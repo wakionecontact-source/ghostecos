@@ -35,10 +35,18 @@ media/
 # Secrets / env
 .env
 .env.*
+!.env.example       # шаблон без секретов разрешён
+!*.env.example
 *.pem
 *.key
 *_secret.*
 *credentials*
+
+# Mobile app (Flutter) — пока публикуем только серверный код
+app/
+
+# Claude AI sessions
+.claude/
 
 # OS
 .DS_Store
