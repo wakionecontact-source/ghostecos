@@ -524,23 +524,27 @@ async function decryptFromPeer(peerUsername, cipherB64){
 }
 
 // ── Сохранение/загрузка приватного ключа в IDB ──
-// БЕЗОПАСНОСТЬ: храним сам CryptoKey-объект с extractable=false. Браузер сам
-// гарантирует что байты ключа не достанутся JS даже через crypto.subtle.exportKey.
-// XSS не сможет украсть ключ — только использовать пока вкладка открыта (что
-// атакующий и так может, отправляя сообщения через активную сессию).
-async function saveKeysToIDB(){
+// Храним pkcs8-байты приватного ключа. При load импортируем с extractable=false
+// — это значит XSS не сможет re-export через crypto.subtle.exportKey() уже импортированный
+// ключ. (Полная защита от XSS требовала бы session-key wrapping — TODO в будущем.)
+// pkcs8-в-IDB совместимо со всеми браузерами (Safari/iOS не поддерживает
+// structured-clone CryptoKey-объектов — было причиной вечного спиннера).
+async function saveKeysToIDB(pkcs8Bytes){
   const db = await openIDB();
   if (!db.objectStoreNames.contains('keys')) return;
-  // IndexedDB поддерживает structured clone для CryptoKey — сохраняем объект как есть.
   const tx = db.transaction('keys', 'readwrite');
-  await new Promise((res, rej) => {
-    const r = tx.objectStore('keys').put({ id: 'priv', key: myPriv });
-    r.onsuccess = () => res(); r.onerror = () => rej(r.error);
-  });
-  await new Promise((res, rej) => {
-    const r = tx.objectStore('keys').put({ id: 'pub', data: myPub });
-    r.onsuccess = () => res(); r.onerror = () => rej(r.error);
-  });
+  if (pkcs8Bytes) {
+    await new Promise((res, rej) => {
+      const r = tx.objectStore('keys').put({ id: 'priv', data: pkcs8Bytes });
+      r.onsuccess = () => res(); r.onerror = () => rej(r.error);
+    });
+  }
+  if (myPub) {
+    await new Promise((res, rej) => {
+      const r = tx.objectStore('keys').put({ id: 'pub', data: myPub });
+      r.onsuccess = () => res(); r.onerror = () => rej(r.error);
+    });
+  }
 }
 async function loadKeysFromIDB(){
   const db = await openIDB();
@@ -550,17 +554,16 @@ async function loadKeysFromIDB(){
   const pub = await new Promise(r => { const q = tx.objectStore('keys').get('pub'); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
   if (!priv || !pub) return false;
   try {
-    // priv.key — это CryptoKey-объект с extractable=false. Браузер не отдаст байты.
-    // (Legacy: если в IDB лежат старые bytes от прошлой версии — игнорируем, заставим
-    // переввести пароль для регенерации non-extractable ключа.)
-    if (priv.key && priv.key.type === 'private') {
-      myPriv = priv.key;
-    } else if (priv.data) {
-      // Старый формат: были pkcs8-байты. Перенесём в non-extractable и пересохраним.
-      myPriv = await crypto.subtle.importKey('pkcs8', priv.data, ECDH_ALGO, false, ['deriveBits']);
-    } else {
+    let bytes = null;
+    if (priv.data) bytes = priv.data;
+    else if (priv.key) {
+      // Legacy: сохраняли CryptoKey-объект (Safari/iOS не работало). Удалим запись.
+      await wipeKeysIDB();
       return false;
     }
+    if (!bytes) return false;
+    // extractable=false — XSS не сможет вытащить через exportKey
+    myPriv = await crypto.subtle.importKey('pkcs8', bytes, ECDH_ALGO, false, ['deriveBits']);
     myPub = pub.data;
     return true;
   } catch(e) { console.error('[E2E] load from IDB failed:', e); return false; }
@@ -596,9 +599,11 @@ async function ensureKeys(password){
       const iv = enc.slice(0, 12);
       const ct = enc.slice(12);
       const privBytes = await crypto.subtle.decrypt({name:'AES-GCM', iv}, master, ct);
-      // extractable=false: после импорта байты ключа недоступны JS (защита от XSS-кражи).
+      // extractable=false: после импорта байты ключа недоступны JS через exportKey.
       myPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
       myPub = remote.x25519_pub;
+      // Сохраним pkcs8 в IDB — следующий заход не будет требовать пароль
+      await saveKeysToIDB(privBytes);
       console.log('[E2E] keys decrypted OK');
       return;
     } catch(e) {
@@ -628,11 +633,11 @@ async function ensureKeys(password){
     encrypted_private_key: b64e(enc),
     key_salt: b64e(salt),
   });
-  // Переимпортируем priv как non-extractable, выкидываем extractable-копию.
+  // Переимпортируем priv как non-extractable.
   myPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
-  // Стираем чувствительные буферы — не оставляем pkcs8/master в куче JS.
-  new Uint8Array(privBytes).fill(0);
-  console.log('[E2E] upload OK, priv is now non-extractable');
+  // Сохраним pkcs8 в IDB для следующих заходов (БЕЗ пароля).
+  await saveKeysToIDB(privBytes);
+  console.log('[E2E] upload OK, priv is non-extractable, saved to IDB');
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -644,6 +649,12 @@ function openIDB(){
   return new Promise((res, rej) => {
     // v3: добавлен стор peerkeys для TOFU-пиннинга публичных ключей собеседников
     const req = indexedDB.open('ghostchat-' + (me && me.username || 'anon'), 3);
+    // Timeout 8 секунд — если что-то блокирует апгрейд (другая вкладка с v2),
+    // лучше показать ошибку чем вечный спиннер.
+    const tid = setTimeout(() => {
+      try { req.onsuccess = null; req.onerror = null; req.onblocked = null; } catch(_){}
+      rej(new Error('IndexedDB заблокирована другой вкладкой. Закрой все открытые вкладки GhostChat и попробуй снова.'));
+    }, 8000);
     req.onupgradeneeded = e => {
       const db = e.target.result;
       if (!db.objectStoreNames.contains('messages')) {
@@ -662,8 +673,19 @@ function openIDB(){
         db.createObjectStore('peerkeys', { keyPath: 'username' });
       }
     };
-    req.onsuccess = e => { _idb = e.target.result; res(_idb); };
-    req.onerror = e => rej(e.target.error);
+    req.onblocked = () => {
+      // Другая вкладка держит старую версию открытой → апгрейд завис.
+      clearTimeout(tid);
+      rej(new Error('Другая вкладка GhostChat блокирует обновление базы. Закрой её и обнови страницу.'));
+    };
+    req.onsuccess = e => {
+      clearTimeout(tid);
+      _idb = e.target.result;
+      // Если в будущем третья вкладка откроет с версией выше — закрываем тихо
+      _idb.onversionchange = () => { try { _idb.close(); } catch(_){} _idb = null; };
+      res(_idb);
+    };
+    req.onerror = e => { clearTimeout(tid); rej(e.target.error || new Error('Ошибка открытия IndexedDB')); };
   });
 }
 
@@ -795,7 +817,7 @@ async function doLogin(){
     localStorage.setItem('gs_token',token);localStorage.setItem('gs_me',JSON.stringify(me));setSsoCookie(token);
     showBoot('Подготовка чата', 'Минуточку…');
     await ensureKeys(p);
-    await saveKeysToIDB();
+    // ensureKeys уже сохраняет pkcs8 в IDB внутри
     await onReady();
   }catch(e){err.textContent=e.message||'Ошибка входа';showAuth();}
   btn.disabled=false;btn.textContent='Войти';
@@ -815,7 +837,7 @@ async function doRegister(){
     localStorage.setItem('gs_token',token);localStorage.setItem('gs_me',JSON.stringify(me));setSsoCookie(token);
     showBoot('Настройка профиля', 'Минуточку…');
     await ensureKeys(p);
-    await saveKeysToIDB();
+    // ensureKeys уже сохраняет pkcs8 в IDB внутри
     await onReady();
   }catch(e){err.textContent=e.message||'Ошибка регистрации';showAuth();}
   btn.disabled=false;btn.textContent='Зарегистрироваться';
@@ -1578,8 +1600,16 @@ async function init(){
     showAuth(); return;
   }
   // Пробуем загрузить ключи из IndexedDB (вводили пароль раньше на этом устройстве)
-  await openIDB();
-  const loaded = await loadKeysFromIDB();
+  let loaded = false;
+  try {
+    await openIDB();
+    loaded = await loadKeysFromIDB();
+  } catch(e) {
+    // openIDB заблокирована другой вкладкой или другая ошибка — покажем юзеру
+    showAuth();
+    document.getElementById('loginError').textContent = e.message || 'Не удалось открыть локальное хранилище';
+    return;
+  }
   if (loaded) {
     // SSO + ключи готовы → сразу в чат, без пароля
     await onReady();
