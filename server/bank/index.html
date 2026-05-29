@@ -365,9 +365,16 @@ nav#appNav a:not(.active):hover{color:var(--text);}
         </div>
       </div>
       <!-- Action buttons -->
-      <div class="actions-row">
-        <button class="act-btn" onclick="openTransferSoul()"><i class="fa-solid fa-paper-plane"></i>Перевести Soul</button>
-        <button class="act-btn" onclick="scrollToSection('marketSection')"><i class="fa-solid fa-store"></i>Маркет NFT</button>
+      <div class="actions-row" style="grid-template-columns:1fr 1fr;">
+        <button class="act-btn" onclick="openTransferSoul()"><i class="fa-solid fa-paper-plane"></i>Перевести</button>
+        <button class="act-btn" onclick="openInvoiceCreate()"><i class="fa-solid fa-receipt"></i>Счёт</button>
+        <button class="act-btn" onclick="openMintNft()"><i class="fa-solid fa-plus"></i>Создать NFT</button>
+        <button class="act-btn" onclick="openUsername()"><i class="fa-solid fa-at"></i>Username</button>
+      </div>
+      <!-- Мои инвойсы -->
+      <div class="section">
+        <div class="section-title"><i class="fa-solid fa-receipt"></i>Мои счета<span class="right" id="myInvCount" style="font-size:10px;color:var(--sub);font-weight:600;"></span></div>
+        <div id="myInvList"></div>
       </div>
       <!-- История Soul -->
       <div class="section">
@@ -446,22 +453,72 @@ nav#appNav a:not(.active):hover{color:var(--text);}
       <div class="modal-title">Перевод Soul</div>
       <button class="modal-close" onclick="closeModal('transferModal')"><i class="fa-solid fa-xmark"></i></button>
     </div>
-    <div class="field">
-      <label>Получатель (username)</label>
-      <input id="trUser" placeholder="username" autocomplete="off">
-    </div>
-    <div class="field">
-      <label>Сумма (Soul)</label>
-      <input id="trAmount" type="number" min="1" placeholder="1">
-      <div class="hint">Комиссия 3% сверху · мин 1 Soul · списано с вашего баланса</div>
-    </div>
-    <div class="field">
-      <label>Заметка (опционально)</label>
-      <input id="trNote" placeholder="за что..." maxlength="200">
-    </div>
+    <div class="field"><label>Получатель (username)</label><input id="trUser" placeholder="username" autocomplete="off"></div>
+    <div class="field"><label>Сумма (Soul)</label><input id="trAmount" type="number" min="1" placeholder="1"><div class="hint">Комиссия 3% сверху</div></div>
+    <div class="field"><label>Заметка (опц.)</label><input id="trNote" placeholder="за что..." maxlength="200"></div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal('transferModal')">Отмена</button>
       <button class="btn primary" id="trSubmit" onclick="doTransferSoul()">Отправить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Modal: Create invoice ─── -->
+<div class="modal-overlay" id="invCreateModal" onclick="if(event.target===this)closeModal('invCreateModal')">
+  <div class="modal">
+    <div class="modal-head"><div class="modal-title">Новый счёт</div><button class="modal-close" onclick="closeModal('invCreateModal')"><i class="fa-solid fa-xmark"></i></button></div>
+    <p style="color:var(--sub);font-size:12px;margin-bottom:14px;">Получите ссылку — другие смогут платить по ней Soul. Действует 7 дней.</p>
+    <div class="field"><label>Сумма (Soul)</label><input id="invcAmount" type="number" min="1" placeholder="10"></div>
+    <div class="field"><label>За что (опц.)</label><input id="invcNote" placeholder="например: за чай" maxlength="200"></div>
+    <div class="modal-row"><span>Создание счёта</span><b>100 Gost</b></div>
+    <div class="modal-row"><span>Комиссия при оплате</span><b>5%</b></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal('invCreateModal')">Отмена</button>
+      <button class="btn primary" onclick="doCreateInvoice()">Создать (100 Gost)</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Modal: Pay invoice ─── -->
+<div class="modal-overlay" id="invPayModal" onclick="if(event.target===this)closeModal('invPayModal')">
+  <div class="modal" id="invPayContent"></div>
+</div>
+
+<!-- ─── Modal: Username управление ─── -->
+<div class="modal-overlay" id="usernameModal" onclick="if(event.target===this)closeModal('usernameModal')">
+  <div class="modal" id="usernameContent"></div>
+</div>
+
+<!-- ─── Modal: Mint NFT ─── -->
+<div class="modal-overlay" id="mintModal" onclick="if(event.target===this)closeModal('mintModal')">
+  <div class="modal">
+    <div class="modal-head"><div class="modal-title">Создать свой NFT</div><button class="modal-close" onclick="closeModal('mintModal')"><i class="fa-solid fa-xmark"></i></button></div>
+    <div class="modal-art" id="mintPreview" style="background:#a855f7;border-radius:18px;color:#fff;font-size:36px;font-weight:800;">?</div>
+    <div class="field"><label>Эмодзи (1-6 символов)</label><input id="mintEmoji" placeholder="🐱 или GS" maxlength="6" oninput="updateMintPreview()"></div>
+    <div class="field"><label>Цвет фона</label><input id="mintBg" type="color" value="#a855f7" oninput="updateMintPreview()" style="height:42px;padding:4px;cursor:pointer;"></div>
+    <div class="field"><label>Slug (a-z, цифры)</label><input id="mintSlug" placeholder="my-cat" maxlength="32"></div>
+    <div class="field"><label>Название</label><input id="mintName" placeholder="Мой кот" maxlength="60"></div>
+    <div class="field"><label>Тираж (100-10000)</label><input id="mintSupply" type="number" min="100" max="10000" value="100" oninput="updateMintCost()"></div>
+    <div class="field"><label>Сколько штук выкупить себе (опц.)</label><input id="mintAutoBuy" type="number" min="0" value="0" oninput="updateMintCost()"><div class="hint">Система выкупит у тебя M штук за Soul. Цена = поле ниже.</div></div>
+    <div class="field"><label>Цена на маркете (Soul за штуку)</label><input id="mintSellPrice" type="number" min="1" value="1" oninput="updateMintCost()"></div>
+    <div class="modal-row"><span>Стоимость создания</span><b id="mintCostG">— Gost</b></div>
+    <div class="modal-row"><span>Получите за автовыкуп</span><b id="mintPayout">0 Soul</b></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal('mintModal')">Отмена</button>
+      <button class="btn primary" onclick="doMintNft()">Создать NFT</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Modal: Seed phrase show (после регистрации/regen) ─── -->
+<div class="modal-overlay" id="seedModal" onclick="if(event.target===this)closeModal('seedModal')">
+  <div class="modal">
+    <div class="modal-head"><div class="modal-title" style="color:var(--yellow);"><i class="fa-solid fa-key"></i> Recovery seed</div></div>
+    <p style="color:var(--sub);font-size:12px;margin-bottom:14px;">Сохраните эту фразу. С ней можно восстановить доступ, если забудете пароль.<br><b style="color:var(--red);">НЕ показывайте её никому.</b></p>
+    <div id="seedDisplay" style="background:rgba(2,6,23,0.8);border:2px dashed var(--yellow);border-radius:12px;padding:18px;text-align:center;font-family:'Courier New',monospace;font-size:22px;font-weight:800;letter-spacing:3px;color:var(--yellow);margin-bottom:14px;word-break:break-all;"></div>
+    <div class="modal-actions">
+      <button class="btn primary" onclick="copySeed()"><i class="fa-solid fa-copy"></i> Скопировать</button>
+      <button class="btn ghost" onclick="closeModal('seedModal')">Я сохранил</button>
     </div>
   </div>
 </div>
@@ -675,7 +732,7 @@ function renderCatalog(items){
     else floorHTML = `от ${pricePill(it.start_price_gost, 'gost')}`;
     return `
     <div class="cat-card" data-rarity="${it.rarity}" onclick="openCatalogModal('${esc(it.slug)}')" title="${esc(it.description)}">
-      <div class="cat-art">${nftSvg(it.slug)}</div>
+      <div class="cat-art">${nftArt(it)}</div>
       <div class="cat-name">${esc(it.name)}</div>
       <div class="cat-meta">${rarityIcon(it.rarity)} ${it.listed}/${it.max_supply}</div>
       <div class="cat-floor">${floorHTML}</div>
@@ -702,7 +759,7 @@ async function loadMyNfts(){
     if (!nfts.length) { root.innerHTML = '<div class="my-empty"><i class="fa-solid fa-image"></i>Пока нет NFT. Купите первый на маркете или дождитесь подарка.</div>'; return; }
     root.innerHTML = '<div class="list-grid">' + nfts.map(n => `
       <div class="lst-card" data-rarity="${n.catalog.rarity}" onclick="openMyNftModal(${n.id})">
-        <div class="lst-art">${nftSvg(n.catalog.slug)}</div>
+        <div class="lst-art">${nftArt(n.catalog)}</div>
         <div class="lst-name">${esc(n.catalog.name)}</div>
         <div class="lst-serial">#${n.serial}/${n.catalog.max_supply}</div>
         ${n.listing ? `<div class="lst-price">${pricePill(n.listing.price, n.listing.currency)}</div>` : `<button class="lst-btn">Управлять</button>`}
@@ -736,7 +793,7 @@ async function loadMarket(append=false){
       const ownerBadge = n.owner.is_official ? verifiedBadge() : '';
       const cur = n.listing.currency;
       return `<div class="lst-card" data-rarity="${n.catalog.rarity}" onclick="openListingModal(${n.id})">
-        <div class="lst-art">${nftSvg(n.catalog.slug)}</div>
+        <div class="lst-art">${nftArt(n.catalog)}</div>
         <div class="lst-name">${esc(n.catalog.name)}</div>
         <div class="lst-serial">#${n.serial}/${n.catalog.max_supply}</div>
         <div class="lst-owner">${ownerBadge}@${esc(n.owner.username)}</div>
@@ -956,6 +1013,237 @@ function scrollToSection(id){
   if (el) el.scrollIntoView({behavior:'smooth', block:'start'});
 }
 
+// ── Рендер NFT-арта универсально (preset SVG или emoji) ──
+function nftArt(catalog){
+  if (catalog.image_kind === 'emoji') {
+    const c = catalog.bg_color || '#a855f7';
+    const t = catalog.image_data || '?';
+    return `<div style="width:100%;height:100%;border-radius:14px;background:${c};display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:800;color:#fff;text-shadow:0 2px 8px rgba(0,0,0,0.4);">${esc(t)}</div>`;
+  }
+  return nftSvg(catalog.slug);
+}
+
+// ══════════════ INVOICES ══════════════
+async function loadInvoices(){
+  try {
+    const r = await api('/invoice/my');
+    const items = r.invoices || [];
+    document.getElementById('myInvCount').textContent = items.length ? items.length : '';
+    const root = document.getElementById('myInvList');
+    if (!items.length) { root.innerHTML = '<div class="my-empty"><i class="fa-solid fa-receipt"></i>Счетов пока нет.<br>Создайте — получите ссылку для оплаты.</div>'; return; }
+    root.innerHTML = '<div class="tx-list">' + items.map(i => {
+      const url = `${location.origin}/bank/?pay=${i.code}`;
+      const status = i.cancelled ? '<span style="color:var(--red);">отменён</span>' : (i.seconds_left <= 0 ? '<span style="color:var(--sub);">истёк</span>' : `<span style="color:var(--green);">активен · ${Math.floor(i.seconds_left/86400)}д ${Math.floor(i.seconds_left%86400/3600)}ч</span>`);
+      return `<div class="tx-item">
+        <div class="tx-icon" style="color:var(--soul);background:rgba(236,72,153,0.12);"><i class="fa-solid fa-receipt"></i></div>
+        <div class="tx-body">
+          <div class="tx-title">${pricePill(i.amount_soul, 'soul')} ${i.note ? '· ' + esc(i.note) : ''}</div>
+          <div class="tx-meta">оплачен ${i.paid_count}× · ${status} · <a href="${url}" onclick="copyInvLink(event, '${i.code}')" style="color:var(--primary);text-decoration:underline;">копировать ссылку</a></div>
+        </div>
+        ${!i.cancelled && i.seconds_left > 0 ? `<button class="btn ghost" style="padding:6px 10px;font-size:11px;" onclick="cancelInvoice('${i.code}')">×</button>` : ''}
+      </div>`;
+    }).join('') + '</div>';
+  } catch(e) { console.error('[invoices]', e); }
+}
+function copyInvLink(ev, code){
+  ev.preventDefault();
+  const url = `${location.origin}/bank/?pay=${code}`;
+  navigator.clipboard.writeText(url).then(() => showToast('Ссылка скопирована'));
+}
+async function cancelInvoice(code){
+  if (!confirm('Отменить счёт?')) return;
+  try { await api(`/invoice/${code}`, 'DELETE'); showToast('Отменён'); loadInvoices(); }
+  catch(e) { showToast(e.message, true); }
+}
+function openInvoiceCreate(){
+  document.getElementById('invcAmount').value = '';
+  document.getElementById('invcNote').value = '';
+  openModal('invCreateModal');
+}
+async function doCreateInvoice(){
+  const amount = +document.getElementById('invcAmount').value;
+  const note = document.getElementById('invcNote').value.trim();
+  if (!amount || amount < 1) { showToast('Введите сумму', true); return; }
+  try {
+    const r = await api('/invoice/create', 'POST', { amount_soul: amount, note: note || null });
+    showToast(`Счёт создан · ${r.code}`);
+    closeModal('invCreateModal');
+    await Promise.all([loadInvoices(), loadWallet()]);
+    // Сразу копируем ссылку
+    const url = `${location.origin}/bank/?pay=${r.code}`;
+    navigator.clipboard.writeText(url).then(() => showToast('Ссылка скопирована'));
+  } catch(e) { showToast(e.message, true); }
+}
+
+// Открыть страницу оплаты при ?pay=CODE
+async function checkInvoicePayParam(){
+  const p = new URLSearchParams(location.search);
+  const code = p.get('pay');
+  if (!code) return;
+  try {
+    const inv = await api(`/invoice/${code}`);
+    const fee = Math.max(1, Math.ceil(inv.amount_soul * (inv.fee_bps / 10000)));
+    const isMine = me && inv.owner.username === me.username;
+    const expired = inv.expired || inv.cancelled;
+    const cont = document.getElementById('invPayContent');
+    cont.innerHTML = `
+      <div class="modal-head"><div class="modal-title">Оплата счёта</div><button class="modal-close" onclick="closeModal('invPayModal');history.replaceState(null,'',location.pathname);"><i class="fa-solid fa-xmark"></i></button></div>
+      <div class="modal-info">
+        <h3>${pricePill(inv.amount_soul, 'soul')}</h3>
+        ${inv.note ? `<div class="sub">${esc(inv.note)}</div>` : ''}
+      </div>
+      <div>
+        <div class="modal-row"><span>Получатель</span><b>${inv.owner.is_official ? verifiedBadge() : ''}@${esc(inv.owner.username)}</b></div>
+        <div class="modal-row"><span>Сумма счёта</span><span class="v">${pricePill(inv.amount_soul, 'soul')}</span></div>
+        <div class="modal-row"><span>Комиссия (5%)</span><span class="v">${pricePill(fee, 'soul')}</span></div>
+        <div class="modal-row"><span><b>Итого с вашего баланса</b></span><span class="v"><b>${pricePill(inv.amount_soul + fee, 'soul')}</b></span></div>
+        <div class="modal-row"><span>Уже оплачен раз</span><b>${inv.paid_count}</b></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="closeModal('invPayModal');history.replaceState(null,'',location.pathname);">Отмена</button>
+        ${expired ? '<button class="btn ghost" disabled>Счёт неактивен</button>' : isMine ? '<button class="btn ghost" disabled>Это ваш счёт</button>' : `<button class="btn primary" onclick="payInvoice('${code}')">Оплатить</button>`}
+      </div>`;
+    openModal('invPayModal');
+  } catch(e) { showToast(e.message || 'Счёт не найден', true); }
+}
+async function payInvoice(code){
+  try {
+    const r = await api(`/invoice/${code}/pay`, 'POST');
+    showToast(`Оплачено! −${fmtNum(r.amount + r.fee)} Soul`);
+    closeModal('invPayModal');
+    history.replaceState(null, '', location.pathname);
+    loadWallet();
+  } catch(e) { showToast(e.message, true); }
+}
+
+// ══════════════ USERNAMES ══════════════
+async function openUsername(){
+  try {
+    const r = await api('/username/my');
+    const cont = document.getElementById('usernameContent');
+    const additional = r.additional || [];
+    cont.innerHTML = `
+      <div class="modal-head"><div class="modal-title">Мои username</div><button class="modal-close" onclick="closeModal('usernameModal')"><i class="fa-solid fa-xmark"></i></button></div>
+      <div class="modal-row"><span>Создано всего (lifetime)</span><b>${r.lifetime_created} / ${r.lifetime_cap}</b></div>
+      <div class="modal-row"><span>Сейчас primary</span><b>@${esc(r.primary)}</b></div>
+      ${additional.length ? '<div style="margin-top:12px;font-size:11px;color:var(--sub);text-transform:uppercase;font-weight:700;letter-spacing:0.5px;">Дополнительные:</div>' : ''}
+      ${additional.map(a => `
+        <div class="modal-row">
+          <span>@${esc(a.username)}${a.for_sale_price ? ` <span style="color:var(--soul);font-size:11px;">· продаётся за ${a.for_sale_price}</span>` : ''}</span>
+          <span style="display:flex;gap:6px;">
+            <button class="btn ghost" style="padding:5px 10px;font-size:11px;" onclick="setUsernamePrimary('${esc(a.username)}')">Сделать primary</button>
+            <button class="btn ghost" style="padding:5px 10px;font-size:11px;" onclick="listUsernameForSale('${esc(a.username)}', ${a.for_sale_price || 'null'})">${a.for_sale_price ? 'Снять' : 'Продать'}</button>
+          </span>
+        </div>
+      `).join('')}
+      ${r.lifetime_created < r.lifetime_cap ? `
+        <div class="field" style="margin-top:14px;">
+          <label>Создать новый username (100 Soul, осталось ${r.lifetime_cap - r.lifetime_created} раз)</label>
+          <input id="unNew" placeholder="например cool-name" autocomplete="off">
+        </div>
+        <div class="modal-actions">
+          <button class="btn ghost" onclick="closeModal('usernameModal')">Закрыть</button>
+          <button class="btn primary" onclick="doCreateUsername()">Создать за 100 Soul</button>
+        </div>` : '<div style="text-align:center;color:var(--sub);font-size:12px;margin-top:14px;">Лимит создания исчерпан. Дополнительные можно только купить у других.</div><div class="modal-actions"><button class="btn ghost" onclick="closeModal(\'usernameModal\')">Закрыть</button></div>'}
+    `;
+    openModal('usernameModal');
+  } catch(e) { showToast(e.message, true); }
+}
+async function doCreateUsername(){
+  const u = document.getElementById('unNew').value.trim().toLowerCase();
+  if (!u) { showToast('Введите username', true); return; }
+  try {
+    await api('/username/create', 'POST', { username: u });
+    showToast(`Создан @${u}`);
+    closeModal('usernameModal');
+    loadWallet();
+  } catch(e) { showToast(e.message, true); }
+}
+async function setUsernamePrimary(u){
+  if (!confirm(`Сделать @${u} основным username?`)) return;
+  try {
+    const r = await api('/username/set_primary', 'POST', { username: u });
+    showToast(`Теперь @${r.primary}`);
+    me.username = r.primary;
+    localStorage.setItem('gs_me', JSON.stringify(me));
+    closeModal('usernameModal');
+  } catch(e) { showToast(e.message, true); }
+}
+async function listUsernameForSale(u, currentPrice){
+  if (currentPrice !== null) {
+    if (!confirm(`Снять @${u} с продажи?`)) return;
+    try { await api('/username/list', 'POST', { username: u, price_soul: null }); showToast('Снят'); openUsername(); }
+    catch(e) { showToast(e.message, true); }
+    return;
+  }
+  const price = +prompt(`Цена для @${u} в Soul:`, '50');
+  if (!price || price < 1) return;
+  try { await api('/username/list', 'POST', { username: u, price_soul: price }); showToast(`Выставлен за ${price} Soul`); openUsername(); }
+  catch(e) { showToast(e.message, true); }
+}
+
+// ══════════════ MINT NFT ══════════════
+function openMintNft(){
+  document.getElementById('mintEmoji').value = '';
+  document.getElementById('mintSlug').value = '';
+  document.getElementById('mintName').value = '';
+  document.getElementById('mintSupply').value = 100;
+  document.getElementById('mintAutoBuy').value = 0;
+  document.getElementById('mintSellPrice').value = 1;
+  document.getElementById('mintBg').value = '#a855f7';
+  updateMintPreview();
+  updateMintCost();
+  openModal('mintModal');
+}
+function updateMintPreview(){
+  const emoji = document.getElementById('mintEmoji').value || '?';
+  const bg = document.getElementById('mintBg').value;
+  const p = document.getElementById('mintPreview');
+  p.textContent = emoji;
+  p.style.background = bg;
+}
+function updateMintCost(){
+  const supply = +document.getElementById('mintSupply').value || 100;
+  const autoBuy = +document.getElementById('mintAutoBuy').value || 0;
+  const price = +document.getElementById('mintSellPrice').value || 1;
+  const supplyFee = Math.max(1, Math.round((10000 / supply) ** 1.1));
+  const gostCost = 50 + supplyFee;
+  const soulPayout = autoBuy * price;
+  document.getElementById('mintCostG').innerHTML = `${pricePill(gostCost, 'gost')} <span style="color:var(--sub);font-size:11px;">(50 + ${supplyFee})</span>`;
+  document.getElementById('mintPayout').innerHTML = soulPayout > 0 ? pricePill(soulPayout, 'soul') + ' от системы' : '0';
+}
+async function doMintNft(){
+  const body = {
+    slug: document.getElementById('mintSlug').value.trim().toLowerCase(),
+    name: document.getElementById('mintName').value.trim(),
+    description: '',
+    supply: +document.getElementById('mintSupply').value,
+    image_emoji: document.getElementById('mintEmoji').value.trim(),
+    bg_color: document.getElementById('mintBg').value,
+    rarity: 'common',
+    auto_buy: +document.getElementById('mintAutoBuy').value,
+    sell_price_soul: +document.getElementById('mintSellPrice').value,
+  };
+  if (!body.slug || !body.name || !body.image_emoji) { showToast('Заполните slug, имя и эмодзи', true); return; }
+  try {
+    const r = await api('/nft/mint', 'POST', body);
+    showToast(`NFT создан! −${r.gost_paid} Gost, +${r.soul_received} Soul`);
+    closeModal('mintModal');
+    await Promise.all([loadWallet(), loadCatalog(), loadMyNfts(), loadMarket()]);
+  } catch(e) { showToast(e.message, true); }
+}
+
+// ══════════════ SEED PHRASE ══════════════
+function showSeedModal(seed){
+  document.getElementById('seedDisplay').textContent = seed;
+  document.getElementById('seedDisplay').dataset.seed = seed;
+  openModal('seedModal');
+}
+function copySeed(){
+  const s = document.getElementById('seedDisplay').dataset.seed;
+  navigator.clipboard.writeText(s).then(() => showToast('Скопировано'));
+}
+
 // ── WebSocket ──
 function connectWS(){
   if (_wsAuthFail) return;
@@ -1017,8 +1305,9 @@ async function init(){
     localStorage.setItem('gs_me', JSON.stringify(me));
     if (me.is_guest) { showAuth(); return; }
     showApp();
-    await Promise.all([loadWallet(), loadCatalog(), loadMyNfts(), loadMarket()]);
+    await Promise.all([loadWallet(), loadCatalog(), loadMyNfts(), loadMarket(), loadInvoices()]);
     connectWS();
+    checkInvoicePayParam();
   } catch(e) {
     console.error('[init]', e);
     if (e.status === 401) { localStorage.removeItem('gs_token'); localStorage.removeItem('gs_me'); }

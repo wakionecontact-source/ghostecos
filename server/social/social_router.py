@@ -511,6 +511,36 @@ def init():
         );
         CREATE INDEX IF NOT EXISTS idx_soc_nft_listings_catalog ON soc_nft_listings(price_soul);
 
+        -- ══════ INVOICES (счета) ══════
+        CREATE TABLE IF NOT EXISTS soc_invoices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT UNIQUE NOT NULL,
+            owner_id INTEGER NOT NULL,
+            amount_soul INTEGER NOT NULL,
+            note TEXT DEFAULT NULL,
+            paid_count INTEGER NOT NULL DEFAULT 0,
+            total_received INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL,
+            cancelled INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (owner_id) REFERENCES users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_soc_invoices_owner ON soc_invoices(owner_id, id DESC);
+
+        -- ══════ USERNAMES (дополнительные, P2P) ══════
+        -- Primary username хранится в users.username. Дополнительные — здесь.
+        -- for_sale_price NULL = не продаётся
+        CREATE TABLE IF NOT EXISTS soc_usernames (
+            username TEXT PRIMARY KEY,
+            owner_id INTEGER NOT NULL,
+            for_sale_price INTEGER DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            acquired_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (owner_id) REFERENCES users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_soc_usernames_owner ON soc_usernames(owner_id);
+        CREATE INDEX IF NOT EXISTS idx_soc_usernames_market ON soc_usernames(for_sale_price) WHERE for_sale_price IS NOT NULL;
+
         CREATE INDEX IF NOT EXISTS idx_soc_posts_created ON soc_posts(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_soc_posts_user ON soc_posts(user_id);
         CREATE INDEX IF NOT EXISTS idx_soc_reactions_post ON soc_reactions(post_id);
@@ -563,6 +593,31 @@ def init():
     # Добавляем currency в soc_nft_listings если её ещё нет (миграция со старого формата)
     try:
         c.execute("ALTER TABLE soc_nft_listings ADD COLUMN currency TEXT NOT NULL DEFAULT 'soul'")
+    except sqlite3.OperationalError:
+        pass
+    # Колонки для пользовательских NFT (image_kind/data) и лимит создания username
+    try:
+        c.execute("ALTER TABLE soc_nft_catalog ADD COLUMN image_kind TEXT NOT NULL DEFAULT 'preset'")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE soc_nft_catalog ADD COLUMN image_data TEXT NOT NULL DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE soc_nft_catalog ADD COLUMN bg_color TEXT NOT NULL DEFAULT '#a855f7'")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN seed_hash TEXT DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN nft_mints_count INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN usernames_created INTEGER NOT NULL DEFAULT 0")
     except sqlite3.OperationalError:
         pass
     c.commit()
@@ -889,11 +944,15 @@ def register(body: RegisterBody, request: Request):
     _val_password(body.password)
     argon2 = hash_argon2(body.password)
     token = secrets.token_hex(32)
+    # Генерим seed-фразу для recovery (16 символов без 0/O/1/l/I)
+    seed_alpha = "abcdefghkmnpqrstuvwxyz23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+    seed = ''.join(secrets.choice(seed_alpha) for _ in range(16))
+    seed_hash = hash_argon2(seed)
     c = db()
     try:
         c.execute(
-            "INSERT INTO users (username, display_name, argon2_hash, in_ghostchat) VALUES (?,?,?,0)",
-            (username, display_name, argon2),
+            "INSERT INTO users (username, display_name, argon2_hash, in_ghostchat, seed_hash) VALUES (?,?,?,0,?)",
+            (username, display_name, argon2, seed_hash),
         )
         uid = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
         c.execute("INSERT INTO soc_tokens (user_id, token) VALUES (?,?)", (uid, token))
@@ -903,10 +962,60 @@ def register(body: RegisterBody, request: Request):
         raise HTTPException(409, "Имя пользователя уже занято")
     finally:
         c.close()
-    # Welcome bonus: 100 gost. UNIQUE-индекс не даст продублировать при повторном регистрате (теоретически невозможно — username уникален, но на всякий)
     try: award_gost(uid, 'register')
-    except Exception: pass  # не блокируем регистрацию из-за wallet-сбоя
-    return {"id": uid, "username": username, "display_name": display_name, "token": token}
+    except Exception: pass
+    return {
+        "id": uid, "username": username, "display_name": display_name, "token": token,
+        "seed_phrase": seed,  # показываем ОДИН РАЗ — юзер должен сохранить!
+    }
+
+
+class SeedRecoveryBody(BaseModel):
+    username: str
+    seed_phrase: str
+
+@router.post("/recovery/seed")
+def recovery_seed(body: SeedRecoveryBody, request: Request):
+    """Восстановить доступ по seed-фразе. Возвращает новый токен."""
+    _rate_limit(f"recov:{_client_ip(request)}", limit=10, window=3600)
+    username = body.username.strip().lower()
+    seed = body.seed_phrase.strip()
+    if not username or len(seed) != 16:
+        # Dummy verify чтобы тайминги не разнились
+        verify_argon2(seed, _DUMMY_ARGON2_HASH)
+        raise HTTPException(401, "Неверная seed-фраза")
+    c = db()
+    user = c.execute("SELECT id, seed_hash, username FROM users WHERE username=?", (username,)).fetchone()
+    if not user or not user["seed_hash"] or not verify_argon2(seed, user["seed_hash"]):
+        c.close()
+        verify_argon2(seed, _DUMMY_ARGON2_HASH)
+        raise HTTPException(401, "Неверная seed-фраза")
+    # Создать новый токен (старый невалиден — но если юзер залогинен с старым, он останется)
+    new_token = secrets.token_hex(32)
+    c.execute("INSERT OR REPLACE INTO soc_tokens (user_id, token) VALUES (?,?)", (user["id"], new_token))
+    c.commit()
+    c.close()
+    return {"username": user["username"], "token": new_token}
+
+
+class SeedRegenBody(BaseModel):
+    password: str
+
+@router.post("/me/regen_seed")
+def regen_seed(body: SeedRegenBody, authorization: Optional[str] = Header(None)):
+    """Сгенерить новую seed-фразу (для тех у кого её нет, или забыли). Требует пароль."""
+    user = auth_member(authorization)
+    _rate_limit(f"regenseed:{user['id']}", limit=3, window=3600)
+    stored_hash = user.get("argon2_hash") or user.get("password_hash")
+    if not stored_hash or not verify_argon2(body.password, stored_hash):
+        raise HTTPException(401, "Неверный пароль")
+    seed_alpha = "abcdefghkmnpqrstuvwxyz23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+    seed = ''.join(secrets.choice(seed_alpha) for _ in range(16))
+    seed_hash = hash_argon2(seed)
+    c = db()
+    c.execute("UPDATE users SET seed_hash=? WHERE id=?", (seed_hash, user["id"]))
+    c.commit(); c.close()
+    return {"seed_phrase": seed}
 
 @router.post("/guest")
 def guest_login(request: Request):
@@ -2699,6 +2808,9 @@ def _nft_card(row: dict) -> dict:
             "name": row["catalog_name"],
             "rarity": row["catalog_rarity"],
             "max_supply": row["catalog_max_supply"],
+            "image_kind": row.get("catalog_image_kind") or "preset",
+            "image_data": row.get("catalog_image_data") or row["catalog_slug"],
+            "bg_color": row.get("catalog_bg_color") or "#a855f7",
         },
         "listing": (
             {
@@ -2714,6 +2826,7 @@ _NFT_JOIN_SQL = """
     SELECT n.id, n.serial, n.owner_id, n.catalog_id,
            u.username as owner_username, u.display_name as owner_display_name, u.is_official as owner_is_official,
            cat.slug as catalog_slug, cat.name as catalog_name, cat.rarity as catalog_rarity, cat.max_supply as catalog_max_supply,
+           cat.image_kind as catalog_image_kind, cat.image_data as catalog_image_data, cat.bg_color as catalog_bg_color,
            l.id as listing_id, l.price_soul as listing_price, l.currency as listing_currency
     FROM soc_nfts n
     JOIN users u ON u.id = n.owner_id
@@ -2746,7 +2859,10 @@ def nft_catalog(authorization: Optional[str] = Header(None)):
                 "minted": r["minted"], "listed": r["listed"],
                 "floor_gost": r["floor_gost"],
                 "floor_soul": r["floor_soul"],
-                "start_price_gost": r["start_price_soul"],   # колонка в БД исторически называется price_soul, но хранит Gost для системных
+                "start_price_gost": r["start_price_soul"],
+                "image_kind": r["image_kind"] or "preset",
+                "image_data": r["image_data"] or r["slug"],
+                "bg_color": r["bg_color"] or "#a855f7",
                 "creator": {
                     "username": r["creator_username"],
                     "display_name": r["creator_display_name"],
@@ -2939,6 +3055,574 @@ def nft_buy(nft_id: int, authorization: Optional[str] = Header(None)):
         _push_soul_event(lst["seller_id"], price, 'nft_sell', seller_new)
     ws_hub.broadcast("nft.sold", {"nft_id": nft_id})
     return {"status": "ok", "price": price, "fee": fee, "currency": "soul", "new_balance": buyer_new}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INVOICES (счета на оплату Soul)
+# ══════════════════════════════════════════════════════════════════════════════
+INVOICE_CREATE_GOST = 100
+INVOICE_EXTEND_GOST = 90
+INVOICE_PAY_FEE_BPS = 500  # 5%
+INVOICE_TTL_DAYS = 7
+INVOICE_CODE_ALPHA = "abcdefghkmnpqrstuvwxyz23456789"  # без похожих символов
+
+def _gen_invoice_code() -> str:
+    """12-символьный код в формате xxxx-xxxx-xxxx."""
+    p = lambda: ''.join(secrets.choice(INVOICE_CODE_ALPHA) for _ in range(4))
+    return f"{p()}-{p()}-{p()}"
+
+
+class InvoiceCreateBody(BaseModel):
+    amount_soul: int
+    note: Optional[str] = None
+
+
+@router.post("/invoice/create")
+def invoice_create(body: InvoiceCreateBody, authorization: Optional[str] = Header(None)):
+    """Создать счёт. Платит автор 100 Gost. Живёт 7 дней. Можно оплатить много раз."""
+    user = auth_member(authorization)
+    _rate_limit(f"invoicec:{user['id']}", limit=20, window=3600)
+    if body.amount_soul <= 0 or body.amount_soul > 1_000_000:
+        raise HTTPException(400, "Сумма от 1 до 1 000 000 Soul")
+    note = (body.note or "").strip()[:200] or None
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        # Проверяем Gost
+        wallet = c.execute("SELECT gost FROM soc_wallets WHERE user_id=?", (user["id"],)).fetchone()
+        bal = (wallet["gost"] if wallet else 0)
+        if bal < INVOICE_CREATE_GOST:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(400, f"Нужно {INVOICE_CREATE_GOST} Gost для создания счёта (у вас {bal})")
+        # Списываем Gost
+        c.execute("INSERT OR IGNORE INTO soc_wallets (user_id) VALUES (?)", (user["id"],))
+        c.execute(
+            "UPDATE soc_wallets SET gost = gost - ?, updated_at = CURRENT_TIMESTAMP WHERE user_id=?",
+            (INVOICE_CREATE_GOST, user["id"]),
+        )
+        c.execute(
+            "INSERT INTO soc_wallet_tx (user_id, currency, delta, source) VALUES (?, 'gost', ?, 'spend')",
+            (user["id"], -INVOICE_CREATE_GOST),
+        )
+        # Генерим уникальный code (несколько попыток на коллизию)
+        for _attempt in range(8):
+            code = _gen_invoice_code()
+            exists = c.execute("SELECT 1 FROM soc_invoices WHERE code=?", (code,)).fetchone()
+            if not exists: break
+        else:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(500, "Не удалось сгенерировать код")
+        c.execute(
+            "INSERT INTO soc_invoices (code, owner_id, amount_soul, note, expires_at) "
+            "VALUES (?, ?, ?, ?, datetime('now', '+7 day'))",
+            (code, user["id"], body.amount_soul, note),
+        )
+        new_gost = c.execute("SELECT gost FROM soc_wallets WHERE user_id=?", (user["id"],)).fetchone()["gost"]
+        c.execute("COMMIT")
+    except HTTPException:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close(); raise
+    c.close()
+    ws_hub.send_to(user["id"], "wallet.credit", {
+        "currency": "gost", "delta": -INVOICE_CREATE_GOST, "source": "spend", "balance": new_gost,
+    })
+    return {"status": "ok", "code": code, "amount_soul": body.amount_soul, "note": note}
+
+
+@router.get("/invoice/my")
+def invoice_my(authorization: Optional[str] = Header(None)):
+    """Мои инвойсы."""
+    user = auth_member(authorization)
+    c = db()
+    rows = c.execute(
+        "SELECT id, code, amount_soul, note, paid_count, total_received, "
+        "created_at, expires_at, cancelled, "
+        "(strftime('%s', expires_at) - strftime('%s','now')) as seconds_left "
+        "FROM soc_invoices WHERE owner_id=? ORDER BY id DESC LIMIT 30",
+        (user["id"],),
+    ).fetchall()
+    c.close()
+    return {
+        "invoices": [
+            {
+                "id": r["id"], "code": r["code"], "amount_soul": r["amount_soul"],
+                "note": r["note"], "paid_count": r["paid_count"],
+                "total_received": r["total_received"], "created_at": r["created_at"],
+                "expires_at": r["expires_at"], "cancelled": bool(r["cancelled"]),
+                "seconds_left": max(0, r["seconds_left"] or 0),
+            }
+            for r in rows
+        ]
+    }
+
+
+@router.get("/invoice/{code}")
+def invoice_info(code: str, authorization: Optional[str] = Header(None)):
+    """Публичная информация о счёте (для страницы оплаты по ссылке)."""
+    auth(authorization)
+    c = db()
+    row = c.execute(
+        "SELECT i.*, u.username as owner_username, u.display_name as owner_display_name, u.is_official as owner_is_official, "
+        "(strftime('%s', expires_at) - strftime('%s','now')) as seconds_left "
+        "FROM soc_invoices i JOIN users u ON u.id=i.owner_id WHERE i.code=?", (code,),
+    ).fetchone()
+    c.close()
+    if not row:
+        raise HTTPException(404, "Счёт не найден")
+    return {
+        "code": row["code"],
+        "amount_soul": row["amount_soul"],
+        "note": row["note"],
+        "owner": {
+            "username": row["owner_username"], "display_name": row["owner_display_name"],
+            "is_official": bool(row["owner_is_official"]),
+        },
+        "paid_count": row["paid_count"],
+        "expires_at": row["expires_at"],
+        "seconds_left": max(0, row["seconds_left"] or 0),
+        "cancelled": bool(row["cancelled"]),
+        "expired": (row["seconds_left"] or 0) <= 0,
+        "fee_bps": INVOICE_PAY_FEE_BPS,
+    }
+
+
+@router.post("/invoice/{code}/pay")
+def invoice_pay(code: str, authorization: Optional[str] = Header(None)):
+    """Оплатить счёт. Комиссия 5% сверху."""
+    user = auth_member(authorization)
+    _rate_limit(f"invpay:{user['id']}", limit=30, window=60)
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        inv = c.execute("SELECT * FROM soc_invoices WHERE code=?", (code,)).fetchone()
+        if not inv:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(404, "Счёт не найден")
+        if inv["cancelled"]:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(400, "Счёт отменён")
+        sl = c.execute("SELECT strftime('%s', ?) - strftime('%s','now') as s", (inv["expires_at"],)).fetchone()["s"]
+        if (sl or 0) <= 0:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(400, "Срок счёта истёк")
+        if inv["owner_id"] == user["id"]:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(400, "Нельзя оплачивать свой счёт")
+        amount = inv["amount_soul"]
+        fee = max(1, (amount * INVOICE_PAY_FEE_BPS + 9999) // 10000)
+        total = amount + fee
+        bal = _soul_balance(c, user["id"])
+        if bal < total:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(400, f"Недостаточно Soul: нужно {total} (счёт {amount} + комиссия {fee}), у вас {bal}")
+        _credit_soul_tx(c, user["id"], -total, 'invoice_pay',
+                        counter=inv["owner_id"], ref_type='invoice', ref_id=inv["id"],
+                        note=inv["note"])
+        _credit_soul_tx(c, inv["owner_id"], amount, 'invoice_in',
+                        counter=user["id"], ref_type='invoice', ref_id=inv["id"],
+                        note=inv["note"])
+        c.execute("UPDATE soc_economy_state SET system_balance = system_balance + ? WHERE is_active=1", (fee,))
+        c.execute("UPDATE soc_invoices SET paid_count = paid_count + 1, total_received = total_received + ? WHERE id=?",
+                  (amount, inv["id"]))
+        payer_new = _soul_balance(c, user["id"])
+        owner_new = _soul_balance(c, inv["owner_id"])
+        c.execute("COMMIT")
+    except HTTPException:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close(); raise
+    c.close()
+    _push_soul_event(user["id"], -total, 'invoice_pay', payer_new)
+    _push_soul_event(inv["owner_id"], amount, 'invoice_in', owner_new)
+    return {"status": "ok", "amount": amount, "fee": fee, "new_balance": payer_new}
+
+
+@router.post("/invoice/{code}/extend")
+def invoice_extend(code: str, authorization: Optional[str] = Header(None)):
+    """Продлить срок счёта ещё на 7 дней. Стоит 90 Gost."""
+    user = auth_member(authorization)
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        inv = c.execute("SELECT * FROM soc_invoices WHERE code=? AND owner_id=?", (code, user["id"])).fetchone()
+        if not inv:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(404, "Не ваш счёт")
+        wallet = c.execute("SELECT gost FROM soc_wallets WHERE user_id=?", (user["id"],)).fetchone()
+        if (wallet["gost"] if wallet else 0) < INVOICE_EXTEND_GOST:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(400, f"Нужно {INVOICE_EXTEND_GOST} Gost")
+        c.execute(
+            "UPDATE soc_wallets SET gost = gost - ?, updated_at = CURRENT_TIMESTAMP WHERE user_id=?",
+            (INVOICE_EXTEND_GOST, user["id"]),
+        )
+        c.execute(
+            "INSERT INTO soc_wallet_tx (user_id, currency, delta, source) VALUES (?, 'gost', ?, 'spend')",
+            (user["id"], -INVOICE_EXTEND_GOST),
+        )
+        c.execute("UPDATE soc_invoices SET expires_at = datetime(expires_at, '+7 day'), cancelled = 0 WHERE id=?",
+                  (inv["id"],))
+        new_gost = c.execute("SELECT gost FROM soc_wallets WHERE user_id=?", (user["id"],)).fetchone()["gost"]
+        c.execute("COMMIT")
+    except HTTPException:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close(); raise
+    c.close()
+    ws_hub.send_to(user["id"], "wallet.credit", {
+        "currency": "gost", "delta": -INVOICE_EXTEND_GOST, "source": "spend", "balance": new_gost,
+    })
+    return {"status": "ok"}
+
+
+@router.delete("/invoice/{code}")
+def invoice_cancel(code: str, authorization: Optional[str] = Header(None)):
+    """Отменить свой счёт (по нему нельзя будет платить, но история сохранится)."""
+    user = auth_member(authorization)
+    c = db()
+    inv = c.execute("SELECT id FROM soc_invoices WHERE code=? AND owner_id=?", (code, user["id"])).fetchone()
+    if not inv:
+        c.close(); raise HTTPException(404, "Не ваш счёт")
+    c.execute("UPDATE soc_invoices SET cancelled=1 WHERE id=?", (inv["id"],))
+    c.commit(); c.close()
+    return {"status": "ok"}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# USERNAMES — кастомные имена за Soul (lifetime cap 3 на аккаунт)
+# ══════════════════════════════════════════════════════════════════════════════
+USERNAME_CREATE_PRICE_SOUL = 100
+USERNAME_P2P_FEE_BPS = 1000  # 10%
+USERNAME_LIFETIME_CAP = 3
+
+
+class UsernameCreateBody(BaseModel):
+    username: str
+
+
+@router.post("/username/create")
+def username_create(body: UsernameCreateBody, authorization: Optional[str] = Header(None)):
+    """Создать новый уникальный username за 100 Soul. Не более 3 за жизнь аккаунта."""
+    user = auth_member(authorization)
+    _rate_limit(f"unc:{user['id']}", limit=5, window=3600)
+    new_username = _val_username(body.username)
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        # Lifetime cap check
+        u = c.execute("SELECT usernames_created FROM users WHERE id=?", (user["id"],)).fetchone()
+        if (u["usernames_created"] or 0) >= USERNAME_LIFETIME_CAP:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(403, f"Лимит создания username: {USERNAME_LIFETIME_CAP}")
+        # Уникальность
+        clash = c.execute(
+            "SELECT 1 FROM users WHERE username=? UNION ALL SELECT 1 FROM soc_usernames WHERE username=?",
+            (new_username, new_username),
+        ).fetchone()
+        if clash:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(409, "Username уже занят")
+        # Списываем Soul
+        bal = _soul_balance(c, user["id"])
+        if bal < USERNAME_CREATE_PRICE_SOUL:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(400, f"Нужно {USERNAME_CREATE_PRICE_SOUL} Soul (у вас {bal})")
+        _credit_soul_tx(c, user["id"], -USERNAME_CREATE_PRICE_SOUL, 'username_create',
+                        ref_type='username', ref_id=0, note=new_username)
+        c.execute("UPDATE soc_economy_state SET system_balance = system_balance + ? WHERE is_active=1",
+                  (USERNAME_CREATE_PRICE_SOUL,))
+        c.execute("INSERT INTO soc_usernames (username, owner_id) VALUES (?, ?)", (new_username, user["id"]))
+        c.execute("UPDATE users SET usernames_created = usernames_created + 1 WHERE id=?", (user["id"],))
+        new_bal = _soul_balance(c, user["id"])
+        c.execute("COMMIT")
+    except HTTPException:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close(); raise
+    c.close()
+    _push_soul_event(user["id"], -USERNAME_CREATE_PRICE_SOUL, 'username_create', new_bal)
+    return {"status": "ok", "username": new_username, "remaining_lifetime": USERNAME_LIFETIME_CAP - (u["usernames_created"] + 1)}
+
+
+@router.get("/username/my")
+def username_my(authorization: Optional[str] = Header(None)):
+    """Мои username (включая primary + дополнительные)."""
+    user = auth_member(authorization)
+    c = db()
+    extras = c.execute(
+        "SELECT username, for_sale_price, acquired_at FROM soc_usernames WHERE owner_id=? ORDER BY acquired_at",
+        (user["id"],),
+    ).fetchall()
+    me_row = c.execute("SELECT username, usernames_created FROM users WHERE id=?", (user["id"],)).fetchone()
+    c.close()
+    return {
+        "primary": me_row["username"],
+        "lifetime_created": me_row["usernames_created"] or 0,
+        "lifetime_cap": USERNAME_LIFETIME_CAP,
+        "additional": [
+            {"username": r["username"], "for_sale_price": r["for_sale_price"], "acquired_at": r["acquired_at"]}
+            for r in extras
+        ],
+    }
+
+
+class UsernameListBody(BaseModel):
+    username: str
+    price_soul: Optional[int] = None  # None = снять с продажи
+
+
+@router.post("/username/list")
+def username_list(body: UsernameListBody, authorization: Optional[str] = Header(None)):
+    """Выставить свой username на P2P или снять с продажи."""
+    user = auth_member(authorization)
+    c = db()
+    row = c.execute("SELECT owner_id FROM soc_usernames WHERE username=?", (body.username,)).fetchone()
+    if not row or row["owner_id"] != user["id"]:
+        c.close(); raise HTTPException(403, "Не ваш username")
+    if body.price_soul is not None and (body.price_soul < 1 or body.price_soul > 1_000_000):
+        c.close(); raise HTTPException(400, "Цена 1..1 000 000")
+    c.execute("UPDATE soc_usernames SET for_sale_price=? WHERE username=?", (body.price_soul, body.username))
+    c.commit(); c.close()
+    return {"status": "ok"}
+
+
+@router.get("/username/market")
+def username_market(offset: int = Query(0, ge=0), authorization: Optional[str] = Header(None)):
+    """Активные листинги username на P2P."""
+    auth(authorization)
+    c = db()
+    rows = c.execute(
+        "SELECT n.username, n.for_sale_price, u.username as owner_username, u.display_name as owner_display_name, u.is_official "
+        "FROM soc_usernames n JOIN users u ON u.id=n.owner_id "
+        "WHERE n.for_sale_price IS NOT NULL ORDER BY n.for_sale_price ASC LIMIT 30 OFFSET ?",
+        (offset,),
+    ).fetchall()
+    c.close()
+    return {
+        "listings": [
+            {
+                "username": r["username"], "price_soul": r["for_sale_price"],
+                "owner": {"username": r["owner_username"], "display_name": r["owner_display_name"], "is_official": bool(r["is_official"])},
+            } for r in rows
+        ]
+    }
+
+
+@router.post("/username/buy/{username}")
+def username_buy(username: str, authorization: Optional[str] = Header(None)):
+    """Купить чужой username с P2P."""
+    user = auth_member(authorization)
+    _rate_limit(f"unbuy:{user['id']}", limit=10, window=3600)
+    username = username.strip().lower()
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        row = c.execute("SELECT owner_id, for_sale_price FROM soc_usernames WHERE username=?", (username,)).fetchone()
+        if not row or row["for_sale_price"] is None:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(404, "Не продаётся")
+        if row["owner_id"] == user["id"]:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(400, "Ваш же username")
+        price = row["for_sale_price"]
+        fee = max(1, (price * USERNAME_P2P_FEE_BPS + 9999) // 10000)
+        seller_part = price - fee
+        bal = _soul_balance(c, user["id"])
+        if bal < price:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(400, f"Недостаточно Soul: нужно {price} (у вас {bal})")
+        _credit_soul_tx(c, user["id"], -price, 'username_buy',
+                        counter=row["owner_id"], ref_type='username', note=username)
+        _credit_soul_tx(c, row["owner_id"], seller_part, 'username_sell',
+                        counter=user["id"], ref_type='username', note=username)
+        c.execute("UPDATE soc_economy_state SET system_balance = system_balance + ? WHERE is_active=1", (fee,))
+        c.execute("UPDATE soc_usernames SET owner_id=?, for_sale_price=NULL, acquired_at=CURRENT_TIMESTAMP WHERE username=?",
+                  (user["id"], username))
+        buyer_new = _soul_balance(c, user["id"])
+        seller_new = _soul_balance(c, row["owner_id"])
+        c.execute("COMMIT")
+    except HTTPException:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close(); raise
+    c.close()
+    _push_soul_event(user["id"], -price, 'username_buy', buyer_new)
+    _push_soul_event(row["owner_id"], seller_part, 'username_sell', seller_new)
+    return {"status": "ok", "username": username, "price": price, "fee": fee}
+
+
+class UsernameSetPrimaryBody(BaseModel):
+    username: str
+
+
+@router.post("/username/set_primary")
+def username_set_primary(body: UsernameSetPrimaryBody, authorization: Optional[str] = Header(None)):
+    """Сделать дополнительный username основным. Бывший primary становится дополнительным."""
+    user = auth_member(authorization)
+    new_primary = body.username.strip().lower()
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        row = c.execute("SELECT owner_id, for_sale_price FROM soc_usernames WHERE username=?", (new_primary,)).fetchone()
+        if not row or row["owner_id"] != user["id"]:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(403, "Не ваш username")
+        if row["for_sale_price"] is not None:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(400, "Сначала снимите username с продажи")
+        old_primary = user["username"]
+        # Меняем местами
+        c.execute("UPDATE users SET username=? WHERE id=?", (new_primary, user["id"]))
+        c.execute("DELETE FROM soc_usernames WHERE username=?", (new_primary,))
+        c.execute("INSERT INTO soc_usernames (username, owner_id, acquired_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                  (old_primary, user["id"]))
+        c.execute("COMMIT")
+    except HTTPException:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close(); raise
+    c.close()
+    return {"status": "ok", "primary": new_primary}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MINT OWN NFT — юзеры создают свои NFT
+# ══════════════════════════════════════════════════════════════════════════════
+MINT_BASE_GOST = 50
+MINT_SUPPLY_MIN = 100
+MINT_SUPPLY_MAX = 10000
+MINT_LIFETIME_CAP = 100  # не более 100 разных типов NFT на аккаунт (защита от спама)
+
+def _mint_supply_fee(supply: int) -> int:
+    """Доплата за тираж: (10000/supply)^1.1. Минимум 1, максимум адекватный."""
+    if supply <= 0: return 0
+    return max(1, round((10000 / supply) ** 1.1))
+
+
+class MintNftBody(BaseModel):
+    slug: str                  # уникальный слаг (a-z0-9-, 3-32)
+    name: str                  # отображаемое название
+    description: Optional[str] = None
+    supply: int                # тираж 100..10000
+    image_emoji: str           # 1-2 символа emoji (упрощённый MVP вместо upload картинки)
+    bg_color: Optional[str] = None  # hex #RRGGBB, дефолт фиолет
+    rarity: Optional[str] = None    # common/rare/legend (автор сам выбирает)
+    auto_buy: int = 0          # сколько штук автор сам выкупает (0 ≤ auto_buy ≤ supply)
+    sell_price_soul: int = 1   # цена выставления на маркет в Soul
+
+
+@router.post("/nft/mint")
+def nft_mint(body: MintNftBody, authorization: Optional[str] = Header(None)):
+    """Минт собственного NFT. Автор платит Gost (50 + надбавка за низкий тираж).
+    Если auto_buy>0 — система выкупает M первых штук у автора за Soul (эмиссия Soul автору),
+    эти M штук система выставляет на маркет по той же цене (формирует floor).
+    Остальные (supply - auto_buy) штук остаются у автора, он сам решает что с ними."""
+    user = auth_member(authorization)
+    _rate_limit(f"mint:{user['id']}", limit=10, window=3600)
+    slug = (body.slug or "").strip().lower()
+    if not re.match(r'^[a-z0-9_-]{3,32}$', slug):
+        raise HTTPException(400, "Slug: 3-32 символов (a-z, 0-9, _, -)")
+    if slug in {n['slug'] for n in _NFT_SEED}:
+        raise HTTPException(409, "Этот slug зарезервирован системой")
+    name = (body.name or "").strip()
+    if not name or len(name) > 60:
+        raise HTTPException(400, "Имя: 1-60 символов")
+    desc = (body.description or "").strip()[:200]
+    if body.supply < MINT_SUPPLY_MIN or body.supply > MINT_SUPPLY_MAX:
+        raise HTTPException(400, f"Тираж: от {MINT_SUPPLY_MIN} до {MINT_SUPPLY_MAX}")
+    emoji = (body.image_emoji or "").strip()
+    if not emoji or len(emoji) > 6:
+        raise HTTPException(400, "Эмодзи: 1-6 символов")
+    bg = (body.bg_color or "#a855f7").strip()
+    if not re.match(r'^#[0-9a-fA-F]{6}$', bg):
+        raise HTTPException(400, "Цвет: формат #RRGGBB")
+    rarity = body.rarity or 'common'
+    if rarity not in ('common', 'rare', 'legend'):
+        raise HTTPException(400, "rarity: common|rare|legend")
+    if body.auto_buy < 0 or body.auto_buy > body.supply:
+        raise HTTPException(400, "auto_buy 0..supply")
+    if body.sell_price_soul < 1 or body.sell_price_soul > 1_000_000:
+        raise HTTPException(400, "sell_price_soul 1..1 000 000")
+
+    # Подсчёт цены создания
+    gost_fee = MINT_BASE_GOST + _mint_supply_fee(body.supply)
+
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        # Lifetime cap
+        u = c.execute("SELECT nft_mints_count FROM users WHERE id=?", (user["id"],)).fetchone()
+        if (u["nft_mints_count"] or 0) >= MINT_LIFETIME_CAP:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(403, f"Лимит созданных NFT: {MINT_LIFETIME_CAP}")
+        # Уникальность slug
+        if c.execute("SELECT 1 FROM soc_nft_catalog WHERE slug=?", (slug,)).fetchone():
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(409, "Slug занят")
+        # Списываем Gost
+        c.execute("INSERT OR IGNORE INTO soc_wallets (user_id) VALUES (?)", (user["id"],))
+        wallet = c.execute("SELECT gost FROM soc_wallets WHERE user_id=?", (user["id"],)).fetchone()
+        if wallet["gost"] < gost_fee:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(400, f"Нужно {gost_fee} Gost (у вас {wallet['gost']})")
+        c.execute(
+            "UPDATE soc_wallets SET gost = gost - ?, updated_at = CURRENT_TIMESTAMP WHERE user_id=?",
+            (gost_fee, user["id"]),
+        )
+        c.execute(
+            "INSERT INTO soc_wallet_tx (user_id, currency, delta, source) VALUES (?, 'gost', ?, 'spend')",
+            (user["id"], -gost_fee),
+        )
+        # Auto-buy логика: M штук система выкупает у автора по auto_buy_price = sell_price_soul
+        soul_to_author = 0
+        if body.auto_buy > 0:
+            soul_to_author = body.auto_buy * body.sell_price_soul
+            state = _economy_state(c)
+            if not state or state["system_balance"] < soul_to_author:
+                c.execute("ROLLBACK"); c.close()
+                raise HTTPException(503, "В системе недостаточно Soul для автовыкупа. Уменьшите auto_buy или цену.")
+            c.execute("UPDATE soc_economy_state SET system_balance = system_balance - ? WHERE is_active=1",
+                      (soul_to_author,))
+            _credit_soul_tx(c, user["id"], soul_to_author, 'nft_mint_payout',
+                            ref_type='nft_catalog', note=f"autobuy {body.auto_buy}")
+        # Создаём catalog
+        c.execute(
+            "INSERT INTO soc_nft_catalog (slug, name, description, rarity, max_supply, creator_id, "
+            "start_price_soul, image_kind, image_data, bg_color) "
+            "VALUES (?,?,?,?,?,?,?, 'emoji', ?, ?)",
+            (slug, name, desc, rarity, body.supply, user["id"], body.sell_price_soul, emoji, bg),
+        )
+        cat_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
+        # Минтим supply штук
+        ghostecos = c.execute("SELECT id FROM users WHERE username=?", (GHOSTECOS_USERNAME,)).fetchone()
+        gh_uid = ghostecos["id"]
+        for serial in range(1, body.supply + 1):
+            if serial <= body.auto_buy:
+                owner = gh_uid  # система получила (на маркет выставит)
+            else:
+                owner = user["id"]
+            c.execute(
+                "INSERT INTO soc_nfts (catalog_id, serial, owner_id) VALUES (?,?,?)",
+                (cat_id, serial, owner),
+            )
+            nft_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
+            # Первые auto_buy штук → автоматически на маркет по sell_price (Soul)
+            if serial <= body.auto_buy:
+                c.execute(
+                    "INSERT INTO soc_nft_listings (nft_id, seller_id, price_soul, currency) VALUES (?,?,?,'soul')",
+                    (nft_id, gh_uid, body.sell_price_soul),
+                )
+        c.execute("UPDATE users SET nft_mints_count = nft_mints_count + 1 WHERE id=?", (user["id"],))
+        new_gost = c.execute("SELECT gost FROM soc_wallets WHERE user_id=?", (user["id"],)).fetchone()["gost"]
+        new_soul = _soul_balance(c, user["id"])
+        c.execute("COMMIT")
+    except HTTPException:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close(); raise
+    c.close()
+    ws_hub.send_to(user["id"], "wallet.credit", {
+        "currency": "gost", "delta": -gost_fee, "source": "spend", "balance": new_gost,
+    })
+    if soul_to_author:
+        _push_soul_event(user["id"], soul_to_author, 'nft_mint_payout', new_soul)
+    ws_hub.broadcast("nft.minted", {"catalog_id": cat_id, "slug": slug, "name": name})
+    return {
+        "status": "ok", "catalog_id": cat_id, "slug": slug,
+        "gost_paid": gost_fee, "soul_received": soul_to_author,
+    }
 
 
 class NftTransferBody(BaseModel):
