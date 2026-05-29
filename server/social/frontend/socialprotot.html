@@ -1684,9 +1684,15 @@ const RT = (() => {
   function handle(m) {
     const t = m.type, d = m.data || {};
     if (t === 'wallet.credit') {
+      console.log('[wallet.credit]', d);
       // Сервер заплюсовал нам валюту — обновляем pill и тост
       if (d.currency === 'gost') {
-        updateGostPill(d.balance);
+        // Если сервер прислал balance — обновляем сразу. Если нет — fetch для надёжности.
+        if (typeof d.balance === 'number') {
+          updateGostPill(d.balance);
+        } else {
+          refreshWallet();
+        }
         const labels = {register:'welcome', daily:'дейли', post:'за пост', react:'за лайк',
                         comment:'за коммент', follow:'за подписчика'};
         const reason = labels[d.source] || d.source;
@@ -2439,10 +2445,12 @@ async function claimDaily(){
 function updateGostPill(val){
   const el = document.getElementById('gostPillVal');
   const pill = document.getElementById('gostPill');
-  if (!el || !pill) return;
+  if (!el || !pill) { console.warn('[gostPill] elem not found, val=', val); return; }
   const prev = +(el.textContent.replace(/\s/g, '')) || 0;
-  el.textContent = (val || 0).toLocaleString('ru-RU');
-  if (val > prev) {
+  const next = Number.isFinite(+val) ? +val : prev;
+  el.textContent = next.toLocaleString('ru-RU');
+  console.log('[gostPill] update', prev, '→', next);
+  if (next > prev) {
     pill.classList.remove('bump');
     void pill.offsetWidth; // restart animation
     pill.classList.add('bump');
