@@ -72,8 +72,8 @@ PRICE_FULL_USDT     = float(os.getenv("GC_PRICE_FULL_USDT", "5.50"))
 PRICE_DISC_USDT     = float(os.getenv("GC_PRICE_DISC_USDT", "2.75"))
 DISCOUNT_HOURS      = int(os.getenv("GC_DISCOUNT_HOURS",    "72"))
 PREMIUM_MONTHS      = int(os.getenv("GC_PREMIUM_MONTHS",    "12"))
-SEND_URL            = os.getenv("GC_SEND_URL",   "https://t.me/send?start=IV4qJ3pfGkgA")
-DONATE_URL          = os.getenv("GC_DONATE_URL", "https://dalink.to/waki_ss")
+SEND_URL            = os.getenv("GC_SEND_URL",   "")  # Telegram @send deep link (optional)
+DONATE_URL          = os.getenv("GC_DONATE_URL", "")  # any tip-link service URL
 
 # ── Пути к статике ────────────────────────────────────────────────────────────
 import os as _os

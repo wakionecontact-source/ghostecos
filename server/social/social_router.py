@@ -2718,21 +2718,34 @@ class AdminEmitBody(BaseModel):
     amount: int
     token: str  # admin-secret (env)
 
-@router.post("/admin/economy/emit")
-def admin_emit(body: AdminEmitBody, authorization: Optional[str] = Header(None)):
-    """Эмиссия Soul в system_balance (только админ). amount может быть отрицательным (изъятие)."""
+def _check_admin_token(token: str) -> None:
+    """Constant-time admin token validation (защита от timing attack)."""
     admin_token = os.environ.get('GE_ADMIN_TOKEN', '')
-    if not admin_token or body.token != admin_token:
+    if not admin_token or not hmac.compare_digest(token or '', admin_token):
         raise HTTPException(403, "Forbidden")
+
+
+@router.post("/admin/economy/emit")
+def admin_emit(body: AdminEmitBody, request: Request, authorization: Optional[str] = Header(None)):
+    """Эмиссия Soul в system_balance (только админ). amount может быть отрицательным (изъятие)."""
+    _rate_limit(f"admin:{_client_ip(request)}", limit=60, window=60)
+    _check_admin_token(body.token)
     if abs(body.amount) > 10_000_000:
         raise HTTPException(400, "Слишком большая сумма")
     c = db()
-    state = _economy_state(c)
-    if not state:
-        c.close(); raise HTTPException(503, "Сезон не активен")
-    new_bal = max(0, state["system_balance"] + body.amount)
-    c.execute("UPDATE soc_economy_state SET system_balance=? WHERE season_id=?", (new_bal, state["season_id"]))
-    c.commit(); c.close()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        state = _economy_state(c)
+        if not state:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(503, "Сезон не активен")
+        new_bal = max(0, state["system_balance"] + body.amount)
+        c.execute("UPDATE soc_economy_state SET system_balance=? WHERE season_id=?", (new_bal, state["season_id"]))
+        c.execute("COMMIT")
+    except HTTPException:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close(); raise
+    c.close()
     return {"status": "ok", "system_balance": new_bal, "delta": body.amount}
 
 
@@ -2743,12 +2756,11 @@ class AdminGrantBody(BaseModel):
     token: str
 
 @router.post("/admin/economy/grant")
-def admin_grant(body: AdminGrantBody, authorization: Optional[str] = Header(None)):
+def admin_grant(body: AdminGrantBody, request: Request, authorization: Optional[str] = Header(None)):
     """Выдать Soul юзеру из system_balance (или забрать обратно). Только админ.
     Это «ручная» эмиссия в баланс юзера — для наград, тестов, компенсаций."""
-    admin_token = os.environ.get('GE_ADMIN_TOKEN', '')
-    if not admin_token or body.token != admin_token:
-        raise HTTPException(403, "Forbidden")
+    _rate_limit(f"admin:{_client_ip(request)}", limit=60, window=60)
+    _check_admin_token(body.token)
     if body.amount == 0:
         raise HTTPException(400, "amount=0")
     if abs(body.amount) > 1_000_000:
@@ -3453,6 +3465,7 @@ class UsernameSetPrimaryBody(BaseModel):
 def username_set_primary(body: UsernameSetPrimaryBody, authorization: Optional[str] = Header(None)):
     """Сделать дополнительный username основным. Бывший primary становится дополнительным."""
     user = auth_member(authorization)
+    _rate_limit(f"setprim:{user['id']}", limit=10, window=3600)
     new_primary = body.username.strip().lower()
     c = db()
     try:
@@ -3462,6 +3475,15 @@ def username_set_primary(body: UsernameSetPrimaryBody, authorization: Optional[s
             c.execute("ROLLBACK"); c.close(); raise HTTPException(403, "Не ваш username")
         if row["for_sale_price"] is not None:
             c.execute("ROLLBACK"); c.close(); raise HTTPException(400, "Сначала снимите username с продажи")
+        # Защита: убедимся что new_primary не является primary у другого юзера (раса с username_create)
+        clash = c.execute("SELECT id FROM users WHERE username=? AND id!=?", (new_primary, user["id"])).fetchone()
+        if clash:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(409, "Этот username уже primary у другого юзера")
+        # И что old_primary не лежит в soc_usernames (мы туда сейчас впихнём — UNIQUE сломается)
+        if c.execute("SELECT 1 FROM soc_usernames WHERE username=?", (user["username"],)).fetchone():
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(500, "Inconsistent state: текущий primary уже в коллекции")
         old_primary = user["username"]
         # Меняем местами
         c.execute("UPDATE users SET username=? WHERE id=?", (new_primary, user["id"]))

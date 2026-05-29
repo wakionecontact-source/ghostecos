@@ -85,8 +85,8 @@ DISCOUNT_HOURS: int = _int("DISCOUNT_HOURS", 72)
 PREMIUM_MONTHS: int = _int("PREMIUM_MONTHS", 12)
 
 # --- Payment links ---
-SEND_URL: str = _str("SEND_URL", "https://t.me/send?start=IV4qJ3pfGkgA")
-DONATE_URL: str = _str("DONATE_URL", "https://dalink.to/waki_ss")
+SEND_URL: str = _str("SEND_URL", "")    # Telegram @send deep link (optional)
+DONATE_URL: str = _str("DONATE_URL", "")  # any tip-link service URL
 
 # --- Rate limits ---
 RATE_LIMIT_ENABLED: bool = _str("RATE_LIMIT_ENABLED", "true").lower() == "true"

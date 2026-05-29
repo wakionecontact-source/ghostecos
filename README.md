@@ -1,0 +1,136 @@
+# GhostEcos
+
+Открытая privacy-first экосистема: мессенджер с E2E, соцсеть без алгоритмов, внутренняя экономика. Один аккаунт на всё.
+
+🌐 **Демо:** https://ghostecos.duckdns.org
+
+⚠️ **Статус:** ранняя бета. Сервер крутится для тестов, юзеры пока единицы, API может меняться.
+
+---
+
+## Что внутри
+
+| Компонент | URL | Что это |
+|---|---|---|
+| **GhostChat** | `/chat/` | E2E-мессенджер (P-256 + AES-GCM в браузере). Сообщения хранятся на сервере **только до доставки** — потом удаляются. Web + APK Android |
+| **GhostSocial** | `/social/` | Соцсеть: лента, реакции, комменты, подписки, миниски (короткие видео, авто-удаление 48ч). Алгоритмическая лента **на клиенте** — сервер не знает что тебе интересно |
+| **GhostBank** | `/bank/` | Внутренняя экономика: 3 валюты (Gost/Soul/Prem), NFT-маркет, переводы, инвойсы, кастомные юзернеймы. **Никаких реальных денег** — фиктивная игровая экономика |
+| **Лендинг** | `/` | Витрина, ссылки на скачивание |
+
+Один SSO-аккаунт (cookie `gs_token` + `Authorization: Bearer`) — авторизуйся в одном, работает везде.
+
+## Архитектура
+
+```
+┌─────────────┐   ┌──────────────┐   ┌─────────────┐
+│ /chat/      │   │ /social/     │   │ /bank/      │
+│ (vanilla    │   │ (vanilla     │   │ (vanilla    │
+│  JS+PWA)    │   │  JS+PWA)     │   │  JS+PWA)    │
+└──────┬──────┘   └──────┬───────┘   └──────┬──────┘
+       │                 │                  │
+       └────────┬────────┴──────────────────┘
+                │ HTTPS + WSS
+        ┌───────▼────────────────────────┐
+        │ nginx (TLS, static, routing)    │
+        └───────┬─────────────────────────┘
+                │ proxy_pass
+        ┌───────▼─────────────────────────┐
+        │ FastAPI / uvicorn :8005         │
+        │  - social_router (всё под       │
+        │    /api/soc/*)                  │
+        │  - chat_router (/api/chat/*)    │
+        │  - ws_hub (WebSocket pub/sub)   │
+        └───────┬─────────────────────────┘
+                │ sqlite3 + WAL
+        ┌───────▼─────────────────────────┐
+        │ ghostchat.db (одна БД на всё)   │
+        └─────────────────────────────────┘
+```
+
+**Стек:** Python 3.12 / FastAPI / uvicorn / SQLite (WAL) / argon2-cffi / vanilla JS + Web Crypto API в браузере. Никакого React/Vue/build-step.
+
+## Структура репо
+
+```
+server/
+├── social/
+│   ├── social_router.py    ← главный backend (соцсеть + банк + чат API)
+│   ├── social_app.py       ← FastAPI app, middleware, CORS
+│   ├── frontend/
+│   │   └── socialprotot.html  ← SPA GhostSocial
+│   └── cleanup_miniska.py  ← cron (удаление миниск >48ч)
+├── chat/
+│   ├── chat_router.py      ← E2E-эндпоинты (keys, send, pending, ack)
+│   └── index.html          ← SPA GhostChat web
+├── bank/
+│   └── index.html          ← SPA GhostBank (кошелёк + NFT + invoices)
+├── site/                   ← Лендинг
+├── shop/                   ← Premium-магазин (Telegram bot + web)
+├── nginx/                  ← Конфиг nginx (live)
+└── deploy/                 ← systemd unit-файлы (пример)
+```
+
+## Безопасность
+
+- **Argon2** для паролей (PBKDF2 legacy с авто-апгрейдом на argon2)
+- **E2E**: приватный ключ генерится в браузере, никогда не покидает клиент в plaintext. Хранится в IndexedDB как `extractable=false` CryptoKey (XSS не вытащит через `exportKey`)
+- **Transient storage**: ciphertext сообщений на сервере **до доставки**, потом DELETE
+- **TOFU pinning** публичных ключей собеседников (предупреждение при смене)
+- **Rate-limits** на все write-эндпоинты
+- **PARTIAL UNIQUE индексы** против дубль-начислений
+- **WAL + BEGIN IMMEDIATE** для атомарности транзакций (деньги)
+- **CSP-friendly**: нет inline-eval, нет внешних трекеров, нет аналитики
+- **AGPL-v3** — любой хостер форка обязан открыть свой код
+
+## Запуск локально (минимум)
+
+```bash
+# 1. Установить зависимости
+cd server/social
+python -m venv venv
+source venv/bin/activate  # или venv\Scripts\activate на Windows
+pip install -r social_requirements.txt
+
+# 2. Запустить uvicorn
+uvicorn social_app:app --host 0.0.0.0 --port 8005
+
+# 3. nginx (опционально, для путей /chat/, /social/, /bank/)
+# см. server/nginx/ghostchat.conf — это конфиг с проды, поправь пути
+```
+
+База создастся автоматически при первом запуске (`/opt/ghostchat/ghostchat.db` — поменяй путь в `social_router.py:DB`).
+
+При первом старте в БД создаётся:
+- Системный юзер `@ghostecos` (с галочкой `is_official=1`)
+- Сезон 1 экономики (cap=100 000 Soul)
+- 10 стартовых NFT по 100 экз каждого, выставленных на маркет за Gost
+
+## Переменные окружения
+
+| Переменная | Что | По умолчанию |
+|---|---|---|
+| `GE_ADMIN_TOKEN` | Токен для `/api/soc/admin/economy/*` | пусто (admin disabled) |
+
+Для shop/ см. `server/shop/.env.example`.
+
+## Авторство и лицензия
+
+Создатель: [@waki_one](https://t.me/waki_one) в Telegram
+Лицензия: **AGPL-v3** (см. LICENSE)
+
+Это значит: можешь форкнуть, использовать, хостить — но обязан открыть исходники своих изменений если хостишь публично.
+
+## Контрибутиции
+
+Pull requests welcome. Безопасностные репорты — см. SECURITY.md.
+
+## Roadmap
+
+- [x] GhostChat web (E2E, transient storage)
+- [x] GhostSocial (лента, реакции, миниски)
+- [x] GhostBank (3 валюты, NFT-маркет, инвойсы)
+- [ ] Premium на Prem-валюте
+- [ ] Mesh-сеть (mobile-only)
+- [ ] Ghost Node (юзер-хостинг)
+- [ ] Pixel-война (community event)
+- [ ] Safe mode (mobile-only)

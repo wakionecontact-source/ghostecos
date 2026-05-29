@@ -537,6 +537,13 @@ let _activeCurrency = localStorage.getItem('bank_active_cur') || 'soul';
 let _activeMarketSlug = ''; // фильтр маркета (пусто = все)
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+// JS-context escape для inline onclick — esc() ловит только HTML-context.
+// JSON.stringify даёт правильно квотированную JS-строку, потом обрамляем в HTML-context через esc.
+function jsArg(s){return esc(JSON.stringify(String(s == null ? '' : s)));}
+// Whitelist для CSS-цвета чтобы исключить injection в style=""
+function safeColor(c){return /^#[0-9a-fA-F]{6}$/.test(c) ? c : '#a855f7';}
+// Whitelist для currency
+function safeCur(c){return c === 'gost' || c === 'soul' || c === 'prem' ? c : 'gost';}
 function ini(n){return n ? n[0].toUpperCase() : '?';}
 function fmtNum(n){return (n||0).toLocaleString('ru-RU');}
 function showToast(msg, err=false){
@@ -608,7 +615,7 @@ function rarityIcon(r){return r === 'legend' ? '<i class="fa-solid fa-crown"></i
 function verifiedBadge(){return '<i class="fa-solid fa-circle-check verified" title="Официальный аккаунт"></i>';}
 function curIcon(cur){return cur === 'gost' ? 'fa-ghost' : 'fa-fire';}
 function curName(cur){return cur === 'gost' ? 'Gost' : 'Soul';}
-function pricePill(amount, currency){return `<span class="cur-pill ${currency}"><i class="fa-solid ${curIcon(currency)}"></i>${fmtNum(amount)}</span>`;}
+function pricePill(amount, currency){const c = safeCur(currency); return `<span class="cur-pill ${c}"><i class="fa-solid ${curIcon(c)}"></i>${fmtNum(amount)}</span>`;}
 
 // ═══════════════ Wallet (Gost + Soul) ═══════════════
 async function loadWallet(){
@@ -1016,7 +1023,7 @@ function scrollToSection(id){
 // ── Рендер NFT-арта универсально (preset SVG или emoji) ──
 function nftArt(catalog){
   if (catalog.image_kind === 'emoji') {
-    const c = catalog.bg_color || '#a855f7';
+    const c = safeColor(catalog.bg_color || '#a855f7');  // whitelist hex
     const t = catalog.image_data || '?';
     return `<div style="width:100%;height:100%;border-radius:14px;background:${c};display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:800;color:#fff;text-shadow:0 2px 8px rgba(0,0,0,0.4);">${esc(t)}</div>`;
   }
@@ -1034,20 +1041,21 @@ async function loadInvoices(){
     root.innerHTML = '<div class="tx-list">' + items.map(i => {
       const url = `${location.origin}/bank/?pay=${i.code}`;
       const status = i.cancelled ? '<span style="color:var(--red);">отменён</span>' : (i.seconds_left <= 0 ? '<span style="color:var(--sub);">истёк</span>' : `<span style="color:var(--green);">активен · ${Math.floor(i.seconds_left/86400)}д ${Math.floor(i.seconds_left%86400/3600)}ч</span>`);
+      const codeArg = jsArg(i.code);
       return `<div class="tx-item">
         <div class="tx-icon" style="color:var(--soul);background:rgba(236,72,153,0.12);"><i class="fa-solid fa-receipt"></i></div>
         <div class="tx-body">
           <div class="tx-title">${pricePill(i.amount_soul, 'soul')} ${i.note ? '· ' + esc(i.note) : ''}</div>
-          <div class="tx-meta">оплачен ${i.paid_count}× · ${status} · <a href="${url}" onclick="copyInvLink(event, '${i.code}')" style="color:var(--primary);text-decoration:underline;">копировать ссылку</a></div>
+          <div class="tx-meta">оплачен ${i.paid_count}× · ${status} · <a href="${esc(url)}" onclick="copyInvLink(event, ${codeArg})" style="color:var(--primary);text-decoration:underline;">копировать ссылку</a></div>
         </div>
-        ${!i.cancelled && i.seconds_left > 0 ? `<button class="btn ghost" style="padding:6px 10px;font-size:11px;" onclick="cancelInvoice('${i.code}')">×</button>` : ''}
+        ${!i.cancelled && i.seconds_left > 0 ? `<button class="btn ghost" style="padding:6px 10px;font-size:11px;" onclick="cancelInvoice(${codeArg})">×</button>` : ''}
       </div>`;
     }).join('') + '</div>';
   } catch(e) { console.error('[invoices]', e); }
 }
 function copyInvLink(ev, code){
   ev.preventDefault();
-  const url = `${location.origin}/bank/?pay=${code}`;
+  const url = `${location.origin}/bank/?pay=${encodeURIComponent(code)}`;
   navigator.clipboard.writeText(url).then(() => showToast('Ссылка скопирована'));
 }
 async function cancelInvoice(code){
@@ -1070,7 +1078,7 @@ async function doCreateInvoice(){
     closeModal('invCreateModal');
     await Promise.all([loadInvoices(), loadWallet()]);
     // Сразу копируем ссылку
-    const url = `${location.origin}/bank/?pay=${r.code}`;
+    const url = `${location.origin}/bank/?pay=${encodeURIComponent(r.code)}`;
     navigator.clipboard.writeText(url).then(() => showToast('Ссылка скопирована'));
   } catch(e) { showToast(e.message, true); }
 }
@@ -1081,7 +1089,8 @@ async function checkInvoicePayParam(){
   const code = p.get('pay');
   if (!code) return;
   try {
-    const inv = await api(`/invoice/${code}`);
+    if (!/^[a-z0-9-]{1,20}$/i.test(code)) { showToast('Невалидный код счёта', true); return; }
+    const inv = await api(`/invoice/${encodeURIComponent(code)}`);
     const fee = Math.max(1, Math.ceil(inv.amount_soul * (inv.fee_bps / 10000)));
     const isMine = me && inv.owner.username === me.username;
     const expired = inv.expired || inv.cancelled;
@@ -1101,14 +1110,14 @@ async function checkInvoicePayParam(){
       </div>
       <div class="modal-actions">
         <button class="btn ghost" onclick="closeModal('invPayModal');history.replaceState(null,'',location.pathname);">Отмена</button>
-        ${expired ? '<button class="btn ghost" disabled>Счёт неактивен</button>' : isMine ? '<button class="btn ghost" disabled>Это ваш счёт</button>' : `<button class="btn primary" onclick="payInvoice('${code}')">Оплатить</button>`}
+        ${expired ? '<button class="btn ghost" disabled>Счёт неактивен</button>' : isMine ? '<button class="btn ghost" disabled>Это ваш счёт</button>' : `<button class="btn primary" onclick="payInvoice(${jsArg(code)})">Оплатить</button>`}
       </div>`;
     openModal('invPayModal');
   } catch(e) { showToast(e.message || 'Счёт не найден', true); }
 }
 async function payInvoice(code){
   try {
-    const r = await api(`/invoice/${code}/pay`, 'POST');
+    const r = await api(`/invoice/${encodeURIComponent(code)}/pay`, 'POST');
     showToast(`Оплачено! −${fmtNum(r.amount + r.fee)} Soul`);
     closeModal('invPayModal');
     history.replaceState(null, '', location.pathname);
@@ -1127,15 +1136,18 @@ async function openUsername(){
       <div class="modal-row"><span>Создано всего (lifetime)</span><b>${r.lifetime_created} / ${r.lifetime_cap}</b></div>
       <div class="modal-row"><span>Сейчас primary</span><b>@${esc(r.primary)}</b></div>
       ${additional.length ? '<div style="margin-top:12px;font-size:11px;color:var(--sub);text-transform:uppercase;font-weight:700;letter-spacing:0.5px;">Дополнительные:</div>' : ''}
-      ${additional.map(a => `
+      ${additional.map(a => {
+        const uArg = jsArg(a.username);
+        const priceArg = a.for_sale_price == null ? 'null' : Number(a.for_sale_price);
+        return `
         <div class="modal-row">
-          <span>@${esc(a.username)}${a.for_sale_price ? ` <span style="color:var(--soul);font-size:11px;">· продаётся за ${a.for_sale_price}</span>` : ''}</span>
+          <span>@${esc(a.username)}${a.for_sale_price ? ` <span style="color:var(--soul);font-size:11px;">· продаётся за ${Number(a.for_sale_price)}</span>` : ''}</span>
           <span style="display:flex;gap:6px;">
-            <button class="btn ghost" style="padding:5px 10px;font-size:11px;" onclick="setUsernamePrimary('${esc(a.username)}')">Сделать primary</button>
-            <button class="btn ghost" style="padding:5px 10px;font-size:11px;" onclick="listUsernameForSale('${esc(a.username)}', ${a.for_sale_price || 'null'})">${a.for_sale_price ? 'Снять' : 'Продать'}</button>
+            <button class="btn ghost" style="padding:5px 10px;font-size:11px;" onclick="setUsernamePrimary(${uArg})">Сделать primary</button>
+            <button class="btn ghost" style="padding:5px 10px;font-size:11px;" onclick="listUsernameForSale(${uArg}, ${priceArg})">${a.for_sale_price ? 'Снять' : 'Продать'}</button>
           </span>
-        </div>
-      `).join('')}
+        </div>`;
+      }).join('')}
       ${r.lifetime_created < r.lifetime_cap ? `
         <div class="field" style="margin-top:14px;">
           <label>Создать новый username (100 Soul, осталось ${r.lifetime_cap - r.lifetime_created} раз)</label>
