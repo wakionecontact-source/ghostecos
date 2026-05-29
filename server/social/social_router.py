@@ -443,6 +443,71 @@ def init():
             FOREIGN KEY (owner_id) REFERENCES users(id),
             FOREIGN KEY (contact_id) REFERENCES users(id)
         );
+
+        -- ══════ ЭКОНОМИКА: Soul + NFT ══════════════════════════════════════════
+        -- Состояние сезона (одна строка с активным сезоном)
+        CREATE TABLE IF NOT EXISTS soc_economy_state (
+            season_id INTEGER PRIMARY KEY,
+            cap INTEGER NOT NULL,
+            system_balance INTEGER NOT NULL,
+            burned_total INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            closed_at TIMESTAMP
+        );
+        -- Аудит-лог Soul-транзакций (как soc_wallet_tx для gost, но для soul)
+        -- source: 'admin_emit'|'transfer_in'|'transfer_out'|'fee'|'nft_buy'|'nft_sell'|'nft_fee'|'burn'
+        CREATE TABLE IF NOT EXISTS soc_soul_tx (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            delta INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            counter_user_id INTEGER NOT NULL DEFAULT 0,
+            ref_type TEXT NOT NULL DEFAULT '',
+            ref_id INTEGER NOT NULL DEFAULT 0,
+            note TEXT DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_soc_soul_tx_user ON soc_soul_tx(user_id, id DESC);
+        -- Каталог NFT (типы — например 'ghost', 'moon', ...)
+        CREATE TABLE IF NOT EXISTS soc_nft_catalog (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            rarity TEXT NOT NULL DEFAULT 'common',
+            max_supply INTEGER NOT NULL,
+            creator_id INTEGER NOT NULL,
+            start_price_soul INTEGER NOT NULL DEFAULT 5,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (creator_id) REFERENCES users(id)
+        );
+        -- Экземпляры NFT (instance)
+        CREATE TABLE IF NOT EXISTS soc_nfts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            catalog_id INTEGER NOT NULL,
+            serial INTEGER NOT NULL,
+            owner_id INTEGER NOT NULL,
+            minted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (catalog_id, serial),
+            FOREIGN KEY (catalog_id) REFERENCES soc_nft_catalog(id),
+            FOREIGN KEY (owner_id) REFERENCES users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_soc_nfts_owner ON soc_nfts(owner_id);
+        CREATE INDEX IF NOT EXISTS idx_soc_nfts_catalog ON soc_nfts(catalog_id);
+        -- Маркет: один NFT может быть выставлен только 1 раз
+        CREATE TABLE IF NOT EXISTS soc_nft_listings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nft_id INTEGER NOT NULL UNIQUE,
+            seller_id INTEGER NOT NULL,
+            price_soul INTEGER NOT NULL,
+            listed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (nft_id) REFERENCES soc_nfts(id),
+            FOREIGN KEY (seller_id) REFERENCES users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_soc_nft_listings_catalog ON soc_nft_listings(price_soul);
+
         CREATE INDEX IF NOT EXISTS idx_soc_posts_created ON soc_posts(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_soc_posts_user ON soc_posts(user_id);
         CREATE INDEX IF NOT EXISTS idx_soc_reactions_post ON soc_reactions(post_id);
@@ -487,9 +552,109 @@ def init():
         CREATE INDEX IF NOT EXISTS idx_soc_wallet_tx_user ON soc_wallet_tx(user_id, id DESC);
         CREATE INDEX IF NOT EXISTS idx_soc_wallet_tx_day ON soc_wallet_tx(user_id, source, created_at);
     ''')
+    # Добавляем колонку is_official в users (для системного юзера GhostEcos с галочкой)
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN is_official INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # уже есть
+    c.commit()
+    c.close()
+
+# ── Bootstrap: системный юзер GhostEcos, NFT-каталог, сезон 1 ─────────────────
+
+# Стартовый каталог NFT — те же что в UI /bank/ + 100 экз каждого
+_NFT_SEED = [
+    {"slug":"ghost",   "name":"Призрак",  "rarity":"common", "price":5,
+     "desc":"Символ экосистемы GhostEcos — призрак, плавающий в эфире."},
+    {"slug":"moon",    "name":"Луна",     "rarity":"common", "price":5,
+     "desc":"Лунный диск с пульсирующим свечением."},
+    {"slug":"star",    "name":"Звезда",   "rarity":"rare",   "price":15,
+     "desc":"Медленно вращающаяся пятиконечная звезда."},
+    {"slug":"flame",   "name":"Пламя",    "rarity":"common", "price":5,
+     "desc":"Колеблющееся пламя — энергия эфира."},
+    {"slug":"heart",   "name":"Сердце",   "rarity":"common", "price":5,
+     "desc":"Бьющееся сердце GhostEcos."},
+    {"slug":"bolt",    "name":"Молния",   "rarity":"rare",   "price":15,
+     "desc":"Молния с периодическими вспышками."},
+    {"slug":"crystal", "name":"Кристалл", "rarity":"legend", "price":50,
+     "desc":"Переливающийся кристалл — легендарная редкость."},
+    {"slug":"eye",     "name":"Око",      "rarity":"rare",   "price":15,
+     "desc":"Всевидящее око — следит за вами."},
+    {"slug":"key",     "name":"Ключ",     "rarity":"rare",   "price":15,
+     "desc":"Скелетный ключ — открывает то, что скрыто."},
+    {"slug":"crown",   "name":"Корона",   "rarity":"legend", "price":50,
+     "desc":"Корона избранных — три камня."},
+]
+SEASON_CAP = 100_000
+GHOSTECOS_USERNAME = 'ghostecos'
+
+def bootstrap_economy():
+    """Идемпотентный сидинг: системный юзер, сезон 1, NFT-каталог + 100 экз каждого + листинги."""
+    c = db()
+    # 1) Системный юзер @ghostecos с is_official=1
+    sys_row = c.execute("SELECT id FROM users WHERE username=?", (GHOSTECOS_USERNAME,)).fetchone()
+    if not sys_row:
+        sys_pwd = secrets.token_hex(48)  # никто никогда не залогинится — random
+        try:
+            c.execute(
+                "INSERT INTO users (username, display_name, argon2_hash, in_ghostchat, is_official) VALUES (?,?,?,0,1)",
+                (GHOSTECOS_USERNAME, 'GhostEcos', hash_argon2(sys_pwd)),
+            )
+            c.commit()
+        except sqlite3.IntegrityError:
+            pass
+        sys_row = c.execute("SELECT id FROM users WHERE username=?", (GHOSTECOS_USERNAME,)).fetchone()
+    else:
+        # Уже есть — но мог быть создан без флага. Гарантируем флаг.
+        c.execute("UPDATE users SET is_official=1, display_name='GhostEcos' WHERE username=?", (GHOSTECOS_USERNAME,))
+        c.commit()
+    sys_uid = sys_row['id']
+    # Wallet для системного юзера (для удобства; balance Soul у него не считается — он "печатает")
+    c.execute("INSERT OR IGNORE INTO soc_wallets (user_id) VALUES (?)", (sys_uid,))
+    c.commit()
+
+    # 2) Сезон 1
+    season = c.execute("SELECT * FROM soc_economy_state WHERE season_id=1").fetchone()
+    if not season:
+        c.execute(
+            "INSERT INTO soc_economy_state (season_id, cap, system_balance, is_active) VALUES (1, ?, ?, 1)",
+            (SEASON_CAP, SEASON_CAP),
+        )
+        c.commit()
+        print(f"[economy] season 1 started: cap={SEASON_CAP} system_balance={SEASON_CAP}")
+
+    # 3) NFT-каталог + минт 100 экз каждого NFT + выставление на маркет
+    catalog_count = c.execute("SELECT COUNT(*) as c FROM soc_nft_catalog").fetchone()['c']
+    if catalog_count == 0:
+        for nft in _NFT_SEED:
+            c.execute(
+                "INSERT INTO soc_nft_catalog (slug, name, description, rarity, max_supply, creator_id, start_price_soul) "
+                "VALUES (?,?,?,?,100,?,?)",
+                (nft['slug'], nft['name'], nft['desc'], nft['rarity'], sys_uid, nft['price']),
+            )
+            cat_id = c.execute("SELECT last_insert_rowid() as id").fetchone()['id']
+            # Минтим 100 экз
+            for serial in range(1, 101):
+                c.execute(
+                    "INSERT INTO soc_nfts (catalog_id, serial, owner_id) VALUES (?,?,?)",
+                    (cat_id, serial, sys_uid),
+                )
+                nft_id = c.execute("SELECT last_insert_rowid() as id").fetchone()['id']
+                # Выставляем на маркет по стартовой цене (немного варьируем по серийному номеру: первые — дороже)
+                # serial 1-10 → +50%, 11-30 → +20%, остальные — base price
+                price = nft['price']
+                if serial <= 10: price = int(nft['price'] * 1.5)
+                elif serial <= 30: price = int(nft['price'] * 1.2)
+                c.execute(
+                    "INSERT INTO soc_nft_listings (nft_id, seller_id, price_soul) VALUES (?,?,?)",
+                    (nft_id, sys_uid, price),
+                )
+            print(f"[economy] minted {nft['name']} x100 (catalog #{cat_id})")
+        c.commit()
     c.close()
 
 init()
+bootstrap_economy()
 
 # ── Auth middleware ─────────────────────────────────────────────────────────────
 
@@ -2244,3 +2409,456 @@ def claim_daily(authorization: Optional[str] = Header(None)):
     if res["reason"] == "too_soon":
         raise HTTPException(429, "Ежедневный бонус уже получен. Приходи завтра.")
     return res
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SOUL — основная валюта (transferable, cap-эмиссия, динамический курс)
+# ══════════════════════════════════════════════════════════════════════════════
+
+SOUL_MIN_RATE = 100              # 1 Soul = 100 Gost минимум
+SOUL_TRANSFER_FEE_BPS = 300      # 3% (в базисных пунктах: 10000bps = 100%)
+NFT_MARKET_FEE_BPS = 1000        # 10% при покупке с маркета
+NFT_TRANSFER_FEE_SOUL = 1        # 1 Soul за передачу NFT
+
+def _economy_state(c) -> Optional[dict]:
+    row = c.execute("SELECT * FROM soc_economy_state WHERE is_active=1 LIMIT 1").fetchone()
+    return dict(row) if row else None
+
+def compute_soul_rate(system_balance: int, cap: int) -> int:
+    """Курс: сколько Gost за 1 Soul. Формула 100 × cap / system_balance.
+    При system_balance=0 курс «приостановлен» (-1 как маркер)."""
+    if system_balance <= 0: return -1
+    return max(SOUL_MIN_RATE, round(SOUL_MIN_RATE * cap / system_balance))
+
+def _credit_soul_tx(c, user_id, delta, source, counter=0, ref_type='', ref_id=0, note=None):
+    """Записать tx + обновить баланс. Должно вызываться внутри уже открытой транзакции."""
+    c.execute(
+        "INSERT INTO soc_soul_tx (user_id, delta, source, counter_user_id, ref_type, ref_id, note) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (user_id, delta, source, counter, ref_type, ref_id, note),
+    )
+    if user_id > 0:
+        c.execute("INSERT OR IGNORE INTO soc_wallets (user_id) VALUES (?)", (user_id,))
+        c.execute(
+            "UPDATE soc_wallets SET soul = soul + ?, updated_at = CURRENT_TIMESTAMP WHERE user_id=?",
+            (delta, user_id),
+        )
+
+def _push_soul_event(user_id, delta, source, balance):
+    """WS-уведомление владельцу о движении Soul."""
+    ws_hub.send_to(user_id, "wallet.credit", {
+        "currency": "soul", "delta": delta, "source": source, "balance": balance,
+    })
+
+def _soul_balance(c, user_id) -> int:
+    row = c.execute("SELECT soul FROM soc_wallets WHERE user_id=?", (user_id,)).fetchone()
+    return row["soul"] if row else 0
+
+
+@router.get("/economy/state")
+def economy_state(authorization: Optional[str] = Header(None)):
+    """Состояние экономики: курс, системный баланс, сезон."""
+    auth(authorization)  # любой авторизованный включая гостя
+    c = db()
+    state = _economy_state(c)
+    c.close()
+    if not state:
+        raise HTTPException(503, "Экономика не инициализирована")
+    rate = compute_soul_rate(state["system_balance"], state["cap"])
+    return {
+        "season_id": state["season_id"],
+        "cap": state["cap"],
+        "system_balance": state["system_balance"],
+        "burned_total": state["burned_total"],
+        "soul_rate_gost": rate,         # сколько Gost за 1 Soul (-1 если приостановлено)
+        "rate_paused": rate == -1,
+        "transfer_fee_bps": SOUL_TRANSFER_FEE_BPS,
+        "market_fee_bps": NFT_MARKET_FEE_BPS,
+        "nft_transfer_fee_soul": NFT_TRANSFER_FEE_SOUL,
+    }
+
+
+class SoulTransferBody(BaseModel):
+    to_username: str
+    amount: int
+    note: Optional[str] = None
+
+
+@router.post("/soul/transfer")
+def soul_transfer(body: SoulTransferBody, authorization: Optional[str] = Header(None)):
+    """Перевод Soul другому юзеру. Комиссия 3% сверху (платит отправитель).
+    Минимум перевода: 1 Soul (значит итого спишется 1 + ceil(0.03) = 2)."""
+    user = auth_member(authorization)
+    _rate_limit(f"soul_tx:{user['id']}", limit=30, window=60)
+    if body.amount <= 0:
+        raise HTTPException(400, "Сумма должна быть положительной")
+    if body.amount > 1_000_000:
+        raise HTTPException(400, "Слишком большая сумма")
+    to_username = (body.to_username or "").strip().lower()
+    if to_username == user["username"]:
+        raise HTTPException(400, "Нельзя перевести самому себе")
+    note = (body.note or "").strip()[:200] if body.note else None
+
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        recipient = c.execute("SELECT id, username, display_name FROM users WHERE username=?", (to_username,)).fetchone()
+        if not recipient:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(404, "Получатель не найден")
+        # Комиссия — округление вверх, минимум 1 Soul
+        fee = max(1, (body.amount * SOUL_TRANSFER_FEE_BPS + 9999) // 10000)
+        total_debit = body.amount + fee
+        sender_bal = _soul_balance(c, user["id"])
+        if sender_bal < total_debit:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(400, f"Недостаточно Soul. Нужно {total_debit} (включая комиссию {fee}), у вас {sender_bal}")
+        # 1) Списываем у отправителя сумму + комиссию (одной записью)
+        _credit_soul_tx(c, user["id"], -total_debit, 'transfer_out',
+                        counter=recipient["id"], note=note)
+        # 2) Зачисляем получателю
+        _credit_soul_tx(c, recipient["id"], body.amount, 'transfer_in',
+                        counter=user["id"], note=note)
+        # 3) Комиссия → system_balance
+        c.execute("UPDATE soc_economy_state SET system_balance = system_balance + ? WHERE is_active=1", (fee,))
+        sender_new = _soul_balance(c, user["id"])
+        recipient_new = _soul_balance(c, recipient["id"])
+        c.execute("COMMIT")
+    except HTTPException:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close(); raise
+    except Exception as e:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close()
+        raise HTTPException(500, f"Ошибка перевода: {e}")
+    c.close()
+    _push_soul_event(user["id"], -total_debit, 'transfer_out', sender_new)
+    _push_soul_event(recipient["id"], body.amount, 'transfer_in', recipient_new)
+    return {"status": "ok", "fee": fee, "new_balance": sender_new,
+            "recipient": {"username": recipient["username"], "display_name": recipient["display_name"]}}
+
+
+@router.get("/soul/tx")
+def soul_tx_history(offset: int = Query(0, ge=0), authorization: Optional[str] = Header(None)):
+    """История моих Soul-транзакций."""
+    user = auth_member(authorization)
+    c = db()
+    rows = c.execute(
+        "SELECT id, delta, source, counter_user_id, ref_type, ref_id, note, created_at "
+        "FROM soc_soul_tx WHERE user_id=? ORDER BY id DESC LIMIT 30 OFFSET ?",
+        (user["id"], offset),
+    ).fetchall()
+    counter_ids = list({r["counter_user_id"] for r in rows if r["counter_user_id"]})
+    counter_map = {}
+    if counter_ids:
+        ph = ",".join("?" * len(counter_ids))
+        for u in c.execute(f"SELECT id, username, display_name, is_official FROM users WHERE id IN ({ph})", counter_ids):
+            counter_map[u["id"]] = {"username": u["username"], "display_name": u["display_name"], "is_official": bool(u["is_official"])}
+    c.close()
+    return {
+        "transactions": [
+            {
+                "id": r["id"], "delta": r["delta"], "source": r["source"],
+                "ref_type": r["ref_type"], "ref_id": r["ref_id"], "note": r["note"],
+                "counter": counter_map.get(r["counter_user_id"]),
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ],
+        "has_more": len(rows) == 30,
+    }
+
+
+class AdminEmitBody(BaseModel):
+    amount: int
+    token: str  # admin-secret (env)
+
+@router.post("/admin/economy/emit")
+def admin_emit(body: AdminEmitBody, authorization: Optional[str] = Header(None)):
+    """Эмиссия Soul в system_balance (только админ). amount может быть отрицательным (изъятие)."""
+    admin_token = os.environ.get('GE_ADMIN_TOKEN', '')
+    if not admin_token or body.token != admin_token:
+        raise HTTPException(403, "Forbidden")
+    if abs(body.amount) > 10_000_000:
+        raise HTTPException(400, "Слишком большая сумма")
+    c = db()
+    state = _economy_state(c)
+    if not state:
+        c.close(); raise HTTPException(503, "Сезон не активен")
+    new_bal = max(0, state["system_balance"] + body.amount)
+    c.execute("UPDATE soc_economy_state SET system_balance=? WHERE season_id=?", (new_bal, state["season_id"]))
+    c.commit(); c.close()
+    return {"status": "ok", "system_balance": new_bal, "delta": body.amount}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NFT — каталог, владение, маркет, передача
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _nft_card(row: dict) -> dict:
+    """Унифицированный формат NFT для API."""
+    return {
+        "id": row["id"],
+        "serial": row["serial"],
+        "owner": {
+            "id": row["owner_id"],
+            "username": row.get("owner_username"),
+            "display_name": row.get("owner_display_name"),
+            "is_official": bool(row.get("owner_is_official", 0)),
+        },
+        "catalog": {
+            "id": row["catalog_id"],
+            "slug": row["catalog_slug"],
+            "name": row["catalog_name"],
+            "rarity": row["catalog_rarity"],
+            "max_supply": row["catalog_max_supply"],
+        },
+        "listing": (
+            {"id": row["listing_id"], "price_soul": row["listing_price"]}
+            if row.get("listing_id") else None
+        ),
+    }
+
+_NFT_JOIN_SQL = """
+    SELECT n.id, n.serial, n.owner_id, n.catalog_id,
+           u.username as owner_username, u.display_name as owner_display_name, u.is_official as owner_is_official,
+           cat.slug as catalog_slug, cat.name as catalog_name, cat.rarity as catalog_rarity, cat.max_supply as catalog_max_supply,
+           l.id as listing_id, l.price_soul as listing_price
+    FROM soc_nfts n
+    JOIN users u ON u.id = n.owner_id
+    JOIN soc_nft_catalog cat ON cat.id = n.catalog_id
+    LEFT JOIN soc_nft_listings l ON l.nft_id = n.id
+"""
+
+
+@router.get("/nft/catalog")
+def nft_catalog(authorization: Optional[str] = Header(None)):
+    """Список всех типов NFT в каталоге."""
+    auth(authorization)
+    c = db()
+    rows = c.execute("""
+        SELECT cat.*, u.username as creator_username, u.display_name as creator_display_name, u.is_official as creator_is_official,
+               (SELECT COUNT(*) FROM soc_nfts n WHERE n.catalog_id = cat.id) as minted,
+               (SELECT COUNT(*) FROM soc_nft_listings l JOIN soc_nfts n ON l.nft_id=n.id WHERE n.catalog_id = cat.id) as listed,
+               (SELECT MIN(l.price_soul) FROM soc_nft_listings l JOIN soc_nfts n ON l.nft_id=n.id WHERE n.catalog_id = cat.id) as floor_price
+        FROM soc_nft_catalog cat
+        JOIN users u ON u.id = cat.creator_id
+        ORDER BY cat.id ASC
+    """).fetchall()
+    c.close()
+    return {
+        "catalog": [
+            {
+                "id": r["id"], "slug": r["slug"], "name": r["name"], "description": r["description"],
+                "rarity": r["rarity"], "max_supply": r["max_supply"],
+                "minted": r["minted"], "listed": r["listed"],
+                "floor_price_soul": r["floor_price"],
+                "start_price_soul": r["start_price_soul"],
+                "creator": {
+                    "username": r["creator_username"],
+                    "display_name": r["creator_display_name"],
+                    "is_official": bool(r["creator_is_official"]),
+                },
+            }
+            for r in rows
+        ]
+    }
+
+
+@router.get("/nft/my")
+def nft_my(authorization: Optional[str] = Header(None)):
+    """Мои NFT (с пометкой выставлен ли на рынок)."""
+    user = auth_member(authorization)
+    c = db()
+    rows = c.execute(_NFT_JOIN_SQL + " WHERE n.owner_id=? ORDER BY n.id DESC", (user["id"],)).fetchall()
+    c.close()
+    return {"nfts": [_nft_card(dict(r)) for r in rows]}
+
+
+@router.get("/nft/listings")
+def nft_listings(slug: Optional[str] = Query(None), sort: str = Query("price_asc"),
+                  offset: int = Query(0, ge=0), authorization: Optional[str] = Header(None)):
+    """Активные листинги маркета. Можно фильтровать по slug каталога."""
+    auth(authorization)
+    order = {"price_asc": "l.price_soul ASC", "price_desc": "l.price_soul DESC", "new": "l.id DESC"}.get(sort, "l.price_soul ASC")
+    c = db()
+    sql = _NFT_JOIN_SQL + " WHERE l.id IS NOT NULL"
+    params: list = []
+    if slug:
+        sql += " AND cat.slug=?"; params.append(slug)
+    sql += f" ORDER BY {order} LIMIT 30 OFFSET ?"
+    params.append(offset)
+    rows = c.execute(sql, params).fetchall()
+    c.close()
+    return {"listings": [_nft_card(dict(r)) for r in rows], "has_more": len(rows) == 30}
+
+
+class NftListBody(BaseModel):
+    nft_id: int
+    price_soul: int
+
+
+@router.post("/nft/list")
+def nft_list_for_sale(body: NftListBody, authorization: Optional[str] = Header(None)):
+    """Выставить свой NFT на маркет."""
+    user = auth_member(authorization)
+    _rate_limit(f"nftlist:{user['id']}", limit=30, window=60)
+    if body.price_soul <= 0 or body.price_soul > 1_000_000:
+        raise HTTPException(400, "Цена должна быть от 1 до 1 000 000 Soul")
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        nft = c.execute("SELECT owner_id FROM soc_nfts WHERE id=?", (body.nft_id,)).fetchone()
+        if not nft:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(404, "NFT не найден")
+        if nft["owner_id"] != user["id"]:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(403, "Это не ваш NFT")
+        existing = c.execute("SELECT id FROM soc_nft_listings WHERE nft_id=?", (body.nft_id,)).fetchone()
+        if existing:
+            c.execute("UPDATE soc_nft_listings SET price_soul=? WHERE nft_id=?", (body.price_soul, body.nft_id))
+        else:
+            c.execute("INSERT INTO soc_nft_listings (nft_id, seller_id, price_soul) VALUES (?,?,?)",
+                      (body.nft_id, user["id"], body.price_soul))
+        c.execute("COMMIT")
+    except HTTPException:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close(); raise
+    c.close()
+    return {"status": "ok"}
+
+
+@router.delete("/nft/list/{nft_id}")
+def nft_unlist(nft_id: int, authorization: Optional[str] = Header(None)):
+    """Снять свой NFT с маркета."""
+    user = auth_member(authorization)
+    c = db()
+    row = c.execute("SELECT seller_id FROM soc_nft_listings WHERE nft_id=?", (nft_id,)).fetchone()
+    if not row:
+        c.close(); raise HTTPException(404, "Не выставлен")
+    if row["seller_id"] != user["id"]:
+        c.close(); raise HTTPException(403, "Не ваш листинг")
+    c.execute("DELETE FROM soc_nft_listings WHERE nft_id=?", (nft_id,))
+    c.commit(); c.close()
+    return {"status": "ok"}
+
+
+@router.post("/nft/buy/{nft_id}")
+def nft_buy(nft_id: int, authorization: Optional[str] = Header(None)):
+    """Купить NFT с маркета. Покупатель платит price + 10% комиссия системе."""
+    user = auth_member(authorization)
+    _rate_limit(f"nftbuy:{user['id']}", limit=30, window=60)
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        lst = c.execute(
+            "SELECT l.id as lid, l.price_soul, l.seller_id, n.id as nft_id, n.owner_id, n.catalog_id "
+            "FROM soc_nft_listings l JOIN soc_nfts n ON l.nft_id=n.id WHERE l.nft_id=?",
+            (nft_id,),
+        ).fetchone()
+        if not lst:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(404, "Не продаётся")
+        if lst["seller_id"] == user["id"]:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(400, "Нельзя купить свой NFT")
+        price = lst["price_soul"]
+        fee = max(1, (price * NFT_MARKET_FEE_BPS + 9999) // 10000)
+        buyer_bal = _soul_balance(c, user["id"])
+        if buyer_bal < price + fee:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(400, f"Недостаточно Soul. Цена {price} + комиссия {fee} = {price+fee}, у вас {buyer_bal}")
+        # Списываем у покупателя: цена + комиссия
+        _credit_soul_tx(c, user["id"], -(price + fee), 'nft_buy',
+                        counter=lst["seller_id"], ref_type='nft', ref_id=nft_id)
+        # Продавцу — цена (без комиссии)
+        # Если продавец GhostEcos — это «системная продажа», 10% комиссия СЖИГАЕТСЯ, а цена идёт в system_balance
+        seller_official = c.execute("SELECT is_official FROM users WHERE id=?", (lst["seller_id"],)).fetchone()
+        if seller_official and seller_official["is_official"]:
+            # Системная продажа: цена идёт системе, комиссия сжигается
+            c.execute("UPDATE soc_economy_state SET system_balance = system_balance - ?, burned_total = burned_total + ? WHERE is_active=1",
+                      (price, fee))
+            # tx для системного юзера (как «отдала NFT»)
+            _credit_soul_tx(c, lst["seller_id"], 0, 'nft_sell',  # 0 delta — балланс не меняется
+                            counter=user["id"], ref_type='nft', ref_id=nft_id, note=f'sold for {price}, burn {fee}')
+        else:
+            # P2P-продажа: цена продавцу, комиссия системе
+            _credit_soul_tx(c, lst["seller_id"], price, 'nft_sell',
+                            counter=user["id"], ref_type='nft', ref_id=nft_id)
+            c.execute("UPDATE soc_economy_state SET system_balance = system_balance + ? WHERE is_active=1", (fee,))
+        # Передача NFT
+        c.execute("UPDATE soc_nfts SET owner_id=? WHERE id=?", (user["id"], nft_id))
+        c.execute("DELETE FROM soc_nft_listings WHERE nft_id=?", (nft_id,))
+        buyer_new = _soul_balance(c, user["id"])
+        seller_new = _soul_balance(c, lst["seller_id"])
+        c.execute("COMMIT")
+    except HTTPException:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close(); raise
+    except Exception as e:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close()
+        raise HTTPException(500, f"Ошибка покупки: {e}")
+    c.close()
+    _push_soul_event(user["id"], -(price + fee), 'nft_buy', buyer_new)
+    if not (seller_official and seller_official["is_official"]):
+        _push_soul_event(lst["seller_id"], price, 'nft_sell', seller_new)
+    ws_hub.broadcast("nft.sold", {"nft_id": nft_id})
+    return {"status": "ok", "price": price, "fee": fee, "new_balance": buyer_new}
+
+
+class NftTransferBody(BaseModel):
+    nft_id: int
+    to_username: str
+    note: Optional[str] = None
+
+
+@router.post("/nft/transfer")
+def nft_transfer(body: NftTransferBody, authorization: Optional[str] = Header(None)):
+    """Передать NFT юзеру. Комиссия — 1 Soul."""
+    user = auth_member(authorization)
+    _rate_limit(f"nfttx:{user['id']}", limit=30, window=60)
+    to_username = (body.to_username or "").strip().lower()
+    if to_username == user["username"]:
+        raise HTTPException(400, "Нельзя передать самому себе")
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        nft = c.execute("SELECT owner_id FROM soc_nfts WHERE id=?", (body.nft_id,)).fetchone()
+        if not nft:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(404, "NFT не найден")
+        if nft["owner_id"] != user["id"]:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(403, "Не ваш NFT")
+        recipient = c.execute("SELECT id, username, display_name FROM users WHERE username=?", (to_username,)).fetchone()
+        if not recipient:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(404, "Получатель не найден")
+        # Комиссия — 1 Soul
+        sender_bal = _soul_balance(c, user["id"])
+        if sender_bal < NFT_TRANSFER_FEE_SOUL:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(400, f"Нужно {NFT_TRANSFER_FEE_SOUL} Soul для оплаты комиссии передачи")
+        _credit_soul_tx(c, user["id"], -NFT_TRANSFER_FEE_SOUL, 'nft_fee',
+                        counter=recipient["id"], ref_type='nft', ref_id=body.nft_id)
+        c.execute("UPDATE soc_economy_state SET system_balance = system_balance + ? WHERE is_active=1", (NFT_TRANSFER_FEE_SOUL,))
+        # Снимаем с маркета если был выставлен
+        c.execute("DELETE FROM soc_nft_listings WHERE nft_id=?", (body.nft_id,))
+        # Передаём
+        c.execute("UPDATE soc_nfts SET owner_id=? WHERE id=?", (recipient["id"], body.nft_id))
+        sender_new = _soul_balance(c, user["id"])
+        c.execute("COMMIT")
+    except HTTPException:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close(); raise
+    except Exception as e:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close()
+        raise HTTPException(500, f"Ошибка передачи: {e}")
+    c.close()
+    _push_soul_event(user["id"], -NFT_TRANSFER_FEE_SOUL, 'nft_fee', sender_new)
+    ws_hub.send_to(recipient["id"], "nft.received", {"nft_id": body.nft_id, "from": user["username"]})
+    return {"status": "ok", "fee": NFT_TRANSFER_FEE_SOUL,
+            "recipient": {"username": recipient["username"], "display_name": recipient["display_name"]}}
