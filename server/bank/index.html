@@ -22,6 +22,7 @@
   --primary:#a855f7; --primary2:#7c3aed; --primary3:#ec4899;
   --text:#f1f5f9; --sub:#94a3b8;
   --red:#f43f5e; --green:#22c55e; --yellow:#fbbf24; --pink:#ec4899;
+  --soul:#ec4899; --prem:#fbbf24; --gost:#a855f7;
 }
 html{background:var(--bg);scroll-behavior:smooth}
 body{
@@ -45,9 +46,9 @@ button{font-family:inherit;border:0;background:none;color:inherit;cursor:pointer
 button:disabled{cursor:not-allowed;}
 a{color:inherit;text-decoration:none;}
 
-/* ── HEADER (как в GhostSocial) ── */
+/* ── HEADER ── */
 header{
-  position:fixed;top:0;left:0;right:0;z-index:100;
+  position:fixed;top:0;left:0;right:0;
   background:rgba(2,6,23,0.78);
   backdrop-filter:blur(22px) saturate(140%);
   -webkit-backdrop-filter:blur(22px) saturate(140%);
@@ -56,87 +57,80 @@ header{
 }
 .header-top{
   min-height:56px;display:flex;align-items:center;justify-content:space-between;
-  padding:env(safe-area-inset-top) 16px 0;max-width:680px;margin:0 auto;width:100%;
+  padding:env(safe-area-inset-top) 16px 0;max-width:720px;margin:0 auto;width:100%;
 }
 .header-brand{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:800;padding:6px 10px;}
 .header-brand i{font-size:16px;background:linear-gradient(135deg,var(--primary),var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
 .header-brand span{background:linear-gradient(90deg,var(--primary),var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:0.3px;}
-.header-right{display:flex;align-items:center;gap:10px}
-.h-avatar{
-  width:30px;height:30px;border-radius:50%;
-  background:linear-gradient(135deg,var(--primary),var(--primary3));
-  display:flex;align-items:center;justify-content:center;
-  font-size:12px;font-weight:700;color:#fff;cursor:pointer;
-  box-shadow:0 4px 12px rgba(168,85,247,0.3);flex-shrink:0;
-}
+.h-avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary3));display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;cursor:pointer;box-shadow:0 4px 12px rgba(168,85,247,0.3);flex-shrink:0;}
 
-/* ── MAIN ── */
-main{max-width:680px;margin:0 auto;padding:18px 16px 30px;}
+main{max-width:720px;margin:0 auto;padding:18px 16px 30px;}
 
-/* ── AUTH SCREEN (как в GS) ── */
+/* ── AUTH ── */
 #authScreen{display:none;flex-direction:column;align-items:center;justify-content:center;min-height:70vh;padding:30px 20px;text-align:center;}
 .auth-logo{font-size:30px;font-weight:800;background:linear-gradient(90deg,var(--primary),var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px;}
 .auth-sub{color:var(--sub);margin-bottom:24px;max-width:380px;line-height:1.5;}
 .auth-btn{display:inline-flex;align-items:center;gap:8px;background:linear-gradient(90deg,var(--primary),var(--primary2));color:#fff;padding:13px 26px;border-radius:12px;font-weight:700;font-size:14px;box-shadow:0 6px 20px rgba(168,85,247,0.35);transition:transform 0.15s;}
 .auth-btn:hover{transform:translateY(-1px);}
 
-/* ── HERO баланс Gost ── */
-.hero{
-  background:linear-gradient(135deg,rgba(168,85,247,0.20),rgba(236,72,153,0.10));
-  border:1px solid rgba(168,85,247,0.4);
-  border-radius:20px;padding:24px 22px;margin-bottom:16px;
+/* ─────────────────────────────────────────────────────
+   CURRENCY SWITCHER — 3 валюты в ряд, активная увеличена
+   ───────────────────────────────────────────────────── */
+.cur-switcher{display:grid;grid-template-columns:1fr 1.6fr 1fr;gap:10px;margin-bottom:22px;perspective:1000px;}
+.cur-card{
   position:relative;overflow:hidden;
-}
-.hero::before{
-  content:'';position:absolute;top:-50%;right:-25%;width:340px;height:340px;
-  background:radial-gradient(circle,rgba(168,85,247,0.25),transparent 70%);
-  pointer-events:none;
-}
-.hero-label{font-size:11px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:10px;position:relative;z-index:1;}
-.hero-value{display:flex;align-items:center;gap:14px;position:relative;z-index:1;}
-.hero-value > i{font-size:36px;background:linear-gradient(135deg,var(--primary),var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
-.hero-num{font-size:40px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;}
-.hero-unit{font-size:15px;color:var(--sub);margin-top:6px;font-weight:600;}
-.hero-sub{color:var(--sub);font-size:12px;margin-top:10px;position:relative;z-index:1;}
-
-/* ── CARDS ROW (Soul + Prem) ── */
-.cards-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:24px;}
-.card{
   background:var(--surface);border:1px solid var(--border-strong);
-  border-radius:16px;padding:14px;position:relative;
+  border-radius:18px;padding:14px;
   backdrop-filter:blur(8px);
+  cursor:pointer;
+  transition:all 0.5s cubic-bezier(0.34,1.56,0.64,1);
+  transform-origin:center;
+  display:flex;flex-direction:column;justify-content:space-between;
+  min-height:110px;
 }
-.card.locked{opacity:0.55;}
-.card-soul{background:linear-gradient(135deg,rgba(244,114,182,0.10),rgba(168,85,247,0.05));}
-.card-prem{background:linear-gradient(135deg,rgba(251,191,36,0.10),rgba(168,85,247,0.05));}
-.card-head{display:flex;align-items:center;gap:7px;margin-bottom:7px;}
-.card-head i{font-size:14px;}
-.card-soul .card-head i{color:var(--pink);}
-.card-prem .card-head i{color:var(--yellow);}
-.card-name{font-size:12px;font-weight:700;flex:1;}
-.card-soon{font-size:8px;font-weight:800;background:rgba(100,116,139,0.3);color:#94a3b8;padding:2px 6px;border-radius:999px;text-transform:uppercase;letter-spacing:0.4px;}
-.card-balance{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1;}
-.card-sub{font-size:10px;color:var(--sub);margin-top:5px;line-height:1.3;}
+.cur-card::before{
+  content:'';position:absolute;top:-50%;right:-30%;
+  width:200%;height:200%;
+  background:radial-gradient(circle,var(--accent-color, transparent) 0%,transparent 60%);
+  opacity:0.25;pointer-events:none;transition:opacity 0.4s;
+}
+.cur-card.active{
+  border-color:var(--accent-color);
+  box-shadow:0 12px 32px rgba(0,0,0,0.35),0 0 0 1px var(--accent-color);
+  transform:scale(1.04);
+}
+.cur-card.active::before{opacity:0.45;}
+.cur-card:not(.active){opacity:0.78;transform:scale(0.96);}
+.cur-card:not(.active):hover{opacity:1;border-color:var(--accent-color);}
 
-/* ── SECTION ── */
+.cur-card[data-currency="gost"]{--accent-color:rgba(168,85,247,0.5);}
+.cur-card[data-currency="soul"]{--accent-color:rgba(236,72,153,0.5);}
+.cur-card[data-currency="prem"]{--accent-color:rgba(251,191,36,0.5);}
+
+.cc-head{display:flex;align-items:center;gap:7px;margin-bottom:8px;}
+.cc-icon{width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:14px;}
+.cur-card[data-currency="gost"] .cc-icon{color:var(--gost);}
+.cur-card[data-currency="soul"] .cc-icon{color:var(--soul);}
+.cur-card[data-currency="prem"] .cc-icon{color:var(--prem);}
+.cc-name{font-size:13px;font-weight:700;color:var(--text);}
+.cur-card.active .cc-name{font-size:14px;}
+.cc-soon{font-size:8px;font-weight:800;background:rgba(100,116,139,0.3);color:#94a3b8;padding:2px 6px;border-radius:999px;text-transform:uppercase;letter-spacing:0.4px;margin-left:auto;}
+.cc-balance{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1;transition:font-size 0.4s;}
+.cur-card.active .cc-balance{font-size:30px;}
+.cc-sub{font-size:10px;color:var(--sub);margin-top:6px;line-height:1.3;opacity:0.85;}
+.cur-card.active .cc-sub{font-size:11px;}
+
+/* ── PANELS — сменный контент по валюте ── */
+.panel{display:none;animation:fadeUp 0.4s ease-out;}
+.panel.active{display:block;}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+
 .section{margin-bottom:24px;}
-.section-title{
-  display:flex;align-items:center;gap:8px;
-  font-size:12px;font-weight:700;color:var(--sub);
-  text-transform:uppercase;letter-spacing:0.5px;
-  margin-bottom:10px;padding:0 2px;
-}
+.section-title{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;padding:0 2px;}
 .section-title i{color:var(--primary);font-size:12px;}
 
 /* ── DAILY CLAIM ── */
-.claim-btn{
-  width:100%;display:flex;align-items:center;justify-content:center;gap:10px;
-  background:linear-gradient(90deg,var(--primary),var(--primary2));
-  color:#fff;padding:15px;border-radius:14px;
-  font-size:15px;font-weight:700;
-  box-shadow:0 8px 24px rgba(168,85,247,0.35);
-  transition:transform 0.15s;
-}
+.claim-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;background:linear-gradient(90deg,var(--primary),var(--primary2));color:#fff;padding:15px;border-radius:14px;font-size:15px;font-weight:700;box-shadow:0 8px 24px rgba(168,85,247,0.35);transition:transform 0.15s;}
 .claim-btn:hover:not(:disabled){transform:translateY(-2px);}
 .claim-btn:disabled{opacity:0.55;background:rgba(100,116,139,0.25);box-shadow:none;color:#94a3b8;}
 .claim-btn i{font-size:16px;}
@@ -146,29 +140,16 @@ main{max-width:680px;margin:0 auto;padding:18px 16px 30px;}
 /* ── SOURCES grid ── */
 .sources{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
 @media (max-width:480px){.sources{grid-template-columns:1fr;}}
-.src{
-  display:flex;align-items:center;gap:11px;
-  background:var(--surface);border:1px solid var(--border);
-  border-radius:12px;padding:11px 13px;font-size:13px;
-  backdrop-filter:blur(8px);
-}
+.src{display:flex;align-items:center;gap:11px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:11px 13px;font-size:13px;backdrop-filter:blur(8px);}
 .src i{width:24px;text-align:center;color:var(--primary);font-size:14px;}
 .src .label{flex:1;color:var(--text);}
 .src b{color:var(--green);font-weight:800;font-size:13px;font-variant-numeric:tabular-nums;}
 
 /* ── TX LIST ── */
-.tx-list{
-  background:var(--surface);border:1px solid var(--border);
-  border-radius:14px;overflow:hidden;backdrop-filter:blur(8px);
-}
+.tx-list{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;backdrop-filter:blur(8px);}
 .tx-item{display:flex;align-items:center;gap:12px;padding:13px 14px;border-bottom:1px solid var(--border);}
 .tx-item:last-child{border-bottom:0;}
-.tx-icon{
-  width:36px;height:36px;border-radius:11px;
-  background:rgba(168,85,247,0.12);
-  display:flex;align-items:center;justify-content:center;
-  color:var(--primary);font-size:14px;flex-shrink:0;
-}
+.tx-icon{width:36px;height:36px;border-radius:11px;background:rgba(168,85,247,0.12);display:flex;align-items:center;justify-content:center;color:var(--primary);font-size:14px;flex-shrink:0;}
 .tx-body{flex:1;min-width:0;}
 .tx-title{font-size:13px;font-weight:600;margin-bottom:2px;}
 .tx-meta{font-size:11px;color:var(--sub);}
@@ -178,9 +159,83 @@ main{max-width:680px;margin:0 auto;padding:18px 16px 30px;}
 .tx-empty{padding:30px;text-align:center;color:var(--sub);font-size:13px;}
 .tx-empty i{font-size:32px;color:#475569;display:block;margin-bottom:10px;}
 
-/* ── BOTTOM NAV (как в GS) ── */
+/* ── SOON-BANNER для Soul/Prem ── */
+.soon-card{background:var(--surface);border:1px solid var(--border-strong);border-radius:16px;padding:20px;text-align:center;backdrop-filter:blur(8px);}
+.soon-card .badge{display:inline-block;background:rgba(100,116,139,0.3);color:#94a3b8;padding:3px 10px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:10px;}
+.soon-card h3{font-size:16px;font-weight:700;margin-bottom:8px;}
+.soon-card p{color:var(--sub);font-size:13px;line-height:1.55;margin-bottom:10px;}
+.soon-card .feats{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:14px;text-align:left;}
+@media (max-width:480px){.soon-card .feats{grid-template-columns:1fr;}}
+.soon-card .feat{display:flex;align-items:center;gap:9px;background:rgba(2,6,23,0.4);border:1px solid var(--border);border-radius:10px;padding:9px 11px;font-size:12px;}
+.soon-card .feat i{color:var(--primary);width:18px;text-align:center;}
+
+/* ─────────────────────────────────────────────────────
+   NFT — каталог с анимированными SVG
+   ───────────────────────────────────────────────────── */
+.nft-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;}
+@media (min-width:480px){.nft-grid{grid-template-columns:repeat(3,1fr);}}
+@media (min-width:640px){.nft-grid{grid-template-columns:repeat(5,1fr);}}
+.nft-card{
+  position:relative;background:var(--surface);border:1px solid var(--border-strong);
+  border-radius:14px;padding:14px 10px 12px;
+  display:flex;flex-direction:column;align-items:center;gap:6px;
+  backdrop-filter:blur(8px);cursor:pointer;
+  transition:transform 0.25s,border-color 0.25s,box-shadow 0.25s;
+  overflow:hidden;
+}
+.nft-card::before{
+  content:'';position:absolute;inset:0;
+  background:radial-gradient(circle at 50% 30%,var(--glow,rgba(168,85,247,0.18)),transparent 60%);
+  opacity:0.55;pointer-events:none;transition:opacity 0.3s;
+}
+.nft-card:hover{transform:translateY(-3px);border-color:var(--glow-strong,rgba(168,85,247,0.5));box-shadow:0 10px 25px rgba(0,0,0,0.3);}
+.nft-card:hover::before{opacity:1;}
+.nft-art{
+  width:64px;height:64px;display:flex;align-items:center;justify-content:center;
+  position:relative;z-index:1;
+}
+.nft-art svg{width:100%;height:100%;display:block;overflow:visible;}
+.nft-name{font-size:12px;font-weight:700;text-align:center;position:relative;z-index:1;}
+.nft-meta{font-size:10px;color:var(--sub);position:relative;z-index:1;display:flex;align-items:center;gap:4px;}
+.nft-meta i{font-size:9px;color:var(--prem);}
+.nft-price{font-size:11px;font-weight:800;color:var(--soul);position:relative;z-index:1;display:flex;align-items:center;gap:3px;}
+.nft-price i{font-size:9px;}
+
+/* ── NFT KEYFRAMES ── */
+@keyframes ghostFloat{0%,100%{transform:translateY(0);}50%{transform:translateY(-4px);}}
+@keyframes pulseGlow{0%,100%{filter:drop-shadow(0 0 2px currentColor);}50%{filter:drop-shadow(0 0 10px currentColor);}}
+@keyframes spinSlow{from{transform:rotate(0);}to{transform:rotate(360deg);}}
+@keyframes flameWave{0%,100%{transform:scaleY(1) translateY(0);}33%{transform:scaleY(1.08) translateY(-1px);}66%{transform:scaleY(0.95) translateY(1px);}}
+@keyframes heartBeat{0%,100%{transform:scale(1);}15%{transform:scale(1.15);}30%{transform:scale(1);}45%{transform:scale(1.12);}}
+@keyframes flash{0%,80%,100%{opacity:1;filter:drop-shadow(0 0 0 currentColor);}90%{opacity:0.6;filter:drop-shadow(0 0 16px currentColor);}}
+@keyframes shimmer{0%,100%{filter:hue-rotate(0deg) brightness(1);}50%{filter:hue-rotate(40deg) brightness(1.25);}}
+@keyframes blinkEye{0%,90%,100%{transform:scaleY(1);}93%{transform:scaleY(0.05);}96%{transform:scaleY(1);}}
+@keyframes pupilLook{0%,100%{transform:translate(0,0);}25%{transform:translate(3px,1px);}50%{transform:translate(0,2px);}75%{transform:translate(-3px,0);}}
+@keyframes glint{0%{transform:translateX(-60%);opacity:0;}50%{opacity:1;}100%{transform:translateX(60%);opacity:0;}}
+@keyframes gemSparkle{0%,100%{opacity:0.4;}50%{opacity:1;}}
+
+.nft-ghost{animation:ghostFloat 2.5s ease-in-out infinite;color:#e0e7ff;}
+.nft-moon{animation:pulseGlow 3s ease-in-out infinite;color:#fef3c7;}
+.nft-star{animation:spinSlow 12s linear infinite;color:var(--yellow);}
+.nft-flame{transform-origin:50% 90%;animation:flameWave 1s ease-in-out infinite;color:#fb923c;}
+.nft-heart{animation:heartBeat 1.4s ease-in-out infinite;transform-origin:50% 50%;color:var(--red);}
+.nft-bolt{animation:flash 2.2s ease-in-out infinite;color:#facc15;}
+.nft-crystal{animation:shimmer 3s ease-in-out infinite;color:#67e8f9;}
+.nft-eye .eye-lid{transform-origin:50% 50%;animation:blinkEye 4s ease-in-out infinite;}
+.nft-eye .pupil{animation:pupilLook 4s ease-in-out infinite;}
+.nft-key{position:relative;color:#fcd34d;}
+.nft-key .glint{animation:glint 2.5s ease-in-out infinite;}
+.nft-crown .gem{animation:gemSparkle 1.6s ease-in-out infinite;}
+.nft-crown .gem.g2{animation-delay:0.3s;}
+.nft-crown .gem.g3{animation-delay:0.6s;}
+
+.nft-card[data-rarity="common"]{--glow:rgba(168,85,247,0.18);--glow-strong:rgba(168,85,247,0.5);}
+.nft-card[data-rarity="rare"]{--glow:rgba(244,114,182,0.20);--glow-strong:rgba(244,114,182,0.6);}
+.nft-card[data-rarity="legend"]{--glow:rgba(251,191,36,0.25);--glow-strong:rgba(251,191,36,0.7);}
+
+/* ── BOTTOM NAV ── */
 nav#appNav{
-  position:fixed;left:0;right:0;bottom:0;z-index:100;
+  position:fixed;left:0;right:0;bottom:0;
   background:rgba(2,6,23,0.85);
   backdrop-filter:blur(22px) saturate(140%);
   -webkit-backdrop-filter:blur(22px) saturate(140%);
@@ -188,30 +243,13 @@ nav#appNav{
   padding:8px 8px calc(8px + env(safe-area-inset-bottom));
   display:flex;justify-content:space-around;align-items:center;
 }
-nav#appNav a{
-  flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
-  padding:8px 4px;border-radius:10px;
-  color:var(--sub);font-size:10px;font-weight:600;
-  transition:color 0.15s,background 0.15s;
-  max-width:100px;
-}
+nav#appNav a{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 4px;border-radius:10px;color:var(--sub);font-size:10px;font-weight:600;transition:color 0.15s,background 0.15s;max-width:100px;}
 nav#appNav a i{font-size:18px;}
 nav#appNav a.active{color:var(--primary);background:rgba(168,85,247,0.12);}
 nav#appNav a:not(.active):hover{color:var(--text);}
 
-/* ── TOAST (как в GS) ── */
-.toast{
-  position:fixed;left:50%;transform:translateX(-50%);
-  bottom:calc(80px + env(safe-area-inset-bottom));
-  background:rgba(15,23,42,0.95);backdrop-filter:blur(10px);
-  border:1px solid var(--border-strong);color:var(--text);
-  padding:11px 18px;border-radius:14px;
-  font-size:13px;font-weight:600;
-  box-shadow:0 14px 40px rgba(0,0,0,0.4);
-  opacity:0;pointer-events:none;
-  transition:opacity 0.25s,transform 0.25s;
-  z-index:200;max-width:90%;
-}
+/* ── TOAST ── */
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(80px + env(safe-area-inset-bottom));background:rgba(15,23,42,0.95);backdrop-filter:blur(10px);border:1px solid var(--border-strong);color:var(--text);padding:11px 18px;border-radius:14px;font-size:13px;font-weight:600;box-shadow:0 14px 40px rgba(0,0,0,0.4);opacity:0;pointer-events:none;transition:opacity 0.25s,transform 0.25s;max-width:90%;}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(-4px);}
 .toast.err{border-color:var(--red);color:#fecaca;}
 
@@ -220,7 +258,6 @@ nav#appNav a:not(.active):hover{color:var(--text);}
 .spinner{width:32px;height:32px;border:3px solid rgba(168,85,247,0.2);border-top-color:var(--primary);border-radius:50%;animation:spin 0.9s linear infinite;margin-bottom:12px;}
 @keyframes spin{to{transform:rotate(360deg);}}
 
-/* ── BUMP animation ── */
 .bump{animation:bumpAnim 0.5s ease-out;}
 @keyframes bumpAnim{0%{transform:scale(1);} 30%{transform:scale(1.15);} 100%{transform:scale(1);}}
 </style>
@@ -236,9 +273,7 @@ nav#appNav a:not(.active):hover{color:var(--text);}
       <i class="fa-solid fa-wallet"></i>
       <span>GhostBank</span>
     </div>
-    <div class="header-right">
-      <div class="h-avatar" id="hAvatar" title="Профиль">?</div>
-    </div>
+    <div class="h-avatar" id="hAvatar" title="Профиль">?</div>
   </div>
 </header>
 
@@ -253,60 +288,260 @@ nav#appNav a:not(.active):hover{color:var(--text);}
   <!-- APP -->
   <div id="app" style="display:none">
 
-    <div class="hero">
-      <div class="hero-label">Ваш баланс</div>
-      <div class="hero-value">
-        <i class="fa-solid fa-ghost"></i>
-        <div>
-          <div class="hero-num"><span id="bGost">0</span></div>
-          <div class="hero-unit">Gost</div>
+    <!-- CURRENCY SWITCHER -->
+    <div class="cur-switcher" id="curSwitcher">
+      <div class="cur-card" data-currency="gost" onclick="selectCurrency('gost')">
+        <div class="cc-head">
+          <div class="cc-icon"><i class="fa-solid fa-ghost"></i></div>
+          <div class="cc-name">Gost</div>
+        </div>
+        <div class="cc-balance" id="bGost">0</div>
+        <div class="cc-sub">За активность</div>
+      </div>
+      <div class="cur-card active" data-currency="soul" onclick="selectCurrency('soul')">
+        <div class="cc-head">
+          <div class="cc-icon"><i class="fa-solid fa-fire"></i></div>
+          <div class="cc-name">Soul</div>
+          <span class="cc-soon">скоро</span>
+        </div>
+        <div class="cc-balance" id="bSoul">0</div>
+        <div class="cc-sub">Основная валюта · переводы · NFT</div>
+      </div>
+      <div class="cur-card" data-currency="prem" onclick="selectCurrency('prem')">
+        <div class="cc-head">
+          <div class="cc-icon"><i class="fa-solid fa-crown"></i></div>
+          <div class="cc-name">Prem</div>
+          <span class="cc-soon">скоро</span>
+        </div>
+        <div class="cc-balance" id="bPrem">0</div>
+        <div class="cc-sub">Премиум-украшения</div>
+      </div>
+    </div>
+
+    <!-- PANEL: GOST -->
+    <div class="panel" data-panel="gost">
+      <div class="section">
+        <div class="section-title"><i class="fa-solid fa-gift"></i>Ежедневный бонус</div>
+        <button class="claim-btn" id="claimBtn" onclick="claimDaily()">
+          <i class="fa-solid fa-gift"></i>
+          <span>Получить <b id="claimAmt">10</b> Gost</span>
+        </button>
+        <div class="claim-hint" id="claimHint" style="display:none;">Следующий бонус через <b id="claimCd">--:--:--</b></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><i class="fa-solid fa-bolt"></i>Как заработать</div>
+        <div class="sources">
+          <div class="src"><i class="fa-solid fa-gift"></i><span class="label">Ежедневный бонус</span><b>+10</b></div>
+          <div class="src"><i class="fa-solid fa-pen"></i><span class="label">Свой пост</span><b>+5</b></div>
+          <div class="src"><i class="fa-solid fa-heart"></i><span class="label">Лайк на твой пост</span><b>+1</b></div>
+          <div class="src"><i class="fa-solid fa-comment"></i><span class="label">Коммент</span><b>+2</b></div>
+          <div class="src"><i class="fa-solid fa-user-plus"></i><span class="label">Подписчик</span><b>+5</b></div>
+          <div class="src"><i class="fa-solid fa-trophy"></i><span class="label">Welcome</span><b>+100</b></div>
         </div>
       </div>
-      <div class="hero-sub">Низшая валюта · зарабатывается активностью</div>
-    </div>
 
-    <div class="cards-row">
-      <div class="card card-soul locked">
-        <div class="card-head"><i class="fa-solid fa-fire"></i><div class="card-name">Soul</div><span class="card-soon">скоро</span></div>
-        <div class="card-balance" id="bSoul">0</div>
-        <div class="card-sub">Основная · переводы · NFT</div>
-      </div>
-      <div class="card card-prem locked">
-        <div class="card-head"><i class="fa-solid fa-crown"></i><div class="card-name">Prem</div><span class="card-soon">скоро</span></div>
-        <div class="card-balance" id="bPrem">0</div>
-        <div class="card-sub">Премиум · украшения</div>
+      <div class="section">
+        <div class="section-title"><i class="fa-solid fa-clock-rotate-left"></i>История</div>
+        <div class="tx-list" id="txList"><div class="loader"><div class="spinner"></div>Загрузка...</div></div>
       </div>
     </div>
 
-    <div class="section">
-      <div class="section-title"><i class="fa-solid fa-gift"></i>Ежедневный бонус</div>
-      <button class="claim-btn" id="claimBtn" onclick="claimDaily()">
-        <i class="fa-solid fa-gift"></i>
-        <span id="claimText">Получить <b id="claimAmt">10</b> Gost</span>
-      </button>
-      <div class="claim-hint" id="claimHint" style="display:none;">Следующий бонус через <b id="claimCd">--:--:--</b></div>
-    </div>
-
-    <div class="section">
-      <div class="section-title"><i class="fa-solid fa-bolt"></i>Как заработать Gost</div>
-      <div class="sources">
-        <div class="src"><i class="fa-solid fa-gift"></i><span class="label">Ежедневный бонус</span><b>+10</b></div>
-        <div class="src"><i class="fa-solid fa-pen"></i><span class="label">Свой пост</span><b>+5</b></div>
-        <div class="src"><i class="fa-solid fa-heart"></i><span class="label">Лайк на твой пост</span><b>+1</b></div>
-        <div class="src"><i class="fa-solid fa-comment"></i><span class="label">Коммент на твой пост</span><b>+2</b></div>
-        <div class="src"><i class="fa-solid fa-user-plus"></i><span class="label">Новый подписчик</span><b>+5</b></div>
-        <div class="src"><i class="fa-solid fa-trophy"></i><span class="label">Welcome бонус</span><b>+100</b></div>
+    <!-- PANEL: SOUL -->
+    <div class="panel active" data-panel="soul">
+      <div class="section">
+        <div class="section-title"><i class="fa-solid fa-fire"></i>Курс Soul</div>
+        <div class="soon-card">
+          <div class="badge" style="background:rgba(236,72,153,0.2);color:var(--soul);">сезон 1 · скоро запуск</div>
+          <h3>Основная валюта экосистемы</h3>
+          <p>Soul эмитируется через выкуп NFT системой и расходуется на переводы, NFT, инвойсы. Жёсткий cap сезона — 100&nbsp;000.</p>
+          <div class="feats">
+            <div class="feat"><i class="fa-solid fa-arrow-right-arrow-left"></i>Переводы юзерам (3% комиссия)</div>
+            <div class="feat"><i class="fa-solid fa-link"></i>Инвойсы — счёт по ссылке</div>
+            <div class="feat"><i class="fa-solid fa-images"></i>Покупка NFT на маркете</div>
+            <div class="feat"><i class="fa-solid fa-at"></i>Custom username (100 Soul)</div>
+            <div class="feat"><i class="fa-solid fa-chart-line"></i>Динамический курс</div>
+            <div class="feat"><i class="fa-solid fa-recycle"></i>Конвертация в Prem при смене сезона</div>
+          </div>
+        </div>
       </div>
     </div>
 
-    <div class="section">
-      <div class="section-title"><i class="fa-solid fa-clock-rotate-left"></i>История</div>
-      <div class="tx-list" id="txList"><div class="loader"><div class="spinner"></div>Загрузка...</div></div>
+    <!-- PANEL: PREM -->
+    <div class="panel" data-panel="prem">
+      <div class="section">
+        <div class="section-title"><i class="fa-solid fa-crown"></i>Премиум-валюта</div>
+        <div class="soon-card">
+          <div class="badge" style="background:rgba(251,191,36,0.2);color:var(--prem);">скоро</div>
+          <h3>Для тех, кто всё успел</h3>
+          <p>Prem — украшения профиля, Premium-подписка, эксклюзивные рамки и эффекты. Не пересекается с Gost/Soul напрямую.</p>
+          <div class="feats">
+            <div class="feat"><i class="fa-solid fa-medal"></i>Premium-подписка GhostChat</div>
+            <div class="feat"><i class="fa-solid fa-palette"></i>Цветные ники, рамки, фоны</div>
+            <div class="feat"><i class="fa-solid fa-gift"></i>Эксклюзивные NFT-подарки</div>
+            <div class="feat"><i class="fa-solid fa-arrow-trend-up"></i>Награды за HODL Soul</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NFT CATALOG — общий для всех валют, всегда снизу -->
+    <div class="section" style="margin-top:8px;">
+      <div class="section-title">
+        <i class="fa-solid fa-images"></i>Каталог GhostEcos · стартовая коллекция
+      </div>
+      <div class="nft-grid">
+
+        <!-- 1. ПРИЗРАК -->
+        <div class="nft-card" data-rarity="common" title="Призрак — символ экосистемы">
+          <div class="nft-art">
+            <svg viewBox="0 0 80 80" class="nft-ghost">
+              <ellipse cx="40" cy="35" rx="22" ry="26" fill="currentColor"/>
+              <path d="M18 55 L25 65 L32 55 L40 65 L48 55 L55 65 L62 55 L62 35 L18 35 Z" fill="currentColor"/>
+              <circle cx="32" cy="32" r="3.5" fill="#1e293b"/>
+              <circle cx="48" cy="32" r="3.5" fill="#1e293b"/>
+              <ellipse cx="40" cy="44" rx="3" ry="2" fill="#1e293b" opacity="0.6"/>
+            </svg>
+          </div>
+          <div class="nft-name">Призрак</div>
+          <div class="nft-meta">#001-100</div>
+        </div>
+
+        <!-- 2. ЛУНА -->
+        <div class="nft-card" data-rarity="common" title="Луна — фазы силы">
+          <div class="nft-art">
+            <svg viewBox="0 0 80 80" class="nft-moon">
+              <circle cx="40" cy="40" r="26" fill="currentColor"/>
+              <circle cx="32" cy="32" r="3.5" fill="#94a3b8" opacity="0.5"/>
+              <circle cx="50" cy="44" r="2.5" fill="#94a3b8" opacity="0.5"/>
+              <circle cx="44" cy="52" r="3" fill="#94a3b8" opacity="0.5"/>
+              <circle cx="28" cy="46" r="2" fill="#94a3b8" opacity="0.5"/>
+            </svg>
+          </div>
+          <div class="nft-name">Луна</div>
+          <div class="nft-meta">#001-100</div>
+        </div>
+
+        <!-- 3. ЗВЕЗДА -->
+        <div class="nft-card" data-rarity="rare" title="Звезда — вращается медленно">
+          <div class="nft-art">
+            <svg viewBox="0 0 80 80" class="nft-star">
+              <path d="M40 10 L48 32 L72 32 L52 46 L60 70 L40 56 L20 70 L28 46 L8 32 L32 32 Z" fill="currentColor" stroke="#fff" stroke-width="0.5"/>
+            </svg>
+          </div>
+          <div class="nft-name">Звезда</div>
+          <div class="nft-meta"><i class="fa-solid fa-star"></i>rare</div>
+        </div>
+
+        <!-- 4. ПЛАМЯ -->
+        <div class="nft-card" data-rarity="common" title="Огонь — энергия">
+          <div class="nft-art">
+            <svg viewBox="0 0 80 80" class="nft-flame">
+              <path d="M40 12 C 28 28, 22 42, 28 56 C 30 64, 36 70, 40 70 C 44 70, 50 64, 52 56 C 58 42, 52 28, 40 12 Z" fill="currentColor"/>
+              <path d="M40 28 C 34 38, 32 48, 36 56 C 38 62, 42 64, 44 60 C 48 52, 46 40, 40 28 Z" fill="#fcd34d"/>
+              <ellipse cx="40" cy="56" rx="3" ry="6" fill="#fff"/>
+            </svg>
+          </div>
+          <div class="nft-name">Пламя</div>
+          <div class="nft-meta">#001-100</div>
+        </div>
+
+        <!-- 5. СЕРДЦЕ -->
+        <div class="nft-card" data-rarity="common" title="Сердце — бьётся">
+          <div class="nft-art">
+            <svg viewBox="0 0 80 80" class="nft-heart">
+              <path d="M40 64 C 24 50, 8 38, 14 22 C 18 12, 32 12, 40 26 C 48 12, 62 12, 66 22 C 72 38, 56 50, 40 64 Z" fill="currentColor"/>
+              <path d="M28 22 C 24 26, 24 32, 28 36" stroke="#fff" stroke-width="2" fill="none" opacity="0.5"/>
+            </svg>
+          </div>
+          <div class="nft-name">Сердце</div>
+          <div class="nft-meta">#001-100</div>
+        </div>
+
+        <!-- 6. МОЛНИЯ -->
+        <div class="nft-card" data-rarity="rare" title="Молния — вспышки">
+          <div class="nft-art">
+            <svg viewBox="0 0 80 80" class="nft-bolt">
+              <path d="M44 8 L20 44 L36 44 L28 72 L60 32 L42 32 L52 8 Z" fill="currentColor" stroke="#fff" stroke-width="0.5"/>
+            </svg>
+          </div>
+          <div class="nft-name">Молния</div>
+          <div class="nft-meta"><i class="fa-solid fa-star"></i>rare</div>
+        </div>
+
+        <!-- 7. КРИСТАЛЛ -->
+        <div class="nft-card" data-rarity="legend" title="Кристалл — переливается">
+          <div class="nft-art">
+            <svg viewBox="0 0 80 80" class="nft-crystal">
+              <path d="M40 8 L60 28 L40 72 L20 28 Z" fill="currentColor" stroke="#fff" stroke-width="0.8"/>
+              <path d="M40 8 L60 28 L40 28 Z" fill="rgba(255,255,255,0.4)"/>
+              <path d="M40 28 L60 28 L40 72 Z" fill="rgba(0,0,0,0.15)"/>
+              <line x1="40" y1="8" x2="40" y2="72" stroke="#fff" stroke-width="0.8"/>
+            </svg>
+          </div>
+          <div class="nft-name">Кристалл</div>
+          <div class="nft-meta"><i class="fa-solid fa-crown"></i>legend</div>
+        </div>
+
+        <!-- 8. ГЛАЗ -->
+        <div class="nft-card" data-rarity="rare" title="Всевидящее око">
+          <div class="nft-art">
+            <svg viewBox="0 0 80 80" class="nft-eye">
+              <ellipse cx="40" cy="40" rx="32" ry="20" fill="#fff"/>
+              <ellipse cx="40" cy="40" rx="32" ry="20" fill="none" stroke="#1e293b" stroke-width="1.5"/>
+              <g class="pupil">
+                <circle cx="40" cy="40" r="11" fill="#0891b2"/>
+                <circle cx="40" cy="40" r="6" fill="#1e293b"/>
+                <circle cx="37" cy="37" r="2" fill="#fff"/>
+              </g>
+              <ellipse cx="40" cy="40" rx="32" ry="20" fill="#1e293b" class="eye-lid"/>
+            </svg>
+          </div>
+          <div class="nft-name">Око</div>
+          <div class="nft-meta"><i class="fa-solid fa-star"></i>rare</div>
+        </div>
+
+        <!-- 9. КЛЮЧ -->
+        <div class="nft-card" data-rarity="rare" title="Ключ-скелет">
+          <div class="nft-art">
+            <svg viewBox="0 0 80 80" class="nft-key">
+              <circle cx="25" cy="25" r="14" fill="none" stroke="currentColor" stroke-width="4"/>
+              <circle cx="25" cy="25" r="5" fill="currentColor"/>
+              <rect x="36" y="22" width="36" height="6" rx="2" fill="currentColor"/>
+              <rect x="56" y="28" width="4" height="8" fill="currentColor"/>
+              <rect x="64" y="28" width="4" height="6" fill="currentColor"/>
+              <rect class="glint" x="14" y="36" width="3" height="40" fill="rgba(255,255,255,0.6)" transform="rotate(-45 40 40)"/>
+            </svg>
+          </div>
+          <div class="nft-name">Ключ</div>
+          <div class="nft-meta"><i class="fa-solid fa-star"></i>rare</div>
+        </div>
+
+        <!-- 10. КОРОНА -->
+        <div class="nft-card" data-rarity="legend" title="Корона — для избранных">
+          <div class="nft-art">
+            <svg viewBox="0 0 80 80" class="nft-crown">
+              <path d="M14 56 L18 30 L30 44 L40 22 L50 44 L62 30 L66 56 Z" fill="#fcd34d" stroke="#fbbf24" stroke-width="1.5"/>
+              <rect x="14" y="56" width="52" height="10" rx="2" fill="#fbbf24"/>
+              <circle class="gem" cx="40" cy="34" r="3.5" fill="#f43f5e"/>
+              <circle class="gem g2" cx="24" cy="50" r="2.5" fill="#3b82f6"/>
+              <circle class="gem g3" cx="56" cy="50" r="2.5" fill="#22c55e"/>
+              <rect x="14" y="62" width="52" height="2" fill="rgba(255,255,255,0.4)"/>
+            </svg>
+          </div>
+          <div class="nft-name">Корона</div>
+          <div class="nft-meta"><i class="fa-solid fa-crown"></i>legend</div>
+        </div>
+
+      </div>
+      <p style="margin-top:14px;font-size:12px;color:var(--sub);text-align:center;line-height:1.5;">
+        Это первые 10 NFT от GhostEcos · по 100 экземпляров каждого.<br>
+        Раздача начнётся с запуском Soul. Юзеры смогут создавать свои.
+      </p>
     </div>
   </div>
 </main>
 
-<!-- BOTTOM NAV (стиль GhostSocial) -->
 <nav id="appNav">
   <a href="/social/" title="GhostSocial"><i class="fa-solid fa-house"></i>Лента</a>
   <a href="/social/#screenMinisky" title="Миниски"><i class="fa-solid fa-video"></i>Миниски</a>
@@ -326,6 +561,7 @@ let _walDailyTimer = null;
 let _ws = null;
 let _wsReconnectDelay = 1000;
 let _wsAuthFail = false;
+let _activeCurrency = localStorage.getItem('bank_active_cur') || 'soul';
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function ini(n){return n ? n[0].toUpperCase() : '?';}
@@ -386,6 +622,15 @@ function setBalance(elId, val){
     void el.offsetWidth;
     el.classList.add('bump');
   }
+}
+
+// ── Переключатель валют ──
+function selectCurrency(cur){
+  if (cur === _activeCurrency) return;
+  _activeCurrency = cur;
+  localStorage.setItem('bank_active_cur', cur);
+  document.querySelectorAll('.cur-card').forEach(c => c.classList.toggle('active', c.dataset.currency === cur));
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.dataset.panel === cur));
 }
 
 function setupDailyClaim(secondsLeft){
@@ -501,6 +746,7 @@ function showApp(){
   document.getElementById('authScreen').style.display = 'none';
   document.getElementById('app').style.display = '';
   if (me) document.getElementById('hAvatar').textContent = ini(me.display_name || me.username);
+  selectCurrency(_activeCurrency); // восстановить выбор из localStorage
 }
 
 async function init(){
