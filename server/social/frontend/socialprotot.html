@@ -1504,6 +1504,7 @@ async function mskReact(postId) {
       if (likeIcon) likeIcon.className = `fa-${next ? 'solid' : 'regular'} fa-heart`;
       if (likeLbl) likeLbl.textContent = (r.total || 0);
     }
+    refreshWallet();  // если автор онлайн в др. вкладке — обновится у него; нам не повредит
   } catch(e) {}
 }
 
@@ -2448,6 +2449,26 @@ function updateGostPill(val){
   }
 }
 
+// Тихий fetch баланса как страховка к WS-событию wallet.credit.
+// Debounce 400мс: при rapid clicks (например 5 лайков подряд) запрос один.
+let _walRefreshT = null;
+function refreshWallet(){
+  if (isGuest()) return;
+  clearTimeout(_walRefreshT);
+  _walRefreshT = setTimeout(async () => {
+    try {
+      const w = await api('/wallet');
+      updateGostPill(w.balance.gost || 0);
+      // Если открыт экран кошелька — синкаем и его
+      if (document.getElementById('screenWallet').classList.contains('active')) {
+        document.getElementById('walGost').textContent = (w.balance.gost || 0).toLocaleString('ru-RU');
+        const tx = await api('/wallet/tx');
+        renderTxList(tx.transactions || []);
+      }
+    } catch(_) {}
+  }, 400);
+}
+
 const TX_SOURCE_META = {
   'register': {icon:'fa-gift',         label:'Welcome бонус'},
   'daily':    {icon:'fa-gift',         label:'Ежедневный бонус'},
@@ -2940,6 +2961,7 @@ function attachEvents() {
       try {
         await api(`/follow/${username}`, 'POST');
         Algo.onFollow(username, true);
+        refreshWallet();  // +5 followee (WS прилетит ему; мне как follower — bump если был capped/edge)
         // Помечаем все посты этого автора как «подписан» и убираем кнопки
         feedPosts.forEach(p => { if (p.username === username) p.am_following = true; });
         document.querySelectorAll(`[data-action="post-follow"][data-username="${username}"]`).forEach(b => {
@@ -3013,6 +3035,7 @@ async function sendReaction(pid, emoji) {
       }
     });
     attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
+    refreshWallet();  // страховка к WS — для случая когда автор поста = ты сам в другой вкладке
   } catch(e) {}
 }
 
@@ -3572,6 +3595,7 @@ pubBtn.addEventListener('click', async () => {
     postText.value = ''; charCount.textContent = '0 / 1000'; attachedFiles = []; renderMediaPreview();
     _pollDraft = null; renderPollEditor();
     showToast('Пост опубликован!');
+    refreshWallet();  // +5 Gost за свой пост (WS придёт сам; это страховка)
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
     document.getElementById('navFeed').classList.add('active');
@@ -4105,6 +4129,7 @@ document.getElementById('commentSend').addEventListener('click', async () => {
     if (_p) Algo.onComment(_p);
     inp.value = ''; commentOffset = 0;
     await loadComments(false);
+    refreshWallet();  // +2 автору поста (если это не я — WS прилетит ему; если я — ничего)
     const p = feedPosts.find(x => x.id === curCommentPostId);
     if (p) { p.comments_count++; const el = document.querySelector(`[data-post="${curCommentPostId}"][data-action="comment"] .cc`); if (el) el.textContent = p.comments_count; }
     // Миниска тоже может содержать этот пост — обновим счётчик там
@@ -4227,6 +4252,7 @@ function renderFollowBtn(btnId, username, following) {
         await api(`/follow/${username}`, 'POST');
         Algo.onFollow(username, true);
         renderFollowBtn(btnId, username, true);
+        refreshWallet();
         const fc = document.getElementById('fpFollowers');
         if (fc) fc.textContent = (+fc.textContent || 0) + 1;
         // В ленте — убрать кнопки «Подписаться» с постов этого автора
