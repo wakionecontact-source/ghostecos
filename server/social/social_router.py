@@ -2593,6 +2593,57 @@ def admin_emit(body: AdminEmitBody, authorization: Optional[str] = Header(None))
     return {"status": "ok", "system_balance": new_bal, "delta": body.amount}
 
 
+class AdminGrantBody(BaseModel):
+    username: str
+    amount: int                  # Soul (положительное = выдать, отрицательное = забрать)
+    note: Optional[str] = None
+    token: str
+
+@router.post("/admin/economy/grant")
+def admin_grant(body: AdminGrantBody, authorization: Optional[str] = Header(None)):
+    """Выдать Soul юзеру из system_balance (или забрать обратно). Только админ.
+    Это «ручная» эмиссия в баланс юзера — для наград, тестов, компенсаций."""
+    admin_token = os.environ.get('GE_ADMIN_TOKEN', '')
+    if not admin_token or body.token != admin_token:
+        raise HTTPException(403, "Forbidden")
+    if body.amount == 0:
+        raise HTTPException(400, "amount=0")
+    if abs(body.amount) > 1_000_000:
+        raise HTTPException(400, "Слишком большая сумма")
+    username = body.username.strip().lower()
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        user = c.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
+        if not user:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(404, "Юзер не найден")
+        state = _economy_state(c)
+        if not state:
+            c.execute("ROLLBACK"); c.close(); raise HTTPException(503, "Сезон не активен")
+        # Если выдаём → списываем с system_balance. Если забираем → возвращаем в system_balance.
+        if body.amount > 0:
+            if state["system_balance"] < body.amount:
+                c.execute("ROLLBACK"); c.close()
+                raise HTTPException(400, f"В системе только {state['system_balance']} Soul")
+            c.execute("UPDATE soc_economy_state SET system_balance = system_balance - ? WHERE is_active=1", (body.amount,))
+        else:
+            c.execute("UPDATE soc_economy_state SET system_balance = system_balance + ? WHERE is_active=1", (-body.amount,))
+        _credit_soul_tx(c, user["id"], body.amount, 'admin_emit', note=(body.note or 'admin grant'))
+        new_bal = _soul_balance(c, user["id"])
+        c.execute("COMMIT")
+    except HTTPException:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close(); raise
+    except Exception as e:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close(); raise HTTPException(500, str(e))
+    c.close()
+    _push_soul_event(user["id"], body.amount, 'admin_emit', new_bal)
+    return {"status": "ok", "user": username, "amount": body.amount, "new_balance": new_bal}
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # NFT — каталог, владение, маркет, передача
 # ══════════════════════════════════════════════════════════════════════════════
