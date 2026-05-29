@@ -818,8 +818,14 @@ async function doLogin(){
     showBoot('Подготовка чата', 'Минуточку…');
     await ensureKeys(p);
     // ensureKeys уже сохраняет pkcs8 в IDB внутри
-    await onReady();
-  }catch(e){err.textContent=e.message||'Ошибка входа';showAuth();}
+    try { await onReady(); }
+    catch(rdyErr){
+      console.error('[onReady FAILED]', rdyErr);
+      err.textContent = 'Сбой инициализации чата: ' + (rdyErr.message || rdyErr);
+      showAuth();
+      return;
+    }
+  }catch(e){console.error('[doLogin FAILED]', e);err.textContent=e.message||'Ошибка входа';showAuth();}
   btn.disabled=false;btn.textContent='Войти';
 }
 async function doRegister(){
@@ -838,8 +844,14 @@ async function doRegister(){
     showBoot('Настройка профиля', 'Минуточку…');
     await ensureKeys(p);
     // ensureKeys уже сохраняет pkcs8 в IDB внутри
-    await onReady();
-  }catch(e){err.textContent=e.message||'Ошибка регистрации';showAuth();}
+    try { await onReady(); }
+    catch(rdyErr){
+      console.error('[onReady FAILED]', rdyErr);
+      err.textContent = 'Сбой инициализации чата: ' + (rdyErr.message || rdyErr);
+      showAuth();
+      return;
+    }
+  }catch(e){console.error('[doRegister FAILED]', e);err.textContent=e.message||'Ошибка регистрации';showAuth();}
   btn.disabled=false;btn.textContent='Зарегистрироваться';
 }
 ['loginUsername','loginPassword'].forEach(id=>document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();}));
@@ -882,14 +894,19 @@ window.addEventListener('storage',e=>{
 // READY: загружаем диалоги из IDB, забираем pending, открываем WS
 // ════════════════════════════════════════════════════════════════════
 async function onReady(){
+  console.log('[onReady] start');
   showApp();
   applyLeftBtn();
-  maybeShowInstallPrompt();
+  try { maybeShowInstallPrompt(); } catch(e) { console.warn('[onReady] install prompt err', e); }
+  console.log('[onReady] opening IDB');
   await openIDB();
+  console.log('[onReady] loading dialogs');
   dialogs = (await idbGetDialogs()) || [];
   dialogs.sort((a,b) => (b.last_at || '').localeCompare(a.last_at || ''));
   renderDialogs();
+  console.log('[onReady] connectWS');
   connectWS();
+  console.log('[onReady] fetchPending');
   fetchPending();
   // Бейдж непрочитанных GhostSocial-уведомлений
   startGSBadgePolling();
