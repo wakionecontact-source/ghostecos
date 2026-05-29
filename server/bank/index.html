@@ -210,6 +210,14 @@ main{max-width:720px;margin:0 auto;padding:18px 16px 30px;}
 .lst-serial{font-size:10px;color:var(--sub);text-align:center;position:relative;z-index:1;font-variant-numeric:tabular-nums;}
 .lst-owner{font-size:10px;text-align:center;color:var(--sub);position:relative;z-index:1;display:flex;align-items:center;justify-content:center;gap:3px;}
 .lst-owner .verified{color:var(--soul);font-size:9px;}
+.verified{color:var(--soul);font-size:10px;}
+.load-more{width:100%;margin-top:14px;padding:11px;background:var(--surface);border:1px solid var(--border-strong);border-radius:12px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer;transition:all 0.15s;backdrop-filter:blur(8px);}
+.load-more:hover:not(:disabled){border-color:var(--primary);background:rgba(168,85,247,0.08);}
+.load-more:disabled{opacity:0.4;}
+.cur-pill{display:inline-flex;align-items:center;gap:3px;font-variant-numeric:tabular-nums;}
+.cur-pill i{font-size:10px;}
+.cur-pill.gost{color:var(--gost);} .cur-pill.gost i{color:var(--gost);}
+.cur-pill.soul{color:var(--soul);} .cur-pill.soul i{color:var(--soul);}
 .lst-price{font-weight:800;font-size:14px;color:var(--soul);text-align:center;position:relative;z-index:1;display:flex;justify-content:center;align-items:center;gap:4px;}
 .lst-price i{font-size:11px;}
 .lst-btn{width:100%;padding:8px;border-radius:10px;background:linear-gradient(90deg,var(--primary),var(--primary2));color:#fff;font-size:12px;font-weight:700;position:relative;z-index:1;cursor:pointer;transition:transform 0.15s;}
@@ -541,6 +549,9 @@ const NFT_SVG = {
 function nftSvg(slug){return NFT_SVG[slug] || NFT_SVG.ghost;}
 function rarityIcon(r){return r === 'legend' ? '<i class="fa-solid fa-crown"></i>' : r === 'rare' ? '<i class="fa-solid fa-star"></i>' : '';}
 function verifiedBadge(){return '<i class="fa-solid fa-circle-check verified" title="Официальный аккаунт"></i>';}
+function curIcon(cur){return cur === 'gost' ? 'fa-ghost' : 'fa-fire';}
+function curName(cur){return cur === 'gost' ? 'Gost' : 'Soul';}
+function pricePill(amount, currency){return `<span class="cur-pill ${currency}"><i class="fa-solid ${curIcon(currency)}"></i>${fmtNum(amount)}</span>`;}
 
 // ═══════════════ Wallet (Gost + Soul) ═══════════════
 async function loadWallet(){
@@ -656,14 +667,20 @@ async function loadCatalog(){
 }
 function renderCatalog(items){
   const root = document.getElementById('catGrid');
-  root.innerHTML = items.map(it => `
+  root.innerHTML = items.map(it => {
+    // Floor: показываем Gost-цену если есть (первичные продажи), иначе Soul
+    let floorHTML;
+    if (it.floor_gost != null) floorHTML = `от ${pricePill(it.floor_gost, 'gost')}`;
+    else if (it.floor_soul != null) floorHTML = `от ${pricePill(it.floor_soul, 'soul')}`;
+    else floorHTML = `от ${pricePill(it.start_price_gost, 'gost')}`;
+    return `
     <div class="cat-card" data-rarity="${it.rarity}" onclick="openCatalogModal('${esc(it.slug)}')" title="${esc(it.description)}">
       <div class="cat-art">${nftSvg(it.slug)}</div>
       <div class="cat-name">${esc(it.name)}</div>
       <div class="cat-meta">${rarityIcon(it.rarity)} ${it.listed}/${it.max_supply}</div>
-      <div class="cat-floor">от <i class="fa-solid fa-fire"></i>${fmtNum(it.floor_price_soul || it.start_price_soul)}</div>
-    </div>
-  `).join('');
+      <div class="cat-floor">${floorHTML}</div>
+    </div>`;
+  }).join('');
 }
 function renderMarketFilters(items){
   const wrap = document.getElementById('marketFilters');
@@ -688,31 +705,60 @@ async function loadMyNfts(){
         <div class="lst-art">${nftSvg(n.catalog.slug)}</div>
         <div class="lst-name">${esc(n.catalog.name)}</div>
         <div class="lst-serial">#${n.serial}/${n.catalog.max_supply}</div>
-        ${n.listing ? `<div class="lst-price"><i class="fa-solid fa-fire"></i>${fmtNum(n.listing.price_soul)}</div>` : `<button class="lst-btn">Управлять</button>`}
+        ${n.listing ? `<div class="lst-price">${pricePill(n.listing.price, n.listing.currency)}</div>` : `<button class="lst-btn">Управлять</button>`}
       </div>`).join('') + '</div>';
   } catch(e) { console.error('[my nfts]', e); }
 }
 
-async function loadMarket(){
+let _marketOffset = 0;
+let _marketHasMore = false;
+async function loadMarket(append=false){
   const root = document.getElementById('marketGrid');
-  root.innerHTML = '<div class="loader" style="grid-column:1/-1;"><div class="spinner"></div></div>';
+  if (!append) {
+    root.innerHTML = '<div class="loader" style="grid-column:1/-1;"><div class="spinner"></div></div>';
+    _marketOffset = 0;
+  }
+  // Убрать старую кнопку «Показать ещё» если есть
+  const oldBtn = document.getElementById('marketMoreBtn');
+  if (oldBtn) oldBtn.remove();
   try {
-    const q = _activeMarketSlug ? `?slug=${encodeURIComponent(_activeMarketSlug)}` : '';
-    const r = await api('/nft/listings' + q);
-    if (!r.listings.length) { root.innerHTML = '<div class="my-empty" style="grid-column:1/-1;"><i class="fa-solid fa-store-slash"></i>Здесь пусто</div>'; return; }
-    root.innerHTML = r.listings.map(n => {
+    const params = new URLSearchParams();
+    if (_activeMarketSlug) params.set('slug', _activeMarketSlug);
+    params.set('offset', _marketOffset);
+    const r = await api('/nft/listings?' + params.toString());
+    if (!r.listings.length && !append) {
+      root.innerHTML = '<div class="my-empty" style="grid-column:1/-1;"><i class="fa-solid fa-store-slash"></i>Здесь пусто</div>';
+      _marketHasMore = false;
+      return;
+    }
+    const html = r.listings.map(n => {
       const isMine = me && n.owner.id === me.id;
       const ownerBadge = n.owner.is_official ? verifiedBadge() : '';
+      const cur = n.listing.currency;
       return `<div class="lst-card" data-rarity="${n.catalog.rarity}" onclick="openListingModal(${n.id})">
         <div class="lst-art">${nftSvg(n.catalog.slug)}</div>
         <div class="lst-name">${esc(n.catalog.name)}</div>
         <div class="lst-serial">#${n.serial}/${n.catalog.max_supply}</div>
         <div class="lst-owner">${ownerBadge}@${esc(n.owner.username)}</div>
-        <div class="lst-price"><i class="fa-solid fa-fire"></i>${fmtNum(n.listing.price_soul)}</div>
-        ${isMine ? '<button class="lst-btn own" onclick="event.stopPropagation();unlistNft(' + n.id + ')">Снять</button>' : '<button class="lst-btn" onclick="event.stopPropagation();buyListing(' + n.id + ',' + n.listing.price_soul + ')">Купить</button>'}
+        <div class="lst-price">${pricePill(n.listing.price, cur)}</div>
+        ${isMine ? '<button class="lst-btn own" onclick="event.stopPropagation();unlistNft(' + n.id + ')">Снять</button>' : '<button class="lst-btn" onclick="event.stopPropagation();buyListing(' + n.id + ')">Купить</button>'}
       </div>`;
     }).join('');
-  } catch(e) { console.error('[market]', e); root.innerHTML = '<div class="my-empty" style="grid-column:1/-1;">Ошибка загрузки</div>'; }
+    if (append) root.insertAdjacentHTML('beforeend', html);
+    else root.innerHTML = html;
+    _marketOffset += r.listings.length;
+    _marketHasMore = !!r.has_more;
+    // Кнопка «Показать ещё» — после грида
+    if (_marketHasMore) {
+      const section = document.getElementById('marketSection');
+      const btn = document.createElement('button');
+      btn.id = 'marketMoreBtn';
+      btn.className = 'load-more';
+      btn.textContent = 'Показать ещё';
+      btn.onclick = () => { btn.disabled = true; btn.textContent = 'Загрузка...'; loadMarket(true); };
+      section.appendChild(btn);
+    }
+  } catch(e) { console.error('[market]', e); if (!append) root.innerHTML = '<div class="my-empty" style="grid-column:1/-1;">Ошибка загрузки</div>'; }
 }
 
 // ═══════════════ Модалки ═══════════════
@@ -720,11 +766,14 @@ function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 
 async function openCatalogModal(slug){
-  // Открыть детали + ссылку на маркет с фильтром
   try {
     const r = await api('/nft/catalog');
     const it = r.catalog.find(x => x.slug === slug);
     if (!it) return;
+    const floorRows = [];
+    if (it.floor_gost != null) floorRows.push(`<div class="modal-row"><span>Первичная цена (от GhostEcos)</span><span class="v">${pricePill(it.floor_gost, 'gost')}</span></div>`);
+    if (it.floor_soul != null) floorRows.push(`<div class="modal-row"><span>Минимальная P2P</span><span class="v">${pricePill(it.floor_soul, 'soul')}</span></div>`);
+    if (!floorRows.length) floorRows.push(`<div class="modal-row"><span>Стартовая цена</span><span class="v">${pricePill(it.start_price_gost, 'gost')}</span></div>`);
     const cont = document.getElementById('nftModalContent');
     cont.innerHTML = `
       <div class="modal-head">
@@ -740,7 +789,7 @@ async function openCatalogModal(slug){
         <div class="modal-row"><span>Создатель</span><b>@${esc(it.creator.username)} ${it.creator.is_official ? verifiedBadge() : ''}</b></div>
         <div class="modal-row"><span>Тираж</span><b>${it.minted}/${it.max_supply}</b></div>
         <div class="modal-row"><span>На рынке</span><b>${it.listed}</b></div>
-        <div class="modal-row"><span>Минимальная цена</span><span class="v">${fmtNum(it.floor_price_soul || it.start_price_soul)} Soul</span></div>
+        ${floorRows.join('')}
       </div>
       <div class="modal-actions">
         <button class="btn ghost" onclick="closeModal('nftModal')">Закрыть</button>
@@ -752,16 +801,38 @@ async function openCatalogModal(slug){
 
 async function openListingModal(nftId){
   try {
-    const r = await api('/nft/listings');
-    const n = r.listings.find(x => x.id === nftId);
+    // Берём один листинг точечно через /nft/my (если мой) или через /listings (по offset)
+    // Здесь — упрощённо: достаём из последнего загруженного списка
+    const r = await api(`/nft/listings?offset=0`);
+    // Если не нашли в первой странице — попробуем все валюты через slug-pass: ищем по nftId перебором
+    let n = r.listings.find(x => x.id === nftId);
+    if (!n) {
+      // ещё пара попыток с большими offset (если очень глубоко)
+      for (let off = 30; off < 300 && !n; off += 30) {
+        const r2 = await api(`/nft/listings?offset=${off}`);
+        n = r2.listings.find(x => x.id === nftId);
+        if (!r2.has_more) break;
+      }
+    }
     if (!n) { showToast('Уже продан', true); loadMarket(); return; }
     const isMine = me && n.owner.id === me.id;
     const ownerBadge = n.owner.is_official ? verifiedBadge() : '';
+    const cur = n.listing.currency;
     const cont = document.getElementById('nftModalContent');
-    const fee = Math.max(1, Math.ceil(n.listing.price_soul * 0.10));
+    const rows = [`<div class="modal-row"><span>Продавец</span><b>${ownerBadge}@${esc(n.owner.username)}</b></div>`];
+    rows.push(`<div class="modal-row"><span>Цена</span><span class="v">${pricePill(n.listing.price, cur)}</span></div>`);
+    let total = n.listing.price;
+    if (cur === 'soul') {
+      const fee = Math.max(1, Math.ceil(n.listing.price * 0.10));
+      total = n.listing.price + fee;
+      rows.push(`<div class="modal-row"><span>Комиссия маркета (10%)</span><span class="v">${pricePill(fee, 'soul')}</span></div>`);
+      rows.push(`<div class="modal-row"><span><b>Итого</b></span><span class="v"><b>${pricePill(total, 'soul')}</b></span></div>`);
+    } else {
+      rows.push(`<div class="modal-row" style="color:var(--sub);font-size:11px;"><span>Первичная продажа</span><span>без комиссии</span></div>`);
+    }
     cont.innerHTML = `
       <div class="modal-head">
-        <div class="modal-title">NFT в продаже</div>
+        <div class="modal-title">${cur === 'gost' ? 'Первичная продажа' : 'NFT в продаже'}</div>
         <button class="modal-close" onclick="closeModal('nftModal')"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <div class="modal-art">${nftSvg(n.catalog.slug)}</div>
@@ -769,15 +840,10 @@ async function openListingModal(nftId){
         <h3>${esc(n.catalog.name)} ${rarityIcon(n.catalog.rarity)}</h3>
         <div class="sub">#${n.serial} из ${n.catalog.max_supply}</div>
       </div>
-      <div>
-        <div class="modal-row"><span>Продавец</span><b>${ownerBadge}@${esc(n.owner.username)}</b></div>
-        <div class="modal-row"><span>Цена</span><span class="v">${fmtNum(n.listing.price_soul)} Soul</span></div>
-        <div class="modal-row"><span>Комиссия маркета (10%)</span><span class="v">${fmtNum(fee)} Soul</span></div>
-        <div class="modal-row"><span><b>Итого с вашего баланса</b></span><span class="v"><b>${fmtNum(n.listing.price_soul + fee)} Soul</b></span></div>
-      </div>
+      <div>${rows.join('')}</div>
       <div class="modal-actions">
         <button class="btn ghost" onclick="closeModal('nftModal')">Отмена</button>
-        ${isMine ? `<button class="btn danger" onclick="unlistNft(${n.id})">Снять с продажи</button>` : `<button class="btn primary" id="buyBtn" onclick="buyListing(${n.id},${n.listing.price_soul})">Купить за ${fmtNum(n.listing.price_soul + fee)}</button>`}
+        ${isMine ? `<button class="btn danger" onclick="unlistNft(${n.id})">Снять с продажи</button>` : `<button class="btn primary" onclick="buyListing(${n.id})">Купить за ${pricePill(total, cur)}</button>`}
       </div>`;
     openModal('nftModal');
   } catch(e) { console.error(e); }
@@ -790,6 +856,7 @@ async function openMyNftModal(nftId){
     if (!n) return;
     const cont = document.getElementById('nftModalContent');
     const listed = !!n.listing;
+    const listedHere = listed ? `<div class="modal-row"><span>Сейчас на маркете</span><span class="v">${pricePill(n.listing.price, n.listing.currency)}</span></div>` : '';
     cont.innerHTML = `
       <div class="modal-head">
         <div class="modal-title">Мой NFT</div>
@@ -800,10 +867,11 @@ async function openMyNftModal(nftId){
         <h3>${esc(n.catalog.name)} ${rarityIcon(n.catalog.rarity)}</h3>
         <div class="sub">#${n.serial} из ${n.catalog.max_supply}</div>
       </div>
-      ${listed ? `<div class="modal-row"><span>Сейчас на маркете</span><span class="v">${fmtNum(n.listing.price_soul)} Soul</span></div>` : ''}
+      ${listedHere}
       <div class="field" style="margin-top:14px;">
         <label>${listed ? 'Изменить цену (Soul)' : 'Цена на маркете (Soul)'}</label>
-        <input id="listPrice" type="number" min="1" value="${listed ? n.listing.price_soul : ''}" placeholder="например 10">
+        <input id="listPrice" type="number" min="1" value="${listed ? n.listing.price : ''}" placeholder="например 10">
+        <div class="hint">Юзеры выставляют только за Soul. С продажи 10% комиссия системе.</div>
       </div>
       <div class="modal-actions">
         ${listed ? `<button class="btn danger" onclick="unlistNft(${n.id})">Снять</button>` : '<button class="btn ghost" onclick="closeModal(\'nftModal\')">Отмена</button>'}
@@ -816,11 +884,12 @@ async function openMyNftModal(nftId){
   } catch(e) { console.error(e); }
 }
 
-async function buyListing(nftId, price){
-  if (!confirm(`Купить за ${fmtNum(price)} Soul (+ 10% комиссия)?`)) return;
+async function buyListing(nftId){
   try {
     const r = await api(`/nft/buy/${nftId}`, 'POST');
-    showToast(`Куплено! −${fmtNum(r.price + r.fee)} Soul`);
+    const cur = r.currency || 'soul';
+    const total = (r.price || 0) + (r.fee || 0);
+    showToast(`Куплено! −${fmtNum(total)} ${curName(cur)}`);
     closeModal('nftModal');
     await Promise.all([loadWallet(), loadMyNfts(), loadMarket(), loadCatalog()]);
   } catch(e) { showToast(e.message || 'Ошибка покупки', true); }
