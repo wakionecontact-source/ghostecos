@@ -2,127 +2,222 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
-<title>GhostBank · Кошелёк</title>
-<link rel="manifest" href="/bank/manifest.json">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>GhostBank</title>
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<meta name="theme-color" content="#020617">
+<link rel="manifest" href="/bank/manifest.json">
+<meta name="theme-color" content="#7c3aed">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="GhostBank">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 :root{
-  --bg:#020617; --bg-card:#0f172a; --bg-card-2:#1e293b;
-  --text:#e2e8f0; --sub:#94a3b8; --muted:#64748b;
-  --primary:#a855f7; --primary2:#ec4899; --primary-d:#7c3aed;
-  --green:#22c55e; --red:#ef4444; --yellow:#fbbf24;
-  --border:#1e293b; --border-strong:#334155;
-  --bg-overlay:rgba(2,6,23,0.85);
+  --bg:#020617; --bg-deep:#060a1a; --surface:rgba(15,23,42,0.5);
+  --border:rgba(255,255,255,0.08); --border-strong:rgba(255,255,255,0.13);
+  --primary:#a855f7; --primary2:#7c3aed; --primary3:#ec4899;
+  --text:#f1f5f9; --sub:#94a3b8;
+  --red:#f43f5e; --green:#22c55e; --yellow:#fbbf24; --pink:#ec4899;
 }
-*{box-sizing:border-box;margin:0;padding:0;}
-html,body{height:100%;}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:14px;line-height:1.5;padding-bottom:env(safe-area-inset-bottom);}
-body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse at top right,rgba(168,85,247,0.10),transparent 60%),radial-gradient(ellipse at bottom left,rgba(236,72,153,0.07),transparent 50%);pointer-events:none;z-index:-1;}
+html{background:var(--bg);scroll-behavior:smooth}
+body{
+  background:transparent;color:var(--text);font-family:'Inter',sans-serif;
+  overflow-x:hidden;
+  padding-top:calc(56px + env(safe-area-inset-top));
+  padding-bottom:calc(70px + env(safe-area-inset-bottom));
+  min-height:100vh;position:relative;
+}
+body::before{
+  content:"";position:fixed;inset:0;z-index:-1;
+  background:
+    radial-gradient(80% 60% at 20% 0%,rgba(124,58,237,0.15),transparent 60%),
+    radial-gradient(70% 60% at 100% 100%,rgba(236,72,153,0.10),transparent 60%),
+    linear-gradient(180deg,var(--bg-deep),var(--bg));
+}
 button{font-family:inherit;border:0;background:none;color:inherit;cursor:pointer;}
 button:disabled{cursor:not-allowed;}
 a{color:inherit;text-decoration:none;}
-input{font-family:inherit;}
 
-/* ── HEADER ── */
-header{position:sticky;top:0;z-index:100;background:rgba(2,6,23,0.85);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);padding:env(safe-area-inset-top) 0 0;}
-.header-row{display:flex;align-items:center;gap:12px;padding:12px 16px;max-width:680px;margin:0 auto;}
-.header-back{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:10px;background:rgba(255,255,255,0.04);font-size:14px;color:var(--sub);transition:background 0.15s;}
-.header-back:hover{background:rgba(168,85,247,0.15);color:var(--primary);}
-.header-brand{flex:1;display:flex;align-items:center;gap:8px;}
-.header-brand i{font-size:18px;background:linear-gradient(135deg,var(--primary),var(--primary2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
-.header-brand span{font-size:17px;font-weight:800;background:linear-gradient(90deg,var(--primary),var(--primary2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:0.3px;}
-.h-avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;cursor:pointer;box-shadow:0 4px 12px rgba(168,85,247,0.3);flex-shrink:0;}
+/* ── HEADER (как в GhostSocial) ── */
+header{
+  position:fixed;top:0;left:0;right:0;z-index:100;
+  background:rgba(2,6,23,0.78);
+  backdrop-filter:blur(22px) saturate(140%);
+  -webkit-backdrop-filter:blur(22px) saturate(140%);
+  border-bottom:1px solid var(--border);
+  display:flex;flex-direction:column;
+}
+.header-top{
+  min-height:56px;display:flex;align-items:center;justify-content:space-between;
+  padding:env(safe-area-inset-top) 16px 0;max-width:680px;margin:0 auto;width:100%;
+}
+.header-brand{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:800;padding:6px 10px;}
+.header-brand i{font-size:16px;background:linear-gradient(135deg,var(--primary),var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.header-brand span{background:linear-gradient(90deg,var(--primary),var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:0.3px;}
+.header-right{display:flex;align-items:center;gap:10px}
+.h-avatar{
+  width:30px;height:30px;border-radius:50%;
+  background:linear-gradient(135deg,var(--primary),var(--primary3));
+  display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:700;color:#fff;cursor:pointer;
+  box-shadow:0 4px 12px rgba(168,85,247,0.3);flex-shrink:0;
+}
 
 /* ── MAIN ── */
-main{max-width:680px;margin:0 auto;padding:18px 16px 40px;}
+main{max-width:680px;margin:0 auto;padding:18px 16px 30px;}
 
-/* ── AUTH SCREEN ── */
-#authScreen{display:none;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;padding:30px 20px;}
-#authScreen h1{font-size:22px;font-weight:800;margin-bottom:8px;text-align:center;}
-#authScreen p{color:var(--sub);text-align:center;margin-bottom:24px;max-width:380px;}
-.auth-btn{display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;padding:12px 24px;border-radius:12px;font-weight:700;font-size:14px;box-shadow:0 6px 20px rgba(168,85,247,0.35);}
+/* ── AUTH SCREEN (как в GS) ── */
+#authScreen{display:none;flex-direction:column;align-items:center;justify-content:center;min-height:70vh;padding:30px 20px;text-align:center;}
+.auth-logo{font-size:30px;font-weight:800;background:linear-gradient(90deg,var(--primary),var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px;}
+.auth-sub{color:var(--sub);margin-bottom:24px;max-width:380px;line-height:1.5;}
+.auth-btn{display:inline-flex;align-items:center;gap:8px;background:linear-gradient(90deg,var(--primary),var(--primary2));color:#fff;padding:13px 26px;border-radius:12px;font-weight:700;font-size:14px;box-shadow:0 6px 20px rgba(168,85,247,0.35);transition:transform 0.15s;}
+.auth-btn:hover{transform:translateY(-1px);}
 
-/* ── HERO BALANCE ── */
-.hero{background:linear-gradient(135deg,rgba(168,85,247,0.20),rgba(236,72,153,0.10));border:1px solid rgba(168,85,247,0.4);border-radius:20px;padding:22px 20px;margin-bottom:18px;position:relative;overflow:hidden;}
-.hero::before{content:'';position:absolute;top:-40%;right:-20%;width:300px;height:300px;background:radial-gradient(circle,rgba(168,85,247,0.25),transparent 70%);pointer-events:none;}
-.hero-label{font-size:11px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:8px;}
-.hero-value{display:flex;align-items:center;gap:10px;}
-.hero-value i{font-size:32px;background:linear-gradient(135deg,var(--primary),var(--primary2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
-.hero-num{font-size:38px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;}
-.hero-unit{font-size:16px;color:var(--sub);margin-top:6px;}
-.hero-sub{color:var(--sub);font-size:12px;margin-top:8px;}
+/* ── HERO баланс Gost ── */
+.hero{
+  background:linear-gradient(135deg,rgba(168,85,247,0.20),rgba(236,72,153,0.10));
+  border:1px solid rgba(168,85,247,0.4);
+  border-radius:20px;padding:24px 22px;margin-bottom:16px;
+  position:relative;overflow:hidden;
+}
+.hero::before{
+  content:'';position:absolute;top:-50%;right:-25%;width:340px;height:340px;
+  background:radial-gradient(circle,rgba(168,85,247,0.25),transparent 70%);
+  pointer-events:none;
+}
+.hero-label{font-size:11px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:10px;position:relative;z-index:1;}
+.hero-value{display:flex;align-items:center;gap:14px;position:relative;z-index:1;}
+.hero-value > i{font-size:36px;background:linear-gradient(135deg,var(--primary),var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.hero-num{font-size:40px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;}
+.hero-unit{font-size:15px;color:var(--sub);margin-top:6px;font-weight:600;}
+.hero-sub{color:var(--sub);font-size:12px;margin-top:10px;position:relative;z-index:1;}
 
-/* ── CARDS ROW ── */
-.cards-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:22px;}
-.card{background:var(--bg-card);border:1px solid var(--border-strong);border-radius:14px;padding:14px;position:relative;}
+/* ── CARDS ROW (Soul + Prem) ── */
+.cards-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:24px;}
+.card{
+  background:var(--surface);border:1px solid var(--border-strong);
+  border-radius:16px;padding:14px;position:relative;
+  backdrop-filter:blur(8px);
+}
 .card.locked{opacity:0.55;}
-.card-head{display:flex;align-items:center;gap:7px;margin-bottom:6px;}
+.card-soul{background:linear-gradient(135deg,rgba(244,114,182,0.10),rgba(168,85,247,0.05));}
+.card-prem{background:linear-gradient(135deg,rgba(251,191,36,0.10),rgba(168,85,247,0.05));}
+.card-head{display:flex;align-items:center;gap:7px;margin-bottom:7px;}
 .card-head i{font-size:14px;}
-.card-soul .card-head i{color:#ec4899;}
+.card-soul .card-head i{color:var(--pink);}
 .card-prem .card-head i{color:var(--yellow);}
 .card-name{font-size:12px;font-weight:700;flex:1;}
 .card-soon{font-size:8px;font-weight:800;background:rgba(100,116,139,0.3);color:#94a3b8;padding:2px 6px;border-radius:999px;text-transform:uppercase;letter-spacing:0.4px;}
 .card-balance{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1;}
-.card-sub{font-size:10px;color:var(--sub);margin-top:4px;line-height:1.3;}
+.card-sub{font-size:10px;color:var(--sub);margin-top:5px;line-height:1.3;}
 
 /* ── SECTION ── */
 .section{margin-bottom:24px;}
-.section-title{display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:11px;padding:0 2px;}
-.section-title .ico{color:var(--primary);margin-right:6px;}
+.section-title{
+  display:flex;align-items:center;gap:8px;
+  font-size:12px;font-weight:700;color:var(--sub);
+  text-transform:uppercase;letter-spacing:0.5px;
+  margin-bottom:10px;padding:0 2px;
+}
+.section-title i{color:var(--primary);font-size:12px;}
 
 /* ── DAILY CLAIM ── */
-.claim-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;padding:15px;border-radius:14px;font-size:15px;font-weight:700;box-shadow:0 8px 24px rgba(168,85,247,0.35);transition:transform 0.15s;}
+.claim-btn{
+  width:100%;display:flex;align-items:center;justify-content:center;gap:10px;
+  background:linear-gradient(90deg,var(--primary),var(--primary2));
+  color:#fff;padding:15px;border-radius:14px;
+  font-size:15px;font-weight:700;
+  box-shadow:0 8px 24px rgba(168,85,247,0.35);
+  transition:transform 0.15s;
+}
 .claim-btn:hover:not(:disabled){transform:translateY(-2px);}
-.claim-btn:disabled{opacity:0.6;background:rgba(100,116,139,0.3);box-shadow:none;color:#94a3b8;}
+.claim-btn:disabled{opacity:0.55;background:rgba(100,116,139,0.25);box-shadow:none;color:#94a3b8;}
 .claim-btn i{font-size:16px;}
 .claim-hint{text-align:center;color:var(--sub);font-size:12px;margin-top:10px;}
 .claim-hint b{color:var(--primary);font-variant-numeric:tabular-nums;font-weight:700;}
 
-/* ── SOURCES ── */
+/* ── SOURCES grid ── */
 .sources{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
 @media (max-width:480px){.sources{grid-template-columns:1fr;}}
-.src{display:flex;align-items:center;gap:10px;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:10px 12px;font-size:13px;}
+.src{
+  display:flex;align-items:center;gap:11px;
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:12px;padding:11px 13px;font-size:13px;
+  backdrop-filter:blur(8px);
+}
 .src i{width:24px;text-align:center;color:var(--primary);font-size:14px;}
 .src .label{flex:1;color:var(--text);}
-.src b{color:var(--green);font-weight:800;font-size:13px;}
+.src b{color:var(--green);font-weight:800;font-size:13px;font-variant-numeric:tabular-nums;}
 
 /* ── TX LIST ── */
-.tx-list{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;overflow:hidden;}
-.tx-item{display:flex;align-items:center;gap:11px;padding:13px 14px;border-bottom:1px solid var(--border);}
+.tx-list{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:14px;overflow:hidden;backdrop-filter:blur(8px);
+}
+.tx-item{display:flex;align-items:center;gap:12px;padding:13px 14px;border-bottom:1px solid var(--border);}
 .tx-item:last-child{border-bottom:0;}
-.tx-icon{width:36px;height:36px;border-radius:11px;background:rgba(168,85,247,0.12);display:flex;align-items:center;justify-content:center;color:var(--primary);font-size:14px;flex-shrink:0;}
+.tx-icon{
+  width:36px;height:36px;border-radius:11px;
+  background:rgba(168,85,247,0.12);
+  display:flex;align-items:center;justify-content:center;
+  color:var(--primary);font-size:14px;flex-shrink:0;
+}
 .tx-body{flex:1;min-width:0;}
 .tx-title{font-size:13px;font-weight:600;margin-bottom:2px;}
 .tx-meta{font-size:11px;color:var(--sub);}
 .tx-amount{font-weight:800;font-size:14px;font-variant-numeric:tabular-nums;}
 .tx-amount.pos{color:var(--green);}
 .tx-amount.neg{color:var(--red);}
-.tx-empty{padding:28px;text-align:center;color:var(--sub);font-size:13px;}
+.tx-empty{padding:30px;text-align:center;color:var(--sub);font-size:13px;}
+.tx-empty i{font-size:32px;color:#475569;display:block;margin-bottom:10px;}
 
-/* ── TOAST ── */
-.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom));background:rgba(15,23,42,0.95);backdrop-filter:blur(10px);border:1px solid var(--border-strong);color:var(--text);padding:11px 18px;border-radius:14px;font-size:13px;font-weight:600;box-shadow:0 14px 40px rgba(0,0,0,0.4);opacity:0;pointer-events:none;transition:opacity 0.25s,transform 0.25s;z-index:200;max-width:90%;}
+/* ── BOTTOM NAV (как в GS) ── */
+nav#appNav{
+  position:fixed;left:0;right:0;bottom:0;z-index:100;
+  background:rgba(2,6,23,0.85);
+  backdrop-filter:blur(22px) saturate(140%);
+  -webkit-backdrop-filter:blur(22px) saturate(140%);
+  border-top:1px solid var(--border);
+  padding:8px 8px calc(8px + env(safe-area-inset-bottom));
+  display:flex;justify-content:space-around;align-items:center;
+}
+nav#appNav a{
+  flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
+  padding:8px 4px;border-radius:10px;
+  color:var(--sub);font-size:10px;font-weight:600;
+  transition:color 0.15s,background 0.15s;
+  max-width:100px;
+}
+nav#appNav a i{font-size:18px;}
+nav#appNav a.active{color:var(--primary);background:rgba(168,85,247,0.12);}
+nav#appNav a:not(.active):hover{color:var(--text);}
+
+/* ── TOAST (как в GS) ── */
+.toast{
+  position:fixed;left:50%;transform:translateX(-50%);
+  bottom:calc(80px + env(safe-area-inset-bottom));
+  background:rgba(15,23,42,0.95);backdrop-filter:blur(10px);
+  border:1px solid var(--border-strong);color:var(--text);
+  padding:11px 18px;border-radius:14px;
+  font-size:13px;font-weight:600;
+  box-shadow:0 14px 40px rgba(0,0,0,0.4);
+  opacity:0;pointer-events:none;
+  transition:opacity 0.25s,transform 0.25s;
+  z-index:200;max-width:90%;
+}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(-4px);}
 .toast.err{border-color:var(--red);color:#fecaca;}
 
 /* ── LOADER ── */
-.loader{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px;color:var(--sub);font-size:13px;}
+.loader{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:36px;color:var(--sub);font-size:13px;}
 .spinner{width:32px;height:32px;border:3px solid rgba(168,85,247,0.2);border-top-color:var(--primary);border-radius:50%;animation:spin 0.9s linear infinite;margin-bottom:12px;}
 @keyframes spin{to{transform:rotate(360deg);}}
 
-/* ── NAV-LINKS внизу: между приложениями ── */
-.app-nav{display:flex;gap:8px;margin-top:30px;padding-top:18px;border-top:1px solid var(--border);}
-.app-nav a{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 8px;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;font-size:11px;color:var(--sub);transition:all 0.15s;}
-.app-nav a:hover{border-color:var(--primary);color:var(--text);background:rgba(168,85,247,0.08);}
-.app-nav a i{font-size:18px;color:var(--primary);}
-
-/* ── PILL BUMP ANIMATION ── */
+/* ── BUMP animation ── */
 .bump{animation:bumpAnim 0.5s ease-out;}
 @keyframes bumpAnim{0%{transform:scale(1);} 30%{transform:scale(1.15);} 100%{transform:scale(1);}}
 </style>
@@ -130,30 +225,28 @@ main{max-width:680px;margin:0 auto;padding:18px 16px 40px;}
 <body>
 
 <header>
-  <div class="header-row">
-    <a href="/social/" class="header-back" id="backLink" title="Назад">
-      <i class="fa-solid fa-arrow-left"></i>
-    </a>
+  <div class="header-top">
     <div class="header-brand">
       <i class="fa-solid fa-wallet"></i>
       <span>GhostBank</span>
     </div>
-    <div class="h-avatar" id="hAvatar" title="Профиль">?</div>
+    <div class="header-right">
+      <div class="h-avatar" id="hAvatar" title="Профиль">?</div>
+    </div>
   </div>
 </header>
 
 <main>
-  <!-- Если не авторизован — показываем auth screen -->
+  <!-- AUTH SCREEN -->
   <div id="authScreen">
-    <h1>Войдите в GhostEcos</h1>
-    <p>GhostBank использует общий аккаунт с GhostChat и GhostSocial. Войдите там — баланс появится сразу.</p>
+    <div class="auth-logo">GhostBank</div>
+    <p class="auth-sub">Аккаунт общий с GhostSocial и GhostChat. Войдите там — баланс появится сразу.</p>
     <a href="/social/" class="auth-btn"><i class="fa-solid fa-arrow-right"></i> Открыть GhostSocial</a>
   </div>
 
-  <!-- App -->
+  <!-- APP -->
   <div id="app" style="display:none">
 
-    <!-- HERO — главный баланс Gost -->
     <div class="hero">
       <div class="hero-label">Ваш баланс</div>
       <div class="hero-value">
@@ -166,31 +259,21 @@ main{max-width:680px;margin:0 auto;padding:18px 16px 40px;}
       <div class="hero-sub">Низшая валюта · зарабатывается активностью</div>
     </div>
 
-    <!-- 2 OTHER CARDS -->
     <div class="cards-row">
       <div class="card card-soul locked">
-        <div class="card-head">
-          <i class="fa-solid fa-fire"></i>
-          <div class="card-name">Soul</div>
-          <span class="card-soon">скоро</span>
-        </div>
+        <div class="card-head"><i class="fa-solid fa-fire"></i><div class="card-name">Soul</div><span class="card-soon">скоро</span></div>
         <div class="card-balance" id="bSoul">0</div>
         <div class="card-sub">Основная · переводы · NFT</div>
       </div>
       <div class="card card-prem locked">
-        <div class="card-head">
-          <i class="fa-solid fa-crown"></i>
-          <div class="card-name">Prem</div>
-          <span class="card-soon">скоро</span>
-        </div>
+        <div class="card-head"><i class="fa-solid fa-crown"></i><div class="card-name">Prem</div><span class="card-soon">скоро</span></div>
         <div class="card-balance" id="bPrem">0</div>
         <div class="card-sub">Премиум · украшения</div>
       </div>
     </div>
 
-    <!-- DAILY -->
     <div class="section">
-      <div class="section-title"><span><i class="fa-solid fa-gift ico"></i>Ежедневный бонус</span></div>
+      <div class="section-title"><i class="fa-solid fa-gift"></i>Ежедневный бонус</div>
       <button class="claim-btn" id="claimBtn" onclick="claimDaily()">
         <i class="fa-solid fa-gift"></i>
         <span id="claimText">Получить <b id="claimAmt">10</b> Gost</span>
@@ -198,9 +281,8 @@ main{max-width:680px;margin:0 auto;padding:18px 16px 40px;}
       <div class="claim-hint" id="claimHint" style="display:none;">Следующий бонус через <b id="claimCd">--:--:--</b></div>
     </div>
 
-    <!-- SOURCES -->
     <div class="section">
-      <div class="section-title"><span><i class="fa-solid fa-bolt ico"></i>Как заработать Gost</span></div>
+      <div class="section-title"><i class="fa-solid fa-bolt"></i>Как заработать Gost</div>
       <div class="sources">
         <div class="src"><i class="fa-solid fa-gift"></i><span class="label">Ежедневный бонус</span><b>+10</b></div>
         <div class="src"><i class="fa-solid fa-pen"></i><span class="label">Свой пост</span><b>+5</b></div>
@@ -211,20 +293,21 @@ main{max-width:680px;margin:0 auto;padding:18px 16px 40px;}
       </div>
     </div>
 
-    <!-- HISTORY -->
     <div class="section">
-      <div class="section-title"><span><i class="fa-solid fa-clock-rotate-left ico"></i>История</span></div>
+      <div class="section-title"><i class="fa-solid fa-clock-rotate-left"></i>История</div>
       <div class="tx-list" id="txList"><div class="loader"><div class="spinner"></div>Загрузка...</div></div>
-    </div>
-
-    <!-- NAV BETWEEN APPS -->
-    <div class="app-nav">
-      <a href="/social/" title="GhostSocial"><i class="fa-solid fa-house"></i>Лента</a>
-      <a href="/chat/" title="GhostChat"><i class="fa-solid fa-comments"></i>Чаты</a>
-      <a href="/" title="GhostEcos"><i class="fa-solid fa-ghost"></i>Главная</a>
     </div>
   </div>
 </main>
+
+<!-- BOTTOM NAV (стиль GhostSocial) -->
+<nav id="appNav">
+  <a href="/social/" title="GhostSocial"><i class="fa-solid fa-house"></i>Лента</a>
+  <a href="/social/#screenMinisky" title="Миниски"><i class="fa-solid fa-video"></i>Миниски</a>
+  <a href="#" class="active" title="GhostBank"><i class="fa-solid fa-wallet"></i>Банк</a>
+  <a href="/chat/" title="GhostChat"><i class="fa-solid fa-comments"></i>Чаты</a>
+  <a href="/" title="GhostEcos"><i class="fa-solid fa-ghost"></i>Главная</a>
+</nav>
 
 <div class="toast" id="toast"></div>
 
@@ -238,7 +321,6 @@ let _ws = null;
 let _wsReconnectDelay = 1000;
 let _wsAuthFail = false;
 
-// ── helpers ──
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function ini(n){return n ? n[0].toUpperCase() : '?';}
 function showToast(msg, err=false){
@@ -255,7 +337,6 @@ function ago(ts){
   return Math.floor(s / 86400) + ' д назад';
 }
 
-// ── API ──
 async function api(path, method='GET', body=null){
   const h = { 'Content-Type': 'application/json' };
   if (token) h['Authorization'] = 'Bearer ' + token;
@@ -274,7 +355,6 @@ async function api(path, method='GET', body=null){
   return r.json();
 }
 
-// ── Wallet ──
 async function loadWallet(){
   try {
     const [w, tx] = await Promise.all([api('/wallet'), api('/wallet/tx')]);
@@ -350,7 +430,7 @@ const TX_META = {
 function renderTxList(list){
   const root = document.getElementById('txList');
   if (!list.length) {
-    root.innerHTML = '<div class="tx-empty">Пока пусто. Активничай в GhostSocial — Gost начнут капать.</div>';
+    root.innerHTML = '<div class="tx-empty"><i class="fa-solid fa-coins"></i>Пока пусто. Активничай в GhostSocial — Gost начнут капать.</div>';
     return;
   }
   root.innerHTML = list.map(t => {
@@ -369,7 +449,6 @@ function renderTxList(list){
   }).join('');
 }
 
-// ── WebSocket: live updates ──
 function connectWS(){
   if (_wsAuthFail) return;
   if (_ws && (_ws.readyState === 0 || _ws.readyState === 1)) return;
@@ -399,19 +478,15 @@ function connectWS(){
 
 function handleWS(m){
   const t = m.type, d = m.data || {};
-  if (t === 'wallet.credit') {
-    if (d.currency === 'gost') {
-      if (typeof d.balance === 'number') setBalance('bGost', d.balance);
-      else loadWallet();
-      const labels = {register:'welcome', daily:'дейли', post:'за пост', react:'за лайк',
-                      comment:'за коммент', follow:'за подписчика'};
-      showToast(`+${d.delta} Gost · ${labels[d.source] || d.source}`);
-      loadWallet(); // обновим историю и баланс
-    }
+  if (t === 'wallet.credit' && d.currency === 'gost') {
+    if (typeof d.balance === 'number') setBalance('bGost', d.balance);
+    const labels = {register:'welcome', daily:'дейли', post:'за пост', react:'за лайк',
+                    comment:'за коммент', follow:'за подписчика'};
+    showToast(`+${d.delta} Gost · ${labels[d.source] || d.source}`);
+    loadWallet();
   }
 }
 
-// ── Auth ──
 function showAuth(){
   document.getElementById('authScreen').style.display = 'flex';
   document.getElementById('app').style.display = 'none';
@@ -422,18 +497,7 @@ function showApp(){
   if (me) document.getElementById('hAvatar').textContent = ini(me.display_name || me.username);
 }
 
-// ── Back link ──
-function setupBackLink(){
-  const params = new URLSearchParams(location.search);
-  const from = params.get('from');
-  const link = document.getElementById('backLink');
-  if (from && /^\/[a-z]/.test(from)) link.href = from;
-  else link.href = '/social/';
-}
-
-// ── Init ──
 async function init(){
-  setupBackLink();
   if (!token) { showAuth(); return; }
   try {
     const d = await api('/me');
@@ -450,7 +514,6 @@ async function init(){
   }
 }
 
-// Refresh при возврате на вкладку
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && token) loadWallet();
 });
