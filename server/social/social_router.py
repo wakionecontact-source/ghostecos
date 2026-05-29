@@ -3625,6 +3625,46 @@ def nft_mint(body: MintNftBody, authorization: Optional[str] = Header(None)):
     }
 
 
+class PostMintBody(BaseModel):
+    post_id: int
+    supply: int = 100               # 100..10000
+    sell_price_soul: int = 5
+    auto_buy: int = 0
+    image_emoji: Optional[str] = None  # если не указано — берём 1-ю букву автора
+    bg_color: Optional[str] = None
+
+
+@router.post("/post/mint_as_nft")
+def mint_post_as_nft(body: PostMintBody, authorization: Optional[str] = Header(None)):
+    """Превратить свой пост в NFT (карточка-коллекционка).
+    Создаётся новый тип в каталоге со slug `post-{id}-{rand}`, name = первые ~40
+    символов текста поста или 'Пост от @username'. Логика та же что /nft/mint."""
+    user = auth_member(authorization)
+    c = db()
+    post = c.execute("SELECT id, user_id, content FROM soc_posts WHERE id=?", (body.post_id,)).fetchone()
+    c.close()
+    if not post:
+        raise HTTPException(404, "Пост не найден")
+    if post["user_id"] != user["id"]:
+        raise HTTPException(403, "Минтить можно только свои посты")
+    text = (post["content"] or "").strip()
+    name = text[:50] if text else f"Пост от @{user['username']}"
+    desc = text[:200] if text else ''
+    suffix = secrets.token_hex(3)
+    slug = f"post-{post['id']}-{suffix}"
+    emoji = (body.image_emoji or '').strip() or (user['display_name'] or user['username'])[0].upper()
+    bg = body.bg_color or '#7c3aed'
+    # Прокидываем в существующий /nft/mint helper-логику — вызываем напрямую
+    fake_body = MintNftBody(
+        slug=slug, name=name, description=desc,
+        supply=max(100, min(10000, body.supply)),
+        image_emoji=emoji[:6], bg_color=bg, rarity='common',
+        auto_buy=max(0, body.auto_buy),
+        sell_price_soul=max(1, body.sell_price_soul),
+    )
+    return nft_mint(fake_body, authorization)
+
+
 class NftTransferBody(BaseModel):
     nft_id: int
     to_username: str

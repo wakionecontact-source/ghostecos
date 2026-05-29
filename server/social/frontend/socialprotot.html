@@ -3254,6 +3254,26 @@ async function submitEditPost() {
   }
 }
 
+async function mintPostAsNft(postId) {
+  // Простой prompt-based UI. Полноценную модалку сделаем потом.
+  const supply = +prompt('Тираж NFT (100-10000):', '100');
+  if (!supply || supply < 100) return;
+  const price = +prompt('Цена за штуку (Soul):', '5');
+  if (!price || price < 1) return;
+  const autoBuy = +prompt(`Сколько штук выкупить себе (0-${supply})?\nПолучите Soul за каждую (если в системе хватает):`, '0') || 0;
+  const emoji = prompt('Эмодзи (1-2 символа, опц.):', '') || '';
+  const supplyFee = Math.max(1, Math.round((10000 / supply) ** 1.1));
+  const gostCost = 50 + supplyFee;
+  if (!confirm(`Создать NFT из этого поста?\n\nТираж: ${supply}\nЦена в маркете: ${price} Soul\nАвтовыкуп: ${autoBuy} шт\n\nСтоимость создания: ${gostCost} Gost\nПолучите за автовыкуп: ${autoBuy * price} Soul`)) return;
+  try {
+    const r = await api('/post/mint_as_nft', 'POST', {
+      post_id: postId, supply, sell_price_soul: price, auto_buy: autoBuy,
+      image_emoji: emoji || null, bg_color: null,
+    });
+    showToast(`NFT создан! −${r.gost_paid} Gost${r.soul_received ? ', +' + r.soul_received + ' Soul' : ''}`);
+  } catch(e) { showToast(e.message || 'Ошибка минта', true); }
+}
+
 function deletePost(postId) {
   showConfirm({
     title: 'Удалить пост?',
@@ -3826,6 +3846,7 @@ function openPostMenu(postId, anchor, mediaUrl, eventOrEl) {
   }
   if (isOwn) {
     items.push({ icon: 'fa-pen', label: 'Редактировать', onClick: () => openEditPost(postId) });
+    items.push({ icon: 'fa-gem', label: 'Минтить как NFT', onClick: () => mintPostAsNft(postId) });
     items.push({ icon: 'fa-trash-can', label: 'Удалить пост', danger: true, onClick: () => deletePost(postId) });
   }
   buildMenuItems(items);
