@@ -1652,6 +1652,8 @@ const RT = (() => {
       // keep-alive ping каждые 25с
       clearInterval(pingTimer);
       pingTimer = setInterval(() => { try { ws.send('ping'); } catch(_) {} }, 25000);
+      // При (re)connect — синкаем баланс на случай что пока WS лежал, нам что-то начислили
+      if (typeof refreshWallet === 'function') refreshWallet();
     };
     ws.onmessage = (e) => {
       if (e.data === 'pong') return;
@@ -2476,6 +2478,13 @@ function refreshWallet(){
     } catch(_) {}
   }, 400);
 }
+
+// Когда вкладка возвращается в фокус — синкаем баланс.
+// Это ловит случай: PWA в фоне → WS отрубается → нам что-то начислили → возвращаемся → видим актуал.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') refreshWallet();
+});
+window.addEventListener('focus', () => refreshWallet());
 
 const TX_SOURCE_META = {
   'register': {icon:'fa-gift',         label:'Welcome бонус'},
