@@ -186,9 +186,18 @@ def _ci_contains(haystack, needle):
     return 1 if needle.lower() in haystack.lower() else 0
 
 def db():
-    c = sqlite3.connect(DB)
+    # timeout=5: вместо мгновенного 'database is locked' ждём до 5 сек на освобождение
+    c = sqlite3.connect(DB, timeout=5.0)
     c.row_factory = sqlite3.Row
     c.create_function("ci_contains", 2, _ci_contains, deterministic=True)
+    # WAL: readers не блокируют writers, writer не блокирует readers. Безопасно вызывать
+    # каждый коннект — pragma persists между сессиями (один раз пропишется и хватит).
+    try:
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("PRAGMA synchronous=NORMAL")
+        c.execute("PRAGMA busy_timeout=5000")
+    except Exception:
+        pass
     return c
 
 # ── WebSocket hub ──────────────────────────────────────────────────────────────
@@ -1561,6 +1570,9 @@ def react(post_id: int, body: ReactBody, authorization: Optional[str] = Header(N
         "SELECT emoji FROM soc_reactions WHERE post_id=? AND user_id=?", (post_id, user["id"])
     ).fetchone()
 
+    # Помечаем что нужно наградить АВТОРА поста после commit (а не во время — иначе SQLite lock)
+    do_award_owner = False
+
     if body.emoji is None:
         # Снять реакцию
         if existing:
@@ -1582,10 +1594,10 @@ def react(post_id: int, body: ReactBody, authorization: Optional[str] = Header(N
                 (post_id, user["id"], body.emoji),
             )
             _add_notif(c, owner_id, user["id"], "react", post_id, body.emoji)
-            # Награда АВТОРУ поста за чужой лайк (cap 50/день; UNIQUE: один actor на один пост = одно начисление навсегда)
+            # Награду отдадим ПОСЛЕ c.commit() / c.close() — award_gost открывает своё
+            # соединение и BEGIN IMMEDIATE: пока мы держим транзакцию здесь — он словит lock.
             if owner_id != user["id"]:
-                try: award_gost(owner_id, 'react', actor_id=user["id"], ref_type='post', ref_id=post_id)
-                except Exception: pass
+                do_award_owner = True
 
     c.commit()
     result = _post_reactions(c, post_id, user["id"])
@@ -1593,6 +1605,12 @@ def react(post_id: int, body: ReactBody, authorization: Optional[str] = Header(N
     public = {"counts": result.get("counts", {}), "total": result.get("total", 0)}
     ws_hub.broadcast("post.react", {"post_id": post_id, "reactions": public})
     c.close()
+
+    # Награда автору — отдельным соединением, без конфликта lock'ов
+    if do_award_owner:
+        try: award_gost(owner_id, 'react', actor_id=user["id"], ref_type='post', ref_id=post_id)
+        except Exception: pass
+
     return result
 
 # ── Comments ───────────────────────────────────────────────────────────────────
