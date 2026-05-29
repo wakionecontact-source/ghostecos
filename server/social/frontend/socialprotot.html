@@ -63,6 +63,56 @@ header{position:fixed;top:0;left:0;right:0;background:rgba(2,6,23,0.78);backdrop
 .new-pill.show{display:flex}
 .new-pill:active{background:rgba(168,85,247,0.22)}
 .h-avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;cursor:pointer;box-shadow:0 4px 12px rgba(168,85,247,0.3);flex-shrink:0;}
+
+/* Pill баланса Gost в шапке */
+.gost-pill{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,rgba(168,85,247,0.15),rgba(236,72,153,0.10));border:1px solid rgba(168,85,247,0.35);color:#e9d5ff;font-size:13px;font-weight:700;padding:5px 11px;border-radius:999px;cursor:pointer;font-family:inherit;transition:all 0.2s;}
+.gost-pill:hover{background:linear-gradient(135deg,rgba(168,85,247,0.25),rgba(236,72,153,0.18));transform:translateY(-1px);}
+.gost-pill i{font-size:12px;color:var(--primary);}
+.gost-pill.bump{animation:gostBump 0.5s ease-out;}
+@keyframes gostBump{0%{transform:scale(1);} 30%{transform:scale(1.25);background:linear-gradient(135deg,rgba(34,197,94,0.35),rgba(168,85,247,0.20));} 100%{transform:scale(1);}}
+
+/* Кошелёк */
+.wallet-cards{display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:22px;}
+@media (min-width:520px){.wallet-cards{grid-template-columns:1fr 1fr 1fr;}}
+.wallet-card{background:rgba(15,23,42,0.6);border:1px solid var(--border-strong);border-radius:16px;padding:14px;position:relative;overflow:hidden;}
+.wallet-card.locked{opacity:0.55;}
+.wallet-card-gost{background:linear-gradient(135deg,rgba(168,85,247,0.18),rgba(236,72,153,0.10));border-color:rgba(168,85,247,0.4);}
+.wallet-card-soul{background:linear-gradient(135deg,rgba(244,114,182,0.10),rgba(168,85,247,0.05));}
+.wallet-card-prem{background:linear-gradient(135deg,rgba(251,191,36,0.10),rgba(168,85,247,0.05));}
+.wc-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+.wc-head i{font-size:16px;color:var(--primary);}
+.wallet-card-soul .wc-head i{color:#ec4899;}
+.wallet-card-prem .wc-head i{color:#fbbf24;}
+.wc-name{font-size:14px;font-weight:700;flex:1;}
+.wc-soon{font-size:9px;font-weight:700;background:rgba(100,116,139,0.3);color:#94a3b8;padding:2px 7px;border-radius:999px;text-transform:uppercase;letter-spacing:0.4px;}
+.wc-balance{font-size:26px;font-weight:800;line-height:1;margin-bottom:6px;}
+.wc-sub{font-size:11px;color:var(--sub);line-height:1.4;}
+
+.wallet-section{margin-bottom:22px;}
+.wallet-section-title{font-size:12px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;padding:0 2px;}
+
+.wallet-claim-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;border:0;border-radius:14px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 6px 20px rgba(168,85,247,0.35);transition:transform 0.15s;}
+.wallet-claim-btn:hover:not(:disabled){transform:translateY(-1px);}
+.wallet-claim-btn:disabled{opacity:0.5;cursor:not-allowed;background:rgba(100,116,139,0.3);box-shadow:none;color:#94a3b8;}
+.wallet-claim-hint{font-size:12px;color:var(--sub);text-align:center;margin-top:10px;}
+.wallet-claim-hint span{color:var(--primary);font-weight:700;font-variant-numeric:tabular-nums;}
+
+.wallet-sources{display:grid;grid-template-columns:1fr;gap:8px;}
+@media (min-width:520px){.wallet-sources{grid-template-columns:1fr 1fr;}}
+.wal-src{display:flex;align-items:center;gap:10px;background:rgba(15,23,42,0.45);border:1px solid var(--border);border-radius:12px;padding:10px 13px;font-size:13px;}
+.wal-src i{width:24px;text-align:center;color:var(--primary);font-size:14px;}
+.wal-src span{flex:1;color:var(--text);}
+.wal-src b{font-weight:800;color:#22c55e;font-size:14px;}
+
+.tx-item{display:flex;align-items:center;gap:11px;padding:11px 12px;border-bottom:1px solid var(--border);}
+.tx-item:last-child{border-bottom:0;}
+.tx-icon{width:34px;height:34px;border-radius:10px;background:rgba(168,85,247,0.12);display:flex;align-items:center;justify-content:center;color:var(--primary);font-size:14px;flex-shrink:0;}
+.tx-body{flex:1;min-width:0;}
+.tx-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px;}
+.tx-meta{font-size:11px;color:var(--sub);}
+.tx-amount{font-weight:800;font-size:14px;color:#22c55e;font-variant-numeric:tabular-nums;}
+.tx-amount.neg{color:var(--red);}
+.tx-empty{padding:24px;text-align:center;color:var(--sub);font-size:13px;}
 nav{position:fixed;bottom:0;left:0;right:0;height:calc(68px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom);background:rgba(2,6,23,0.92);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);border-top:1px solid var(--border);display:flex;z-index:100;}
 .nav-btn{flex:1;background:none;border:none;color:#475569;font-size:10px;font-weight:600;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;transition:color 0.2s;font-family:'Inter',sans-serif;}
 .nav-btn i{font-size:19px}
@@ -661,6 +711,10 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
         <i class="fa-solid fa-arrow-up" style="font-size:11px"></i>
         <span>Новые посты</span>
       </div>
+      <button class="gost-pill" id="gostPill" onclick="switchScreen('screenWallet')" title="Кошелёк">
+        <i class="fa-solid fa-ghost"></i>
+        <span id="gostPillVal">0</span>
+      </button>
       <div class="h-avatar" id="hAvatar" onclick="goProfile()">?</div>
     </div>
   </div>
@@ -795,6 +849,70 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
     <h2 style="font-size:18px;font-weight:700;margin-bottom:14px;padding:0 2px;">Уведомления</h2>
     <div id="notifList"><div class="loader"><div class="spinner"></div></div></div>
   </div>
+
+  <!-- ─── КОШЕЛЁК ─────────────────────────────────────────────────────────── -->
+  <div class="screen" id="screenWallet">
+    <h2 style="font-size:20px;font-weight:800;margin:0 0 4px;padding:0 2px;">Кошелёк</h2>
+    <p style="color:var(--sub);font-size:12px;margin:0 0 16px;padding:0 2px;">Экономика GhostEcos · бета</p>
+
+    <!-- Карточки балансов -->
+    <div class="wallet-cards">
+      <div class="wallet-card wallet-card-gost">
+        <div class="wc-head">
+          <i class="fa-solid fa-ghost"></i>
+          <span class="wc-name">Gost</span>
+        </div>
+        <div class="wc-balance" id="walGost">0</div>
+        <div class="wc-sub">Бесплатная — за активность</div>
+      </div>
+      <div class="wallet-card wallet-card-soul locked">
+        <div class="wc-head">
+          <i class="fa-solid fa-fire"></i>
+          <span class="wc-name">Soul</span>
+          <span class="wc-soon">скоро</span>
+        </div>
+        <div class="wc-balance" id="walSoul">0</div>
+        <div class="wc-sub">Основная · с курсом · переводы</div>
+      </div>
+      <div class="wallet-card wallet-card-prem locked">
+        <div class="wc-head">
+          <i class="fa-solid fa-crown"></i>
+          <span class="wc-name">Prem</span>
+          <span class="wc-soon">скоро</span>
+        </div>
+        <div class="wc-balance" id="walPrem">0</div>
+        <div class="wc-sub">Премиум-украшения</div>
+      </div>
+    </div>
+
+    <!-- Daily claim -->
+    <div class="wallet-section">
+      <div class="wallet-section-title">Ежедневный бонус</div>
+      <button class="wallet-claim-btn" id="walClaimBtn" onclick="claimDaily()">
+        <i class="fa-solid fa-gift"></i>
+        <span id="walClaimText">Получить <span id="walDailyAmt">10</span> Gost</span>
+      </button>
+      <div class="wallet-claim-hint" id="walClaimHint" style="display:none;">Следующий бонус через <span id="walClaimCountdown">--:--:--</span></div>
+    </div>
+
+    <!-- Как заработать -->
+    <div class="wallet-section">
+      <div class="wallet-section-title">Как заработать Gost</div>
+      <div class="wallet-sources">
+        <div class="wal-src"><i class="fa-solid fa-gift"></i><span>Ежедневный бонус</span><b>+10</b></div>
+        <div class="wal-src"><i class="fa-solid fa-pen"></i><span>Свой пост</span><b>+5</b></div>
+        <div class="wal-src"><i class="fa-solid fa-heart"></i><span>Лайк на твой пост</span><b>+1</b></div>
+        <div class="wal-src"><i class="fa-solid fa-comment"></i><span>Коммент на твой пост</span><b>+2</b></div>
+        <div class="wal-src"><i class="fa-solid fa-user-plus"></i><span>Новый подписчик</span><b>+5</b></div>
+      </div>
+    </div>
+
+    <!-- История транзакций -->
+    <div class="wallet-section">
+      <div class="wallet-section-title">История</div>
+      <div id="walTxList"><div class="loader"><div class="spinner spinner-sm"></div></div></div>
+    </div>
+  </div>
 </main>
 
 <aside class="dt-side-left" id="dtSideLeft" style="display:none">
@@ -803,6 +921,7 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
   <button class="dt-nav-btn" data-screen="screenMinisky"><i class="fa-solid fa-video"></i> Миниски</button>
   <button class="dt-nav-btn" data-screen="screenSearch"><i class="fa-solid fa-magnifying-glass"></i> Поиск</button>
   <button class="dt-nav-btn" data-screen="screenNotif"><span class="nav-icon-wrap"><i class="fa-solid fa-bell"></i><span class="notif-badge" id="dtNotifBadge"></span></span> Уведомления</button>
+  <button class="dt-nav-btn" data-screen="screenWallet"><i class="fa-solid fa-ghost"></i> Кошелёк</button>
   <button class="dt-nav-btn" data-screen="screenProfile"><i class="fa-solid fa-user"></i> Профиль</button>
   <a class="dt-nav-btn" id="dtChatLink" href="/chat/?from=/social" style="text-decoration:none;">
     <span class="nav-icon-wrap"><i class="fa-solid fa-comments"></i><span class="notif-badge" id="dtChatBadge"></span></span>
@@ -1115,6 +1234,13 @@ function showApp() {
   document.body.style.paddingBottom = 'calc(68px + env(safe-area-inset-bottom))';
   if (me) document.getElementById('hAvatar').textContent = ini(me.display_name || me.username);
   document.body.classList.toggle('guest-mode', isGuest());
+  // Gost-pill в шапке скрываем для гостей (у них нет кошелька), показываем для всех остальных
+  const gp = document.getElementById('gostPill');
+  if (gp) gp.style.display = isGuest() ? 'none' : '';
+  // Тихо подтянуть баланс при старте — чтобы в pill сразу был актуал, а не «0»
+  if (!isGuest()) {
+    api('/wallet').then(w => updateGostPill(w.balance.gost || 0)).catch(() => {});
+  }
 }
 
 function switchTab(tab) {
@@ -1556,6 +1682,19 @@ const RT = (() => {
 
   function handle(m) {
     const t = m.type, d = m.data || {};
+    if (t === 'wallet.credit') {
+      // Сервер заплюсовал нам валюту — обновляем pill и тост
+      if (d.currency === 'gost') {
+        updateGostPill(d.balance);
+        const labels = {register:'welcome', daily:'дейли', post:'за пост', react:'за лайк',
+                        comment:'за коммент', follow:'за подписчика'};
+        const reason = labels[d.source] || d.source;
+        showToast(`+${d.delta} Gost · ${reason}`);
+        // Если открыт экран кошелька — перерисовать историю
+        if (document.getElementById('screenWallet').classList.contains('active')) loadWallet();
+      }
+      return;
+    }
     if (t === 'post.new') {
       const p = d.post;
       if (!p || currentSort !== 'new' || currentTag) {
@@ -2236,9 +2375,107 @@ function switchScreen(screenId) {
   if (screenId === 'screenProfile' && !isGuest()) loadMyProfile();
   if (screenId === 'screenSearch') setTimeout(() => searchInput.focus(), 100);
   if (screenId === 'screenNotif') loadNotifications();
+  if (screenId === 'screenWallet') loadWallet();
   if (screenId === 'screenMinisky') loadMinisky(); else stopMinisky();
   if (screenId === 'screenFeed') startNewCheck(); else stopNewCheck();
   window.scrollTo({top: 0});
+}
+
+// ── КОШЕЛЁК ─────────────────────────────────────────────────────────────
+let _walDailyTimer = null;
+async function loadWallet(){
+  if (isGuest()) return;
+  try {
+    const [w, tx] = await Promise.all([ api('/wallet'), api('/wallet/tx') ]);
+    document.getElementById('walGost').textContent = (w.balance.gost || 0).toLocaleString('ru-RU');
+    document.getElementById('walSoul').textContent = (w.balance.soul || 0).toLocaleString('ru-RU');
+    document.getElementById('walPrem').textContent = (w.balance.prem || 0).toLocaleString('ru-RU');
+    document.getElementById('walDailyAmt').textContent = w.daily_reward;
+    updateGostPill(w.balance.gost || 0);
+    setupDailyClaim(w.next_daily_in || 0);
+    renderTxList(tx.transactions || []);
+  } catch(e) { console.error('[wallet] load failed', e); }
+}
+
+function setupDailyClaim(secondsLeft){
+  const btn = document.getElementById('walClaimBtn');
+  const hint = document.getElementById('walClaimHint');
+  const cd = document.getElementById('walClaimCountdown');
+  clearInterval(_walDailyTimer);
+  if (secondsLeft <= 0) {
+    btn.disabled = false;
+    btn.style.display = '';
+    hint.style.display = 'none';
+    return;
+  }
+  btn.disabled = true;
+  hint.style.display = '';
+  const tick = () => {
+    if (secondsLeft <= 0) { clearInterval(_walDailyTimer); setupDailyClaim(0); return; }
+    const h = Math.floor(secondsLeft / 3600);
+    const m = Math.floor((secondsLeft % 3600) / 60);
+    const s = secondsLeft % 60;
+    cd.textContent = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    secondsLeft--;
+  };
+  tick();
+  _walDailyTimer = setInterval(tick, 1000);
+}
+
+async function claimDaily(){
+  const btn = document.getElementById('walClaimBtn');
+  btn.disabled = true;
+  try {
+    const r = await api('/wallet/claim_daily', 'POST');
+    if (r.credited > 0) showToast(`+${r.credited} Gost получено!`);
+    await loadWallet();
+  } catch(e) {
+    showToast(e.message || 'Не удалось получить бонус');
+    btn.disabled = false;
+  }
+}
+
+function updateGostPill(val){
+  const el = document.getElementById('gostPillVal');
+  const pill = document.getElementById('gostPill');
+  if (!el || !pill) return;
+  const prev = +(el.textContent.replace(/\s/g, '')) || 0;
+  el.textContent = (val || 0).toLocaleString('ru-RU');
+  if (val > prev) {
+    pill.classList.remove('bump');
+    void pill.offsetWidth; // restart animation
+    pill.classList.add('bump');
+  }
+}
+
+const TX_SOURCE_META = {
+  'register': {icon:'fa-gift',         label:'Welcome бонус'},
+  'daily':    {icon:'fa-gift',         label:'Ежедневный бонус'},
+  'post':     {icon:'fa-pen',          label:'За пост'},
+  'react':    {icon:'fa-heart',        label:'Лайк на твой пост'},
+  'comment':  {icon:'fa-comment',      label:'Коммент на твой пост'},
+  'follow':   {icon:'fa-user-plus',    label:'Новый подписчик'},
+  'spend':    {icon:'fa-cart-shopping',label:'Покупка'},
+  'admin':    {icon:'fa-shield',       label:'От администрации'},
+};
+function renderTxList(list){
+  const root = document.getElementById('walTxList');
+  if (!list.length) { root.innerHTML = '<div class="tx-empty">Пока пусто. Активничай — Gost начнут капать.</div>'; return; }
+  root.innerHTML = list.map(t => {
+    const meta = TX_SOURCE_META[t.source] || {icon:'fa-coins', label:t.source};
+    const sign = t.delta > 0 ? '+' : '';
+    const cls = t.delta < 0 ? 'tx-amount neg' : 'tx-amount';
+    const actorPart = t.actor ? ` · @${esc(t.actor.username)}` : '';
+    const when = ago(t.created_at);
+    return `<div class="tx-item">
+      <div class="tx-icon"><i class="fa-solid ${meta.icon}"></i></div>
+      <div class="tx-body">
+        <div class="tx-title">${esc(meta.label)}</div>
+        <div class="tx-meta">${when}${actorPart}</div>
+      </div>
+      <div class="${cls}">${sign}${t.delta} ${t.currency}</div>
+    </div>`;
+  }).join('');
 }
 
 document.querySelectorAll('.nav-btn, .dt-nav-btn, .dt-create-btn').forEach(btn => {

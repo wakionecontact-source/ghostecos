@@ -442,6 +442,41 @@ def init():
         CREATE INDEX IF NOT EXISTS idx_soc_notif_user ON soc_notifications(user_id, id DESC);
         CREATE INDEX IF NOT EXISTS idx_soc_tokens_token ON soc_tokens(token);
         CREATE INDEX IF NOT EXISTS idx_chat_dm_recv ON chat_dm(receiver_id, id);
+
+        -- ── Экономика GhostEcos: кошелёк (3 валюты) ──
+        -- gost — non-transferable, бесплатная (активность)
+        -- soul — основная, transferable, cap-эмиссия (пока 0 у всех — выкуп NFT не реализован)
+        -- prem — премиальная (украшения), пока 0
+        CREATE TABLE IF NOT EXISTS soc_wallets (
+            user_id INTEGER PRIMARY KEY,
+            gost INTEGER NOT NULL DEFAULT 0,
+            soul INTEGER NOT NULL DEFAULT 0,
+            prem INTEGER NOT NULL DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+        -- Audit log + дедуп источников начисления.
+        -- source = 'register'|'daily'|'post'|'react'|'comment'|'follow'|'spend'|'admin'|...
+        -- actor_id — кто триггернул (например юзер который лайкнул); 0 если система
+        -- ref_type/ref_id — на что ссылается (например 'post'/123); ref_id=0 если не применимо
+        CREATE TABLE IF NOT EXISTS soc_wallet_tx (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            currency TEXT NOT NULL,
+            delta INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            actor_id INTEGER NOT NULL DEFAULT 0,
+            ref_type TEXT NOT NULL DEFAULT '',
+            ref_id INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+        -- Дедуп: одна пара (получатель, источник, актор, ref) даёт начисление только ОДИН раз
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_soc_wallet_tx_dedup
+            ON soc_wallet_tx(user_id, source, actor_id, ref_type, ref_id)
+            WHERE source IN ('react','comment','follow','post','register');
+        CREATE INDEX IF NOT EXISTS idx_soc_wallet_tx_user ON soc_wallet_tx(user_id, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_soc_wallet_tx_day ON soc_wallet_tx(user_id, source, created_at);
     ''')
     c.close()
 
@@ -660,6 +695,9 @@ def register(body: RegisterBody, request: Request):
         raise HTTPException(409, "Имя пользователя уже занято")
     finally:
         c.close()
+    # Welcome bonus: 100 gost. UNIQUE-индекс не даст продублировать при повторном регистрате (теоретически невозможно — username уникален, но на всякий)
+    try: award_gost(uid, 'register')
+    except Exception: pass  # не блокируем регистрацию из-за wallet-сбоя
     return {"id": uid, "username": username, "display_name": display_name, "token": token}
 
 @router.post("/guest")
@@ -1148,6 +1186,9 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
         ws_hub.broadcast("post.new", {"post": full})
     c2.close()
     c.close()
+    # Награда автору за пост (cap 25/день — антиспам)
+    try: award_gost(user["id"], 'post', ref_type='post', ref_id=post_id)
+    except Exception: pass
     return {"status": "ok", "post_id": post_id}
 
 @router.patch("/post/{post_id}")
@@ -1395,6 +1436,10 @@ def follow(username: str, authorization: Optional[str] = Header(None)):
     _add_notif(c, target["id"], user["id"], "follow", 0)
     c.commit()
     c.close()
+    # Награда followee за нового подписчика. UNIQUE по (followee, 'follow', follower, '', 0)
+    # → если follower отписался и подписался снова — НЕ начисляется повторно (как и должно быть).
+    try: award_gost(target["id"], 'follow', actor_id=user["id"])
+    except Exception: pass
     return {"status": "ok", "following": True}
 
 @router.delete("/follow/{username}")
@@ -1537,6 +1582,10 @@ def react(post_id: int, body: ReactBody, authorization: Optional[str] = Header(N
                 (post_id, user["id"], body.emoji),
             )
             _add_notif(c, owner_id, user["id"], "react", post_id, body.emoji)
+            # Награда АВТОРУ поста за чужой лайк (cap 50/день; UNIQUE: один actor на один пост = одно начисление навсегда)
+            if owner_id != user["id"]:
+                try: award_gost(owner_id, 'react', actor_id=user["id"], ref_type='post', ref_id=post_id)
+                except Exception: pass
 
     c.commit()
     result = _post_reactions(c, post_id, user["id"])
@@ -1592,6 +1641,10 @@ def write_comment(post_id: int, body: CommentBody, authorization: Optional[str] 
     comment_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
     total = c.execute("SELECT COUNT(*) as cnt FROM soc_comments WHERE post_id=?", (post_id,)).fetchone()["cnt"]
     c.close()
+    # Награда автору поста за чужой коммент. ref_id = comment_id чтобы каждый отдельный коммент засчитывался.
+    if post["user_id"] != user["id"]:
+        try: award_gost(post["user_id"], 'comment', actor_id=user["id"], ref_type='comment', ref_id=comment_id)
+        except Exception: pass
     ws_hub.broadcast("post.comment", {
         "post_id": post_id,
         "comments_count": total,
@@ -1948,3 +2001,228 @@ def miniska_feed(
 @router.get("/health")
 def health():
     return {"status": "ok", "service": "GhostSocial"}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ЭКОНОМИКА: КОШЕЛЁК (gost / soul / prem)
+# ══════════════════════════════════════════════════════════════════════════════
+# Дизайн см. memory/project_economy.md
+#   gost — бесплатная, активность, non-transferable, тратится только на первичные NFT
+#   soul — transferable, cap-эмиссия, эмитируется через выкуп NFT (TODO)
+#   prem — украшения, не пересекается с другими (TODO)
+
+# Тарифы и лимиты — все в одном месте, чтобы балансировать без хождения по коду
+GOST_REWARDS = {
+    'register':  100,   # one-time welcome bonus
+    'daily':      10,   # раз в 24ч
+    'post':        5,   # за свой пост
+    'react':       1,   # автор поста — за чужой лайк
+    'comment':     2,   # автор поста — за чужой коммент
+    'follow':      5,   # юзер — за нового подписчика
+}
+# Cap начисления per-источник per-юзер за скользящие 24ч (защита от спама)
+GOST_DAILY_CAP = {
+    'post':     25,    # ≈ 5 постов в день максимум засчитано
+    'react':    50,    # ≈ 50 лайков на свои посты
+    'comment':  60,    # ≈ 30 комментов
+    'follow':   25,    # ≈ 5 новых фолловеров
+    # daily/register — natural cap (1 раз/24ч / one-time)
+}
+DAILY_CLAIM_INTERVAL = 24 * 3600   # секунд между daily-claim
+ALLOWED_CURRENCIES = {'gost', 'soul', 'prem'}
+
+
+def _ensure_wallet(c, user_id: int) -> None:
+    """Гарантирует наличие строки wallet (для join'ов и обновлений)."""
+    c.execute("INSERT OR IGNORE INTO soc_wallets (user_id) VALUES (?)", (user_id,))
+
+
+def get_balance(user_id: int) -> dict:
+    """Возвращает баланс юзера. Все три валюты — всегда возвращаем (нули если нет записи)."""
+    c = db()
+    row = c.execute(
+        "SELECT gost, soul, prem FROM soc_wallets WHERE user_id=?", (user_id,)
+    ).fetchone()
+    c.close()
+    return {
+        "gost": (row["gost"] if row else 0),
+        "soul": (row["soul"] if row else 0),
+        "prem": (row["prem"] if row else 0),
+    }
+
+
+def _sum_source_24h(c, user_id: int, source: str) -> int:
+    """Сколько начислено за последние 24ч по этому источнику (для cap-чека)."""
+    row = c.execute(
+        "SELECT COALESCE(SUM(delta), 0) as s FROM soc_wallet_tx "
+        "WHERE user_id=? AND source=? AND delta>0 "
+        "AND created_at > datetime('now', '-1 day')",
+        (user_id, source),
+    ).fetchone()
+    return row["s"] or 0
+
+
+def award_gost(
+    user_id: int,
+    source: str,
+    actor_id: int = 0,
+    ref_type: str = '',
+    ref_id: int = 0,
+    amount_override: Optional[int] = None,
+) -> dict:
+    """Начисляет gost за активность. Атомарно. Возвращает {credited, new_balance, reason}.
+
+    Дедуп: для source ∈ {register, post, react, comment, follow} —
+    UNIQUE индекс на (user_id, source, actor_id, ref_type, ref_id) не даст начислить дважды.
+    daily — отдельный check по времени.
+    Cap per-day по источнику — мягкий cap (выше cap'а просто не начисляется, без ошибки).
+    """
+    if user_id <= 0:
+        return {"credited": 0, "new_balance": 0, "reason": "guest"}
+    if source not in GOST_REWARDS and amount_override is None:
+        return {"credited": 0, "new_balance": 0, "reason": "unknown_source"}
+    amount = amount_override if amount_override is not None else GOST_REWARDS[source]
+    if amount <= 0:
+        return {"credited": 0, "new_balance": 0, "reason": "zero"}
+
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        _ensure_wallet(c, user_id)
+
+        # daily — особый: 1 раз в 24ч
+        if source == 'daily':
+            last = c.execute(
+                "SELECT created_at FROM soc_wallet_tx "
+                "WHERE user_id=? AND source='daily' "
+                "ORDER BY id DESC LIMIT 1",
+                (user_id,),
+            ).fetchone()
+            if last:
+                age = c.execute(
+                    "SELECT strftime('%s','now') - strftime('%s', ?) as age",
+                    (last["created_at"],),
+                ).fetchone()["age"]
+                if (age or 0) < DAILY_CLAIM_INTERVAL:
+                    c.execute("ROLLBACK")
+                    c.close()
+                    return {"credited": 0, "new_balance": get_balance(user_id)["gost"], "reason": "too_soon"}
+
+        # Per-day cap для тех источников где он есть
+        if source in GOST_DAILY_CAP:
+            already = _sum_source_24h(c, user_id, source)
+            if already >= GOST_DAILY_CAP[source]:
+                c.execute("ROLLBACK")
+                c.close()
+                return {"credited": 0, "new_balance": get_balance(user_id)["gost"], "reason": "daily_cap"}
+            # Не дать переплеснуть cap — режем amount
+            if already + amount > GOST_DAILY_CAP[source]:
+                amount = GOST_DAILY_CAP[source] - already
+
+        # Запись tx (UNIQUE index блокирует дубль — IntegrityError)
+        try:
+            c.execute(
+                "INSERT INTO soc_wallet_tx (user_id, currency, delta, source, actor_id, ref_type, ref_id) "
+                "VALUES (?, 'gost', ?, ?, ?, ?, ?)",
+                (user_id, amount, source, actor_id, ref_type, ref_id),
+            )
+        except sqlite3.IntegrityError:
+            # Дубль по UNIQUE — это OK, источник уже был засчитан
+            c.execute("ROLLBACK")
+            c.close()
+            return {"credited": 0, "new_balance": get_balance(user_id)["gost"], "reason": "already_credited"}
+
+        # Обновляем баланс
+        c.execute(
+            "UPDATE soc_wallets SET gost = gost + ?, updated_at = CURRENT_TIMESTAMP WHERE user_id=?",
+            (amount, user_id),
+        )
+        new_bal = c.execute("SELECT gost FROM soc_wallets WHERE user_id=?", (user_id,)).fetchone()["gost"]
+        c.execute("COMMIT")
+    except Exception:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close()
+        raise
+    c.close()
+    # WS-пуш владельцу: моментально подсветить +N в кошельке
+    ws_hub.send_to(user_id, "wallet.credit", {
+        "currency": "gost", "delta": amount, "source": source,
+        "balance": new_bal,
+    })
+    return {"credited": amount, "new_balance": new_bal, "reason": "ok"}
+
+
+# ── Wallet API ────────────────────────────────────────────────────────────────
+
+@router.get("/wallet")
+def my_wallet(authorization: Optional[str] = Header(None)):
+    """Текущий баланс залогиненного юзера."""
+    user = auth_member(authorization)
+    bal = get_balance(user["id"])
+    # Информация о daily-claim для UI: сколько ждать до следующего
+    c = db()
+    last = c.execute(
+        "SELECT created_at FROM soc_wallet_tx WHERE user_id=? AND source='daily' "
+        "ORDER BY id DESC LIMIT 1",
+        (user["id"],),
+    ).fetchone()
+    next_daily_in = 0
+    if last:
+        age = c.execute(
+            "SELECT strftime('%s','now') - strftime('%s', ?) as age", (last["created_at"],)
+        ).fetchone()["age"] or 0
+        next_daily_in = max(0, DAILY_CLAIM_INTERVAL - age)
+    c.close()
+    return {
+        "balance": bal,
+        "daily_reward": GOST_REWARDS['daily'],
+        "next_daily_in": next_daily_in,  # секунд до следующего claim (0 = можно сейчас)
+    }
+
+
+@router.get("/wallet/tx")
+def my_wallet_tx(offset: int = Query(0, ge=0), authorization: Optional[str] = Header(None)):
+    """История транзакций (последние 30, пагинация)."""
+    user = auth_member(authorization)
+    c = db()
+    rows = c.execute(
+        "SELECT id, currency, delta, source, actor_id, ref_type, ref_id, created_at "
+        "FROM soc_wallet_tx WHERE user_id=? "
+        "ORDER BY id DESC LIMIT 30 OFFSET ?",
+        (user["id"], offset),
+    ).fetchall()
+    # Дотягиваем username актора одной пачкой
+    actor_ids = list({r["actor_id"] for r in rows if r["actor_id"]})
+    actor_map = {}
+    if actor_ids:
+        ph = ",".join("?" * len(actor_ids))
+        for u in c.execute(f"SELECT id, username, display_name FROM users WHERE id IN ({ph})", actor_ids):
+            actor_map[u["id"]] = {"username": u["username"], "display_name": u["display_name"]}
+    c.close()
+    return {
+        "transactions": [
+            {
+                "id": r["id"],
+                "currency": r["currency"],
+                "delta": r["delta"],
+                "source": r["source"],
+                "ref_type": r["ref_type"],
+                "ref_id": r["ref_id"],
+                "actor": actor_map.get(r["actor_id"]),
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ],
+        "has_more": len(rows) == 30,
+    }
+
+
+@router.post("/wallet/claim_daily")
+def claim_daily(authorization: Optional[str] = Header(None)):
+    """Ежедневный бонус gost. Раз в 24ч."""
+    user = auth_member(authorization)
+    _rate_limit(f"daily:{user['id']}", limit=5, window=60)  # анти-спам кнопки
+    res = award_gost(user["id"], 'daily')
+    if res["reason"] == "too_soon":
+        raise HTTPException(429, "Ежедневный бонус уже получен. Приходи завтра.")
+    return res
