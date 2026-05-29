@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>404 — страница не найдена · GhostEcos</title>
+  <meta name="robots" content="noindex">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 60'><path d='M24 3C13.5 3 6 11 6 21v33l4.5-4.5L15 54l4.5-4.5L24 54l4.5-4.5L33 54l4.5-4.5L42 54V21C42 11 34.5 3 24 3Z' fill='%23a855f7'/><ellipse cx='17' cy='22' rx='4' ry='4.5' fill='%23000' opacity='.5'/><ellipse cx='31' cy='22' rx='4' ry='4.5' fill='%23000' opacity='.5'/></svg>">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #020617; --bg-deep: #060a1a; --primary: #a855f7; --primary2: #7c3aed;
+      --text: #f1f5f9; --sub: #94a3b8; --border-strong: rgba(255,255,255,0.13);
+    }
+    html { background: var(--bg); }
+    body {
+      min-height: 100vh; color: var(--text); font-family: 'Inter', sans-serif;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center; padding: 24px; position: relative; overflow: hidden;
+    }
+    body::before {
+      content: ""; position: fixed; inset: 0; z-index: -1;
+      background:
+        radial-gradient(80% 60% at 20% 0%, rgba(124,58,237,0.18), transparent 60%),
+        radial-gradient(70% 60% at 100% 100%, rgba(168,85,247,0.12), transparent 60%),
+        linear-gradient(180deg, var(--bg-deep), var(--bg));
+    }
+    #mesh-bg { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+    .wrap { position: relative; z-index: 1; max-width: 520px; }
+
+    .ghost { margin-bottom: 8px; display: inline-block; cursor: pointer; animation: float 3.5s ease-in-out infinite; filter: drop-shadow(0 14px 34px rgba(168,85,247,0.5)); transition: transform .15s; }
+    .ghost:hover { transform: scale(1.06); }
+    .ghost:active { transform: scale(0.96); }
+    .ghost svg { width: 86px; height: auto; display: block; }
+    .bico { width: 18px; height: 18px; flex-shrink: 0; }
+    @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-12px); } }
+
+    .code {
+      font-size: clamp(88px, 22vw, 160px); font-weight: 800; line-height: 0.95; letter-spacing: -4px;
+      background: linear-gradient(135deg, #c084fc, #a855f7, #7c3aed);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px;
+    }
+    h1 { font-size: clamp(22px, 5vw, 30px); font-weight: 800; letter-spacing: -0.5px; margin-bottom: 14px; }
+    p.sub { font-size: 16px; color: var(--sub); line-height: 1.7; margin-bottom: 36px; }
+
+    .btns { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+    .btn {
+      padding: 14px 28px; border-radius: 12px; font-size: 15px; font-weight: 600; font-family: inherit;
+      text-decoration: none; cursor: pointer; display: inline-flex; align-items: center; gap: 9px;
+      transition: transform 0.2s, box-shadow 0.2s, background 0.2s, border-color 0.2s;
+    }
+    .btn-primary { background: linear-gradient(90deg, var(--primary), var(--primary2)); color: #fff; border: none; }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 12px 32px rgba(168,85,247,0.35); }
+    .btn-outline { background: rgba(255,255,255,0.03); border: 1px solid var(--border-strong); color: var(--text); }
+    .btn-outline:hover { transform: translateY(-2px); background: rgba(255,255,255,0.07); border-color: rgba(168,85,247,0.4); }
+
+    .tertiary { margin-top: 26px; font-size: 14px; color: var(--sub); }
+    .tertiary a { color: var(--primary); text-decoration: none; }
+    .tertiary a:hover { text-decoration: underline; }
+
+    /* ── ПАСХАЛКА: ghost-runner ── */
+    #game { display: none; flex-direction: column; align-items: center; gap: 14px; position: relative; z-index: 1; width: 100%; max-width: 700px; }
+    #game.on { display: flex; }
+    .g-stage { position: relative; width: 100%; }
+    #g-canvas {
+      width: 100%; height: auto; display: block; touch-action: manipulation;
+      background: rgba(2,6,23,0.55); border: 1px solid var(--border-strong); border-radius: 16px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.42);
+    }
+    .g-hud {
+      position: absolute; top: 12px; left: 16px; right: 16px; display: flex; justify-content: space-between;
+      font-weight: 700; font-size: 14px; color: var(--sub); pointer-events: none;
+      font-variant-numeric: tabular-nums;
+    }
+    .g-hud #g-score { color: var(--text); }
+    .g-over {
+      position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+      background: rgba(2,6,23,0.74); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); border-radius: 16px;
+    }
+    .g-over.on { display: flex; }
+    .g-over .go-title { font-size: 22px; font-weight: 800; letter-spacing: -0.5px; }
+    .g-over .go-score { font-size: 15px; color: var(--sub); }
+    .g-over .go-score b { color: var(--text); }
+    .g-restart {
+      margin-top: 6px; padding: 11px 24px; border-radius: 11px; border: none; cursor: pointer; font-family: inherit;
+      font-size: 14px; font-weight: 700; color: #fff; background: linear-gradient(90deg, var(--primary), var(--primary2));
+      transition: transform .15s, box-shadow .2s;
+    }
+    .g-restart:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(168,85,247,0.4); }
+    .g-foot { display: flex; align-items: center; gap: 18px; font-size: 13px; color: var(--sub); }
+    .g-foot button { background: none; border: none; color: var(--sub); cursor: pointer; font-family: inherit; font-size: 13px; }
+    .g-foot button:hover { color: var(--text); }
+
+    @media (prefers-reduced-motion: reduce) { .ghost { animation: none; } #mesh-bg { display: none; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="ghost">
+      <svg viewBox="0 0 48 60" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Призрак GhostEcos">
+        <defs>
+          <linearGradient id="gh" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#c084fc"/>
+            <stop offset=".55" stop-color="#a855f7"/>
+            <stop offset="1" stop-color="#7c3aed"/>
+          </linearGradient>
+        </defs>
+        <path d="M24 3C13.5 3 6 11 6 21v33l4.5-4.5L15 54l4.5-4.5L24 54l4.5-4.5L33 54l4.5-4.5L42 54V21C42 11 34.5 3 24 3Z" fill="url(#gh)"/>
+        <ellipse cx="17" cy="22" rx="4" ry="4.5" fill="#0b0418" opacity=".55"/>
+        <ellipse cx="31" cy="22" rx="4" ry="4.5" fill="#0b0418" opacity=".55"/>
+        <circle cx="18.5" cy="20.5" r="1.4" fill="#fff" opacity=".75"/>
+        <circle cx="32.5" cy="20.5" r="1.4" fill="#fff" opacity=".75"/>
+      </svg>
+    </div>
+    <div class="code">404</div>
+    <h1>Такой страницы нет</h1>
+    <p class="sub">
+      Похоже, ссылка с ошибкой или страница уже растворилась.
+      Этот призрак её не нашёл — но дальше есть куда пойти.
+    </p>
+    <div class="btns">
+      <a href="/" class="btn btn-primary">
+        <svg class="bico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.8 12 3l9 7.8"/><path d="M5.5 9.3V20h13V9.3"/></svg>
+        На главную
+      </a>
+      <a href="/social" class="btn btn-outline">
+        <svg class="bico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        В GhostSocial
+      </a>
+    </div>
+    <div class="tertiary">
+      Или скачай мессенджер — <a href="/lend/ghostchat/">GhostChat</a>
+    </div>
+  </div>
+
+  <!-- ПАСХАЛКА: ghost-runner -->
+  <div id="game">
+    <div class="g-stage">
+      <canvas id="g-canvas" width="700" height="220"></canvas>
+      <div class="g-hud"><span id="g-score">0</span><span id="g-best"></span></div>
+      <div class="g-over" id="gOver">
+        <div class="go-title">Призрака поймали</div>
+        <div class="go-score">счёт: <b id="goScore">0</b></div>
+        <button class="g-restart" id="gRestart">ещё раз</button>
+      </div>
+    </div>
+    <div class="g-foot">
+      <span>пробел / тап — прыжок</span>
+      <button id="gBack">← назад на 404</button>
+    </div>
+  </div>
+
+  <script src="/mesh.js"></script>
+
+  <!-- Ghost runner (динозаврик, но призрак) -->
+  <script>
+  (function(){
+    var ghostBtn = document.querySelector('.ghost');
+    var wrap     = document.querySelector('.wrap');
+    var game     = document.getElementById('game');
+    var canvas   = document.getElementById('g-canvas');
+    var ctx      = canvas.getContext('2d');
+    var scoreEl  = document.getElementById('g-score');
+    var bestEl   = document.getElementById('g-best');
+    var overEl   = document.getElementById('gOver');
+    var goScore  = document.getElementById('goScore');
+    if (!ghostBtn || !ctx) return;
+
+    var W = canvas.width, H = canvas.height, groundY = H - 38;
+    var GH = 40, GW = GH * 48 / 60;            // размер призрака на канвасе
+    var GX = 64;                               // x призрака (фикс)
+    var BEST_KEY = 'gc_ghost_run_best';
+    var ghostPath = new Path2D("M24 3C13.5 3 6 11 6 21v33l4.5-4.5L15 54l4.5-4.5L24 54l4.5-4.5L33 54l4.5-4.5L42 54V21C42 11 34.5 3 24 3Z");
+
+    var state, raf = null, active = false;
+
+    function best(){ return parseInt(localStorage.getItem(BEST_KEY) || '0', 10) || 0; }
+
+    function reset(){
+      state = { y: groundY - GH, vy: 0, onGround: true, obs: [], spawn: 45, speed: 5.5, dist: 0, score: 0, over: false, gx: 0 };
+      overEl.classList.remove('on');
+      scoreEl.textContent = '0';
+      bestEl.textContent = best() ? ('рекорд ' + best()) : '';
+    }
+
+    function start(){
+      reset(); active = true;
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(tick);
+    }
+
+    function jump(){
+      if (state.over){ start(); return; }
+      if (state.onGround){ state.vy = -12.2; state.onGround = false; }
+    }
+
+    function spawn(){
+      state.obs.push({ x: W + 10, w: 16 + (Math.random()*12|0), h: 24 + (Math.random()*26|0) });
+    }
+
+    function gameOver(){
+      state.over = true;
+      var b = best();
+      if (state.score > b){ b = state.score; localStorage.setItem(BEST_KEY, String(b)); }
+      bestEl.textContent = 'рекорд ' + b;
+      goScore.textContent = state.score;
+      overEl.classList.add('on');
+    }
+
+    function tick(){
+      if (!active) return;
+      // физика
+      state.speed = Math.min(12, state.speed + 0.0016);
+      state.vy += 0.7; state.y += state.vy;
+      if (state.y >= groundY - GH){ state.y = groundY - GH; state.vy = 0; state.onGround = true; }
+      state.gx = (state.gx - state.speed) % 24;
+
+      if (--state.spawn <= 0){
+        spawn();
+        state.spawn = Math.max(32, ((70 + Math.random()*60) * (6 / state.speed)) | 0);
+      }
+
+      var gx = GX + 4, gw = GW - 8, gbottom = state.y + GH - 4;
+      for (var i = state.obs.length - 1; i >= 0; i--){
+        var o = state.obs[i];
+        o.x -= state.speed;
+        if (gx < o.x + o.w && gx + gw > o.x && gbottom > groundY - o.h) gameOver();
+        if (o.x + o.w < 0) state.obs.splice(i, 1);
+      }
+
+      state.dist += state.speed;
+      state.score = (state.dist / 12) | 0;
+      scoreEl.textContent = state.score;
+
+      render();
+      if (!state.over) raf = requestAnimationFrame(tick);
+    }
+
+    function drawGrave(o){
+      var r = o.w / 2, top = groundY - o.h;
+      ctx.fillStyle = '#3f4a63';
+      ctx.strokeStyle = 'rgba(168,85,247,0.4)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(o.x, groundY);
+      ctx.lineTo(o.x, top + r);
+      ctx.arc(o.x + r, top + r, r, Math.PI, 0);
+      ctx.lineTo(o.x + o.w, groundY);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = 'rgba(241,245,249,0.4)';
+      ctx.lineWidth = 2;
+      var cx = o.x + r, cy = top + r + 5;
+      ctx.beginPath(); ctx.moveTo(cx, cy - 4); ctx.lineTo(cx, cy + 7); ctx.moveTo(cx - 4, cy); ctx.lineTo(cx + 4, cy); ctx.stroke();
+    }
+
+    function drawGhost(){
+      ctx.save();
+      ctx.translate(GX, state.y);
+      ctx.scale(GW / 48, GH / 60);
+      var g = ctx.createLinearGradient(0, 0, 48, 60);
+      g.addColorStop(0, '#c084fc'); g.addColorStop(0.55, '#a855f7'); g.addColorStop(1, '#7c3aed');
+      ctx.fillStyle = g; ctx.fill(ghostPath);
+      ctx.fillStyle = 'rgba(11,4,24,0.7)';
+      ctx.beginPath(); ctx.ellipse(17, 22, 4, 4.5, 0, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(31, 22, 4, 4.5, 0, 0, 7); ctx.fill();
+      ctx.restore();
+    }
+
+    function render(){
+      ctx.clearRect(0, 0, W, H);
+      ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(0, groundY); ctx.lineTo(W, groundY); ctx.stroke();
+      ctx.strokeStyle = 'rgba(168,85,247,0.4)'; ctx.lineWidth = 2;
+      for (var x = state.gx; x < W; x += 24){ ctx.beginPath(); ctx.moveTo(x, groundY + 6); ctx.lineTo(x + 10, groundY + 6); ctx.stroke(); }
+      for (var i = 0; i < state.obs.length; i++) drawGrave(state.obs[i]);
+      drawGhost();
+    }
+
+    function open(){ wrap.style.display = 'none'; game.classList.add('on'); start(); }
+    function close(){ active = false; if (raf) cancelAnimationFrame(raf); game.classList.remove('on'); wrap.style.display = ''; }
+
+    ghostBtn.addEventListener('click', open);
+    document.getElementById('gBack').addEventListener('click', close);
+    document.getElementById('gRestart').addEventListener('click', start);
+    canvas.addEventListener('pointerdown', function(){ if (active) jump(); });
+    document.addEventListener('keydown', function(e){
+      if (!active) return;
+      if (e.code === 'Space' || e.code === 'ArrowUp' || e.key === ' '){ e.preventDefault(); jump(); }
+      else if (e.code === 'Escape'){ close(); }
+    });
+  })();
+  </script>
+</body>
+</html>

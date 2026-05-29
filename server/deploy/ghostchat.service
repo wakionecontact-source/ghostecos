@@ -1,0 +1,20 @@
+[Unit]
+Description=GhostChat Relay Server
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/ghostchat
+# SECURITY (C1): секреты задаются ТОЛЬКО на сервере, НЕ хранятся в репозитории.
+# Каждый — отдельное стойкое значение. Сгенерировать:
+#   python3 -c "import secrets; print(secrets.token_hex(32))"
+# GC_JWT_SECRET обязателен и отдельный — иначе сервис не стартует (config.py).
+Environment=GC_JWT_SECRET=<set-on-server>
+Environment=GHOSTCHAT_ADMIN_KEY=<set-on-server>
+Environment=GHOSTCHAT_SUPPORT_PASSWORD=<set-on-server>
+Environment=GC_INTERNAL_KEY=<set-on-server-MUST-match-shop_web>
+ExecStart=/opt/ghostchat/venv/bin/python -m uvicorn main_remote:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

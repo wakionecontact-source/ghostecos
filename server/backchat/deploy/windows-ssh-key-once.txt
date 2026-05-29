@@ -1,0 +1,20 @@
+Один раз с Windows (PowerShell), чтобы дальше заходить без пароля — пароль вводишь только в последней строке.
+
+1) Ключ:
+   ssh-keygen -t ed25519 -f "$env:USERPROFILE\.ssh\id_ed25519_ghostchat" -N '""'
+
+2) Публичный ключ на сервер (подставь USER и IP):
+   Get-Content "$env:USERPROFILE\.ssh\id_ed25519_ghostchat.pub" | ssh USER@IP "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+
+3) Файл %USERPROFILE%\.ssh\config :
+   Host ghostchat
+     HostName IP_СЕРВЕРА
+     User USER
+     IdentityFile ~/.ssh/id_ed25519_ghostchat
+
+4) Проверка:
+   ssh ghostchat "uname -a"
+
+После этого в Cursor можно запускать из корня проекта:
+   ssh ghostchat "sudo systemctl status ghostchat"
+(если sudo на сервере без пароля для твоего пользователя настроишь отдельно — иначе команды с sudo только у тебя вручную в SSH).

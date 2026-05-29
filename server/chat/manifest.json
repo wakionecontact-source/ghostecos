@@ -1,0 +1,18 @@
+{
+  "name": "GhostChat",
+  "short_name": "GhostChat",
+  "description": "Приватный мессенджер с E2E-шифрованием",
+  "start_url": "/chat/",
+  "scope": "/chat/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#020617",
+  "theme_color": "#7c3aed",
+  "lang": "ru",
+  "categories": ["social", "communication"],
+  "icons": [
+    { "src": "/favicon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/favicon.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}

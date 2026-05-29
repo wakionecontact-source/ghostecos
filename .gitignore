@@ -1,0 +1,53 @@
+# Build / deps
+__pycache__/
+*.pyc
+*.pyo
+venv/
+node_modules/
+.venv/
+
+# Database & runtime
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.log
+
+# Backups
+*.bak
+*.bak2
+*.bak.*
+*.save
+*.save.*
+*.p
+dev_backups/
+
+# Archives & binaries
+*.zip
+*.apk
+
+# Local media uploads (test data)
+server/social/media/
+server/social/uploads/
+uploads/
+media/
+
+# Secrets / env
+.env
+.env.*
+*.pem
+*.key
+*_secret.*
+*credentials*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Personal binaries at root
+/photo_*.jpg
+/ghostchat_*.apk

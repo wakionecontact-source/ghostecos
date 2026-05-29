@@ -1,0 +1,1203 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GhostChat — Приватный мессенджер</title>
+  <link rel="icon" type="image/png" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg:       #020617;
+      --bg-deep:  #060a1a;
+      --surface:  rgba(15, 23, 42, 0.45);
+      --surface2: rgba(30, 41, 59, 0.6);
+      --surface-solid: #0f172a;
+      --border:   rgba(255,255,255,0.08);
+      --border-strong: rgba(255,255,255,0.13);
+      --primary:  #a855f7;
+      --primary2: #7c3aed;
+      --text:     #f1f5f9;
+      --sub:      #94a3b8;
+      --green:    #4ade80;
+    }
+
+    html { scroll-behavior: smooth; background: var(--bg); }
+
+    body {
+      background: transparent;
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    /* ── MESH CANVAS ── */
+    #mesh-bg {
+      position: fixed; inset: 0; width: 100%; height: 100%;
+      z-index: 0; pointer-events: none; display: block;
+    }
+    body::before {
+      content: ""; position: fixed; inset: 0; z-index: -1;
+      background:
+        radial-gradient(80% 60% at 20% 0%,  rgba(124,58,237,0.18), transparent 60%),
+        radial-gradient(70% 60% at 100% 100%, rgba(168,85,247,0.12), transparent 60%),
+        linear-gradient(180deg, var(--bg-deep), var(--bg));
+    }
+
+    /* ── NAV ── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 40px;
+      background: rgba(2,6,23,0.6);
+      backdrop-filter: blur(22px);
+      -webkit-backdrop-filter: blur(22px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-logo {
+      font-size: 20px; font-weight: 800; letter-spacing: 1px;
+      background: linear-gradient(90deg, var(--primary), var(--primary2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .nav-links { display: flex; gap: 32px; }
+    .nav-links a {
+      color: var(--sub); text-decoration: none; font-size: 14px; font-weight: 500;
+      transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--text); }
+    .nav-btn {
+      padding: 8px 20px; border-radius: 10px; cursor: pointer;
+      font-size: 14px; font-weight: 600; font-family: inherit;
+      transition: opacity 0.2s, transform 0.15s;
+      text-decoration: none;
+    }
+    .nav-btn-primary {
+      background: linear-gradient(90deg, var(--primary), var(--primary2));
+      color: white; border: none;
+    }
+    .nav-btn-primary:hover { opacity: 0.85; transform: translateY(-1px); }
+    .nav-btn-ghost {
+      background: transparent;
+      border: 1px solid var(--border-strong);
+      color: var(--text);
+    }
+    .nav-btn-ghost:hover { background: rgba(255,255,255,0.05); }
+
+    /* Profile dropdown (for logged-in users) */
+    .profile-wrap { position: relative; }
+    .profile-btn {
+      width: 36px; height: 36px; border-radius: 50%; cursor: pointer; border: none;
+      background: linear-gradient(135deg, var(--primary), var(--primary2));
+      color: white; font-weight: 700; font-size: 14px;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 6px 18px rgba(168,85,247,0.35);
+    }
+    .profile-menu {
+      position: absolute; top: 46px; right: 0; min-width: 220px;
+      background: rgba(15,23,42,0.9);
+      backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+      border: 1px solid var(--border-strong); border-radius: 14px;
+      padding: 6px; box-shadow: 0 20px 50px rgba(0,0,0,0.55);
+      display: none;
+    }
+    .profile-menu.show { display: block; }
+    .pm-head { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--sub); }
+    .pm-head b { display: block; color: var(--text); font-size: 14px; margin-bottom: 3px; }
+    .profile-menu a, .profile-menu button {
+      display: block; width: 100%; text-align: left; padding: 10px 12px;
+      background: transparent; border: none; color: var(--text); font-size: 14px;
+      border-radius: 8px; cursor: pointer; font-family: inherit; text-decoration: none;
+    }
+    .profile-menu a:hover, .profile-menu button:hover { background: rgba(255,255,255,0.06); }
+    .pm-sep { border-top: 1px solid var(--border); margin: 4px 0; }
+
+    /* ── HERO ── */
+    .hero {
+      min-height: 100vh;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center; padding: 120px 24px 80px;
+      position: relative; z-index: 1; overflow: hidden;
+    }
+
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 999px; margin-bottom: 24px;
+      background: rgba(168,85,247,0.1); border: 1px solid rgba(168,85,247,0.3);
+      font-size: 13px; color: var(--primary); font-weight: 500;
+    }
+    .hero-badge span { width: 6px; height: 6px; border-radius: 50%;
+                        background: var(--primary); display: inline-block;
+                        animation: pulse 2s infinite; }
+    @keyframes pulse {
+      0%,100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.4; transform: scale(0.8); }
+    }
+
+    h1 {
+      font-size: clamp(48px, 8vw, 96px); font-weight: 800; line-height: 1.05;
+      letter-spacing: -2px; margin-bottom: 24px;
+    }
+    h1 .grad, .grad {
+      background: linear-gradient(135deg, #c084fc, #a855f7, #7c3aed);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+
+    .hero-sub {
+      font-size: clamp(16px, 2vw, 20px); color: var(--sub); max-width: 560px;
+      line-height: 1.7; margin-bottom: 40px;
+    }
+
+    .hero-btns { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-bottom: 64px; }
+    .btn-primary {
+      padding: 14px 32px; border-radius: 12px; border: none; cursor: pointer;
+      background: linear-gradient(90deg, var(--primary), var(--primary2));
+      color: white; font-size: 16px; font-weight: 600; font-family: inherit;
+      transition: transform 0.2s, box-shadow 0.2s;
+      text-decoration: none; display: inline-flex; align-items: center; gap: 8px;
+    }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 12px 32px rgba(168,85,247,0.35); }
+    .btn-outline {
+      padding: 14px 32px; border-radius: 12px; cursor: pointer;
+      background: rgba(255,255,255,0.03); border: 1px solid var(--border-strong);
+      color: var(--text); font-size: 16px; font-weight: 600; font-family: inherit;
+      transition: background 0.2s, transform 0.2s, border-color 0.2s;
+      text-decoration: none; display: inline-flex; align-items: center; gap: 8px;
+    }
+    .btn-outline:hover { background: rgba(255,255,255,0.07); transform: translateY(-2px); border-color: rgba(168,85,247,0.4); }
+
+    /* ── STATS ── */
+    .stats { display: flex; gap: 40px; flex-wrap: wrap; justify-content: center; }
+    .stat { text-align: center; }
+    .stat-num {
+      font-size: 32px; font-weight: 800;
+      background: linear-gradient(90deg, var(--primary), var(--primary2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .stat-label { font-size: 13px; color: var(--sub); margin-top: 4px; }
+
+    /* ── SECTIONS ── */
+    section { padding: 100px 24px; max-width: 1100px; margin: 0 auto; position: relative; z-index: 1; }
+
+    .section-label {
+      font-size: 12px; font-weight: 600; letter-spacing: 2px;
+      color: var(--primary); text-transform: uppercase; margin-bottom: 16px;
+    }
+    h2 {
+      font-size: clamp(28px, 4vw, 44px); font-weight: 800; line-height: 1.15;
+      letter-spacing: -1px; margin-bottom: 16px;
+    }
+    .section-sub { font-size: 17px; color: var(--sub); line-height: 1.7; max-width: 560px; }
+
+    /* ── GLASS CARDS ── */
+    .glass-card {
+      background: var(--surface);
+      backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border-strong);
+      border-radius: 16px; padding: 28px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.28);
+    }
+
+    /* ── FEATURES GRID ── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 16px; margin-top: 56px;
+    }
+    .feature-card {
+      background: var(--surface);
+      backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      border: 1px solid var(--border);
+      border-radius: 16px; padding: 28px;
+      transition: border-color 0.2s, transform 0.2s;
+      position: relative; overflow: hidden;
+    }
+    .feature-card::before {
+      content: ''; position: absolute; inset: 0; border-radius: 16px;
+      background: linear-gradient(135deg, rgba(168,85,247,0.05), transparent);
+      opacity: 0; transition: opacity 0.3s;
+    }
+    .feature-card:hover { border-color: rgba(168,85,247,0.35); transform: translateY(-4px); }
+    .feature-card:hover::before { opacity: 1; }
+    .feature-icon {
+      width: 48px; height: 48px; border-radius: 12px; margin-bottom: 16px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; color: var(--primary);
+      background: rgba(168,85,247,0.12); border: 1px solid rgba(168,85,247,0.2);
+    }
+    .feature-card h3 { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+    .feature-card p { font-size: 14px; color: var(--sub); line-height: 1.6; }
+
+    /* ── CRYPTO SECTION ── */
+    .crypto-layout {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 48px;
+      align-items: center; margin-top: 56px;
+    }
+    .crypto-card {
+      background: var(--surface);
+      backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      border: 1px solid var(--border); border-radius: 16px; padding: 20px;
+      margin-bottom: 12px; display: flex; align-items: center; gap: 16px;
+    }
+    .crypto-icon {
+      width: 44px; height: 44px; border-radius: 10px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 17px; color: var(--primary);
+      background: rgba(168,85,247,0.12); border: 1px solid rgba(168,85,247,0.2);
+    }
+    .crypto-card h4 { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+    .crypto-card p  { font-size: 13px; color: var(--sub); line-height: 1.5; }
+    .crypto-visual {
+      background: var(--surface);
+      backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      border: 1px solid var(--border);
+      border-radius: 20px; padding: 28px; font-family: 'Courier New', monospace;
+      font-size: 13px; position: relative; overflow: hidden;
+    }
+    .crypto-visual::before {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(135deg, rgba(168,85,247,0.06), transparent);
+    }
+    .code-line { padding: 4px 0; position: relative; }
+    .code-key   { color: #7dd3fc; }
+    .code-val   { color: #86efac; }
+    .code-str   { color: #fca5a5; }
+    .code-comment { color: var(--sub); }
+
+    /* ── PROTOCOL ── */
+    .protocol-flow { display: flex; flex-direction: column; gap: 0; margin-top: 48px; }
+    .proto-step { display: flex; gap: 20px; align-items: flex-start; position: relative; }
+    .proto-step:not(:last-child)::after {
+      content: ''; position: absolute; left: 19px; top: 44px; bottom: -20px;
+      width: 2px; background: linear-gradient(to bottom, rgba(168,85,247,0.4), transparent);
+    }
+    .proto-num {
+      width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: 700;
+      background: linear-gradient(135deg, var(--primary), var(--primary2));
+      color: white; margin-top: 2px;
+    }
+    .proto-content { padding-bottom: 32px; }
+    .proto-content h4 { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+    .proto-content p  { font-size: 14px; color: var(--sub); line-height: 1.6; }
+
+    /* ── PLATFORMS ── */
+    .platforms { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 48px; }
+    .platform-card {
+      flex: 1; min-width: 200px;
+      background: var(--surface);
+      backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      border: 1px solid var(--border); border-radius: 16px; padding: 28px;
+      text-align: center; transition: border-color 0.2s, transform 0.2s;
+    }
+    .platform-card:hover { border-color: rgba(168,85,247,0.35); transform: translateY(-4px); }
+    .platform-icon { font-size: 32px; margin-bottom: 12px; display: block; color: var(--primary); }
+    .platform-card h3 { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+    .platform-card p { font-size: 13px; color: var(--sub); }
+    .platform-badge {
+      display: inline-block; margin-top: 12px;
+      padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    }
+    .badge-ready { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
+    .badge-soon  { background: rgba(168,85,247,0.12); color: var(--primary); border: 1px solid rgba(168,85,247,0.3); }
+
+    /* ── MESH SECTION ── */
+    .mesh-section {
+      background: linear-gradient(135deg, rgba(168,85,247,0.1), rgba(124,58,237,0.06));
+      backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      border: 1px solid rgba(168,85,247,0.22);
+      border-radius: 24px; padding: 56px; text-align: center;
+      position: relative; overflow: hidden;
+    }
+    .mesh-section::before {
+      content: ''; position: absolute; width: 500px; height: 500px;
+      top: -250px; left: 50%; transform: translateX(-50%);
+      background: radial-gradient(circle, rgba(168,85,247,0.12), transparent);
+      pointer-events: none;
+    }
+    .mesh-section h2 { font-size: 36px; }
+    .mesh-section p  { color: var(--sub); max-width: 520px; margin: 16px auto 0; font-size: 16px; line-height: 1.7; }
+
+    /* ── PREMIUM SECTION ── */
+    .premium-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 56px;
+    }
+    .premium-price-card {
+      background: linear-gradient(135deg, rgba(168,85,247,0.12), rgba(124,58,237,0.08));
+      backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(168,85,247,0.3); border-radius: 20px;
+      padding: 36px 28px; text-align: center; position: relative; overflow: hidden;
+    }
+    .premium-price-card::before {
+      content: ''; position: absolute; inset: 0; pointer-events: none;
+      background: linear-gradient(135deg, rgba(168,85,247,0.05), transparent);
+    }
+    .premium-features-card {
+      background: var(--surface);
+      backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      border: 1px solid var(--border); border-radius: 20px; padding: 36px 28px;
+    }
+    .premium-feature-item {
+      display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px;
+    }
+    .premium-feature-item:last-child { margin-bottom: 0; }
+    .pfi-icon {
+      width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
+      background: rgba(74,222,128,0.12); border: 1px solid rgba(74,222,128,0.25);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; color: var(--green); margin-top: 1px;
+    }
+    .pfi-text h4 { font-size: 15px; font-weight: 600; margin-bottom: 2px; }
+    .pfi-text p { font-size: 13px; color: var(--sub); line-height: 1.5; }
+
+    .price-big {
+      font-size: 64px; font-weight: 800; line-height: 1;
+      background: linear-gradient(135deg, #c084fc, #a855f7, #7c3aed);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      position: relative;
+    }
+    .price-strike {
+      font-size: 20px; color: var(--sub); text-decoration: line-through;
+      margin-bottom: 4px;
+    }
+    .discount-badge {
+      display: inline-block; padding: 4px 12px; border-radius: 999px;
+      background: rgba(74,222,128,0.12); border: 1px solid rgba(74,222,128,0.3);
+      color: var(--green); font-size: 12px; font-weight: 600; margin-bottom: 16px;
+    }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 40px; display: flex;
+      justify-content: space-between; align-items: center;
+      flex-wrap: wrap; gap: 16px; max-width: 1100px; margin: 0 auto;
+      position: relative; z-index: 1;
+    }
+    .footer-logo {
+      font-size: 18px; font-weight: 800;
+      background: linear-gradient(90deg, var(--primary), var(--primary2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    footer p { font-size: 13px; color: var(--sub); }
+
+    /* ── MODAL ── */
+    #modal-overlay {
+      display: none; position: fixed; inset: 0; z-index: 999;
+      background: rgba(2,6,23,0.78); backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      align-items: center; justify-content: center;
+    }
+    .modal-box {
+      background: rgba(15,23,42,0.9);
+      backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+      border: 1px solid rgba(168,85,247,0.25);
+      border-radius: 24px; padding: 48px 40px; max-width: 440px; width: 90%;
+      text-align: center; position: relative;
+      box-shadow: 0 32px 80px rgba(0,0,0,0.6), 0 0 60px rgba(168,85,247,0.08);
+    }
+    .modal-close {
+      position: absolute; top: 16px; right: 16px;
+      background: rgba(255,255,255,0.06); border: none; border-radius: 8px;
+      width: 32px; height: 32px; cursor: pointer; color: var(--sub); font-size: 16px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .modal-close:hover { background: rgba(255,255,255,0.12); color: var(--text); }
+
+    /* ── POPUPS ── */
+    .popup {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(120%);
+      z-index: 800; max-width: 420px; width: calc(100% - 32px);
+      background: rgba(15,23,42,0.92);
+      backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+      border: 1px solid rgba(168,85,247,0.3);
+      border-radius: 20px; padding: 22px 24px;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.55);
+      transition: transform 0.4s cubic-bezier(0.34,1.56,0.64,1), opacity 0.3s;
+      opacity: 0;
+    }
+    .popup.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+    .popup-icon {
+      width: 44px; height: 44px; border-radius: 12px; margin-bottom: 14px;
+      background: rgba(168,85,247,0.12); border: 1px solid rgba(168,85,247,0.25);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; color: var(--primary);
+    }
+    .popup h4 { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+    .popup p  { font-size: 14px; color: var(--sub); line-height: 1.5; margin-bottom: 16px; }
+    .popup-btns { display: flex; gap: 8px; }
+    .popup-btn-primary {
+      flex: 1; padding: 10px 16px; border-radius: 10px; border: none; cursor: pointer;
+      background: linear-gradient(90deg, var(--primary), var(--primary2));
+      color: white; font-size: 14px; font-weight: 600; font-family: inherit;
+      transition: opacity 0.2s; text-decoration: none;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    .popup-btn-primary:hover { opacity: 0.85; }
+    .popup-btn-ghost {
+      padding: 10px 14px; border-radius: 10px; cursor: pointer;
+      background: transparent; border: 1px solid var(--border-strong);
+      color: var(--sub); font-size: 14px; font-weight: 500; font-family: inherit;
+      transition: color 0.2s, border-color 0.2s;
+    }
+    .popup-btn-ghost:hover { color: var(--text); border-color: rgba(168,85,247,0.4); }
+    .popup-dismiss {
+      position: absolute; top: 12px; right: 12px;
+      background: none; border: none; color: var(--sub); cursor: pointer;
+      font-size: 16px; padding: 4px;
+    }
+    .popup-dismiss:hover { color: var(--text); }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 768px) {
+      nav { padding: 12px 16px; }
+      .nav-links { display: none; }
+      .nav-btn { padding: 6px 14px; font-size: 13px; }
+      .crypto-layout { grid-template-columns: 1fr; }
+      .premium-grid { grid-template-columns: 1fr; }
+    }
+
+    /* ── SCROLLBAR ── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.3); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(168,85,247,0.5); }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+      #mesh-bg { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-logo">GhostChat</div>
+  <div class="nav-links">
+    <a href="#features">Функции</a>
+    <a href="#crypto">Шифрование</a>
+    <a href="#protocol">Протокол</a>
+    <a href="#platforms">Платформы</a>
+    <a href="#ghostsocial">GhostSocial</a>
+    <a href="#premium">Premium</a>
+  </div>
+  <div class="nav-right" style="display:flex; align-items:center; gap:10px;">
+    <button class="nav-btn nav-btn-primary" onclick="openModal()">
+      <i class="fa-solid fa-download" style="font-size:12px;"></i> Скачать
+    </button>
+    <a class="nav-btn nav-btn-ghost" id="loginBtn" href="/social">Войти</a>
+    <div id="profileWrap" class="profile-wrap" style="display:none;">
+      <button id="profileBtn" class="profile-btn">?</button>
+      <div id="profileMenu" class="profile-menu">
+        <div id="pmHead" class="pm-head"></div>
+        <a href="/shop/profile">Мой профиль</a>
+        <a href="/shop/premium" id="pmBuy">Купить Premium ⭐</a>
+        <div class="pm-sep"></div>
+        <button id="pmLogout">Выйти</button>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<!-- DOWNLOAD MODAL -->
+<div id="modal-overlay" onclick="closeModal()" style="display:none; align-items:center; justify-content:center;">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeModal()"><i class="fa-solid fa-xmark"></i></button>
+    <div style="
+      width:64px; height:64px; border-radius:16px; margin:0 auto 20px;
+      background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.25);
+      display:flex; align-items:center; justify-content:center;
+      font-size:26px; color:#a855f7;
+    "><i class="fa-solid fa-ghost"></i></div>
+
+    <h3 style="font-size:22px; font-weight:800; margin-bottom:10px; letter-spacing:-0.5px;">
+      Открытая бета
+    </h3>
+    <p style="color:var(--sub); font-size:15px; line-height:1.7; margin-bottom:24px;">
+      <span id="modalVersionText">GhostChat — скачай APK и установи на Android.</span><br>
+      Нашёл баг? Напиши нам в Telegram.
+    </p>
+
+    <a id="downloadLink" href="/download/latest" style="
+      display:inline-flex; align-items:center; gap:10px;
+      padding:14px 28px; border-radius:12px; text-decoration:none;
+      background:linear-gradient(90deg,#a855f7,#7c3aed);
+      color:white; font-size:15px; font-weight:600;
+      transition:transform 0.2s, box-shadow 0.2s;
+    " onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 12px 32px rgba(168,85,247,0.35)'"
+       onmouseout="this.style.transform='';this.style.boxShadow=''">
+      <i class="fa-solid fa-download" style="font-size:18px;"></i>
+      Скачать APK
+    </a>
+
+    <div style="margin-top:20px;">
+      <a href="https://t.me/waki_one" target="_blank" rel="noopener" style="color:var(--primary); font-size:13px; text-decoration:none;">
+        <i class="fa-brands fa-telegram" style="margin-right:4px;"></i> @waki_one — обновления и баг-репорты
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- POPUP: first visit -->
+<div class="popup" id="popupFirstVisit">
+  <button class="popup-dismiss" onclick="dismissFirstVisit(true)"><i class="fa-solid fa-xmark"></i></button>
+  <div class="popup-icon"><i class="fa-solid fa-ghost"></i></div>
+  <h4>Впервые в GhostChat?</h4>
+  <p>Скачай последнюю версию мессенджера — приватное общение без следов.</p>
+  <div class="popup-btns">
+    <a id="popupDownloadBtn" href="/download/latest" class="popup-btn-primary" onclick="onPopupDownload()">
+      <i class="fa-solid fa-download"></i> Скачать
+    </a>
+    <button class="popup-btn-ghost" onclick="dismissFirstVisit(true)">Потом</button>
+  </div>
+</div>
+
+<!-- POPUP: version update -->
+<div class="popup" id="popupVersion">
+  <button class="popup-dismiss" onclick="dismissVersionPopup()"><i class="fa-solid fa-xmark"></i></button>
+  <div class="popup-icon"><i class="fa-solid fa-arrows-rotate" style="font-size:18px;"></i></div>
+  <h4 id="popupVersionTitle">Доступно обновление</h4>
+  <p id="popupVersionText">Новая версия GhostChat уже на сайте.</p>
+  <div class="popup-btns">
+    <a id="popupVersionDownload" href="/download/latest" class="popup-btn-primary" onclick="onVersionDownload()">
+      <i class="fa-solid fa-download"></i> Обновить
+    </a>
+    <button class="popup-btn-ghost" onclick="dismissVersionPopup()">Уже скачал</button>
+  </div>
+</div>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-badge">
+    <span></span> Открытый исходный код · Без слежки
+  </div>
+
+  <h1>
+    Общайся<br>
+    <span class="grad">без следов.</span>
+  </h1>
+
+  <p class="hero-sub">
+    GhostChat — мессенджер нового поколения. Сквозное шифрование,
+    анонимность по умолчанию, работа без интернета через LAN-сеть.
+    Никаких серверных логов. Никаких компромиссов.
+  </p>
+
+  <div class="hero-btns">
+    <button class="btn-primary" onclick="openModal()">
+      <i class="fa-solid fa-download"></i> Скачать для Android
+    </button>
+    <a href="/chat/?from=/" class="btn-outline">
+      <i class="fa-solid fa-comments"></i> Открыть веб-версию
+    </a>
+    <a href="https://t.me/waki_one" target="_blank" rel="noopener" class="btn-outline">
+      <i class="fa-brands fa-telegram"></i> Подробнее
+    </a>
+  </div>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-num">E2E</div>
+      <div class="stat-label">Сквозное шифрование</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">0</div>
+      <div class="stat-label">Метаданных на сервере</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">LAN</div>
+      <div class="stat-label">Работа без интернета</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">AES</div>
+      <div class="stat-label">256-bit шифрование</div>
+    </div>
+  </div>
+</div>
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="section-label">Возможности</div>
+  <h2>Всё что нужно.<br>Ничего лишнего.</h2>
+  <p class="section-sub">
+    Каждая функция спроектирована с приоритетом приватности.
+    Никаких компромиссов между удобством и безопасностью.
+  </p>
+
+  <div class="features-grid">
+    <div class="feature-card">
+      <div class="feature-icon"><i class="fa-solid fa-lock"></i></div>
+      <h3>Сквозное шифрование</h3>
+      <p>Каждое сообщение шифруется на устройстве. Ключи никогда не покидают твой телефон. Сервер видит только зашифрованные данные.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon"><i class="fa-solid fa-satellite-dish"></i></div>
+      <h3>LAN-режим</h3>
+      <p>Общайся в локальной сети без интернета. Прямое P2P-подключение между устройствами через Wi-Fi или Ethernet.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon"><i class="fa-solid fa-file-shield"></i></div>
+      <h3>Передача файлов</h3>
+      <p>Отправляй файлы любого типа. Всё зашифровано AES-256-GCM. Файлы не хранятся на сервере дольше необходимого.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon"><i class="fa-solid fa-users"></i></div>
+      <h3>Групповые чаты</h3>
+      <p>Создавай закрытые каналы и групповые чаты с управлением участниками, ролями и правами доступа.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon"><i class="fa-solid fa-mobile-screen"></i></div>
+      <h3>Мультиустройство</h3>
+      <p>Один аккаунт на нескольких устройствах. Система уровней доверия — ты контролируешь кому и что разрешено.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+      <h3>Режим паники</h3>
+      <p>Один жест — и все данные уничтожены. Экстренная очистка всей переписки и ключей шифрования по паролю тревоги.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon"><i class="fa-solid fa-microphone"></i></div>
+      <h3>Диктофон</h3>
+      <p>Запись голосовых заметок прямо в приложении. Защищён паролем, изолирован от основных чатов.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon"><i class="fa-solid fa-reply"></i></div>
+      <h3>Ответы и пересылка</h3>
+      <p>Отвечай на конкретные сообщения, пересылай контент между чатами. Полный контроль над перепиской.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon"><i class="fa-solid fa-bell"></i></div>
+      <h3>Фоновые уведомления</h3>
+      <p>Получай уведомления даже когда приложение закрыто. Фоновый сервис работает без разрядки батареи.</p>
+    </div>
+  </div>
+</section>
+
+<!-- CRYPTO -->
+<section id="crypto">
+  <div class="section-label">Безопасность</div>
+  <h2>Военный уровень<br>шифрования.</h2>
+  <p class="section-sub">
+    Используем те же алгоритмы, что применяют спецслужбы и банки.
+    Открытые стандарты, проверенные временем.
+  </p>
+
+  <div class="crypto-layout">
+    <div>
+      <div class="crypto-card">
+        <div class="crypto-icon"><i class="fa-solid fa-key"></i></div>
+        <div>
+          <h4>X25519 — обмен ключами</h4>
+          <p>Протокол Диффи-Хеллмана на эллиптической кривой. Сессионный ключ вычисляется независимо на каждом устройстве. Сервер не имеет доступа.</p>
+        </div>
+      </div>
+      <div class="crypto-card">
+        <div class="crypto-icon"><i class="fa-solid fa-pen-nib"></i></div>
+        <div>
+          <h4>Ed25519 — цифровая подпись</h4>
+          <p>Каждое сообщение подписано. Невозможно подделать отправителя или изменить содержимое без обнаружения.</p>
+        </div>
+      </div>
+      <div class="crypto-card">
+        <div class="crypto-icon"><i class="fa-solid fa-shield-halved"></i></div>
+        <div>
+          <h4>AES-256-GCM — шифрование данных</h4>
+          <p>256-битный ключ, режим Galois/Counter с аутентификацией. Шифрует и сообщения, и файлы, и метаданные.</p>
+        </div>
+      </div>
+      <div class="crypto-card">
+        <div class="crypto-icon"><i class="fa-solid fa-vault"></i></div>
+        <div>
+          <h4>Argon2id — защита паролей</h4>
+          <p>Лучший современный алгоритм хеширования. Устойчив к GPU-атакам и брутфорсу. Твой пароль невозможно взломать перебором.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="crypto-visual">
+      <div class="code-line"><span class="code-comment">// Установка сессионного ключа</span></div>
+      <div class="code-line"><span class="code-key">const</span> <span class="code-val">myPriv</span> = X25519.generatePrivate()</div>
+      <div class="code-line"><span class="code-key">const</span> <span class="code-val">myPub</span>  = X25519.getPublic(myPriv)</div>
+      <br>
+      <div class="code-line"><span class="code-comment">// Обмен публичными ключами</span></div>
+      <div class="code-line"><span class="code-key">const</span> <span class="code-val">shared</span> = X25519.diffieHellman(</div>
+      <div class="code-line">  <span class="code-val">myPriv</span>, <span class="code-val">theirPub</span></div>
+      <div class="code-line">)</div>
+      <br>
+      <div class="code-line"><span class="code-comment">// Шифрование сообщения</span></div>
+      <div class="code-line"><span class="code-key">const</span> <span class="code-val">cipher</span> = AES_GCM.encrypt(</div>
+      <div class="code-line">  <span class="code-val">message</span>,</div>
+      <div class="code-line">  key: <span class="code-val">shared</span>,</div>
+      <div class="code-line">  nonce: <span class="code-val">randomBytes</span>(<span class="code-str">12</span>)</div>
+      <div class="code-line">)</div>
+      <br>
+      <div class="code-line"><span class="code-comment">// Подпись Ed25519</span></div>
+      <div class="code-line"><span class="code-key">const</span> <span class="code-val">sig</span> = Ed25519.sign(cipher, <span class="code-val">privKey</span>)</div>
+      <br>
+      <div class="code-line" style="color:#4ade80;"><i class="fa-solid fa-check" style="margin-right:6px;"></i>Сервер видит только зашифрованные байты</div>
+    </div>
+  </div>
+</section>
+
+<!-- PROTOCOL -->
+<section id="protocol">
+  <div class="section-label">Протокол</div>
+  <h2>Как работает<br>доставка сообщений.</h2>
+  <p class="section-sub">
+    Надёжная схема с подтверждениями. Сообщение либо доставлено,
+    либо ты об этом знаешь.
+  </p>
+
+  <div class="protocol-flow">
+    <div class="proto-step">
+      <div class="proto-num">1</div>
+      <div class="proto-content">
+        <h4>Шифрование на устройстве</h4>
+        <p>Сообщение шифруется локально сессионным ключом X25519 + AES-256-GCM ещё до отправки на сервер.</p>
+      </div>
+    </div>
+    <div class="proto-step">
+      <div class="proto-num">2</div>
+      <div class="proto-content">
+        <h4>Сервер хранит резервную копию</h4>
+        <p>Сервер принимает зашифрованный блоб и подтверждает сохранение. На сообщении — иконка 💾 (сохранено на сервере).</p>
+      </div>
+    </div>
+    <div class="proto-step">
+      <div class="proto-num">3</div>
+      <div class="proto-content">
+        <h4>Доставка получателю</h4>
+        <p>Если получатель онлайн — сервер немедленно пересылает сообщение. Если офлайн — хранит до подключения.</p>
+      </div>
+    </div>
+    <div class="proto-step">
+      <div class="proto-num">4</div>
+      <div class="proto-content">
+        <h4>Подтверждение доставки</h4>
+        <p>Получатель сохраняет сообщение и отправляет ACK. Сервер удаляет резервную копию и сообщает отправителю — ✓ доставлено.</p>
+      </div>
+    </div>
+    <div class="proto-step">
+      <div class="proto-num">5</div>
+      <div class="proto-content">
+        <h4>Статус прочтения</h4>
+        <p>Когда получатель открывает чат — отправитель получает ✓✓. Управление статусами полностью в твоих руках.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PLATFORMS -->
+<section id="platforms">
+  <div class="section-label">Платформы</div>
+  <h2>GhostChat везде.</h2>
+  <p class="section-sub">
+    Один аккаунт — все устройства. Нативный Android, PWA на iOS,
+    десктоп в разработке.
+  </p>
+
+  <div class="platforms">
+    <div class="platform-card">
+      <span class="platform-icon"><i class="fa-brands fa-android"></i></span>
+      <h3>Android</h3>
+      <p>Flutter-приложение. Поддержка фонового режима, уведомлений, LAN, BLE и серверных чатов.</p>
+      <span class="platform-badge badge-ready">Доступно сейчас</span>
+    </div>
+    <div class="platform-card">
+      <span class="platform-icon"><i class="fa-brands fa-apple"></i></span>
+      <h3>iOS</h3>
+      <p>Доступно как PWA: открой сайт в Safari → «Поделиться» → «На экран „Домой"». Работает как обычное приложение.</p>
+      <span class="platform-badge badge-ready">Доступно · PWA</span>
+    </div>
+    <div class="platform-card">
+      <span class="platform-icon"><i class="fa-solid fa-desktop"></i></span>
+      <h3>Desktop</h3>
+      <p>Нативное приложение на Rust + Tauri для Windows, macOS и Linux.</p>
+      <span class="platform-badge badge-soon">В разработке</span>
+    </div>
+  </div>
+</section>
+
+<!-- MESH -->
+<section>
+  <div class="mesh-section">
+    <div class="section-label" style="text-align:center">Будущее</div>
+    <h2>Mesh-сеть.<br>Без серверов вообще.</h2>
+    <p>
+      Следующий шаг — децентрализованная Mesh-сеть. Устройства соединяются
+      напрямую, маршрутизируют сообщения через соседей. Никаких серверов,
+      никаких точек отказа, никаких точек слежки.
+    </p>
+  </div>
+</section>
+
+<!-- GHOSTSOCIAL -->
+<section id="ghostsocial" style="text-align:center">
+  <div class="section-label">Уже работает</div>
+  <h2>GhostSocial.<br>Социалка экосистемы.</h2>
+  <p class="section-sub" style="max-width:600px;margin:0 auto 32px;">
+    Лента, реакции, подписки, теги, упоминания, шаринг постов, уведомления.
+    Полноценный продукт, открыт прямо в браузере. Аккаунт общий с GhostChat.
+  </p>
+  <a href="/social" class="btn-primary" style="display:inline-flex;align-items:center;gap:9px;font-size:15px;padding:13px 28px;text-decoration:none;">
+    <i class="fa-solid fa-ghost"></i> Открыть GhostSocial
+  </a>
+  <div style="display:flex;gap:24px;justify-content:center;margin-top:36px;flex-wrap:wrap;color:var(--sub);font-size:13px;">
+    <span><i class="fa-solid fa-check" style="color:var(--primary);margin-right:6px;"></i>Без рекламы</span>
+    <span><i class="fa-solid fa-check" style="color:var(--primary);margin-right:6px;"></i>Без алгоритмов</span>
+    <span><i class="fa-solid fa-check" style="color:var(--primary);margin-right:6px;"></i>Открытый код</span>
+  </div>
+</section>
+
+<!-- PREMIUM -->
+<section id="premium">
+  <div class="section-label">Premium</div>
+  <h2>Поддержи разработку.<br>Получи доступ первым.</h2>
+  <p class="section-sub">
+    GhostChat Premium — ранний доступ к закрытым функциям и поддержка независимого проекта.
+  </p>
+
+  <div class="premium-grid">
+    <div class="premium-price-card">
+      <div class="discount-badge" id="discountBadge" style="display:none;">
+        <i class="fa-solid fa-bolt"></i> Скидка 50% · осталось <span id="discountTimer">—</span>
+      </div>
+      <div class="price-strike" id="priceStrike" style="display:none;">₽490</div>
+      <div class="price-big" id="priceBig" style="margin-bottom:6px;">—</div>
+      <div style="color:var(--sub); font-size:14px; margin-bottom:6px;" id="priceUSDT">≈ $— · 12 месяцев</div>
+      <div style="color:var(--sub); font-size:13px; margin-bottom:28px;">Предзаказ · доступ при релизе</div>
+      <a href="/shop/" class="btn-primary" style="display:inline-flex; font-size:15px; padding:13px 28px; position:relative; z-index:1;">
+        <i class="fa-solid fa-crown"></i> Купить Premium
+      </a>
+      <div style="margin-top:14px; font-size:12px; color:var(--sub);">
+        Оплата через USDT (TON) или RUB
+      </div>
+    </div>
+
+    <div class="premium-features-card">
+      <h3 style="margin-bottom:20px;">
+        <i class="fa-solid fa-crown" style="color:var(--primary); margin-right:8px;"></i>
+        Что входит в Premium
+      </h3>
+      <div class="premium-feature-item">
+        <div class="pfi-icon"><i class="fa-solid fa-check"></i></div>
+        <div class="pfi-text">
+          <h4>Ранний доступ к функциям</h4>
+          <p>Получай закрытые фичи раньше всех — до публичного релиза.</p>
+        </div>
+      </div>
+      <div class="premium-feature-item">
+        <div class="pfi-icon"><i class="fa-solid fa-check"></i></div>
+        <div class="pfi-text">
+          <h4>Поддержка разработки</h4>
+          <p>Помогаешь развивать независимый открытый проект.</p>
+        </div>
+      </div>
+      <div class="premium-feature-item">
+        <div class="pfi-icon"><i class="fa-solid fa-check"></i></div>
+        <div class="pfi-text">
+          <h4>Приоритетная поддержка</h4>
+          <p>Ответы на вопросы быстрее, баги в приоритете.</p>
+        </div>
+      </div>
+      <div class="premium-feature-item">
+        <div class="pfi-icon"><i class="fa-solid fa-check"></i></div>
+        <div class="pfi-text">
+          <h4>Знак Premium в аккаунте</h4>
+          <p>Значок подтверждённого Premium в твоём профиле.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-logo">GhostChat</div>
+  <p>Приватный мессенджер нового поколения</p>
+  <p id="footerVersion" style="font-size:12px; color:#475569;">v1.18 · Android Beta</p>
+</footer>
+
+<!-- mesh.js (floating particles) -->
+<script src="/shop/static/mesh.js"></script>
+
+<script>
+  // ── Modal ──
+  const overlay = document.getElementById('modal-overlay');
+  function openModal() { overlay.style.display = 'flex'; }
+  function closeModal() { overlay.style.display = 'none'; }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+  // ── Visitor tracking ──
+  let _visitorId = localStorage.getItem('gc_visitor_id');
+  if (!_visitorId) {
+    _visitorId = ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+      (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
+    localStorage.setItem('gc_visitor_id', _visitorId);
+    fetch('/shop/api/stats/visit', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({visitor_id: _visitorId})
+    }).catch(() => {});
+  }
+
+  // ── Download tracking ──
+  let _latestVersion = '';
+  fetch('/api/version').then(r => r.json()).then(d => {
+    _latestVersion = d.latest || '';
+    // Update modal text
+    if (_latestVersion) {
+      document.getElementById('modalVersionText').textContent =
+        'GhostChat v' + _latestVersion + ' — скачай APK и установи на Android.';
+      document.getElementById('footerVersion').textContent =
+        'v' + _latestVersion + ' · Android Beta';
+    }
+    // Check version popup for returning visitors
+    const hasVisited = localStorage.getItem('gc_visited');
+    const storedVer  = localStorage.getItem('gc_downloaded_version');
+    if (hasVisited && storedVer && _latestVersion && storedVer !== _latestVersion) {
+      setTimeout(() => showVersionPopup(storedVer, _latestVersion), 2000);
+    }
+  }).catch(() => {});
+
+  async function trackDownload(version) {
+    let ver = version || _latestVersion;
+    if (!ver) {
+      try {
+        const r = await fetch('/api/version');
+        const d = await r.json();
+        ver = d.latest || '';
+        if (ver) _latestVersion = ver;
+      } catch (_) {}
+    }
+    localStorage.setItem('gc_downloaded_version', ver || '');
+    fetch('/shop/api/stats/download', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({visitor_id: _visitorId, version: ver || 'unknown'})
+    }).catch(() => {});
+  }
+
+  document.getElementById('downloadLink').addEventListener('click', function() {
+    trackDownload(_latestVersion);
+    dismissFirstVisit(false);
+    dismissVersionPopup();
+  });
+
+  // ── First-visit popup ──
+  const hasVisited = localStorage.getItem('gc_visited');
+  if (!hasVisited) {
+    setTimeout(() => {
+      document.getElementById('popupFirstVisit').classList.add('show');
+    }, 1800);
+  }
+
+  function dismissFirstVisit(trackSkip) {
+    document.getElementById('popupFirstVisit').classList.remove('show');
+    if (!localStorage.getItem('gc_visited')) {
+      localStorage.setItem('gc_visited', '1');
+      // Запомнить текущую версию — чтобы при обновлении показать попап
+      if (_latestVersion && !localStorage.getItem('gc_downloaded_version')) {
+        localStorage.setItem('gc_downloaded_version', _latestVersion);
+      }
+      if (trackSkip) {
+        fetch('/shop/api/stats/skip', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({visitor_id: _visitorId})
+        }).catch(() => {});
+      }
+    }
+  }
+
+  function onPopupDownload() {
+    localStorage.setItem('gc_visited', '1');
+    trackDownload(_latestVersion);
+    setTimeout(() => dismissFirstVisit(false), 200);
+  }
+
+  // ── Version check popup ──
+  function showVersionPopup(oldVer, newVer) {
+    document.getElementById('popupVersionTitle').textContent = 'Доступна версия ' + newVer;
+    document.getElementById('popupVersionText').textContent =
+      'У вас установлена v' + oldVer + '. Вышло обновление!';
+    document.getElementById('popupFirstVisit').classList.remove('show');
+    document.getElementById('popupVersion').classList.add('show');
+  }
+
+  function dismissVersionPopup() {
+    document.getElementById('popupVersion').classList.remove('show');
+    if (_latestVersion) {
+      localStorage.setItem('gc_downloaded_version', _latestVersion);
+    }
+  }
+
+  function onVersionDownload() {
+    trackDownload(_latestVersion);
+    dismissVersionPopup();
+  }
+
+  // Swipe to dismiss popups
+  (function() {
+    ['popupFirstVisit', 'popupVersion'].forEach(id => {
+      const el = document.getElementById(id);
+      let startY = 0, isDragging = false;
+      el.addEventListener('touchstart', e => { startY = e.touches[0].clientY; isDragging = true; }, { passive: true });
+      el.addEventListener('touchmove', e => {
+        if (!isDragging) return;
+        const dy = e.touches[0].clientY - startY;
+        if (dy > 0) el.style.transform = `translateX(-50%) translateY(${dy}px)`;
+      }, { passive: true });
+      el.addEventListener('touchend', e => {
+        isDragging = false;
+        const dy = e.changedTouches[0].clientY - startY;
+        el.style.transform = '';
+        if (dy > 80) {
+          el.classList.remove('show');
+          if (id === 'popupFirstVisit') dismissFirstVisit(true);
+          if (id === 'popupVersion') dismissVersionPopup();
+        }
+      });
+    });
+  })();
+
+  // ── Auth state ──
+  (async function() {
+    try {
+      // SSO: если в localStorage есть токен GhostSocial, но cookie не выставлена —
+      // ставим cookie, чтобы /shop/api/me опознал юзера через soc_tokens.
+      const lsToken = localStorage.getItem('gs_token');
+      const hasCookie = document.cookie.split(';').some(c => c.trim().startsWith('gs_token='));
+      if (lsToken && !lsToken.startsWith('guest_') && !hasCookie) {
+        document.cookie = `gs_token=${encodeURIComponent(lsToken)}; path=/; max-age=31536000; SameSite=Lax; Secure`;
+      }
+      const r = await fetch('/shop/api/me', { credentials: 'include' });
+      if (!r.ok) return;
+      const me = await r.json();
+      document.getElementById('loginBtn').style.display = 'none';
+      const wrap = document.getElementById('profileWrap');
+      wrap.style.display = '';
+      const btn = document.getElementById('profileBtn');
+      btn.textContent = (me.gc_username || '?').slice(0, 1).toUpperCase();
+      btn.title = me.gc_username;
+      const premBadge = me.has_premium
+        ? '<span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;background:rgba(74,222,128,0.15);color:#4ade80;border:1px solid rgba(74,222,128,0.3);margin-left:4px;">Premium ✓</span>'
+        : '';
+      document.getElementById('pmHead').innerHTML =
+        '<b>' + (me.gc_username || '') + '</b>' + premBadge;
+      if (me.has_premium) {
+        document.getElementById('pmBuy').textContent = 'Мой Premium ⭐';
+      }
+      const menu = document.getElementById('profileMenu');
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        menu.classList.toggle('show');
+      });
+      document.addEventListener('click', () => menu.classList.remove('show'));
+      document.getElementById('pmLogout').addEventListener('click', () => {
+        showConfirm({
+          title: 'Выйти из аккаунта?',
+          msg: 'Вы выйдете во всех вкладках GhostEcos — соцсеть, чат и магазин.',
+          okText: 'Выйти',
+          onOk: async () => {
+            try { await fetch('/shop/api/logout', { method: 'POST', credentials: 'include' }); } catch(_) {}
+            localStorage.removeItem('gs_token');
+            localStorage.removeItem('gs_me');
+            document.cookie = 'gs_token=; path=/; max-age=0; SameSite=Lax; Secure';
+            location.reload();
+          }
+        });
+      });
+    } catch(_) {}
+  })();
+
+  // SSO sync: если токен удалили в другой вкладке/проекте — перезагружаем для актуального состояния
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'gs_token' && !e.newValue) location.reload();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    const hasCookie = document.cookie.split(';').some(c => c.trim().startsWith('gs_token='));
+    const hasLocal = !!localStorage.getItem('gs_token');
+    // Если в локалке токен был, а cookie стёрта другим проектом — синхронизируемся
+    if (hasLocal && !hasCookie) {
+      localStorage.removeItem('gs_token');
+      localStorage.removeItem('gs_me');
+      location.reload();
+    }
+  });
+
+  // ── Premium pricing ──
+  (async function() {
+    try {
+      const r = await fetch('/shop/api/pricing');
+      if (!r.ok) return;
+      const d = await r.json();
+      document.getElementById('priceBig').textContent = '₽' + d.rub;
+      document.getElementById('priceUSDT').textContent = '≈ $' + d.usdt.toFixed(2) + ' · ' + d.premium_months + ' месяцев';
+      if (d.discount_active) {
+        document.getElementById('discountBadge').style.display = '';
+        document.getElementById('priceStrike').style.display = '';
+        document.getElementById('priceStrike').textContent = '₽' + d.full_rub;
+        // Countdown timer
+        function updateTimer() {
+          const left = d.discount_ends_at - Math.floor(Date.now() / 1000);
+          if (left <= 0) { document.getElementById('discountBadge').style.display = 'none'; return; }
+          const h = Math.floor(left / 3600);
+          const m = Math.floor((left % 3600) / 60);
+          const s = left % 60;
+          document.getElementById('discountTimer').textContent =
+            (h > 0 ? h + 'ч ' : '') + m + 'м ' + s + 'с';
+          setTimeout(updateTimer, 1000);
+        }
+        updateTimer();
+      }
+    } catch(_) {}
+  })();
+</script>
+<!-- CONFIRM DIALOG -->
+<style>
+.gc-overlay{position:fixed;inset:0;background:rgba(2,6,23,0.7);z-index:600;display:flex;align-items:center;justify-content:center;padding:24px;opacity:0;pointer-events:none;transition:opacity 0.2s;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);}
+.gc-overlay.open{opacity:1;pointer-events:all;}
+.gc-box{width:100%;max-width:340px;background:rgba(9,14,30,0.98);border:1px solid var(--border-strong);border-radius:22px;padding:26px 22px 20px;text-align:center;transform:scale(0.92);transition:transform 0.25s cubic-bezier(0.32,0.72,0,1);box-shadow:0 20px 50px rgba(0,0,0,0.5);}
+.gc-overlay.open .gc-box{transform:scale(1);}
+.gc-icon{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:22px;background:rgba(244,63,94,0.12);color:#f43f5e;}
+.gc-t{font-size:18px;font-weight:700;margin-bottom:6px;}
+.gc-m{font-size:14px;color:var(--sub);line-height:1.5;margin-bottom:22px;}
+.gc-actions{display:flex;gap:10px;}
+.gc-btn{flex:1;padding:13px;border-radius:13px;border:none;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;}
+.gc-btn.cancel{background:rgba(255,255,255,0.06);color:var(--text);border:1px solid var(--border-strong);}
+.gc-btn.ok{background:linear-gradient(90deg,#f43f5e,#e11d48);color:#fff;}
+</style>
+<div class="gc-overlay" id="gcConfirm">
+  <div class="gc-box">
+    <div class="gc-icon"><i class="fa-solid fa-right-from-bracket"></i></div>
+    <div class="gc-t" id="gcT"></div>
+    <div class="gc-m" id="gcM"></div>
+    <div class="gc-actions">
+      <button class="gc-btn cancel" id="gcCancel">Отмена</button>
+      <button class="gc-btn ok" id="gcOk">Ок</button>
+    </div>
+  </div>
+</div>
+<script>
+function showConfirm({title='Подтвердите', msg='', okText='Ок', onOk}) {
+  const ov = document.getElementById('gcConfirm');
+  document.getElementById('gcT').textContent = title;
+  document.getElementById('gcM').textContent = msg;
+  document.getElementById('gcOk').textContent = okText;
+  ov.classList.add('open');
+  const close = () => ov.classList.remove('open');
+  document.getElementById('gcOk').onclick = () => { close(); onOk && onOk(); };
+  document.getElementById('gcCancel').onclick = close;
+  ov.onclick = e => { if (e.target === ov) close(); };
+}
+</script>
+
+</body>
+</html>

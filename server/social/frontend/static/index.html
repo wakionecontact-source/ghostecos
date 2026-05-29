@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>GhostSocial</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ── FEED VIEW ── -->
+  <div id="feed-view" class="view active">
+    <div id="posts-container"></div>
+  </div>
+
+  <!-- ── THEATER VIEW ── -->
+  <div id="theater-view" class="view">
+
+    <div id="theater-topbar">
+      <button id="theater-back">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+        Назад
+      </button>
+      <div id="viewer-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+        <span id="viewer-count">0</span>
+        <span class="viewer-label">сейчас</span>
+      </div>
+    </div>
+
+    <div id="cinema-wrap">
+      <div id="projector">
+        <div class="ray r1"></div>
+        <div class="ray r2"></div>
+        <div class="ray r3"></div>
+      </div>
+
+      <div id="cinema-screen">
+        <div id="screen-inner"></div>
+      </div>
+
+      <div id="cinema-hall"></div>
+
+      <div id="you-row">
+        <div class="you-seat">
+          <div class="ghost-shape you-ghost"></div>
+          <div class="seat-label">Вы</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── GHOST MINI-PROFILE POPUP ── -->
+  <div id="ghost-popup" class="hidden">
+    <div id="ghost-popup-card">
+      <div id="popup-avatar"><div class="ghost-shape ghost-large"></div></div>
+      <div id="popup-name">Призрак</div>
+      <div id="popup-status">Онлайн · смотрит этот пост</div>
+      <div id="popup-btns">
+        <button class="popup-btn accent">Добавить в контакты</button>
+        <button class="popup-btn" id="popup-open-profile">Открыть профиль</button>
+      </div>
+      <button id="popup-close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+          <line x1="18" y1="6" x2="6" y2="18"/>
+          <line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── BOTTOM NAV ── -->
+  <nav id="bottom-nav">
+    <button class="nav-btn active" data-tab="feed">
+      <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="22" height="22">
+        <rect x="3" y="3" width="7" height="7" rx="1"/>
+        <rect x="14" y="3" width="7" height="7" rx="1"/>
+        <rect x="3" y="14" width="7" height="7" rx="1"/>
+        <rect x="14" y="14" width="7" height="7" rx="1"/>
+      </svg>
+      <span>Лента</span>
+    </button>
+    <button class="nav-btn" data-tab="chaos">
+      <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="22" height="22">
+        <circle cx="12" cy="12" r="9"/>
+        <path d="M9 9l6 6M15 9l-6 6"/>
+      </svg>
+      <span>Хаос</span>
+    </button>
+    <button class="nav-btn" data-tab="clips">
+      <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="22" height="22">
+        <polygon points="5 3 19 12 5 21 5 3"/>
+      </svg>
+      <span>Клипы</span>
+    </button>
+    <button class="nav-btn" data-tab="profile">
+      <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="22" height="22">
+        <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+        <circle cx="12" cy="7" r="4"/>
+      </svg>
+      <span>Профиль</span>
+    </button>
+  </nav>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>
