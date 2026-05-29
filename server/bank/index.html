@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<title>GhostBank · Кошелёк</title>
+<link rel="manifest" href="/bank/manifest.json">
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#020617">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="GhostBank">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+:root{
+  --bg:#020617; --bg-card:#0f172a; --bg-card-2:#1e293b;
+  --text:#e2e8f0; --sub:#94a3b8; --muted:#64748b;
+  --primary:#a855f7; --primary2:#ec4899; --primary-d:#7c3aed;
+  --green:#22c55e; --red:#ef4444; --yellow:#fbbf24;
+  --border:#1e293b; --border-strong:#334155;
+  --bg-overlay:rgba(2,6,23,0.85);
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:14px;line-height:1.5;padding-bottom:env(safe-area-inset-bottom);}
+body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse at top right,rgba(168,85,247,0.10),transparent 60%),radial-gradient(ellipse at bottom left,rgba(236,72,153,0.07),transparent 50%);pointer-events:none;z-index:-1;}
+button{font-family:inherit;border:0;background:none;color:inherit;cursor:pointer;}
+button:disabled{cursor:not-allowed;}
+a{color:inherit;text-decoration:none;}
+input{font-family:inherit;}
+
+/* ── HEADER ── */
+header{position:sticky;top:0;z-index:100;background:rgba(2,6,23,0.85);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);padding:env(safe-area-inset-top) 0 0;}
+.header-row{display:flex;align-items:center;gap:12px;padding:12px 16px;max-width:680px;margin:0 auto;}
+.header-back{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:10px;background:rgba(255,255,255,0.04);font-size:14px;color:var(--sub);transition:background 0.15s;}
+.header-back:hover{background:rgba(168,85,247,0.15);color:var(--primary);}
+.header-brand{flex:1;display:flex;align-items:center;gap:8px;}
+.header-brand i{font-size:18px;background:linear-gradient(135deg,var(--primary),var(--primary2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.header-brand span{font-size:17px;font-weight:800;background:linear-gradient(90deg,var(--primary),var(--primary2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:0.3px;}
+.h-avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;cursor:pointer;box-shadow:0 4px 12px rgba(168,85,247,0.3);flex-shrink:0;}
+
+/* ── MAIN ── */
+main{max-width:680px;margin:0 auto;padding:18px 16px 40px;}
+
+/* ── AUTH SCREEN ── */
+#authScreen{display:none;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;padding:30px 20px;}
+#authScreen h1{font-size:22px;font-weight:800;margin-bottom:8px;text-align:center;}
+#authScreen p{color:var(--sub);text-align:center;margin-bottom:24px;max-width:380px;}
+.auth-btn{display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;padding:12px 24px;border-radius:12px;font-weight:700;font-size:14px;box-shadow:0 6px 20px rgba(168,85,247,0.35);}
+
+/* ── HERO BALANCE ── */
+.hero{background:linear-gradient(135deg,rgba(168,85,247,0.20),rgba(236,72,153,0.10));border:1px solid rgba(168,85,247,0.4);border-radius:20px;padding:22px 20px;margin-bottom:18px;position:relative;overflow:hidden;}
+.hero::before{content:'';position:absolute;top:-40%;right:-20%;width:300px;height:300px;background:radial-gradient(circle,rgba(168,85,247,0.25),transparent 70%);pointer-events:none;}
+.hero-label{font-size:11px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:8px;}
+.hero-value{display:flex;align-items:center;gap:10px;}
+.hero-value i{font-size:32px;background:linear-gradient(135deg,var(--primary),var(--primary2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.hero-num{font-size:38px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;}
+.hero-unit{font-size:16px;color:var(--sub);margin-top:6px;}
+.hero-sub{color:var(--sub);font-size:12px;margin-top:8px;}
+
+/* ── CARDS ROW ── */
+.cards-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:22px;}
+.card{background:var(--bg-card);border:1px solid var(--border-strong);border-radius:14px;padding:14px;position:relative;}
+.card.locked{opacity:0.55;}
+.card-head{display:flex;align-items:center;gap:7px;margin-bottom:6px;}
+.card-head i{font-size:14px;}
+.card-soul .card-head i{color:#ec4899;}
+.card-prem .card-head i{color:var(--yellow);}
+.card-name{font-size:12px;font-weight:700;flex:1;}
+.card-soon{font-size:8px;font-weight:800;background:rgba(100,116,139,0.3);color:#94a3b8;padding:2px 6px;border-radius:999px;text-transform:uppercase;letter-spacing:0.4px;}
+.card-balance{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1;}
+.card-sub{font-size:10px;color:var(--sub);margin-top:4px;line-height:1.3;}
+
+/* ── SECTION ── */
+.section{margin-bottom:24px;}
+.section-title{display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:11px;padding:0 2px;}
+.section-title .ico{color:var(--primary);margin-right:6px;}
+
+/* ── DAILY CLAIM ── */
+.claim-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;padding:15px;border-radius:14px;font-size:15px;font-weight:700;box-shadow:0 8px 24px rgba(168,85,247,0.35);transition:transform 0.15s;}
+.claim-btn:hover:not(:disabled){transform:translateY(-2px);}
+.claim-btn:disabled{opacity:0.6;background:rgba(100,116,139,0.3);box-shadow:none;color:#94a3b8;}
+.claim-btn i{font-size:16px;}
+.claim-hint{text-align:center;color:var(--sub);font-size:12px;margin-top:10px;}
+.claim-hint b{color:var(--primary);font-variant-numeric:tabular-nums;font-weight:700;}
+
+/* ── SOURCES ── */
+.sources{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+@media (max-width:480px){.sources{grid-template-columns:1fr;}}
+.src{display:flex;align-items:center;gap:10px;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:10px 12px;font-size:13px;}
+.src i{width:24px;text-align:center;color:var(--primary);font-size:14px;}
+.src .label{flex:1;color:var(--text);}
+.src b{color:var(--green);font-weight:800;font-size:13px;}
+
+/* ── TX LIST ── */
+.tx-list{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;overflow:hidden;}
+.tx-item{display:flex;align-items:center;gap:11px;padding:13px 14px;border-bottom:1px solid var(--border);}
+.tx-item:last-child{border-bottom:0;}
+.tx-icon{width:36px;height:36px;border-radius:11px;background:rgba(168,85,247,0.12);display:flex;align-items:center;justify-content:center;color:var(--primary);font-size:14px;flex-shrink:0;}
+.tx-body{flex:1;min-width:0;}
+.tx-title{font-size:13px;font-weight:600;margin-bottom:2px;}
+.tx-meta{font-size:11px;color:var(--sub);}
+.tx-amount{font-weight:800;font-size:14px;font-variant-numeric:tabular-nums;}
+.tx-amount.pos{color:var(--green);}
+.tx-amount.neg{color:var(--red);}
+.tx-empty{padding:28px;text-align:center;color:var(--sub);font-size:13px;}
+
+/* ── TOAST ── */
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom));background:rgba(15,23,42,0.95);backdrop-filter:blur(10px);border:1px solid var(--border-strong);color:var(--text);padding:11px 18px;border-radius:14px;font-size:13px;font-weight:600;box-shadow:0 14px 40px rgba(0,0,0,0.4);opacity:0;pointer-events:none;transition:opacity 0.25s,transform 0.25s;z-index:200;max-width:90%;}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(-4px);}
+.toast.err{border-color:var(--red);color:#fecaca;}
+
+/* ── LOADER ── */
+.loader{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px;color:var(--sub);font-size:13px;}
+.spinner{width:32px;height:32px;border:3px solid rgba(168,85,247,0.2);border-top-color:var(--primary);border-radius:50%;animation:spin 0.9s linear infinite;margin-bottom:12px;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* ── NAV-LINKS внизу: между приложениями ── */
+.app-nav{display:flex;gap:8px;margin-top:30px;padding-top:18px;border-top:1px solid var(--border);}
+.app-nav a{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 8px;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;font-size:11px;color:var(--sub);transition:all 0.15s;}
+.app-nav a:hover{border-color:var(--primary);color:var(--text);background:rgba(168,85,247,0.08);}
+.app-nav a i{font-size:18px;color:var(--primary);}
+
+/* ── PILL BUMP ANIMATION ── */
+.bump{animation:bumpAnim 0.5s ease-out;}
+@keyframes bumpAnim{0%{transform:scale(1);} 30%{transform:scale(1.15);} 100%{transform:scale(1);}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-row">
+    <a href="/social/" class="header-back" id="backLink" title="Назад">
+      <i class="fa-solid fa-arrow-left"></i>
+    </a>
+    <div class="header-brand">
+      <i class="fa-solid fa-wallet"></i>
+      <span>GhostBank</span>
+    </div>
+    <div class="h-avatar" id="hAvatar" title="Профиль">?</div>
+  </div>
+</header>
+
+<main>
+  <!-- Если не авторизован — показываем auth screen -->
+  <div id="authScreen">
+    <h1>Войдите в GhostEcos</h1>
+    <p>GhostBank использует общий аккаунт с GhostChat и GhostSocial. Войдите там — баланс появится сразу.</p>
+    <a href="/social/" class="auth-btn"><i class="fa-solid fa-arrow-right"></i> Открыть GhostSocial</a>
+  </div>
+
+  <!-- App -->
+  <div id="app" style="display:none">
+
+    <!-- HERO — главный баланс Gost -->
+    <div class="hero">
+      <div class="hero-label">Ваш баланс</div>
+      <div class="hero-value">
+        <i class="fa-solid fa-ghost"></i>
+        <div>
+          <div class="hero-num"><span id="bGost">0</span></div>
+          <div class="hero-unit">Gost</div>
+        </div>
+      </div>
+      <div class="hero-sub">Низшая валюта · зарабатывается активностью</div>
+    </div>
+
+    <!-- 2 OTHER CARDS -->
+    <div class="cards-row">
+      <div class="card card-soul locked">
+        <div class="card-head">
+          <i class="fa-solid fa-fire"></i>
+          <div class="card-name">Soul</div>
+          <span class="card-soon">скоро</span>
+        </div>
+        <div class="card-balance" id="bSoul">0</div>
+        <div class="card-sub">Основная · переводы · NFT</div>
+      </div>
+      <div class="card card-prem locked">
+        <div class="card-head">
+          <i class="fa-solid fa-crown"></i>
+          <div class="card-name">Prem</div>
+          <span class="card-soon">скоро</span>
+        </div>
+        <div class="card-balance" id="bPrem">0</div>
+        <div class="card-sub">Премиум · украшения</div>
+      </div>
+    </div>
+
+    <!-- DAILY -->
+    <div class="section">
+      <div class="section-title"><span><i class="fa-solid fa-gift ico"></i>Ежедневный бонус</span></div>
+      <button class="claim-btn" id="claimBtn" onclick="claimDaily()">
+        <i class="fa-solid fa-gift"></i>
+        <span id="claimText">Получить <b id="claimAmt">10</b> Gost</span>
+      </button>
+      <div class="claim-hint" id="claimHint" style="display:none;">Следующий бонус через <b id="claimCd">--:--:--</b></div>
+    </div>
+
+    <!-- SOURCES -->
+    <div class="section">
+      <div class="section-title"><span><i class="fa-solid fa-bolt ico"></i>Как заработать Gost</span></div>
+      <div class="sources">
+        <div class="src"><i class="fa-solid fa-gift"></i><span class="label">Ежедневный бонус</span><b>+10</b></div>
+        <div class="src"><i class="fa-solid fa-pen"></i><span class="label">Свой пост</span><b>+5</b></div>
+        <div class="src"><i class="fa-solid fa-heart"></i><span class="label">Лайк на твой пост</span><b>+1</b></div>
+        <div class="src"><i class="fa-solid fa-comment"></i><span class="label">Коммент на твой пост</span><b>+2</b></div>
+        <div class="src"><i class="fa-solid fa-user-plus"></i><span class="label">Новый подписчик</span><b>+5</b></div>
+        <div class="src"><i class="fa-solid fa-trophy"></i><span class="label">Welcome бонус</span><b>+100</b></div>
+      </div>
+    </div>
+
+    <!-- HISTORY -->
+    <div class="section">
+      <div class="section-title"><span><i class="fa-solid fa-clock-rotate-left ico"></i>История</span></div>
+      <div class="tx-list" id="txList"><div class="loader"><div class="spinner"></div>Загрузка...</div></div>
+    </div>
+
+    <!-- NAV BETWEEN APPS -->
+    <div class="app-nav">
+      <a href="/social/" title="GhostSocial"><i class="fa-solid fa-house"></i>Лента</a>
+      <a href="/chat/" title="GhostChat"><i class="fa-solid fa-comments"></i>Чаты</a>
+      <a href="/" title="GhostEcos"><i class="fa-solid fa-ghost"></i>Главная</a>
+    </div>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '/api/soc';
+let token = localStorage.getItem('gs_token');
+let me = null;
+try { me = JSON.parse(localStorage.getItem('gs_me') || 'null'); } catch(_) {}
+let _walDailyTimer = null;
+let _ws = null;
+let _wsReconnectDelay = 1000;
+let _wsAuthFail = false;
+
+// ── helpers ──
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function ini(n){return n ? n[0].toUpperCase() : '?';}
+function showToast(msg, err=false){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'toast' + (err ? ' err' : '');
+  t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2400);
+}
+function ago(ts){
+  const d = new Date(ts.includes('Z') || ts.includes('+') ? ts : ts + 'Z');
+  const s = Math.floor((Date.now() - d) / 1000);
+  if (s < 60) return 'только что';
+  if (s < 3600) return Math.floor(s / 60) + ' мин назад';
+  if (s < 86400) return Math.floor(s / 3600) + ' ч назад';
+  return Math.floor(s / 86400) + ' д назад';
+}
+
+// ── API ──
+async function api(path, method='GET', body=null){
+  const h = { 'Content-Type': 'application/json' };
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 20000);
+  const opts = { method, headers: h, signal: ctrl.signal };
+  if (body) opts.body = JSON.stringify(body);
+  let r;
+  try { r = await fetch(API + path, opts); }
+  finally { clearTimeout(tid); }
+  if (!r.ok) {
+    const text = await r.text();
+    let msg = text; try { msg = JSON.parse(text).detail || text; } catch(_) {}
+    const e = new Error(msg); e.status = r.status; throw e;
+  }
+  return r.json();
+}
+
+// ── Wallet ──
+async function loadWallet(){
+  try {
+    const [w, tx] = await Promise.all([api('/wallet'), api('/wallet/tx')]);
+    setBalance('bGost', w.balance.gost || 0);
+    setBalance('bSoul', w.balance.soul || 0);
+    setBalance('bPrem', w.balance.prem || 0);
+    document.getElementById('claimAmt').textContent = w.daily_reward;
+    setupDailyClaim(w.next_daily_in || 0);
+    renderTxList(tx.transactions || []);
+  } catch(e) {
+    console.error('[wallet] load failed', e);
+    if (e.status === 401) { showAuth(); return; }
+    showToast('Не удалось загрузить кошелёк', true);
+  }
+}
+
+function setBalance(elId, val){
+  const el = document.getElementById(elId);
+  const prev = +(el.textContent.replace(/\s/g, '')) || 0;
+  el.textContent = (val || 0).toLocaleString('ru-RU');
+  if (val > prev) {
+    el.classList.remove('bump');
+    void el.offsetWidth;
+    el.classList.add('bump');
+  }
+}
+
+function setupDailyClaim(secondsLeft){
+  const btn = document.getElementById('claimBtn');
+  const hint = document.getElementById('claimHint');
+  const cd = document.getElementById('claimCd');
+  clearInterval(_walDailyTimer);
+  if (secondsLeft <= 0) {
+    btn.disabled = false; btn.style.display = ''; hint.style.display = 'none';
+    return;
+  }
+  btn.disabled = true; hint.style.display = '';
+  const tick = () => {
+    if (secondsLeft <= 0) { clearInterval(_walDailyTimer); setupDailyClaim(0); return; }
+    const h = Math.floor(secondsLeft / 3600);
+    const m = Math.floor((secondsLeft % 3600) / 60);
+    const s = secondsLeft % 60;
+    cd.textContent = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    secondsLeft--;
+  };
+  tick(); _walDailyTimer = setInterval(tick, 1000);
+}
+
+async function claimDaily(){
+  const btn = document.getElementById('claimBtn');
+  btn.disabled = true;
+  try {
+    const r = await api('/wallet/claim_daily', 'POST');
+    if (r.credited > 0) showToast(`+${r.credited} Gost получено!`);
+    await loadWallet();
+  } catch(e) {
+    showToast(e.message || 'Не удалось получить бонус', true);
+    btn.disabled = false;
+  }
+}
+
+const TX_META = {
+  'register': {icon:'fa-trophy',       label:'Welcome бонус'},
+  'daily':    {icon:'fa-gift',         label:'Ежедневный бонус'},
+  'post':     {icon:'fa-pen',          label:'За пост'},
+  'react':    {icon:'fa-heart',        label:'Лайк на твой пост'},
+  'comment':  {icon:'fa-comment',      label:'Коммент на твой пост'},
+  'follow':   {icon:'fa-user-plus',    label:'Новый подписчик'},
+  'spend':    {icon:'fa-cart-shopping',label:'Покупка'},
+  'admin':    {icon:'fa-shield',       label:'От администрации'},
+};
+
+function renderTxList(list){
+  const root = document.getElementById('txList');
+  if (!list.length) {
+    root.innerHTML = '<div class="tx-empty">Пока пусто. Активничай в GhostSocial — Gost начнут капать.</div>';
+    return;
+  }
+  root.innerHTML = list.map(t => {
+    const meta = TX_META[t.source] || {icon:'fa-coins', label:t.source};
+    const sign = t.delta > 0 ? '+' : '';
+    const cls = 'tx-amount ' + (t.delta < 0 ? 'neg' : 'pos');
+    const actor = t.actor ? ` · @${esc(t.actor.username)}` : '';
+    return `<div class="tx-item">
+      <div class="tx-icon"><i class="fa-solid ${meta.icon}"></i></div>
+      <div class="tx-body">
+        <div class="tx-title">${esc(meta.label)}</div>
+        <div class="tx-meta">${ago(t.created_at)}${actor}</div>
+      </div>
+      <div class="${cls}">${sign}${t.delta} ${t.currency}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── WebSocket: live updates ──
+function connectWS(){
+  if (_wsAuthFail) return;
+  if (_ws && (_ws.readyState === 0 || _ws.readyState === 1)) return;
+  const base = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/soc/ws';
+  const u = token ? `${base}?token=${encodeURIComponent(token)}` : base;
+  try { _ws = new WebSocket(u); } catch(_) { setTimeout(connectWS, _wsReconnectDelay); return; }
+  let pingTimer = null;
+  _ws.onopen = () => {
+    _wsReconnectDelay = 1000;
+    clearInterval(pingTimer);
+    pingTimer = setInterval(() => { try { _ws.send('ping'); } catch(_) {} }, 25000);
+    loadWallet();
+  };
+  _ws.onmessage = (e) => {
+    if (e.data === 'pong') return;
+    let m; try { m = JSON.parse(e.data); } catch(_) { return; }
+    handleWS(m);
+  };
+  _ws.onclose = (ev) => {
+    clearInterval(pingTimer);
+    if (ev && (ev.code === 1008 || ev.code === 4401 || ev.code === 4403)) { _wsAuthFail = true; return; }
+    setTimeout(connectWS, _wsReconnectDelay);
+    _wsReconnectDelay = Math.min(_wsReconnectDelay * 2, 30000);
+  };
+  _ws.onerror = () => { try { _ws.close(); } catch(_) {} };
+}
+
+function handleWS(m){
+  const t = m.type, d = m.data || {};
+  if (t === 'wallet.credit') {
+    if (d.currency === 'gost') {
+      if (typeof d.balance === 'number') setBalance('bGost', d.balance);
+      else loadWallet();
+      const labels = {register:'welcome', daily:'дейли', post:'за пост', react:'за лайк',
+                      comment:'за коммент', follow:'за подписчика'};
+      showToast(`+${d.delta} Gost · ${labels[d.source] || d.source}`);
+      loadWallet(); // обновим историю и баланс
+    }
+  }
+}
+
+// ── Auth ──
+function showAuth(){
+  document.getElementById('authScreen').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+}
+function showApp(){
+  document.getElementById('authScreen').style.display = 'none';
+  document.getElementById('app').style.display = '';
+  if (me) document.getElementById('hAvatar').textContent = ini(me.display_name || me.username);
+}
+
+// ── Back link ──
+function setupBackLink(){
+  const params = new URLSearchParams(location.search);
+  const from = params.get('from');
+  const link = document.getElementById('backLink');
+  if (from && /^\/[a-z]/.test(from)) link.href = from;
+  else link.href = '/social/';
+}
+
+// ── Init ──
+async function init(){
+  setupBackLink();
+  if (!token) { showAuth(); return; }
+  try {
+    const d = await api('/me');
+    me = { id: d.id || d.user_id, username: d.username, display_name: d.display_name, is_guest: !!d.is_guest };
+    localStorage.setItem('gs_me', JSON.stringify(me));
+    if (me.is_guest) { showAuth(); return; }
+    showApp();
+    await loadWallet();
+    connectWS();
+  } catch(e) {
+    console.error('[init]', e);
+    if (e.status === 401) { localStorage.removeItem('gs_token'); localStorage.removeItem('gs_me'); }
+    showAuth();
+  }
+}
+
+// Refresh при возврате на вкладку
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && token) loadWallet();
+});
+window.addEventListener('focus', () => { if (token) loadWallet(); });
+
+init();
+</script>
+</body>
+</html>

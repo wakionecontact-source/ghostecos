@@ -708,10 +708,10 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
         <i class="fa-solid fa-arrow-up" style="font-size:11px"></i>
         <span>Новые посты</span>
       </div>
-      <button class="gost-pill" id="gostPill" onclick="switchScreen('screenWallet')" title="Кошелёк">
+      <a class="gost-pill" id="gostPill" href="/bank/?from=/social" title="GhostBank — кошелёк">
         <i class="fa-solid fa-ghost"></i>
         <span id="gostPillVal">0</span>
-      </button>
+      </a>
       <div class="h-avatar" id="hAvatar" onclick="goProfile()">?</div>
     </div>
   </div>
@@ -918,7 +918,7 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
   <button class="dt-nav-btn" data-screen="screenMinisky"><i class="fa-solid fa-video"></i> Миниски</button>
   <button class="dt-nav-btn" data-screen="screenSearch"><i class="fa-solid fa-magnifying-glass"></i> Поиск</button>
   <button class="dt-nav-btn" data-screen="screenNotif"><span class="nav-icon-wrap"><i class="fa-solid fa-bell"></i><span class="notif-badge" id="dtNotifBadge"></span></span> Уведомления</button>
-  <button class="dt-nav-btn" data-screen="screenWallet"><i class="fa-solid fa-ghost"></i> Кошелёк</button>
+  <a class="dt-nav-btn" href="/bank/?from=/social" style="text-decoration:none;"><i class="fa-solid fa-wallet"></i> GhostBank</a>
   <button class="dt-nav-btn" data-screen="screenProfile"><i class="fa-solid fa-user"></i> Профиль</button>
   <a class="dt-nav-btn" id="dtChatLink" href="/chat/?from=/social" style="text-decoration:none;">
     <span class="nav-icon-wrap"><i class="fa-solid fa-comments"></i><span class="notif-badge" id="dtChatBadge"></span></span>
