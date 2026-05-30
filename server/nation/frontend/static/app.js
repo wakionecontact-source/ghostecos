@@ -70,6 +70,8 @@ function initMap() {
 let activeTool = null;
 function setTool(tool) {
   if (draw.active) cancelDraw();
+  if (genSel.active) endGenSelect();
+  closeCtxMenu();
   deselect(); clearHover();
   activeTool = (activeTool === tool) ? null : tool;
   document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === activeTool));
@@ -181,6 +183,8 @@ function alignToRoad(b) {               // rotate along nearest road, entrance f
 
 /* ════════════════ MAP CLICK / PLACE ════════════════ */
 function onMapClick(e) {
+  closeCtxMenu();
+  if (genSel.active) return;
   if (draw.active) { addVertex(e.latlng); return; }
   if (activeTool === 'select') { deselect(); return; }
   if (['house', 'shop', 'tree'].includes(activeTool)) placeBuilding(activeTool, e.latlng);
@@ -213,6 +217,82 @@ function placeBuilding(type, latlng) {
   state.buildings.push(b); save(); renderBuildings(); updateStats();
   return b;
 }
+
+/* ════════════════ SETTLE (buildings drift toward road) ════════════════ */
+function settleToRoad(b) {
+  if (b.type === 'tree') return false;
+  const info = nearestRoad(b.lat, b.lng); if (!info) return false;
+  const E = (info.lng - b.lng) * mPerDegLng(b.lat), N = (info.lat - b.lat) * MPD_LAT, dist = Math.hypot(E, N);
+  const want = LINE_M.road / 2 + 3 + Math.max(clampWH(b.w), clampWH(b.h)) / 2;
+  if (dist <= want + 0.3) return false;
+  const step = Math.min(dist - want, 12), f = step / dist;
+  const nlat = b.lat + N * f / MPD_LAT, nlng = b.lng + E * f / mPerDegLng(b.lat);
+  if (overlapsAt(nlat, nlng, bRadius(b), b)) return false;
+  b.lat = nlat; b.lng = nlng; alignToRoad(b); return true;
+}
+function settlePass(times) { let moved = true, it = 0; while (moved && it++ < (times || 20)) { moved = false; for (const b of state.buildings) if (settleToRoad(b)) moved = true; } }
+function settleAll() { pushUndo(); settlePass(25); save(); renderBuildings(); renderPaths(); updateStats(); flash('Здания подтянуты к дороге'); }
+
+/* ════════════════ AUTO-GENERATION ALONG A ROAD ════════════════ */
+function addWalkway(b) {
+  const dr = doorRect(b), ent = [(dr[2][0] + dr[3][0]) / 2, (dr[2][1] + dr[3][1]) / 2];
+  const info = nearestRoad(b.lat, b.lng); if (!info) return;
+  state.paths.push([ent, [info.lat, info.lng]]);
+}
+function runGeneration(road, segs) {
+  pushUndo();
+  const stepM = 20, gap = 9;
+  segs.forEach(si => {
+    const a = road[si], b = road[si + 1], lat = a[0];
+    const E = (b[1] - a[1]) * mPerDegLng(lat), N = (b[0] - a[0]) * MPD_LAT, len = Math.hypot(E, N);
+    if (len < 8) return;
+    const ux = E / len, uy = N / len, px = -uy, py = ux;
+    for (let d = stepM / 2; d < len - 2; d += stepM) {
+      const cy = a[0] + uy * d / MPD_LAT, cx = a[1] + ux * d / mPerDegLng(lat);
+      for (const side of [1, -1]) {
+        const sb = LINE_M.road / 2 + gap;
+        const nb = { type: Math.random() < 0.18 ? 'shop' : 'house', lat: cy + py * sb * side / MPD_LAT, lng: cx + px * sb * side / mPerDegLng(cy), w: Math.round(rand(9, 18)), h: Math.round(rand(9, 16)) };
+        alignToRoad(nb);
+        if (!overlapsAt(nb.lat, nb.lng, bRadius(nb))) { state.buildings.push(nb); addWalkway(nb); }
+      }
+    }
+  });
+  settlePass(10);
+  save(); renderBuildings(); renderPaths(); updateStats(); flash('Застройка сгенерирована');
+}
+
+/* ════════════════ ROAD CONTEXT MENU + SEGMENT SELECTION ════════════════ */
+let genSel = { active: false, road: null, segs: null, layer: null };
+function closeCtxMenu() { const m = document.getElementById('ctx-menu'); if (m) m.classList.add('hidden'); }
+function openRoadMenu(e, road) {
+  closeCtxMenu();
+  const m = document.getElementById('ctx-menu'); m.innerHTML = '';
+  [['Авто-застройка вдоль дороги', () => { closeCtxMenu(); startGenSelect(road); }],
+   ['Подтянуть здания к дороге', () => { closeCtxMenu(); settleAll(); }]]
+    .forEach(([label, fn]) => { const btn = document.createElement('button'); btn.className = 'ctx-item'; btn.textContent = label; btn.onclick = fn; m.appendChild(btn); });
+  const o = e.originalEvent;
+  m.classList.remove('hidden');
+  m.style.left = Math.min(window.innerWidth - m.offsetWidth - 8, o.clientX) + 'px';
+  m.style.top = Math.min(window.innerHeight - m.offsetHeight - 8, o.clientY) + 'px';
+}
+function startGenSelect(road) {
+  genSel.active = true; genSel.road = road; genSel.segs = new Set();
+  for (let i = 0; i < road.length - 1; i++) genSel.segs.add(i);
+  genSel.layer = L.layerGroup().addTo(map);
+  drawGenSegs();
+  document.getElementById('gen-bar').classList.remove('hidden');
+  document.getElementById('map').classList.add('selecting');
+}
+function drawGenSegs() {
+  genSel.layer.clearLayers(); const road = genSel.road;
+  for (let i = 0; i < road.length - 1; i++) {
+    const sel = genSel.segs.has(i);
+    const ln = L.polyline([road[i], road[i + 1]], { pane: 'pane-edit', color: sel ? '#D97757' : '#9aa0a6', weight: 9, opacity: sel ? .85 : .45 }).addTo(genSel.layer);
+    ln.on('click', ev => { L.DomEvent.stop(ev); genSel.segs.has(i) ? genSel.segs.delete(i) : genSel.segs.add(i); drawGenSegs(); });
+  }
+}
+function endGenSelect() { genSel.active = false; if (genSel.layer) { map.removeLayer(genSel.layer); genSel.layer = null; } genSel.road = null; genSel.segs = null; document.getElementById('gen-bar').classList.add('hidden'); document.getElementById('map').classList.remove('selecting'); }
+function confirmGen() { const road = genSel.road, segs = genSel.segs ? [...genSel.segs] : []; endGenSelect(); if (road && segs.length) runGeneration(road, segs); }
 
 /* ════════════════ BUILDING GEOMETRY ════════════════ */
 function rectCorners(b) {
@@ -249,12 +329,32 @@ function renderTerritory() {
 }
 
 const blMap = new Map();
+function insetRect(b, s) {
+  const w = clampWH(b.w ?? DEF[b.type].w) * s, h = clampWH(b.h ?? DEF[b.type].h) * s, a = (b.rot || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+  return [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]].map(([dx, dy]) => offset(b.lat, b.lng, dx * ca - dy * sa, dx * sa + dy * ca));
+}
+function roofFacets(b) {                 // hip roof: 2 slopes + 2 hip ends + ridge
+  const w = clampWH(b.w ?? DEF[b.type].w), h = clampWH(b.h ?? DEF[b.type].h), a = (b.rot || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+  const P = (dx, dy) => offset(b.lat, b.lng, dx * ca - dy * sa, dx * sa + dy * ca);
+  const c0 = [-w / 2, -h / 2], c1 = [w / 2, -h / 2], c2 = [w / 2, h / 2], c3 = [-w / 2, h / 2];
+  let R1, R2, s1, s2, t1, t2;
+  if (w >= h) { const e = Math.max(0, w / 2 - h / 2); R1 = [-e, 0]; R2 = [e, 0]; s1 = [c0, c1, R2, R1]; s2 = [c3, c2, R2, R1]; t1 = [c0, R1, c3]; t2 = [c1, R2, c2]; }
+  else { const e = Math.max(0, h / 2 - w / 2); R1 = [0, -e]; R2 = [0, e]; s1 = [c0, c3, R2, R1]; s2 = [c1, c2, R2, R1]; t1 = [c0, R1, c1]; t2 = [c3, R2, c2]; }
+  return { slope1: s1.map(p => P(...p)), slope2: s2.map(p => P(...p)), hip1: t1.map(p => P(...p)), hip2: t2.map(p => P(...p)), ridge: [P(...R1), P(...R2)] };
+}
 function drawHouse(b) {
   const corners = rectCorners(b), out = [];
-  if (b.type === 'shop') out.push(L.polygon(corners, { pane: 'pane-builds', color: '#ffffff', weight: 3.5, fillColor: ROOF.shop.fill, fillOpacity: .95 }).addTo(buildLayer));
-  else {
-    out.push(L.polygon(corners, { pane: 'pane-builds', color: ROOF.house.edge, weight: 1, fillColor: ROOF.house.fill, fillOpacity: .95 }).addTo(buildLayer));
-    out.push(L.polyline(ridgeEnds(b), { pane: 'pane-builds', color: '#fff', opacity: .85, weight: 1.6 }).addTo(buildLayer));
+  if (b.type === 'shop') {
+    out.push(L.polygon(corners, { pane: 'pane-builds', color: '#ffffff', weight: 4, fillColor: ROOF.shop.fill, fillOpacity: .95 }).addTo(buildLayer));   // parapet
+    out.push(L.polygon(insetRect(b, 0.66), { pane: 'pane-builds', color: '#173b6b', weight: 1, fillColor: '#2f6fc4', fillOpacity: .97 }).addTo(buildLayer)); // roof field
+    out.push(L.polygon(insetRect(b, 0.30), { pane: 'pane-builds', color: '#0e294e', weight: 1, fillColor: '#1d4f93', fillOpacity: .97 }).addTo(buildLayer)); // rooftop unit
+  } else {
+    const f = roofFacets(b);
+    out.push(L.polygon(f.slope1, { pane: 'pane-builds', color: ROOF.house.edge, weight: 1, fillColor: '#44c65a', fillOpacity: .97 }).addTo(buildLayer));
+    out.push(L.polygon(f.slope2, { pane: 'pane-builds', color: ROOF.house.edge, weight: 1, fillColor: '#2f9d43', fillOpacity: .97 }).addTo(buildLayer));
+    out.push(L.polygon(f.hip1, { pane: 'pane-builds', color: ROOF.house.edge, weight: 1, fillColor: '#23823a', fillOpacity: .97 }).addTo(buildLayer));
+    out.push(L.polygon(f.hip2, { pane: 'pane-builds', color: ROOF.house.edge, weight: 1, fillColor: '#23823a', fillOpacity: .97 }).addTo(buildLayer));
+    out.push(L.polyline(f.ridge, { pane: 'pane-builds', color: '#eafff0', weight: 1.8, opacity: .95 }).addTo(buildLayer));
   }
   out.push(L.polygon(doorRect(b), { pane: 'pane-builds', color: '#7a4a12', weight: 1, fillColor: PORCH, fillOpacity: .95 }).addTo(buildLayer));
   out.forEach(l => { l.on('click', e => onBuildClick(b, e)); l.on('mouseover', () => hoverBuilding(b)); l.on('mouseout', clearHover); });
@@ -311,7 +411,12 @@ function renderRoads() {
   state.roads.forEach(r => {
     const asphalt = L.polyline(r, { pane: 'pane-lines', color: '#3b3f45', weight: w, opacity: .97, lineCap: 'round', lineJoin: 'round' }).addTo(roadLayer);
     L.polyline(r, { pane: 'pane-lines', color: '#f2c200', weight: Math.max(1, w * 0.11), opacity: .9, dashArray: `${Math.max(4, w * 0.8)} ${Math.max(6, w * 1.3)}`, interactive: false }).addTo(roadLayer);
-    lineHandlers(asphalt, 'roads', r);
+    asphalt.on('click', e => {
+      if (activeTool === 'erase') { L.DomEvent.stop(e); eraseSegment('roads', r, e.latlng); }
+      else if (!activeTool && !draw.active && !genSel.active) { L.DomEvent.stop(e); openRoadMenu(e, r); }
+    });
+    asphalt.on('mousemove', e => { if (activeTool === 'erase') hoverSeg(e.latlng, r); });
+    asphalt.on('mouseout', clearHover);
   });
 }
 function renderPaths() {
@@ -491,6 +596,8 @@ function wire() {
   document.getElementById('edit-del').onclick = () => { if (selected) removeBuilding(selected); };
   document.getElementById('edit-done').onclick = deselect;
   document.getElementById('edit-collapse').onclick = () => document.getElementById('edit').classList.toggle('collapsed');
+  document.getElementById('gen-ok').onclick = confirmGen;
+  document.getElementById('gen-cancel').onclick = endGenSelect;
   const nameEl = document.getElementById('state-name'); nameEl.value = state.name; nameEl.oninput = () => { state.name = nameEl.value.trim(); save(); };
   document.getElementById('flag').onclick = () => document.getElementById('palette').classList.toggle('hidden');
   document.querySelectorAll('.layer').forEach(b => { b.onclick = () => { const id = b.dataset.layer; if (id === currentLayer) return; map.removeLayer(layers[currentLayer]); layers[id].addTo(map); currentLayer = id; document.querySelectorAll('.layer').forEach(x => x.classList.toggle('active', x === b)); }; });
@@ -502,7 +609,7 @@ function wire() {
     else if ((e.ctrlKey || e.metaKey) && k === 'v') { e.preventDefault(); paste(); }
     else if (e.key === 'Enter' && draw.active) finishDraw();
     else if (e.key === 'Delete' && selected) removeBuilding(selected);
-    else if (e.key === 'Escape') { if (draw.active) { cancelDraw(); setToolIdle(); } else if (selected) deselect(); else document.getElementById('palette').classList.add('hidden'); }
+    else if (e.key === 'Escape') { closeCtxMenu(); if (genSel.active) endGenSelect(); else if (draw.active) { cancelDraw(); setToolIdle(); } else if (selected) deselect(); else document.getElementById('palette').classList.add('hidden'); }
     else if (e.key === 'Backspace' && draw.active) { e.preventDefault(); undoVertex(); }
   });
 }
