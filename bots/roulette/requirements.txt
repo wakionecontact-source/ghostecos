@@ -1,0 +1,5 @@
+aiogram>=3.4,<4
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-dotenv>=1.0
+aiohttp-socks>=0.9
