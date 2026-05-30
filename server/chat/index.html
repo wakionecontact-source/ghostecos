@@ -176,7 +176,21 @@ button,input,textarea{font-family:inherit;}
 .msg-file-info{flex:1;min-width:0;}
 .msg-file-name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .msg-file-meta{font-size:11px;opacity:0.7;}
-.msg-img{max-width:280px;max-height:280px;border-radius:10px;display:block;margin-top:4px;cursor:pointer;}
+.msg-img{max-width:280px;max-height:280px;border-radius:10px;display:block;margin-top:4px;cursor:zoom-in;transition:opacity 0.15s;}
+.msg-img:hover{opacity:0.92;}
+
+/* ─── Lightbox для медиа ─── */
+#mediaViewer{position:fixed;inset:0;z-index:999;background:rgba(0,0,0,0.92);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;padding:env(safe-area-inset-top) 20px env(safe-area-inset-bottom);animation:mvIn 0.2s ease-out;}
+#mediaViewer.open{display:flex;}
+@keyframes mvIn{from{opacity:0;}to{opacity:1;}}
+.mv-img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;box-shadow:0 20px 60px rgba(0,0,0,0.6);user-select:none;-webkit-user-drag:none;animation:mvImgIn 0.25s cubic-bezier(0.34,1.56,0.64,1);}
+@keyframes mvImgIn{from{transform:scale(0.85);opacity:0;}to{transform:scale(1);opacity:1;}}
+.mv-top{position:absolute;top:0;left:0;right:0;padding:calc(14px + env(safe-area-inset-top)) 16px 14px;display:flex;align-items:center;gap:10px;background:linear-gradient(to bottom,rgba(0,0,0,0.6),transparent);z-index:2;}
+.mv-info{flex:1;min-width:0;color:#fff;}
+.mv-info .nm{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mv-info .sub{font-size:11px;opacity:0.7;margin-top:2px;}
+.mv-btn{width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,0.12);color:#fff;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;transition:background 0.15s;flex-shrink:0;}
+.mv-btn:hover{background:rgba(255,255,255,0.22);}
 .file-progress{margin-top:6px;height:3px;background:rgba(255,255,255,0.15);border-radius:2px;overflow:hidden;}
 .file-progress-bar{height:100%;background:#fff;width:0;transition:width 0.2s;}
 .msg.mine .msg-quote{background:rgba(255,255,255,0.10);border-left-color:rgba(255,255,255,0.6);color:rgba(255,255,255,0.85);}
@@ -1328,6 +1342,46 @@ async function downloadFile(sid){
   } catch(e) { showToast('Не удалось расшифровать: ' + e.message, true); }
 }
 
+// ─── Lightbox для медиа (изображений) ───
+function openMediaViewer(sid){
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
+  if (!m || !m._imgUrl) return;
+  const fp = m.file_payload || m.file || {};
+  let v = document.getElementById('mediaViewer');
+  if (!v) {
+    v = document.createElement('div');
+    v.id = 'mediaViewer';
+    document.body.appendChild(v);
+  }
+  v.innerHTML = `
+    <div class="mv-top">
+      <div class="mv-info">
+        <div class="nm">${esc(fp.file_name || fp.name || 'Изображение')}</div>
+        <div class="sub">${fmtSize(fp.size || 0)} · ${esc(fp.mime || 'image')}</div>
+      </div>
+      <button class="mv-btn" onclick="event.stopPropagation();downloadFile(${JSON.stringify(String(sid))})" title="Скачать"><i class="fa-solid fa-download"></i></button>
+      <button class="mv-btn" onclick="closeMediaViewer()" title="Закрыть"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <img class="mv-img" src="${m._imgUrl}" alt="${esc(fp.file_name || '')}">
+  `;
+  v.classList.add('open');
+  v.onclick = (e) => { if (e.target === v) closeMediaViewer(); };
+  // Swipe down to close (mobile)
+  let touchStartY = 0;
+  v.ontouchstart = (e) => { touchStartY = e.touches[0].clientY; };
+  v.ontouchend = (e) => {
+    const dy = (e.changedTouches[0].clientY - touchStartY);
+    if (dy > 80) closeMediaViewer();
+  };
+  document.addEventListener('keydown', _mvKeyHandler);
+}
+function closeMediaViewer(){
+  const v = document.getElementById('mediaViewer');
+  if (v) v.classList.remove('open');
+  document.removeEventListener('keydown', _mvKeyHandler);
+}
+function _mvKeyHandler(e){ if (e.key === 'Escape') closeMediaViewer(); }
+
 // Превью картинки inline — скачиваем + decrypt + показываем в bubble
 async function loadImgPreview(sid){
   const m = activeMessages.find(x => String(x.sid) === String(sid));
@@ -1344,8 +1398,9 @@ async function loadImgPreview(sid){
     const url = URL.createObjectURL(blob);
     m._imgLoaded = true;
     m._imgUrl = url;
-    const el = document.querySelector(`.msg[data-sid="${String(sid).replace(/[^a-zA-Z0-9_-]/g, '')}"] .msg-img-placeholder`);
-    if (el) el.outerHTML = `<img class="msg-img" src="${url}" alt="${esc(p.file_name)}" onclick="window.open('${url}','_blank')">`;
+    const safeSid = String(sid).replace(/[^a-zA-Z0-9_-]/g, '');
+    const el = document.querySelector(`.msg[data-sid="${safeSid}"] .msg-img-placeholder`);
+    if (el) el.outerHTML = `<img class="msg-img" src="${url}" alt="${esc(p.file_name)}" onclick="openMediaViewer('${safeSid}')">`;
   } catch(_){}
 }
 
