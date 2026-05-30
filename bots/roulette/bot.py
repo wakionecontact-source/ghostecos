@@ -178,14 +178,14 @@ class Form(StatesGroup):
 
 
 def format_profile(u: dict) -> str:
-    gender_map = {"m": "Парень", "f": "Девушка"}
-    looking_map = {"m": "парня", "f": "девушку", "any": "не важно"}
+    gender_map = {"m": "👨 Парень", "f": "👩 Девушка"}
+    looking_map = {"m": "👨 парня", "f": "👩 девушку", "any": "🌈 не важно"}
     lines = [f"<b>{u.get('name') or '—'}, {u.get('age') or '?'}</b>"]
-    g = gender_map.get(u.get("gender"), "?")
-    l = looking_map.get(u.get("looking"), "?")
+    g = gender_map.get(u.get("gender"), "❓")
+    l = looking_map.get(u.get("looking"), "❓")
     lines.append(f"{g} · ищет: {l}")
     if u.get("bio"):
-        lines.append(f"\n{u['bio']}")
+        lines.append(f"\n💭 {u['bio']}")
     return "\n".join(lines)
 
 
@@ -197,19 +197,24 @@ async def on_start(m: Message, state: FSMContext):
     u = db_get_user(m.from_user.id)
     if u and u.get("name"):
         await m.answer(
-            f"С возвращением, <b>{u['name']}</b>!\nЖми кнопку внизу или /help.",
+            f"👋 С возвращением, <b>{u['name']}</b>!\n\n"
+            f"Что хочешь сделать? Кнопки внизу 👇",
             parse_mode="HTML",
             reply_markup=main_menu(),
         )
     else:
         await m.answer(
-            "Привет! Это <b>OKey</b> — знакомства в Telegram.\n\n"
-            "Заполни анкету и смотри других, лайкай, болтай в рулетке.\n\n"
-            "Жми кнопку чтобы начать ↓",
+            "💜 Привет! Это <b>OKey</b> — знакомства в Telegram.\n\n"
+            "Что умеет:\n"
+            "📝 Заполнить анкету и смотреть других\n"
+            "❤️ Лайкать, получать match-уведомления\n"
+            "🎲 Болтать в чат-рулетке со случайными людьми\n\n"
+            "<i>Никакой рекламы и подписок. Open source.</i>\n\n"
+            "Поехали? 👇",
             parse_mode="HTML",
             reply_markup=start_kb(),
         )
-        await m.answer("Главное меню всегда внизу:", reply_markup=main_menu())
+        await m.answer("👇 А внизу — главное меню (всегда там):", reply_markup=main_menu())
 
 
 @dp.message(Command("help"))
@@ -231,7 +236,12 @@ async def on_help(m: Message):
 async def on_cancel(m: Message, state: FSMContext):
     cur = await state.get_state()
     await state.clear()
-    await m.answer("Отменено." if cur else "Нечего отменять.", reply_markup=main_menu())
+    if cur:
+        await m.answer("✋ <b>Заполнение отменено</b>\nВсе введённые данные сброшены.",
+                       parse_mode="HTML", reply_markup=main_menu())
+    else:
+        await m.answer("🤷 Нечего отменять — ты не в процессе заполнения.",
+                       reply_markup=main_menu())
 
 
 @dp.callback_query(F.data == "about")
@@ -285,8 +295,10 @@ async def start_wizard(event, state: FSMContext):
             InlineKeyboardButton(text=f"📋 Взять из Telegram: {tg_name}", callback_data="name:tg"),
         ]])
     await send(
-        "Заполняем анкету. Жми /cancel чтобы прервать.\n\n"
-        "<b>Как тебя зовут?</b>\n(только имя, 2-30 символов)",
+        "📝 <b>Заполняем анкету</b>\n"
+        "<i>Можно прервать в любой момент: /cancel</i>\n\n"
+        "👋 <b>Как тебя зовут?</b>\n"
+        "Только имя, 2-30 символов.",
         parse_mode="HTML",
         reply_markup=name_kb,
     )
@@ -294,18 +306,56 @@ async def start_wizard(event, state: FSMContext):
 
 async def _accept_name(name: str, send_fn, state: FSMContext):
     """Сохранить имя и перейти к возрасту. Используется и из текста, и из кнопки."""
-    if not (2 <= len(name) <= 30):
-        await send_fn("Имя 2-30 символов. Попробуй ещё:")
+    # Защита от пустоты
+    if not name:
+        await send_fn("🤔 Пустое сообщение. Напиши, как тебя зовут:")
+        return False
+    if len(name) < 2:
+        await send_fn(
+            f"📏 «{name}» — слишком коротко (нужно <b>2-30 символов</b>).\n"
+            f"Это правда твоё имя? Попробуй ещё раз:",
+            parse_mode="HTML",
+        )
+        return False
+    if len(name) > 30:
+        await send_fn(
+            f"📏 Длинновато ({len(name)} символов). Максимум <b>30</b>.\n"
+            f"Сократи (или только имя без фамилии):",
+            parse_mode="HTML",
+        )
+        return False
+    # Запрет на ссылки и @-упоминания в имени
+    low = name.lower()
+    if "@" in low or "http" in low or "t.me" in low or ".com" in low:
+        await send_fn(
+            "🚫 В имени не должно быть ссылок или @-упоминаний.\n"
+            "Введи нормальное имя:",
+        )
         return False
     await state.update_data(name=name)
     await state.set_state(Form.age)
-    await send_fn("Сколько тебе лет? (10-60)")
+    await send_fn(
+        f"👌 Привет, <b>{name}</b>!\n\n"
+        f"🎂 <b>Сколько тебе лет?</b>\n"
+        f"Принимаю числа от <b>10</b> до <b>60</b>.",
+        parse_mode="HTML",
+    )
     return True
 
 
 @dp.message(Form.name, F.text)
 async def step_name(m: Message, state: FSMContext):
     await _accept_name(m.text.strip(), m.answer, state)
+
+
+@dp.message(Form.name)
+async def step_name_not_text(m: Message):
+    """Юзер прислал фото/стикер/что угодно вместо имени."""
+    await m.answer(
+        "🤨 Жду <b>текст</b> с твоим именем, не картинку/стикер/файл.\n"
+        "Просто напиши, как тебя зовут:",
+        parse_mode="HTML",
+    )
 
 
 @dp.callback_query(Form.name, F.data == "name:tg")
@@ -317,9 +367,9 @@ async def step_name_from_tg(cq: CallbackQuery, state: FSMContext):
         tg_name = cq.from_user.username or ""
     tg_name = tg_name[:30]
     if len(tg_name) < 2:
-        await cq.answer("В Telegram нет нормального имени — введи вручную", show_alert=True)
+        await cq.answer("⚠️ В Telegram нет нормального имени — введи вручную", show_alert=True)
         return
-    await cq.answer(f"Взял: {tg_name}")
+    await cq.answer(f"✅ Взял: {tg_name}")
     try: await cq.message.edit_reply_markup(reply_markup=None)
     except: pass
     await _accept_name(tg_name, cq.message.answer, state)
@@ -328,58 +378,160 @@ async def step_name_from_tg(cq: CallbackQuery, state: FSMContext):
 @dp.message(Form.age, F.text)
 async def step_age(m: Message, state: FSMContext):
     t = m.text.strip()
-    if not t.isdigit() or not (10 <= int(t) <= 60):
-        await m.answer("Введи число от 10 до 60:")
+    # Удалим всё кроме цифр на случай "22 года" / "22!"
+    digits = "".join(c for c in t if c.isdigit())
+    if not digits:
+        await m.answer(
+            "🔢 Это не похоже на число. Просто <b>число</b>, например: <code>22</code>",
+            parse_mode="HTML",
+        )
         return
-    await state.update_data(age=int(t))
+    try:
+        age = int(digits)
+    except ValueError:
+        await m.answer("🔢 Не понял число. Напиши просто цифрами:")
+        return
+    # Слишком маленький
+    if age < 10:
+        await m.answer(
+            f"🚸 <b>{age}</b> — меньше разрешённого (минимум <b>10</b>).\n\n"
+            f"Если это правда твой возраст — извини, бот тебе пока не подходит 😔\n"
+            f"Если опечатка — напиши настоящий возраст:",
+            parse_mode="HTML",
+        )
+        return
+    # Слишком большой (или явно не возраст)
+    if age > 60 and age <= 120:
+        await m.answer(
+            f"👴 <b>{age}</b> — больше разрешённого (максимум <b>60</b>).\n\n"
+            f"Если это правда — увы, бот тебе не подходит 😔\n"
+            f"Если ошибся — напиши свой возраст заново:",
+            parse_mode="HTML",
+        )
+        return
+    if age > 120:
+        await m.answer(
+            f"🤖 <b>{age}</b> — ну либо ты бессмертный, либо опечатался.\n"
+            f"Напиши нормальный возраст (10-60):",
+            parse_mode="HTML",
+        )
+        return
+    await state.update_data(age=age)
     await state.set_state(Form.gender)
-    await m.answer("Твой пол?", reply_markup=gender_kb())
+    await m.answer(
+        f"📅 <b>{age}</b> — записал!\n\n"
+        f"⚧ <b>Твой пол?</b>",
+        parse_mode="HTML",
+        reply_markup=gender_kb(),
+    )
+
+
+@dp.message(Form.age)
+async def step_age_not_text(m: Message):
+    await m.answer("🔢 Жду число, не картинку/стикер. Сколько тебе лет?")
 
 
 @dp.callback_query(Form.gender, F.data.startswith("g:"))
 async def step_gender(cq: CallbackQuery, state: FSMContext):
     g = cq.data.split(":", 1)[1]
     if g not in ("m", "f"):
-        await cq.answer("?"); return
+        await cq.answer("⚠️"); return
     await state.update_data(gender=g)
-    await cq.answer()
+    label = "👨 Парень" if g == "m" else "👩 Девушка"
+    await cq.answer(f"✅ {label}")
     try: await cq.message.edit_reply_markup(reply_markup=None)
     except: pass
     await state.set_state(Form.looking)
-    await cq.message.answer("Кого ищешь?", reply_markup=looking_kb())
+    await cq.message.answer(
+        f"{label} — записал.\n\n"
+        f"❤️ <b>Кого ищешь?</b>",
+        parse_mode="HTML",
+        reply_markup=looking_kb(),
+    )
+
+
+@dp.message(Form.gender)
+async def step_gender_text(m: Message):
+    await m.answer("👆 Нажми одну из кнопок выше — Парень / Девушка.")
 
 
 @dp.callback_query(Form.looking, F.data.startswith("l:"))
 async def step_looking(cq: CallbackQuery, state: FSMContext):
     lf = cq.data.split(":", 1)[1]
     if lf not in ("m", "f", "any"):
-        await cq.answer("?"); return
+        await cq.answer("⚠️"); return
+    labels = {"m": "👨 Парней", "f": "👩 Девушек", "any": "🌈 Не важно кого"}
     await state.update_data(looking=lf)
-    await cq.answer()
+    await cq.answer(f"✅ {labels[lf]}")
     try: await cq.message.edit_reply_markup(reply_markup=None)
     except: pass
     await state.set_state(Form.bio)
     await cq.message.answer(
-        "Расскажи о себе (до 300 символов) или пропусти:",
+        f"Ищешь: <b>{labels[lf]}</b>\n\n"
+        f"📝 <b>Расскажи о себе</b>\n"
+        f"<i>До 300 символов. Хобби, интересы, чё кайфуешь.</i>\n"
+        f"<i>Можно пропустить.</i>",
+        parse_mode="HTML",
         reply_markup=skip_kb("bio"),
     )
 
 
+@dp.message(Form.looking)
+async def step_looking_text(m: Message):
+    await m.answer("👆 Нажми одну из кнопок выше.")
+
+
 @dp.message(Form.bio, F.text)
 async def step_bio(m: Message, state: FSMContext):
-    await state.update_data(bio=m.text.strip()[:300])
+    bio = m.text.strip()
+    if len(bio) > 300:
+        await m.answer(
+            f"📏 Длинновато ({len(bio)} символов). Максимум <b>300</b>.\n"
+            f"Сократи и пришли заново:",
+            parse_mode="HTML",
+        )
+        return
+    if len(bio) < 3:
+        await m.answer(
+            "🤔 Слишком коротко. Хотя бы пару слов о себе.\n"
+            "Или жми «Пропустить»:",
+            reply_markup=skip_kb("bio"),
+        )
+        return
+    await state.update_data(bio=bio)
     await state.set_state(Form.photo)
-    await m.answer("Отправь своё фото или пропусти:", reply_markup=skip_kb("photo"))
+    await m.answer(
+        f"📸 <b>Теперь отправь своё фото</b>\n"
+        f"<i>Одно, любое. Будет видно другим юзерам.</i>\n"
+        f"<i>Можно пропустить — добавишь позже.</i>",
+        parse_mode="HTML",
+        reply_markup=skip_kb("photo"),
+    )
+
+
+@dp.message(Form.bio)
+async def step_bio_not_text(m: Message):
+    await m.answer(
+        "📝 Жду <b>текст</b> с описанием себя. Или нажми «Пропустить»:",
+        parse_mode="HTML",
+        reply_markup=skip_kb("bio"),
+    )
 
 
 @dp.callback_query(Form.bio, F.data == "skip:bio")
 async def skip_bio(cq: CallbackQuery, state: FSMContext):
-    await cq.answer()
+    await cq.answer("⏭ Без описания")
     await state.update_data(bio=None)
     try: await cq.message.edit_reply_markup(reply_markup=None)
     except: pass
     await state.set_state(Form.photo)
-    await cq.message.answer("Отправь своё фото или пропусти:", reply_markup=skip_kb("photo"))
+    await cq.message.answer(
+        f"📸 <b>Теперь отправь своё фото</b>\n"
+        f"<i>Одно, любое. Будет видно другим юзерам.</i>\n"
+        f"<i>Можно пропустить — добавишь позже.</i>",
+        parse_mode="HTML",
+        reply_markup=skip_kb("photo"),
+    )
 
 
 @dp.message(Form.photo, F.photo)
@@ -388,14 +540,29 @@ async def step_photo(m: Message, state: FSMContext):
     await finalize(m, state)
 
 
-@dp.message(Form.photo, ~F.photo)
+@dp.message(Form.photo, F.document)
+async def step_photo_doc(m: Message):
+    await m.answer(
+        "📎 Это файл, не фото. Пришли <b>именно фото</b> (галерея или камера).\n"
+        "<i>Telegram файлы-картинки не подходят — они не сжимаются.</i>",
+        parse_mode="HTML",
+        reply_markup=skip_kb("photo"),
+    )
+
+
+@dp.message(Form.photo)
 async def step_photo_wrong(m: Message):
-    await m.answer("Жду именно фото (или нажми «Пропустить»):")
+    await m.answer(
+        "📸 Жду <b>фото</b>. Не текст, не стикер, не видео.\n"
+        "Открой галерею и пришли картинку. Или жми «Пропустить»:",
+        parse_mode="HTML",
+        reply_markup=skip_kb("photo"),
+    )
 
 
 @dp.callback_query(Form.photo, F.data == "skip:photo")
 async def skip_photo(cq: CallbackQuery, state: FSMContext):
-    await cq.answer()
+    await cq.answer("⏭ Без фото")
     await state.update_data(photo_id=None)
     try: await cq.message.edit_reply_markup(reply_markup=None)
     except: pass
@@ -419,30 +586,60 @@ async def finalize(m: Message, state: FSMContext, uid: Optional[int] = None, use
         photo_id=data.get("photo_id"),
     )
     u = db_get_user(user_id)
-    text = "✅ Анкета сохранена!\n\n" + format_profile(u)
+    text = "🎉 <b>Анкета готова!</b>\n\n" + format_profile(u)
     if u.get("photo_id"):
         await m.answer_photo(u["photo_id"], caption=text, parse_mode="HTML")
     else:
         await m.answer(text, parse_mode="HTML")
-    await m.answer("Дальше — поиск и рулетка появятся скоро.", reply_markup=main_menu())
+    await m.answer(
+        "💜 Готово!\n\n"
+        "🔜 Скоро: поиск других анкет и чат-рулетка.\n"
+        "Пока — изменяй анкету в ⚙️ Настройки.",
+        reply_markup=main_menu(),
+    )
     log.info("Анкета сохранена tg=%s name=%s", user_id, data.get("name"))
 
 
 # ── Reply-кнопки stub'ы ──────────────────────────────────────────────────────
 @dp.message(F.text == "🔍 Поиск")
 async def stub_search(m: Message):
-    await m.answer("🔍 Поиск анкет — скоро.", reply_markup=main_menu())
+    await m.answer(
+        "🔍 <b>Поиск анкет</b>\n\n"
+        "🛠 Скоро тут будет:\n"
+        "• Смотришь карточки других юзеров\n"
+        "• 💚 Лайк / 💔 Пропустить\n"
+        "• Взаимный лайк → match → можно общаться\n\n"
+        "<i>Жди в следующем апдейте.</i>",
+        parse_mode="HTML",
+        reply_markup=main_menu(),
+    )
 
 
 @dp.message(F.text == "🎲 Рулетка")
 async def stub_roulette(m: Message):
-    await m.answer("🎲 Чат-рулетка — скоро.", reply_markup=main_menu())
+    await m.answer(
+        "🎲 <b>Чат-рулетка</b>\n\n"
+        "🛠 Скоро тут будет:\n"
+        "• Встаёшь в очередь поиска\n"
+        "• Бот находит случайного собеседника\n"
+        "• Болтаешь анонимно, можно остановить в любой момент\n\n"
+        "<i>Жди в следующем апдейте.</i>",
+        parse_mode="HTML",
+        reply_markup=main_menu(),
+    )
 
 
 # ── Настройки + удаление аккаунта ────────────────────────────────────────────
 @dp.message(F.text == "⚙️ Настройки")
 async def on_settings(m: Message):
-    await m.answer("⚙️ <b>Настройки</b>", parse_mode="HTML", reply_markup=settings_kb())
+    u = db_get_user(m.from_user.id)
+    has_profile = bool(u and u.get("name"))
+    status = "✅ Анкета заполнена" if has_profile else "⚠️ Анкета не заполнена"
+    await m.answer(
+        f"⚙️ <b>Настройки</b>\n\n{status}",
+        parse_mode="HTML",
+        reply_markup=settings_kb(),
+    )
 
 
 @dp.callback_query(F.data == "help")
@@ -464,12 +661,13 @@ async def cb_help(cq: CallbackQuery):
 async def cb_del_ask(cq: CallbackQuery):
     await cq.answer()
     await cq.message.answer(
-        "🗑 <b>Удалить аккаунт?</b>\n\n"
-        "Удалится:\n"
-        "• Твоя анкета\n"
-        "• Все лайки и матчи\n"
-        "• История сообщений в боте\n\n"
-        "Действие необратимо.",
+        "⚠️ <b>Удалить аккаунт?</b>\n\n"
+        "Что произойдёт:\n"
+        "🗑 Твоя анкета будет стёрта\n"
+        "❤️ Все лайки и матчи пропадут\n"
+        "💬 История переписок (если будет) — тоже\n\n"
+        "<b>Действие необратимо.</b>\n"
+        "Точно?",
         parse_mode="HTML",
         reply_markup=confirm_delete_kb(),
     )
@@ -477,13 +675,17 @@ async def cb_del_ask(cq: CallbackQuery):
 
 @dp.callback_query(F.data == "acc:del_yes")
 async def cb_del_yes(cq: CallbackQuery, state: FSMContext):
-    await cq.answer("Удаляю...")
+    await cq.answer("🗑 Удаляю...")
     await state.clear()
     db_delete_user(cq.from_user.id)
     try: await cq.message.edit_reply_markup(reply_markup=None)
     except: pass
     await cq.message.answer(
-        "✅ Аккаунт удалён.\n\nЕсли захочешь вернуться — жми /start, заполнишь анкету заново.",
+        "✅ <b>Аккаунт удалён.</b>\n\n"
+        "Все данные стёрты. Если захочешь вернуться — жми /start, "
+        "заполнишь анкету заново.\n\n"
+        "💜 Будет приятно если вернёшься.",
+        parse_mode="HTML",
         reply_markup=main_menu(),
     )
     log.info("Аккаунт удалён: tg=%s @%s", cq.from_user.id, cq.from_user.username)
@@ -491,10 +693,11 @@ async def cb_del_yes(cq: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "acc:del_no")
 async def cb_del_no(cq: CallbackQuery):
-    await cq.answer("Отменено")
+    await cq.answer("✋ Отменено")
     try: await cq.message.edit_reply_markup(reply_markup=None)
     except: pass
-    await cq.message.answer("Удаление отменено.", reply_markup=main_menu())
+    await cq.message.answer("👌 Удаление отменено. Аккаунт на месте.",
+                            reply_markup=main_menu())
 
 
 # ── Fallback ─────────────────────────────────────────────────────────────────
@@ -504,7 +707,10 @@ async def fallback(m: Message, state: FSMContext):
     if cur:
         # Внутри FSM — игнорим (выше уже отработали либо ничего не подошло)
         return
-    await m.answer("Не понял. Жми кнопки внизу или /help.", reply_markup=main_menu())
+    await m.answer(
+        "🤔 Не понял команду.\n\nЖми кнопки внизу 👇 или /help",
+        reply_markup=main_menu(),
+    )
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
