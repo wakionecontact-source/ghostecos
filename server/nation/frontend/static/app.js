@@ -54,7 +54,7 @@ let layers = {}, currentLayer = 'esri', lastMouse = null;
 
 function initMap() {
   map = L.map('map', { zoomControl: false, attributionControl: true, worldCopyJump: true }).setView([state.view.lat, state.view.lng], state.view.zoom);
-  [['pane-territory', 410], ['pane-lines', 420], ['pane-cross', 425], ['pane-builds', 430], ['pane-edit', 440]]
+  [['pane-territory', 410], ['pane-path', 415], ['pane-lines', 420], ['pane-cross', 425], ['pane-builds', 430], ['pane-edit', 440]]
     .forEach(([n, z]) => { map.createPane(n); map.getPane(n).style.zIndex = z; });
   L.control.zoom({ position: 'topright' }).addTo(map);
   layers.esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Esri · GhostNation' });
@@ -161,14 +161,22 @@ function snapPath(latlng) {             // paths: exact; roads: offset to side (
   }
   return best;
 }
-function nearestRoadBearing(latlng) {
-  const p = map.latLngToLayerPoint(latlng); let best = null, bestD = mToPx(120);
+function nearestRoad(lat, lng) {        // globally nearest road point + bearing (no threshold)
+  const p = map.latLngToLayerPoint(L.latLng(lat, lng)); let best = null, bestD = Infinity;
   for (const road of state.roads) for (let i = 1; i < road.length; i++) {
     const a = map.latLngToLayerPoint(L.latLng(road[i - 1][0], road[i - 1][1])), b = map.latLngToLayerPoint(L.latLng(road[i][0], road[i][1]));
-    const d = p.distanceTo(projSeg(p, a, b));
-    if (d < bestD) { bestD = d; const E = (road[i][1] - road[i - 1][1]) * mPerDegLng(latlng.lat), N = (road[i][0] - road[i - 1][0]) * MPD_LAT; best = Math.atan2(N, E) * 180 / Math.PI; }
+    const pr = projSeg(p, a, b), d = p.distanceTo(pr);
+    if (d < bestD) { bestD = d; const ll = map.layerPointToLatLng(pr); const E = (road[i][1] - road[i - 1][1]) * mPerDegLng(lat), N = (road[i][0] - road[i - 1][0]) * MPD_LAT; best = { bearing: Math.atan2(N, E) * 180 / Math.PI, lat: ll.lat, lng: ll.lng }; }
   }
   return best;
+}
+function alignToRoad(b) {               // rotate along nearest road, entrance facing it
+  const info = nearestRoad(b.lat, b.lng);
+  if (!info) { b.rot = Math.round(rand(0, 360)); b.door = randInt(4); return; }
+  b.rot = Math.round(info.bearing);
+  const E = (info.lng - b.lng) * mPerDegLng(b.lat), N = (info.lat - b.lat) * MPD_LAT, a = info.bearing * Math.PI / 180;
+  const ly = -E * Math.sin(a) + N * Math.cos(a);   // perpendicular component toward the road
+  b.door = ly >= 0 ? 2 : 0;                          // 0 = -h/2 side, 2 = +h/2 side
 }
 
 /* ════════════════ MAP CLICK / PLACE ════════════════ */
@@ -177,14 +185,30 @@ function onMapClick(e) {
   if (activeTool === 'select') { deselect(); return; }
   if (['house', 'shop', 'tree'].includes(activeTool)) placeBuilding(activeTool, e.latlng);
 }
+function bRadius(b) { return b.type === 'tree' ? clampR(b.r ?? DEF.tree.r) : Math.hypot(clampWH(b.w ?? DEF[b.type].w) / 2, clampWH(b.h ?? DEF[b.type].h) / 2); }
+function distMeters(la1, ln1, la2, ln2) { const E = (ln2 - ln1) * mPerDegLng(la1), N = (la2 - la1) * MPD_LAT; return Math.hypot(E, N); }
+function overlapsAt(lat, lng, radius, exclude) { for (const o of state.buildings) { if (o === exclude) continue; if (distMeters(lat, lng, o.lat, o.lng) < radius + bRadius(o)) return true; } return false; }
+function insideBuilding(lat, lng) { for (const o of state.buildings) if (distMeters(lat, lng, o.lat, o.lng) < bRadius(o) + 1) return true; return false; }
+function freeSpot(lat, lng, radius) {
+  for (let ring = 1; ring <= 9; ring++) { const dist = ring * (radius * 2 + 3); for (let k = 0; k < 8; k++) { const ang = k / 8 * 2 * Math.PI, ll = offset(lat, lng, Math.cos(ang) * dist, Math.sin(ang) * dist); if (!overlapsAt(ll[0], ll[1], radius)) return { lat: ll[0], lng: ll[1] }; } }
+  return { lat, lng };
+}
 function placeBuilding(type, latlng) {
   pushUndo();
   const b = { type, lat: latlng.lat, lng: latlng.lng };
-  if (type === 'tree') b.r = DEF.tree.r;
-  else {
-    b.w = Math.round(rand(8, 30)); b.h = Math.round(rand(8, 30));
-    const rb = nearestRoadBearing(latlng); b.rot = rb != null ? Math.round(rb) : Math.round(rand(0, 360));
-    b.door = randInt(4);
+  if (type === 'tree') {
+    b.r = DEF.tree.r;
+    if (overlapsAt(b.lat, b.lng, b.r, b)) { const f = freeSpot(b.lat, b.lng, b.r); b.lat = f.lat; b.lng = f.lng; }
+  } else {
+    if (insideBuilding(b.lat, b.lng)) { const f = freeSpot(b.lat, b.lng, 8); b.lat = f.lat; b.lng = f.lng; }
+    alignToRoad(b);
+    let maxS = 30;                                  // random size, shrink on touch, relocate if stuck
+    for (let t = 0; t < 12; t++) {
+      b.w = Math.round(rand(8, maxS)); b.h = Math.round(rand(8, maxS));
+      if (!overlapsAt(b.lat, b.lng, bRadius(b), b)) break;
+      if (maxS > 8) maxS = Math.max(8, maxS * 0.8);
+      else { const f = freeSpot(b.lat, b.lng, bRadius(b)); b.lat = f.lat; b.lng = f.lng; alignToRoad(b); }
+    }
   }
   state.buildings.push(b); save(); renderBuildings(); updateStats();
   return b;
@@ -291,9 +315,9 @@ function renderRoads() {
   });
 }
 function renderPaths() {
-  pathLayer.clearLayers(); const w = pathPx();
+  pathLayer.clearLayers(); const w = Math.max(2, pathPx());
   state.paths.forEach(pp => {
-    const ln = L.polyline(pp, { pane: 'pane-lines', color: '#e7dcc4', weight: w, opacity: .92, lineCap: 'round', dashArray: `${Math.max(1, w)} ${Math.max(2, w * 1.6)}` }).addTo(pathLayer);
+    const ln = L.polyline(pp, { pane: 'pane-path', color: '#b7b9bc', weight: w, opacity: .96, lineCap: 'round', lineJoin: 'round' }).addTo(pathLayer);
     lineHandlers(ln, 'paths', pp);
   });
 }
