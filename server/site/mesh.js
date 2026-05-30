@@ -25,11 +25,14 @@
     W = window.innerWidth;
     H = window.innerHeight;
     DPR = Math.min(window.devicePixelRatio || 1, 2);
+    // Присвоение width/height стирает содержимое — это и нужно при wake-up
+    // из suspended-state, когда browser показывает старый кадр поверх.
     canvas.width  = Math.floor(W * DPR);
     canvas.height = Math.floor(H * DPR);
     canvas.style.width  = W + "px";
     canvas.style.height = H + "px";
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.clearRect(0, 0, W, H);  // явная очистка на случай если W/H не изменились
     const want = countFor(W * H);
     if (particles.length === 0) {
       // заново создаём
@@ -72,6 +75,13 @@
   let rafId = 0; // guard от двойного rAF при visibilitychange
   function tick() {
     rafId = 0;
+    // Если размеры окна разошлись с canvas (юзер ресайзнул пока tab был в фоне,
+    // или DPR поменялся при смене монитора) — пересоздаём canvas. Без этого
+    // ctx.clearRect(0,0,W,H) очищает только старую область, по краям остаются
+    // trails — фиолетовые полосы рендерятся поверх предыдущих кадров.
+    if (W !== window.innerWidth || H !== window.innerHeight) {
+      resize();
+    }
     ctx.clearRect(0, 0, W, H);
     // --- обновление + рисуем точки ---
     for (let i = 0; i < particles.length; i++) {
@@ -169,6 +179,11 @@
 
   document.addEventListener("visibilitychange", () => {
     running = !document.hidden;
+    if (running) {
+      // На wake принудительно пересоздаём canvas — гарантирует чистый старт
+      // и правильный размер если окно/DPR менялись пока вкладка была suspended.
+      resize();
+    }
     schedule();
   });
   window.addEventListener("resize", resize, { passive: true });
