@@ -174,6 +174,33 @@ async def cmd_admin_ping(args: List[str]) -> str:
         return f"FAIL: {e}"
 
 
+@admin_command("scanports", "Найти на каких портах слушает прокси (V2RayTun)")
+async def cmd_admin_scanports(args: List[str]) -> str:
+    import socket
+    candidates = [10808, 10809, 1080, 1081, 2080, 7890, 7891, 8080, 8081, 8118]
+    found = []
+    for port in candidates:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.3)
+        try:
+            s.connect(("127.0.0.1", port))
+            found.append(port)
+        except Exception:
+            pass
+        finally:
+            s.close()
+    if not found:
+        return ("Открытых прокси-портов не нашёл (проверил " + ", ".join(map(str, candidates)) +
+                ").\nВключи V2RayTun и проверь Settings → Inbounds.")
+    return "Слушают порты: " + ", ".join(map(str, found)) + (
+        "\n\nОбычно SOCKS=10808, HTTP=10809.\n"
+        "Попробуй в .env:\n"
+        "  PROXY_URL=socks5://127.0.0.1:10808\n"
+        "  или\n"
+        "  PROXY_URL=http://127.0.0.1:10809"
+    )
+
+
 @admin_command("broadcast", "broadcast <текст> — отправить всем виденным юзерам")
 async def cmd_admin_broadcast(args: List[str]) -> str:
     if not args:
@@ -307,23 +334,36 @@ async def main():
         except Exception:
             pass
 
-    # Проверим бота
-    try:
-        me = await bot.get_me()
-        log.info("Бот @%s (id=%s) — поехали", me.username, me.id)
-    except Exception as e:
-        log.error("Не могу подключиться к Telegram: %s", e)
-        log.error("Проверь BOT_TOKEN и что V2RayTun запущен (порт %s)",
-                  PROXY_URL or "—")
-        # Не выходим — UI всё равно поднят, может юзер починит и сделает /restart
+    # Polling — в фоне, с retry. Если упадёт — UI продолжит работать,
+    # юзер увидит ошибку в логах и сможет починить .env / V2RayTun.
+    async def polling_loop():
+        backoff = 3
+        while True:
+            try:
+                me = await bot.get_me()
+                log.info("Бот @%s (id=%s) — поехали", me.username, me.id)
+                backoff = 3  # reset
+                await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+                # start_polling выходит только на graceful stop
+                log.info("Polling завершён")
+                break
+            except Exception as e:
+                log.error("Telegram недоступен: %s", e)
+                log.error("Проверь V2RayTun (порт %s) и BOT_TOKEN. Retry через %ds...",
+                          PROXY_URL or "—", backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 60)  # 3 → 6 → 12 → 24 → 48 → 60
 
-    # Polling
+    polling_task = asyncio.create_task(polling_loop())
+
+    # Главный loop — uvicorn. Он держит UI до Ctrl+C
     try:
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
-    finally:
-        await bot.session.close()
-        server.should_exit = True
         await server_task
+    finally:
+        polling_task.cancel()
+        try: await polling_task
+        except: pass
+        await bot.session.close()
 
 
 if __name__ == "__main__":
