@@ -200,6 +200,18 @@ function freeSpot(lat, lng, radius) {
   for (let ring = 1; ring <= 9; ring++) { const dist = ring * (radius * 2 + 3); for (let k = 0; k < 8; k++) { const ang = k / 8 * 2 * Math.PI, ll = offset(lat, lng, Math.cos(ang) * dist, Math.sin(ang) * dist); if (!overlapsAt(ll[0], ll[1], radius)) return { lat: ll[0], lng: ll[1] }; } }
   return { lat, lng };
 }
+function pointSegDistM(plat, plng, a, b) {     // metres from point to road segment
+  const mlng = mPerDegLng(a[0]), bx = (b[1] - a[1]) * mlng, by = (b[0] - a[0]) * MPD_LAT;
+  const px = (plng - a[1]) * mlng, py = (plat - a[0]) * MPD_LAT, l2 = bx * bx + by * by;
+  let t = l2 ? (px * bx + py * by) / l2 : 0; t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - t * bx, py - t * by);
+}
+function buildingHitsRoad(b) {                  // any corner / porch within road half-width of any road
+  const pts = [[b.lat, b.lng], ...rectCorners(b)]; const dr = doorRect(b); pts.push(dr[2], dr[3]);
+  for (const road of state.roads) for (let i = 1; i < road.length; i++)
+    for (const p of pts) if (pointSegDistM(p[0], p[1], road[i - 1], road[i]) < LINE_M.road / 2 + 0.3) return true;
+  return false;
+}
 function placeBuilding(type, latlng) {
   pushUndo();
   const b = { type, lat: latlng.lat, lng: latlng.lng };
@@ -230,7 +242,7 @@ function settleToRoad(b) {
   if (dist <= want + 0.3) return false;
   const step = Math.min(dist - want, 12), f = step / dist;
   const nlat = b.lat + N * f / MPD_LAT, nlng = b.lng + E * f / mPerDegLng(b.lat);
-  if (overlapsAt(nlat, nlng, bRadius(b), b)) return false;
+  if (overlapsAt(nlat, nlng, bRadius(b), b) || buildingHitsRoad({ ...b, lat: nlat, lng: nlng })) return false;
   b.lat = nlat; b.lng = nlng; alignToRoad(b); return true;
 }
 function settlePass(times) { let moved = true, it = 0; while (moved && it++ < (times || 20)) { moved = false; for (const b of state.buildings) if (settleToRoad(b)) moved = true; } }
@@ -245,31 +257,40 @@ function addWalkway(b) {                 // дорожка от крыльца �
   if (pE * tE + pN * tN < 0) { pE = -pE; pN = -pN; }
   state.paths.push([ent, offset(info.lat, info.lng, pE * SIDEWALK_OFF, pN * SIDEWALK_OFF)]);
 }
-function runGeneration(road, segs) {
+function runGeneration(pairs) {
   pushUndo();
-  const stepM = 20;
-  segs.forEach(si => {
+  const stepM = 20, rowGap = 8;
+  let shops = 0; const made = [];
+  pairs.forEach(([road, si]) => {
     const a = road[si], b = road[si + 1], lat = a[0];
     const E = (b[1] - a[1]) * mPerDegLng(lat), N = (b[0] - a[0]) * MPD_LAT, len = Math.hypot(E, N);
     if (len < 8) return;
     const ux = E / len, uy = N / len, px = -uy, py = ux, bearing = Math.round(Math.atan2(N, E) * 180 / Math.PI);
     for (let d = stepM / 2; d < len - 2; d += stepM) {
       const cy = a[0] + uy * d / MPD_LAT, cx = a[1] + ux * d / mPerDegLng(lat);
-      for (const side of [1, -1]) {                      // обе стороны выбранного сегмента
-        const w = Math.round(rand(9, 18)), h = Math.round(rand(9, 16));
-        const sb = LINE_M.road / 2 + h / 2 + PORCH_DEPTH + BUILD_GAP;   // крыльцо не вылезает на дорогу
-        const nb = { type: Math.random() < 0.18 ? 'shop' : 'house', lat: cy + py * sb * side / MPD_LAT, lng: cx + px * sb * side / mPerDegLng(cy), w, h, rot: bearing };
-        setDoorToward(nb, cy, cx);                        // вход к ЭТОЙ дороге, не к ближайшей
-        if (!overlapsAt(nb.lat, nb.lng, bRadius(nb))) { state.buildings.push(nb); addWalkway(nb); }
+      for (const side of [1, -1]) {                                   // обе стороны
+        const rows = 1 + (Math.random() < 0.5 ? 1 : 0) + (Math.random() < 0.18 ? 1 : 0);
+        let edge = LINE_M.road / 2 + PORCH_DEPTH + BUILD_GAP;          // ближняя грань первого ряда
+        for (let row = 0; row < rows; row++) {
+          const w = Math.round(rand(9, 18)), h = Math.round(rand(9, 16)), c = edge + h / 2;
+          const isShop = Math.random() < 0.13 / (1 + shops * 1.3);     // шанс падает с числом магазинов
+          const nb = { type: isShop ? 'shop' : 'house', lat: cy + py * c * side / MPD_LAT, lng: cx + px * c * side / mPerDegLng(cy), w, h, rot: bearing };
+          setDoorToward(nb, cy, cx);
+          if (!overlapsAt(nb.lat, nb.lng, bRadius(nb)) && !buildingHitsRoad(nb)) {
+            state.buildings.push(nb); made.push(nb); if (isShop) shops++;
+            if (row === 0) addWalkway(nb);
+          }
+          edge = c + h / 2 + rowGap;                                    // следующий ряд дальше
+        }
       }
     }
   });
-  settlePass(10);
-  save(); renderBuildings(); renderPaths(); updateStats(); flash('Застройка сгенерирована');
+  if (shops === 0) { const hs = made.filter(b => b.type === 'house'); if (hs.length) hs[randInt(hs.length)].type = 'shop'; }  // минимум 1 магазин
+  save(); renderBuildings(); renderPaths(); updateStats(); flash(`Застройка: +${made.length}`);
 }
 
 /* ════════════════ ROAD CONTEXT MENU + SEGMENT SELECTION ════════════════ */
-let genSel = { active: false, road: null, segs: null, layer: null };
+let genSel = { active: false, segs: null, layer: null };
 function closeCtxMenu() { const m = document.getElementById('ctx-menu'); if (m) m.classList.add('hidden'); }
 function openRoadMenu(e, road) {
   closeCtxMenu();
@@ -283,23 +304,30 @@ function openRoadMenu(e, road) {
   m.style.top = Math.min(window.innerHeight - m.offsetHeight - 8, o.clientY) + 'px';
 }
 function startGenSelect(road) {
-  genSel.active = true; genSel.road = road; genSel.segs = new Set();
-  for (let i = 0; i < road.length - 1; i++) genSel.segs.add(i);
+  genSel.active = true; genSel.segs = new Set();
+  const ri = state.roads.indexOf(road);
+  for (let si = 0; si < road.length - 1; si++) genSel.segs.add(ri + ':' + si);   // по умолчанию — кликнутая дорога
   genSel.layer = L.layerGroup().addTo(map);
   drawGenSegs();
   document.getElementById('gen-bar').classList.remove('hidden');
   document.getElementById('map').classList.add('selecting');
 }
-function drawGenSegs() {
-  genSel.layer.clearLayers(); const road = genSel.road;
-  for (let i = 0; i < road.length - 1; i++) {
-    const sel = genSel.segs.has(i);
-    const ln = L.polyline([road[i], road[i + 1]], { pane: 'pane-edit', color: sel ? '#D97757' : '#9aa0a6', weight: 9, opacity: sel ? .85 : .45 }).addTo(genSel.layer);
-    ln.on('click', ev => { L.DomEvent.stop(ev); genSel.segs.has(i) ? genSel.segs.delete(i) : genSel.segs.add(i); drawGenSegs(); });
-  }
+function drawGenSegs() {                          // кликабельны сегменты ВСЕХ дорог
+  genSel.layer.clearLayers();
+  state.roads.forEach((road, ri) => {
+    for (let si = 0; si < road.length - 1; si++) {
+      const key = ri + ':' + si, sel = genSel.segs.has(key);
+      const ln = L.polyline([road[si], road[si + 1]], { pane: 'pane-edit', color: sel ? '#D97757' : '#9aa0a6', weight: 9, opacity: sel ? .85 : .4 }).addTo(genSel.layer);
+      ln.on('click', ev => { L.DomEvent.stop(ev); genSel.segs.has(key) ? genSel.segs.delete(key) : genSel.segs.add(key); drawGenSegs(); });
+    }
+  });
 }
-function endGenSelect() { genSel.active = false; if (genSel.layer) { map.removeLayer(genSel.layer); genSel.layer = null; } genSel.road = null; genSel.segs = null; document.getElementById('gen-bar').classList.add('hidden'); document.getElementById('map').classList.remove('selecting'); }
-function confirmGen() { const road = genSel.road, segs = genSel.segs ? [...genSel.segs] : []; endGenSelect(); if (road && segs.length) runGeneration(road, segs); }
+function endGenSelect() { genSel.active = false; if (genSel.layer) { map.removeLayer(genSel.layer); genSel.layer = null; } genSel.segs = null; document.getElementById('gen-bar').classList.add('hidden'); document.getElementById('map').classList.remove('selecting'); }
+function confirmGen() {
+  const pairs = (genSel.segs ? [...genSel.segs] : []).map(k => { const [ri, si] = k.split(':').map(Number); return [state.roads[ri], si]; }).filter(p => p[0]);
+  endGenSelect();
+  if (pairs.length) runGeneration(pairs);
+}
 
 /* ════════════════ BUILDING GEOMETRY ════════════════ */
 function rectCorners(b) {
