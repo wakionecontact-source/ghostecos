@@ -76,17 +76,26 @@ log = logging.getLogger("roulette")
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import CommandStart, Command
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message
+
+import db as okeydb
+from handlers import profile as profile_handlers
 
 if PROXY_URL:
     log.info("Использую прокси к Telegram: %s", PROXY_URL)
     session = AiohttpSession(proxy=PROXY_URL)
 else:
-    log.info("Без прокси (бот ходит напрямую)")
+    log.info("Без прокси (бот ходит напрямую через систему / TUN VPN)")
     session = AiohttpSession()
 
 bot = Bot(token=BOT_TOKEN, session=session)
-dp = Dispatcher()
+dp = Dispatcher(storage=MemoryStorage())
+dp.include_router(profile_handlers.router)
+
+# Инициализация БД при импорте — таблицы создаются один раз
+okeydb.init_db()
+log.info("БД: %s", okeydb.DB_PATH)
 
 # ── Stats (in-memory; для перезапуск-стойких — потом перенесём в SQLite) ──────
 stats: Dict[str, Any] = {
@@ -98,14 +107,22 @@ stats: Dict[str, Any] = {
 
 
 def stats_snapshot() -> Dict[str, Any]:
-    return {
+    # Базовая сессионная статистика
+    out = {
         "uptime_sec": int(time.time() - stats["started_at"]),
-        "users_seen": len(stats["users_seen"]),
+        "session_users_seen": len(stats["users_seen"]),
         "messages_total": stats["messages_total"],
         "commands_total": stats["commands_total"],
-        "proxy": PROXY_URL or "(нет)",
+        "proxy": PROXY_URL or "(direct / TUN VPN)",
         "bot_token_tail": BOT_TOKEN[-6:] if len(BOT_TOKEN) >= 6 else "",
     }
+    # БД-статы (всё время, не только эта сессия)
+    try:
+        import db as _db
+        out.update(_db.stats_overview())
+    except Exception as e:
+        out["db_error"] = str(e)
+    return out
 
 
 # ── Bot handlers (минимальный набор; рулетка добавится отдельно) ──────────────
@@ -113,13 +130,43 @@ def stats_snapshot() -> Dict[str, Any]:
 async def cmd_start(m: Message):
     stats["users_seen"].add(m.from_user.id)
     stats["commands_total"] += 1
+    okeydb.touch_user(m.from_user.id, m.from_user.username)
     log.info("/start от @%s (id=%s)", m.from_user.username, m.from_user.id)
+    existing = okeydb.get_profile(m.from_user.id)
+    if existing:
+        await m.answer(
+            f"С возвращением, {existing['name']}!\n\n"
+            "/profile — твоя анкета\n"
+            "/edit — изменить\n"
+            "(скоро) /search — смотреть других\n"
+            "(скоро) /roulette — случайный собеседник"
+        )
+    else:
+        await m.answer(
+            "Привет! Это <b>OKey</b> — знакомства в Telegram.\n\n"
+            "Здесь можно:\n"
+            "• Заполнить анкету и смотреть других\n"
+            "• Лайкать и получать match-уведомления\n"
+            "• Болтать случайным образом в чат-рулетке\n\n"
+            "Поехали? Жми /fill — заполним твою анкету.\n"
+            "Помощь: /help · Твой ID: /id",
+            parse_mode="HTML",
+        )
+
+
+@dp.message(Command("help"))
+async def cmd_help(m: Message):
+    stats["commands_total"] += 1
     await m.answer(
-        "Привет. Это GhostRoulette — пока в режиме каркаса.\n\n"
-        "Доступно:\n"
-        "/id — твой Telegram ID\n"
+        "<b>Команды OKey:</b>\n\n"
+        "/fill — заполнить анкету\n"
+        "/profile — посмотреть свою анкету\n"
+        "/edit — изменить анкету\n"
+        "/cancel — прервать заполнение\n"
+        "/id — узнать свой Telegram ID\n"
         "/ping — проверка что бот живой\n\n"
-        "Рулетка появится в следующем апдейте."
+        "<i>Скоро:</i> /search, /roulette",
+        parse_mode="HTML",
     )
 
 
@@ -135,11 +182,13 @@ async def cmd_ping(m: Message):
     await m.answer("pong")
 
 
+# Fallback на любой текст — но НЕ во время FSM (profile-router забирает раньше)
 @dp.message(F.text)
 async def any_text(m: Message):
     stats["users_seen"].add(m.from_user.id)
     stats["messages_total"] += 1
-    # TODO: тут будет роутинг рулетки (поиск собеседника, передача сообщений)
+    okeydb.touch_user(m.from_user.id, m.from_user.username)
+    await m.answer("Не понял команду. /help — список доступных.")
 
 
 # ── Admin command registry ────────────────────────────────────────────────────
@@ -215,6 +264,25 @@ async def cmd_admin_broadcast(args: List[str]) -> str:
             failed += 1
         await asyncio.sleep(0.05)  # ~20 msg/sec, чтобы не словить flood limit
     return f"Отправлено: {sent}, не доставлено: {failed}"
+
+
+@admin_command("profiles", "Последние 10 заполненных анкет")
+async def cmd_admin_profiles(args: List[str]) -> str:
+    with okeydb.conn() as c:
+        rows = c.execute("""
+            SELECT p.name, p.age, p.gender, p.looking_for, p.city, p.completed_at,
+                   u.username, u.tg_id
+            FROM profiles p JOIN users u ON u.tg_id = p.tg_id
+            ORDER BY p.completed_at DESC LIMIT 10
+        """).fetchall()
+    if not rows:
+        return "Анкет пока нет."
+    out = []
+    for r in rows:
+        ago = int(time.time() - r["completed_at"])
+        ago_str = f"{ago//3600}ч" if ago >= 3600 else f"{ago//60}мин"
+        out.append(f"  @{r['username'] or '—':20s} {r['name']:15s} {r['age']:2d} {r['gender']}→{r['looking_for']:3s} {r['city'] or '—':12s} ({ago_str} назад)")
+    return "Последние анкеты:\n" + "\n".join(out)
 
 
 @admin_command("clearlogs", "Очистить буфер логов в UI", button=True)

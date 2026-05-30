@@ -203,9 +203,13 @@ async function loadStats(){
     const upt = `${String(hours).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;
     box.innerHTML = `
       <div class="stat"><div class="l">Uptime</div><div class="v">${upt}</div></div>
-      <div class="stat"><div class="l">Юзеров</div><div class="v">${r.users_seen}</div></div>
-      <div class="stat"><div class="l">Сообщений</div><div class="v">${r.messages_total}</div></div>
-      <div class="stat"><div class="l">Команд</div><div class="v">${r.commands_total}</div></div>
+      <div class="stat"><div class="l">Активных (24ч)</div><div class="v">${r.users_active_24h ?? '—'}</div></div>
+      <div class="stat"><div class="l">Всего юзеров</div><div class="v">${r.users_total ?? '—'}</div></div>
+      <div class="stat"><div class="l">Анкет</div><div class="v">${r.profiles_total ?? '—'}</div></div>
+      <div class="stat"><div class="l">Парней</div><div class="v">${r.profiles_male ?? '—'}</div></div>
+      <div class="stat"><div class="l">Девушек</div><div class="v">${r.profiles_female ?? '—'}</div></div>
+      <div class="stat"><div class="l">Сообщений (сессия)</div><div class="v">${r.messages_total}</div></div>
+      <div class="stat"><div class="l">Бан</div><div class="v">${r.users_banned ?? 0}</div></div>
       <div class="stat" style="grid-column:1/-1;"><div class="l">Прокси</div><div class="v small">${esc(r.proxy)}</div></div>
       <div class="stat" style="grid-column:1/-1;"><div class="l">Токен (хвост)</div><div class="v small">…${esc(r.bot_token_tail)}</div></div>
     `;
