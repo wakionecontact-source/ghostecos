@@ -168,7 +168,8 @@ body.guest-mode .prof-action-btn[onclick*="openAlgoSettings"]{display:none;}
 .algo-stat-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;}
 .algo-stat-row:last-child{border-bottom:none;}
 .algo-stat-row b{color:var(--primary);}
-.post-card{background:var(--surface);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--border-strong);border-radius:16px;padding:16px;margin-bottom:12px;position:relative;}
+.post-card{background:var(--surface);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:10px;position:relative;transition:border-color 0.15s;}
+.post-card:hover{border-color:var(--border-strong);}
 .new-dot{position:absolute;top:14px;right:14px;width:8px;height:8px;border-radius:50%;background:var(--blue);box-shadow:0 0 8px var(--blue);transition:opacity 0.4s;}
 .post-header{display:flex;align-items:center;gap:10px;margin-bottom:10px;cursor:pointer}
 .post-av{width:36px;height:36px;border-radius:50%;flex-shrink:0;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;}

@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>МАЙН</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:#8ecbff;font-family:"Segoe UI",system-ui,sans-serif;user-select:none}
+  canvas{display:block}
+  #cross{position:fixed;left:50%;top:50%;width:22px;height:22px;transform:translate(-50%,-50%);pointer-events:none;opacity:.85;z-index:5}
+  #cross:before,#cross:after{content:'';position:absolute;background:#fff;box-shadow:0 0 2px rgba(0,0,0,.7)}
+  #cross:before{left:50%;top:0;width:2px;height:100%;transform:translateX(-50%)}
+  #cross:after{top:50%;left:0;height:2px;width:100%;transform:translateY(-50%)}
+  #hud{position:fixed;left:10px;top:8px;color:#fff;font-size:13px;text-shadow:0 1px 2px #000;line-height:1.55;pointer-events:none;z-index:5}
+  #bar{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);display:flex;gap:5px;pointer-events:none;z-index:5}
+  .slot{width:50px;height:50px;border:2px solid rgba(0,0,0,.45);background:rgba(0,0,0,.35);border-radius:7px;position:relative;display:flex;align-items:flex-end;justify-content:center;overflow:hidden}
+  .slot .sw{position:absolute;left:6px;right:6px;top:13px;bottom:13px;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.3)}
+  .slot .k{position:relative;font-size:10px;color:#fff;text-shadow:0 1px 1px #000;margin-bottom:1px;font-weight:700}
+  .slot .nm{position:absolute;top:2px;left:0;right:0;text-align:center;font-size:8px;color:#fff;text-shadow:0 1px 1px #000;letter-spacing:.3px}
+  .slot.on{border-color:#fff;box-shadow:0 0 0 2px #fff,0 0 12px rgba(255,255,255,.55)}
+  #menu{position:fixed;inset:0;background:rgba(10,20,35,.82);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;text-align:center;z-index:10;backdrop-filter:blur(2px)}
+  #menu h1{font-size:64px;letter-spacing:10px;margin-bottom:6px;text-shadow:0 4px 0 #2a6e2a,0 7px 18px rgba(0,0,0,.6)}
+  #menu .sub{opacity:.85;margin-bottom:26px;font-size:15px}
+  #menu .ctl{font-size:14px;line-height:2;opacity:.95;background:rgba(0,0,0,.28);padding:16px 28px;border-radius:12px}
+  #menu .play{margin-top:26px;font-size:18px;padding:12px 32px;border:2px solid #fff;border-radius:10px;animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{opacity:.55}50%{opacity:1}}
+  kbd{background:#fff;color:#222;border-radius:4px;padding:1px 7px;font-size:12px;font-family:inherit;font-weight:700;box-shadow:0 2px 0 #b9b9b9}
+  #err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;color:#fff;font-size:18px;text-align:center;padding:30px;z-index:20;background:#1a2433}
+</style>
+</head>
+<body>
+  <div id="cross"></div>
+  <div id="hud"></div>
+  <div id="bar"></div>
+  <div id="menu">
+    <h1>МАЙН</h1>
+    <div class="sub">маленький майнкрафт, чтобы просто отдохнуть</div>
+    <div class="ctl">
+      <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> ходьба &nbsp;&middot;&nbsp; <kbd>мышь</kbd> осмотр &nbsp;&middot;&nbsp; <kbd>Space</kbd> прыжок<br>
+      <kbd>ЛКМ</kbd> ломать блок &nbsp;&middot;&nbsp; <kbd>ПКМ</kbd> ставить блок<br>
+      <kbd>1</kbd>…<kbd>9</kbd> или <kbd>колесо</kbd> — выбрать блок<br>
+      <kbd>F</kbd> полёт &nbsp;&middot;&nbsp; <kbd>Shift</kbd> вниз (в полёте) &nbsp;&middot;&nbsp; <kbd>Ctrl</kbd> бег<br>
+      <kbd>Esc</kbd> пауза
+    </div>
+    <div class="play">Нажми, чтобы играть</div>
+  </div>
+  <div id="err">Не удалось загрузить three.js — нужен интернет.<br>Открой файл при подключении к сети.</div>
+
+<script>
+if (typeof THREE === 'undefined') {
+  document.getElementById('err').style.display = 'flex';
+} else { (function () {
+'use strict';
+
+// ---------- параметры мира ----------
+var SIZE = 64;        // размер карты по X и Z
+var CS   = 16;        // размер чанка
+var NCH  = SIZE / CS; // чанков по стороне
+var MAXY = 40;        // потолок мира
+var REACH = 6;        // дальность руки
+var HW = 0.3, PH = 1.8, EYE = 1.62, EPS = 1e-3; // габариты игрока
+var G = 28, JUMP = 8.7, SENS = 0.0022;
+var TILE = 16, TPR = 4, PAD = 0.5 / (TILE * TPR);
+
+// ---------- блоки ----------
+// occludes: закрывает грань соседа.  transparent: рисуется в полупрозрачном проходе.
+var DEF = {
+  1: { top: 0,  side: 1,  bottom: 2,  occludes: true },   // трава
+  2: { top: 2,  side: 2,  bottom: 2,  occludes: true },   // земля
+  3: { top: 3,  side: 3,  bottom: 3,  occludes: true },   // камень
+  4: { top: 5,  side: 4,  bottom: 5,  occludes: true },   // бревно
+  5: { top: 6,  side: 6,  bottom: 6,  occludes: false },  // листва (cutout)
+  6: { top: 7,  side: 7,  bottom: 7,  occludes: true },   // песок
+  7: { top: 8,  side: 8,  bottom: 8,  occludes: true },   // доски
+  8: { top: 9,  side: 9,  bottom: 9,  occludes: true },   // кирпич
+  9: { top: 10, side: 10, bottom: 10, occludes: false, transparent: true } // стекло
+};
+var HOTBAR = [1, 2, 3, 4, 7, 8, 6, 5, 9];
+var LABEL  = { 1:'Трава', 2:'Земля', 3:'Камень', 4:'Бревно', 5:'Листва', 6:'Песок', 7:'Доски', 8:'Кирпич', 9:'Стекло' };
+var SWATCH = { 1:'#5a9637', 2:'#866043', 3:'#808084', 4:'#664c30', 7:'#a07846', 8:'#cd6a52', 6:'#d6c694', 5:'#3c782d', 9:'rgba(170,210,230,.65)' };
+
+// ---------- хранилище блоков ----------
+var blocks = new Map();
+function key(x, y, z) { return x + ',' + y + ',' + z; }
+function getBlock(x, y, z) { var v = blocks.get(key(x, y, z)); return v === undefined ? 0 : v; }
+function setBlock(x, y, z, t) { if (t) blocks.set(key(x, y, z), t); else blocks.delete(key(x, y, z)); }
+
+// ---------- шум для ландшафта ----------
+function makeNoise(seed) {
+  function rand(x, y) {
+    var n = (x | 0) * 374761393 + (y | 0) * 668265263 + seed * 982451653;
+    n = (n ^ (n >> 13)) * 1274126177;
+    n = n ^ (n >> 16);
+    return (n >>> 0) / 4294967295;
+  }
+  function smooth(t) { return t * t * (3 - 2 * t); }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function vnoise(x, y) {
+    var x0 = Math.floor(x), y0 = Math.floor(y);
+    var xf = x - x0, yf = y - y0;
+    var v00 = rand(x0, y0), v10 = rand(x0 + 1, y0);
+    var v01 = rand(x0, y0 + 1), v11 = rand(x0 + 1, y0 + 1);
+    var u = smooth(xf), v = smooth(yf);
+    return lerp(lerp(v00, v10, u), lerp(v01, v11, u), v);
+  }
+  return function (x, y) {
+    var amp = 1, freq = 1, sum = 0, norm = 0;
+    for (var o = 0; o < 4; o++) {
+      sum += vnoise(x * freq, y * freq) * amp;
+      norm += amp; amp *= 0.5; freq *= 2;
+    }
+    return sum / norm;
+  };
+}
+
+var spawnY = 20;
+function genWorld() {
+  var noise = makeNoise(1337);
+  var hmap = [];
+  for (var x = 0; x < SIZE; x++) {
+    hmap[x] = [];
+    for (var z = 0; z < SIZE; z++) {
+      var n = noise(x * 0.045, z * 0.045);
+      var n2 = noise(x * 0.13 + 100, z * 0.13 + 100) * 0.3;
+      var h = Math.floor(5 + (n + n2) / 1.3 * 16);
+      if (h < 1) h = 1;
+      hmap[x][z] = h;
+      for (var y = 0; y <= h; y++) {
+        var t = 3; // камень
+        if (y === h) t = (h <= 6) ? 6 : 1;          // песок у воды, иначе трава
+        else if (y > h - 3) t = (h <= 6) ? 6 : 2;   // земля под верхом
+        setBlock(x, y, z, t);
+      }
+    }
+  }
+  // деревья
+  for (var tx = 3; tx < SIZE - 3; tx++) {
+    for (var tz = 3; tz < SIZE - 3; tz++) {
+      var th0 = hmap[tx][tz];
+      if (getBlock(tx, th0, tz) !== 1) continue;
+      if (Math.random() > 0.02) continue;
+      var trunk = 4 + Math.floor(Math.random() * 2);
+      for (var i = 1; i <= trunk; i++) setBlock(tx, th0 + i, tz, 4);
+      var top = th0 + trunk;
+      for (var dx = -2; dx <= 2; dx++)
+        for (var dz = -2; dz <= 2; dz++)
+          for (var dy = -1; dy <= 1; dy++) {
+            if (Math.abs(dx) + Math.abs(dz) + Math.abs(dy) > 3) continue;
+            if (getBlock(tx + dx, top + dy, tz + dz) === 0) setBlock(tx + dx, top + dy, tz + dz, 5);
+          }
+      setBlock(tx, top + 1, tz, 5);
+    }
+  }
+  spawnY = hmap[SIZE >> 1][SIZE >> 1] + 1;
+}
+
+// ---------- атлас текстур (рисуем на canvas) ----------
+function buildAtlas() {
+  var c = document.createElement('canvas');
+  c.width = TPR * TILE; c.height = TPR * TILE;
+  var ctx = c.getContext('2d');
+  for (var i = 0; i < 16; i++) drawTile(ctx, i);
+  var tex = new THREE.CanvasTexture(c);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  return tex;
+}
+function drawTile(ctx, i) {
+  var ox = (i % TPR) * TILE, oy = Math.floor(i / TPR) * TILE;
+  function P(X, Y, r, g, b, a) {
+    ctx.fillStyle = 'rgba(' + (r | 0) + ',' + (g | 0) + ',' + (b | 0) + ',' + (a == null ? 1 : a) + ')';
+    ctx.fillRect(ox + X, oy + Y, 1, 1);
+  }
+  function v() { return Math.random() * 2 - 1; }
+  for (var Y = 0; Y < TILE; Y++) {
+    for (var X = 0; X < TILE; X++) {
+      var r, g, b, a = 1, d;
+      switch (i) {
+        case 0: d = v() * 18; r = 90 + d; g = 150 + d; b = 55 + d; if (Math.random() < 0.12) { r -= 20; g -= 20; } break; // трава сверху
+        case 1: // трава сбоку
+          if (Y < 5) { d = v() * 16; r = 90 + d; g = 150 + d; b = 55 + d; if (Y === 4 && Math.random() < 0.5) { d = v() * 16; r = 134 + d; g = 96 + d; b = 67 + d; } }
+          else { d = v() * 16; r = 134 + d; g = 96 + d; b = 67 + d; }
+          break;
+        case 2: d = v() * 16; r = 134 + d; g = 96 + d; b = 67 + d; if (Math.random() < 0.1) { r -= 18; g -= 14; b -= 10; } break; // земля
+        case 3: d = v() * 12; r = 128 + d; g = 128 + d; b = 132 + d; if (Math.random() < 0.08) { r -= 24; g -= 24; b -= 24; } break; // камень
+        case 4: d = v() * 10; r = 102 + d; g = 76 + d; b = 48 + d; if (X % 4 === 0 || X % 7 === 0) { r -= 22; g -= 18; b -= 12; } break; // бревно сбоку
+        case 5: var dist = Math.sqrt((X - 7.5) * (X - 7.5) + (Y - 7.5) * (Y - 7.5)); d = Math.sin(dist * 1.6) * 18; r = 150 + d; g = 120 + d; b = 80 + d; break; // спил
+        case 6: d = v() * 22; r = 60 + d; g = 120 + d; b = 45 + d; if (Math.random() < 0.22) { a = 0; } else if (Math.random() < 0.2) { r -= 20; g -= 20; } break; // листва
+        case 7: d = v() * 14; r = 214 + d; g = 198 + d; b = 148 + d; break; // песок
+        case 8: d = v() * 10; r = 160 + d; g = 120 + d; b = 70 + d; // доски
+          if (Y % 4 === 3) { r -= 34; g -= 28; b -= 18; }
+          if ((Y < 4 && X === 8) || (Y >= 4 && Y < 8 && X === 3) || (Y >= 8 && Y < 12 && X === 12) || (Y >= 12 && X === 6)) { r -= 30; g -= 26; b -= 16; }
+          break;
+        case 9: var row = Math.floor(Y / 4), off = (row % 2) * 4, bx = (X + off) % 8; // кирпич
+          if (Y % 4 === 0 || bx === 0) { r = 205; g = 200; b = 190; } else { d = v() * 10; r = 150 + d; g = 62 + d; b = 52 + d; }
+          break;
+        case 10: var edge = (X === 0 || Y === 0 || X === TILE - 1 || Y === TILE - 1); // стекло
+          if (edge) { r = 200; g = 225; b = 235; a = 0.7; }
+          else if ((X + Y) % 6 === 0) { r = 220; g = 240; b = 250; a = 0.35; }
+          else { r = 170; g = 205; b = 225; a = 0.16; }
+          break;
+        case 11: d = v() * 30; var base = 118 + d; r = base; g = base; b = base + 4; if ((X % 4 === 0 || Y % 4 === 0) && Math.random() < 0.7) { r -= 26; g -= 26; b -= 24; } break;
+        default: r = 255; g = 0; b = 255;
+      }
+      P(X, Y, r, g, b, a);
+    }
+  }
+}
+
+// ---------- геометрия граней ----------
+var FACES = [
+  { dir: [ 1, 0, 0], c: [[1,0,0],[1,0,1],[1,1,1],[1,1,0]], uv: [[0,0],[1,0],[1,1],[0,1]] },
+  { dir: [-1, 0, 0], c: [[0,0,1],[0,0,0],[0,1,0],[0,1,1]], uv: [[0,0],[1,0],[1,1],[0,1]] },
+  { dir: [ 0, 1, 0], c: [[0,1,0],[1,1,0],[1,1,1],[0,1,1]], uv: [[0,0],[1,0],[1,1],[0,1]] },
+  { dir: [ 0,-1, 0], c: [[0,0,1],[1,0,1],[1,0,0],[0,0,0]], uv: [[0,0],[1,0],[1,1],[0,1]] },
+  { dir: [ 0, 0, 1], c: [[1,0,1],[0,0,1],[0,1,1],[1,1,1]], uv: [[0,0],[1,0],[1,1],[0,1]] },
+  { dir: [ 0, 0,-1], c: [[0,0,0],[1,0,0],[1,1,0],[0,1,0]], uv: [[0,0],[1,0],[1,1],[0,1]] }
+];
+function shade(d) { if (d[1] > 0) return 1.0; if (d[1] < 0) return 0.5; if (d[0] !== 0) return 0.8; return 0.65; }
+function shouldDraw(t, nb) {
+  if (!nb) return true;
+  if (DEF[nb].occludes) return false;
+  if (nb === t) return false;
+  return true;
+}
+function addFace(g, x, y, z, f, def) {
+  var ti = (f.dir[1] === 1) ? def.top : (f.dir[1] === -1) ? def.bottom : def.side;
+  var col = ti % TPR, row = Math.floor(ti / TPR);
+  var u0 = col / TPR + PAD, u1 = (col + 1) / TPR - PAD;
+  var v0 = 1 - (row + 1) / TPR + PAD, v1 = 1 - row / TPR - PAD;
+  var sh = shade(f.dir);
+  var base = g.pos.length / 3;
+  for (var k = 0; k < 4; k++) {
+    var cc = f.c[k], uvc = f.uv[k];
+    g.pos.push(x + cc[0], y + cc[1], z + cc[2]);
+    g.uv.push(uvc[0] ? u1 : u0, uvc[1] ? v1 : v0);
+    g.col.push(sh, sh, sh);
+  }
+  g.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+}
+
+// ---------- сцена ----------
+var scene = new THREE.Scene();
+var SKY = 0x8ecbff;
+scene.background = new THREE.Color(SKY);
+scene.fog = new THREE.Fog(SKY, 26, 78);
+var camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 1000);
+camera.rotation.order = 'YXZ';
+var renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+var canvas = renderer.domElement;
+
+var atlas = buildAtlas();
+var matOpaque = new THREE.MeshBasicMaterial({ map: atlas, vertexColors: true, side: THREE.DoubleSide, alphaTest: 0.5 });
+var matTrans  = new THREE.MeshBasicMaterial({ map: atlas, vertexColors: true, side: THREE.DoubleSide, transparent: true, depthWrite: false });
+
+var meshes = {};
+function makeMesh(name, g, mat) {
+  var old = meshes[name];
+  if (old) { scene.remove(old); old.geometry.dispose(); }
+  if (g.idx.length === 0) { meshes[name] = null; return; }
+  var geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(g.pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(g.uv, 2));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(g.col, 3));
+  geo.setIndex(g.idx);
+  var m = new THREE.Mesh(geo, mat);
+  scene.add(m);
+  meshes[name] = m;
+}
+function buildChunk(cx, cz) {
+  if (cx < 0 || cz < 0 || cx >= NCH || cz >= NCH) return;
+  var ox = cx * CS, oz = cz * CS;
+  var O = { pos: [], uv: [], col: [], idx: [] };
+  var T = { pos: [], uv: [], col: [], idx: [] };
+  for (var x = ox; x < ox + CS; x++)
+    for (var z = oz; z < oz + CS; z++)
+      for (var y = 0; y <= MAXY; y++) {
+        var t = getBlock(x, y, z); if (!t) continue;
+        var def = DEF[t];
+        for (var fi = 0; fi < 6; fi++) {
+          var f = FACES[fi];
+          var nb = getBlock(x + f.dir[0], y + f.dir[1], z + f.dir[2]);
+          if (!shouldDraw(t, nb)) continue;
+          addFace(def.transparent ? T : O, x, y, z, f, def);
+        }
+      }
+  makeMesh(cx + ',' + cz + '|o', O, matOpaque);
+  makeMesh(cx + ',' + cz + '|t', T, matTrans);
+}
+function chunkOf(v) { return Math.floor(v / CS); }
+function rebuildAt(x, z) {
+  var cx = chunkOf(x), cz = chunkOf(z);
+  var set = {};
+  set[cx + ',' + cz] = 1;
+  var mx = ((x % CS) + CS) % CS, mz = ((z % CS) + CS) % CS;
+  if (mx === 0)      set[(cx - 1) + ',' + cz] = 1;
+  if (mx === CS - 1) set[(cx + 1) + ',' + cz] = 1;
+  if (mz === 0)      set[cx + ',' + (cz - 1)] = 1;
+  if (mz === CS - 1) set[cx + ',' + (cz + 1)] = 1;
+  for (var s in set) { var p = s.split(','); buildChunk(+p[0], +p[1]); }
+}
+
+// ---------- мир ----------
+genWorld();
+for (var cx = 0; cx < NCH; cx++) for (var cz = 0; cz < NCH; cz++) buildChunk(cx, cz);
+
+// подсветка нацеленного блока
+var hl = new THREE.LineSegments(
+  new THREE.EdgesGeometry(new THREE.BoxGeometry(1.003, 1.003, 1.003)),
+  new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.4 })
+);
+hl.visible = false; scene.add(hl);
+
+// ---------- игрок ----------
+var pos = new THREE.Vector3(SIZE / 2 + 0.5, spawnY + 1, SIZE / 2 + 0.5);
+var vel = new THREE.Vector3();
+var yaw = 0, pitch = 0, onGround = false, fly = false, sel = 0, stepEligible = false;
+var keys = {};
+var UP = new THREE.Vector3(0, 1, 0);
+var _f = new THREE.Vector3(), _r = new THREE.Vector3(), _w = new THREE.Vector3(), _d = new THREE.Vector3();
+
+function collides() {
+  var x0 = Math.floor(pos.x - HW), x1 = Math.floor(pos.x + HW - 1e-6);
+  var y0 = Math.floor(pos.y),      y1 = Math.floor(pos.y + PH - 1e-6);
+  var z0 = Math.floor(pos.z - HW), z1 = Math.floor(pos.z + HW - 1e-6);
+  for (var X = x0; X <= x1; X++)
+    for (var Y = y0; Y <= y1; Y++)
+      for (var Z = z0; Z <= z1; Z++)
+        if (getBlock(X, Y, Z)) return true;
+  return false;
+}
+function moveAxis(axis, dlt) {
+  if (dlt === 0) return;
+  pos[axis] += dlt;
+  if (!collides()) return;
+  // горизонтальный упор — пробуем авто-ступеньку на блок высотой 1
+  if (axis !== 'y' && stepEligible) {
+    var savedY = pos.y;
+    pos.y += 1.02;
+    if (!collides()) return; // зашли на ступеньку, ход сохраняем
+    pos.y = savedY;
+  }
+  // упёрлись — прижимаемся к грани блока
+  if (axis === 'x') { pos.x = dlt > 0 ? Math.floor(pos.x + HW) - HW - EPS : Math.floor(pos.x - HW) + 1 + HW + EPS; vel.x = 0; }
+  else if (axis === 'z') { pos.z = dlt > 0 ? Math.floor(pos.z + HW) - HW - EPS : Math.floor(pos.z - HW) + 1 + HW + EPS; vel.z = 0; }
+  else { if (dlt > 0) { pos.y = Math.floor(pos.y + PH) - PH - EPS; } else { pos.y = Math.floor(pos.y) + 1 + EPS; onGround = true; } vel.y = 0; }
+}
+
+function update(dt) {
+  if (!locked) steerByMouse(dt);
+  _f.set(0, 0, -1).applyEuler(camera.rotation); _f.y = 0;
+  if (_f.lengthSq() < 1e-6) _f.set(0, 0, -1);
+  _f.normalize();
+  _r.crossVectors(_f, UP).normalize();
+  var mz = (keys['KeyW'] ? 1 : 0) - (keys['KeyS'] ? 1 : 0);
+  var mx = (keys['KeyD'] ? 1 : 0) - (keys['KeyA'] ? 1 : 0);
+  _w.set(0, 0, 0).addScaledVector(_f, mz).addScaledVector(_r, mx);
+  if (_w.lengthSq() > 0) _w.normalize();
+  var sprint = keys['ControlLeft'] || keys['ControlRight'];
+  var sp = fly ? 11 : (sprint ? 7.5 : 4.8);
+  vel.x = _w.x * sp; vel.z = _w.z * sp;
+
+  if (fly) {
+    var vy = 0;
+    if (keys['Space']) vy += 1;
+    if (keys['ShiftLeft'] || keys['ShiftRight']) vy -= 1;
+    vel.y = vy * sp;
+  } else {
+    vel.y -= G * dt;
+    if (vel.y < -55) vel.y = -55;
+    if (keys['Space'] && onGround) { vel.y = JUMP; onGround = false; }
+  }
+  stepEligible = onGround && !fly; // авто-ступенька — только при ходьбе по земле
+  onGround = false;
+  moveAxis('x', vel.x * dt);
+  moveAxis('z', vel.z * dt);
+  stepEligible = false;
+  moveAxis('y', vel.y * dt);
+  if (pos.y < -25) { pos.set(SIZE / 2 + 0.5, spawnY + 2, SIZE / 2 + 0.5); vel.set(0, 0, 0); }
+  camera.position.set(pos.x, pos.y + EYE, pos.z);
+}
+
+// ---------- луч / постройка ----------
+function raycastVoxel() {
+  var o = camera.position;
+  camera.getWorldDirection(_d);
+  var px = null, py = null, pz = null;
+  for (var t = 0; t < REACH; t += 0.05) {
+    var X = Math.floor(o.x + _d.x * t), Y = Math.floor(o.y + _d.y * t), Z = Math.floor(o.z + _d.z * t);
+    if (getBlock(X, Y, Z)) return { hit: [X, Y, Z], place: (px === null ? null : [px, py, pz]) };
+    px = X; py = Y; pz = Z;
+  }
+  return null;
+}
+function overlapsPlayer(x, y, z) {
+  return (pos.x + HW > x && pos.x - HW < x + 1) &&
+         (pos.y + PH > y && pos.y < y + 1) &&
+         (pos.z + HW > z && pos.z - HW < z + 1);
+}
+function tryBreak() {
+  var r = raycastVoxel(); if (!r) return;
+  var x = r.hit[0], y = r.hit[1], z = r.hit[2];
+  if (y <= 0) return; // нижний слой не ломаем — чтобы не провалиться
+  setBlock(x, y, z, 0);
+  rebuildAt(x, z);
+}
+function tryPlace() {
+  var r = raycastVoxel(); if (!r || !r.place) return;
+  var x = r.place[0], y = r.place[1], z = r.place[2];
+  if (y < 0 || y > MAXY || x < 0 || z < 0 || x >= SIZE || z >= SIZE) return;
+  if (overlapsPlayer(x, y, z)) return;
+  setBlock(x, y, z, HOTBAR[sel]);
+  rebuildAt(x, z);
+}
+
+// ---------- интерфейс ----------
+var bar = document.getElementById('bar');
+var hud = document.getElementById('hud');
+var menu = document.getElementById('menu');
+function buildBar() {
+  bar.innerHTML = '';
+  for (var i = 0; i < HOTBAR.length; i++) {
+    var id = HOTBAR[i];
+    var s = document.createElement('div');
+    s.className = 'slot' + (i === sel ? ' on' : '');
+    s.innerHTML = '<div class="nm">' + LABEL[id] + '</div><div class="sw" style="background:' + SWATCH[id] + '"></div><div class="k">' + (i + 1) + '</div>';
+    bar.appendChild(s);
+  }
+}
+function updateBar() {
+  var nodes = bar.children;
+  for (var i = 0; i < nodes.length; i++) nodes[i].className = 'slot' + (i === sel ? ' on' : '');
+}
+buildBar();
+
+// ---------- ввод ----------
+var playing = false, locked = false;
+var mouseX = 0, mouseY = 0, haveMouse = false;
+var STEER = 3.4, STEER_P = 2.6, DEAD = 0.20; // обзор по положению курсора (когда захвата мыши нет)
+
+function applyLook(dx, dy) { // плавный относительный обзор при захвате мыши
+  yaw -= dx * SENS;
+  pitch -= dy * SENS;
+  if (pitch > 1.55) pitch = 1.55;
+  if (pitch < -1.55) pitch = -1.55;
+  camera.rotation.set(pitch, yaw, 0);
+}
+function curve(n) { // мёртвая зона в центре + плавный разгон к краю экрана
+  var a = Math.abs(n);
+  if (a < DEAD) return 0;
+  var t = (a - DEAD) / (1 - DEAD);
+  return (n < 0 ? -1 : 1) * t * t;
+}
+function steerByMouse(dt) { // поворот туда, куда уведён курсор от центра — без зажатия
+  if (!haveMouse) return;
+  var cx = curve((mouseX - innerWidth / 2) / (innerWidth / 2));
+  var cy = curve((mouseY - innerHeight / 2) / (innerHeight / 2));
+  if (!cx && !cy) return;
+  yaw -= cx * STEER * dt;
+  pitch -= cy * STEER_P * dt;
+  if (pitch > 1.55) pitch = 1.55;
+  if (pitch < -1.55) pitch = -1.55;
+  camera.rotation.set(pitch, yaw, 0);
+}
+function startGame() {
+  if (playing) return;
+  playing = true;
+  menu.style.display = 'none';
+  try { var p = canvas.requestPointerLock(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+}
+function pauseGame() {
+  playing = false;
+  menu.style.display = 'flex';
+  if (locked && document.exitPointerLock) document.exitPointerLock();
+}
+
+// захват мыши — только бонус для плавного обзора; старт от него не зависит
+document.addEventListener('pointerlockchange', function () {
+  locked = (document.pointerLockElement === canvas);
+  if (locked) { playing = true; menu.style.display = 'none'; }
+  else if (playing) { pauseGame(); } // потеряли захват (Esc в браузере) -> пауза
+});
+document.addEventListener('pointerlockerror', function () {}); // без захвата — рулим положением курсора
+
+menu.addEventListener('mousedown', function (e) { e.preventDefault(); startGame(); });
+canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+canvas.addEventListener('mousedown', function (e) {
+  if (!playing) { startGame(); return; }
+  e.preventDefault();
+  if (e.button === 0) tryBreak();
+  else if (e.button === 2) tryPlace();
+});
+document.addEventListener('mousemove', function (e) {
+  if (locked) applyLook(e.movementX, e.movementY);
+  else { mouseX = e.clientX; mouseY = e.clientY; haveMouse = true; }
+});
+document.addEventListener('mouseleave', function () { haveMouse = false; }); // курсор за окном — перестаём крутить
+addEventListener('wheel', function (e) {
+  if (!playing) return;
+  sel = (sel + (e.deltaY > 0 ? 1 : -1) + HOTBAR.length) % HOTBAR.length;
+  updateBar();
+});
+addEventListener('keydown', function (e) {
+  keys[e.code] = true;
+  if (e.code === 'Space') e.preventDefault();
+  if (e.code === 'Escape' && playing) pauseGame();
+  if (e.code === 'KeyF' && !e.repeat) fly = !fly;
+  if (e.code.indexOf('Digit') === 0) {
+    var n = +e.code.slice(5);
+    if (n >= 1 && n <= HOTBAR.length) { sel = n - 1; updateBar(); }
+  }
+});
+addEventListener('keyup', function (e) { keys[e.code] = false; });
+addEventListener('resize', function () {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ---------- цикл ----------
+var last = performance.now(), fps = 0, acc = 0, frames = 0;
+function updateHud() {
+  hud.innerHTML = 'FPS ' + fps +
+    '<br>XYZ ' + pos.x.toFixed(1) + ' ' + pos.y.toFixed(1) + ' ' + pos.z.toFixed(1) +
+    '<br>' + (fly ? 'режим: полёт' : 'режим: ходьба') +
+    (playing && !locked ? '<br>обзор: веди курсор от центра' : '');
+}
+function loop() {
+  requestAnimationFrame(loop);
+  var now = performance.now();
+  var dt = (now - last) / 1000; last = now;
+  if (dt > 0.05) dt = 0.05;
+  if (playing) update(dt);
+  var r = raycastVoxel();
+  if (r) { hl.visible = true; hl.position.set(r.hit[0] + 0.5, r.hit[1] + 0.5, r.hit[2] + 0.5); }
+  else hl.visible = false;
+  renderer.render(scene, camera);
+  frames++; acc += dt;
+  if (acc >= 0.5) { fps = Math.round(frames / acc); frames = 0; acc = 0; updateHud(); }
+}
+camera.position.set(pos.x, pos.y + EYE, pos.z);
+updateHud();
+loop();
+
+})(); }
+</script>
+</body>
+</html>

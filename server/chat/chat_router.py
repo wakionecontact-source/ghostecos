@@ -24,9 +24,12 @@ import base64, time
 
 from social_router import auth_member, db, ws_hub, _rate_limit
 
-# Лимит размера зашифрованного файла. 50MB — разумно для video/больших картинок.
-# Требует nginx client_max_body_size >= 55M.
-MAX_FILE_SIZE = 50 * 1024 * 1024
+# Лимиты по плану Premium (см. https://t.me/waki_one):
+#   Base (без премиума): ЛС 100 MB, группы/каналы 50 MB
+#   Premium: ЛС 500 MB, группы 200 MB (×5 base)
+# Сейчас premium-проверка не реализована — используем base ЛС лимит.
+# nginx должен быть >= 110M (сейчас 55M — надо поднять, см. ниже).
+MAX_FILE_SIZE = 100 * 1024 * 1024
 FILE_TTL_DAYS = 7
 
 router = APIRouter(prefix="/api/chat", tags=["GhostChat"])
