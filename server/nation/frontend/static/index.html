@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>GhostNation — основай своё государство</title>
+
+  <!-- Leaflet (single external dependency) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+  <div id="map"></div>
+
+  <!-- ── STATE BANNER (top-left) ── -->
+  <header id="banner" class="panel">
+    <button id="flag" class="flag-chip" title="Цвет флага"></button>
+    <div class="banner-text">
+      <input id="state-name" maxlength="28" placeholder="Безымянная земля" spellcheck="false"/>
+      <div class="stats">
+        <span id="stat-area">0 км²</span>
+        <span class="dot">·</span>
+        <span id="stat-builds">0 построек</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── TOOLBAR (left) ── -->
+  <nav id="toolbar" class="panel">
+    <button class="tool" data-tool="borders" title="Провозгласить границы"></button>
+    <button class="tool" data-tool="house"   title="Построить дом"></button>
+    <button class="tool" data-tool="road"    title="Проложить дорогу"></button>
+    <button class="tool" data-tool="tree"    title="Посадить дерево"></button>
+    <div class="tool-sep"></div>
+    <button class="tool" data-tool="erase"   title="Снести (клик по объекту)"></button>
+    <button id="locate" class="tool" title="К своей стране"></button>
+  </nav>
+
+  <!-- ── DRAW CONTROLS (appear while drawing) ── -->
+  <div id="draw-bar" class="panel hidden">
+    <span id="draw-hint">Кликай по карте, чтобы ставить точки</span>
+    <button id="draw-undo" class="mini">Назад</button>
+    <button id="draw-done" class="mini primary">Готово</button>
+    <button id="draw-cancel" class="mini ghost">Отмена</button>
+  </div>
+
+  <!-- ── LAYER SWITCH (bottom-right) ── -->
+  <div id="layers" class="panel">
+    <button class="layer active" data-layer="esri">Esri</button>
+    <button class="layer" data-layer="google">Google</button>
+  </div>
+
+  <!-- ── FLAG COLOR PICKER ── -->
+  <div id="palette" class="panel hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <!-- roof -->
+  <path d="M3 11 L12 4 L21 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
+  <!-- body -->
+  <path d="M5 10 L5 20 L19 20 L19 10" fill="currentColor" fill-opacity="0.18" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+  <!-- door -->
+  <path d="M10 20 L10 14 L14 14 L14 20" fill="currentColor"/>
+</svg>
