@@ -128,9 +128,21 @@ button,input,textarea{font-family:inherit;}
 .chat-empty h3{font-size:18px;font-weight:700;color:var(--text);margin-bottom:6px;}
 .chat-empty p{font-size:14px;line-height:1.5;color:var(--sub);max-width:300px;}
 
-.chat-body{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 14px 6px;display:flex;flex-direction:column;gap:2px;scrollbar-width:thin;overscroll-behavior:contain;}
-.chat-body::-webkit-scrollbar{width:6px;}
-.chat-body::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.07);border-radius:3px;}
+/* ── TG-style кастомный скроллбар ───────────────────────────────────── */
+.chat-body{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 14px 6px;display:flex;flex-direction:column;gap:2px;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(168,85,247,0.2) transparent;transition:scrollbar-color 0.3s;}
+.chat-body:hover, .chat-body.scrolling{scrollbar-color:rgba(168,85,247,0.55) transparent;}
+.chat-body::-webkit-scrollbar{width:10px;}
+.chat-body::-webkit-scrollbar-track{background:transparent;}
+.chat-body::-webkit-scrollbar-thumb{background:rgba(168,85,247,0.20);border-radius:10px;border:3px solid transparent;background-clip:padding-box;transition:background 0.2s;min-height:40px;}
+.chat-body::-webkit-scrollbar-thumb:hover{background:rgba(168,85,247,0.55);background-clip:padding-box;}
+.chat-body.scrolling::-webkit-scrollbar-thumb{background:rgba(168,85,247,0.45);background-clip:padding-box;}
+
+/* Тот же стиль для sidebar диалогов */
+.sb-list{scrollbar-width:thin;scrollbar-color:rgba(168,85,247,0.18) transparent;}
+.sb-list::-webkit-scrollbar{width:8px;}
+.sb-list::-webkit-scrollbar-track{background:transparent;}
+.sb-list::-webkit-scrollbar-thumb{background:rgba(168,85,247,0.18);border-radius:8px;border:2px solid transparent;background-clip:padding-box;}
+.sb-list::-webkit-scrollbar-thumb:hover{background:rgba(168,85,247,0.45);background-clip:padding-box;}
 .chat-body .e2e-hint{align-self:center;background:rgba(74,222,128,0.08);border:1px solid rgba(74,222,128,0.2);color:var(--green);font-size:11px;padding:6px 12px;border-radius:999px;margin-bottom:8px;display:flex;align-items:center;gap:6px;}
 .chat-body .e2e-hint i{font-size:10px;}
 
@@ -1848,6 +1860,17 @@ async function loadMsgPreviews(){
   });
 }
 function scrollChatBottom(smooth=true){const b=document.getElementById('chatBody');if(!b)return;b.scrollTo({top:b.scrollHeight, behavior:smooth?'smooth':'auto'});}
+
+// Подсветка скроллбара во время активного скролла (как в TG)
+let _scrollHideTimer = null;
+document.addEventListener('scroll', e => {
+  const t = e.target;
+  if (!t || !t.classList) return;
+  if (!t.classList.contains('chat-body') && !t.classList.contains('sb-list')) return;
+  t.classList.add('scrolling');
+  clearTimeout(_scrollHideTimer);
+  _scrollHideTimer = setTimeout(() => t.classList.remove('scrolling'), 800);
+}, true);
 
 // ════════════════════════════════════════════════════════════════════
 // Профиль чужого юзера (внутренний экран)
