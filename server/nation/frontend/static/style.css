@@ -115,6 +115,14 @@ button { cursor: pointer; background: none; border: none; color: inherit; font-f
 .mini.ghost { background: none; color: var(--text-dim); }
 .mini.ghost:hover { background: rgba(255,255,255,0.06); color: var(--text); }
 
+/* ── TOAST ── */
+#toast {
+  bottom: 74px; left: 50%; transform: translateX(-50%);
+  padding: 9px 16px; font-size: 13.5px; font-weight: 600; white-space: nowrap;
+  animation: toast-in .18s ease;
+}
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
 /* ── LAYER SWITCH ── */
 #layers {
   bottom: 22px; right: 14px;
@@ -173,9 +181,11 @@ button { cursor: pointer; background: none; border: none; color: inherit; font-f
 }
 .leaflet-control-attribution a { color: var(--text-dim) !important; }
 
-/* vertex handles while drawing */
+/* vertex handles while drawing (anchored via iconAnchor, no margin offset) */
 .vertex-dot {
-  width: 12px; height: 12px; margin: -6px 0 0 -6px;
+  width: 12px; height: 12px;
   border-radius: 50%; background: var(--accent);
   box-shadow: 0 0 0 2px #fff, 0 0 8px var(--accent-glow);
 }
+/* snapped vertex — green ring, signals "joined to existing road" */
+.vertex-dot.snapped { background: #15C26B; box-shadow: 0 0 0 2px #fff, 0 0 10px rgba(21,194,107,.7); }
