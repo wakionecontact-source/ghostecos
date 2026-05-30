@@ -2347,6 +2347,11 @@ function connectWS(){
     wsReconnect = 1000;
     clearInterval(pingTimer);
     pingTimer = setInterval(() => { try{ws.send('ping');}catch(e){} }, 25000);
+    // После reconnect — подтянем накопленные сообщения (DM + groups). Без этого
+    // если WS отвалился в фоне, accumulated pending придёт только при следующем
+    // полном reload страницы.
+    fetchPending().catch(() => {});
+    loadGroups().catch(() => {});
   };
   ws.onmessage = async e => {
     if (e.data === 'pong') return;
@@ -2363,6 +2368,26 @@ function connectWS(){
   };
   ws.onerror = () => { try{ws.close();}catch(e){} };
 }
+
+// При возврате на вкладку (browser suspended → wake) проверяем WS и догоняем
+// pending. Без этого juзер видел "залипшие" сообщения — пришедшие пока tab
+// был в фоне DM-ы не подтягивались до полного перезаhrузки страницы.
+function _onWakeup(){
+  if (!token || _wsAuthFail) return;
+  // Если WS закрыт / закрывается — переподключаемся (onopen догонит pending)
+  if (!ws || ws.readyState === 2 || ws.readyState === 3) {
+    connectWS();
+  } else if (ws.readyState === 1) {
+    // WS живой, но мы могли пропустить события пока в фоне — догоним вручную
+    fetchPending().catch(() => {});
+    loadGroups().catch(() => {});
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') _onWakeup();
+});
+window.addEventListener('focus', _onWakeup);
+window.addEventListener('online', _onWakeup);  // вернулся интернет
 
 async function handleWs(m){
   const t = m.type, d = m.data || {};
