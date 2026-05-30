@@ -1,437 +1,424 @@
 """
-GhostRoulette — каркас бота с интегрированной admin-панелью.
+OKey bot — минимальный рабочий каркас на aiogram 3.
 
-Запуск: start.bat (Windows) или python bot.py.
+Цель этого файла: чтобы /start точно отвечал. Без админ-панелей,
+без FastAPI рядом, без сложных middleware. Только бот + БД + handlers.
 
-Архитектура:
-- aiogram 3 для бота, через SOCKS5/HTTP прокси к Telegram (V2RayTun)
-- FastAPI на отдельном порту для admin-приложения (HTML/JS UI в браузере)
-- WebSocket для real-time стрима логов и статистики в UI
-- Внутренний registry команд: всё что можно вызвать из консоли и кнопок UI
-
-Этот файл — скелет. Бизнес-логика рулетки добавляется в roulette/* (TODO).
+Когда заработает — будем расширять (поиск анкет, рулетка, линковка с GhostEcos).
 """
-from __future__ import annotations
-
 import asyncio
-import json
 import logging
 import os
-import sys
+import sqlite3
 import time
-import webbrowser
-from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Optional
 
-# ── .env ──────────────────────────────────────────────────────────────────────
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 PROXY_URL = os.getenv("PROXY_URL", "").strip() or None
-ADMIN_PORT = int(os.getenv("ADMIN_PORT", "8088"))
-ADMIN_OPEN_BROWSER = os.getenv("ADMIN_OPEN_BROWSER", "1") == "1"
-ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", "0") or "0")
 
 if not BOT_TOKEN:
-    print("[ОШИБКА] BOT_TOKEN не задан в .env. Получи у @BotFather и впиши.")
-    sys.exit(1)
+    print("[ERROR] BOT_TOKEN не задан в .env. Получи у @BotFather и впиши.")
+    raise SystemExit(1)
 
-# ── Логирование: в stdout + в очередь для WS-стрима в UI ──────────────────────
-log_queue: "asyncio.Queue[dict]" = asyncio.Queue(maxsize=2000)
-log_buffer: List[dict] = []  # последние N логов для свежеподключившегося UI
-LOG_BUFFER_MAX = 500
-
-
-class UILogHandler(logging.Handler):
-    def emit(self, record: logging.LogRecord) -> None:
-        entry = {
-            "ts": time.time(),
-            "level": record.levelname,
-            "name": record.name,
-            "msg": self.format(record),
-        }
-        log_buffer.append(entry)
-        if len(log_buffer) > LOG_BUFFER_MAX:
-            del log_buffer[: len(log_buffer) - LOG_BUFFER_MAX]
-        try:
-            log_queue.put_nowait(entry)
-        except asyncio.QueueFull:
-            pass  # UI отстаёт — дропаем
-
-
+# ── Логирование ──────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
     datefmt="%H:%M:%S",
 )
-logging.getLogger().addHandler(UILogHandler())
-log = logging.getLogger("roulette")
+log = logging.getLogger("okey")
+logging.getLogger("aiogram.event").setLevel(logging.WARNING)
 
-# ── Bot setup ─────────────────────────────────────────────────────────────────
+# ── БД ───────────────────────────────────────────────────────────────────────
+DB_PATH = Path(__file__).parent / "okey.db"
+
+
+def db_init():
+    with sqlite3.connect(DB_PATH) as c:
+        c.executescript("""
+        CREATE TABLE IF NOT EXISTS users (
+            tg_id      INTEGER PRIMARY KEY,
+            username   TEXT,
+            name       TEXT,
+            age        INTEGER,
+            gender     TEXT,
+            looking    TEXT,
+            bio        TEXT,
+            photo_id   TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        """)
+
+
+def db_get_user(tg_id: int) -> Optional[dict]:
+    with sqlite3.connect(DB_PATH) as c:
+        c.row_factory = sqlite3.Row
+        r = c.execute("SELECT * FROM users WHERE tg_id=?", (tg_id,)).fetchone()
+        return dict(r) if r else None
+
+
+def db_save_user(tg_id: int, **fields) -> None:
+    now = int(time.time())
+    with sqlite3.connect(DB_PATH) as c:
+        existing = c.execute("SELECT tg_id FROM users WHERE tg_id=?", (tg_id,)).fetchone()
+        if existing:
+            sets = ", ".join(f"{k}=?" for k in fields)
+            params = list(fields.values()) + [now, tg_id]
+            c.execute(f"UPDATE users SET {sets}, updated_at=? WHERE tg_id=?", params)
+        else:
+            cols = "tg_id, " + ", ".join(fields.keys()) + ", created_at, updated_at"
+            qs = ", ".join("?" * (len(fields) + 3))
+            params = [tg_id] + list(fields.values()) + [now, now]
+            c.execute(f"INSERT INTO users ({cols}) VALUES ({qs})", params)
+
+
+# ── aiogram setup ────────────────────────────────────────────────────────────
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import Message
-
-import db as okeydb
-from handlers import profile as profile_handlers
+from aiogram.types import (
+    Message, CallbackQuery,
+    InlineKeyboardMarkup, InlineKeyboardButton,
+    ReplyKeyboardMarkup, KeyboardButton,
+)
 
 if PROXY_URL:
-    log.info("Использую прокси к Telegram: %s", PROXY_URL)
+    log.info("Прокси к Telegram: %s", PROXY_URL)
     session = AiohttpSession(proxy=PROXY_URL)
 else:
-    log.info("Без прокси (бот ходит напрямую через систему / TUN VPN)")
+    log.info("Без прокси (через систему/TUN VPN)")
     session = AiohttpSession()
 
 bot = Bot(token=BOT_TOKEN, session=session)
 dp = Dispatcher(storage=MemoryStorage())
-dp.include_router(profile_handlers.router)
-
-# Инициализация БД при импорте — таблицы создаются один раз
-okeydb.init_db()
-log.info("БД: %s", okeydb.DB_PATH)
-
-# ── Stats (in-memory; для перезапуск-стойких — потом перенесём в SQLite) ──────
-stats: Dict[str, Any] = {
-    "started_at": time.time(),
-    "users_seen": set(),          # уникальные user_id за сессию
-    "messages_total": 0,
-    "commands_total": 0,
-}
 
 
-def stats_snapshot() -> Dict[str, Any]:
-    # Базовая сессионная статистика
-    out = {
-        "uptime_sec": int(time.time() - stats["started_at"]),
-        "session_users_seen": len(stats["users_seen"]),
-        "messages_total": stats["messages_total"],
-        "commands_total": stats["commands_total"],
-        "proxy": PROXY_URL or "(direct / TUN VPN)",
-        "bot_token_tail": BOT_TOKEN[-6:] if len(BOT_TOKEN) >= 6 else "",
-    }
-    # БД-статы (всё время, не только эта сессия)
-    try:
-        import db as _db
-        out.update(_db.stats_overview())
-    except Exception as e:
-        out["db_error"] = str(e)
-    return out
+# ── Клавиатуры ───────────────────────────────────────────────────────────────
+def main_menu() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="👤 Моя анкета"), KeyboardButton(text="🔍 Поиск")],
+            [KeyboardButton(text="🎲 Рулетка"), KeyboardButton(text="❓ Помощь")],
+        ],
+        resize_keyboard=True,
+    )
 
 
-# ── Bot handlers (минимальный набор; рулетка добавится отдельно) ──────────────
+def start_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📝 Заполнить анкету", callback_data="fill")],
+        [InlineKeyboardButton(text="ℹ️ Что это", callback_data="about")],
+    ])
+
+
+def gender_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="👨 Парень", callback_data="g:m"),
+        InlineKeyboardButton(text="👩 Девушка", callback_data="g:f"),
+    ]])
+
+
+def looking_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👨 Парня", callback_data="l:m"),
+         InlineKeyboardButton(text="👩 Девушку", callback_data="l:f")],
+        [InlineKeyboardButton(text="🌈 Не важно", callback_data="l:any")],
+    ])
+
+
+def skip_kb(tag: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="⏭ Пропустить", callback_data=f"skip:{tag}"),
+    ]])
+
+
+def profile_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Изменить", callback_data="fill")],
+    ])
+
+
+# ── FSM анкеты ───────────────────────────────────────────────────────────────
+class Form(StatesGroup):
+    name = State()
+    age = State()
+    gender = State()
+    looking = State()
+    bio = State()
+    photo = State()
+
+
+def format_profile(u: dict) -> str:
+    gender_map = {"m": "Парень", "f": "Девушка"}
+    looking_map = {"m": "парня", "f": "девушку", "any": "не важно"}
+    lines = [f"<b>{u.get('name') or '—'}, {u.get('age') or '?'}</b>"]
+    g = gender_map.get(u.get("gender"), "?")
+    l = looking_map.get(u.get("looking"), "?")
+    lines.append(f"{g} · ищет: {l}")
+    if u.get("bio"):
+        lines.append(f"\n{u['bio']}")
+    return "\n".join(lines)
+
+
+# ── Handlers ─────────────────────────────────────────────────────────────────
 @dp.message(CommandStart())
-async def cmd_start(m: Message):
-    stats["users_seen"].add(m.from_user.id)
-    stats["commands_total"] += 1
-    okeydb.touch_user(m.from_user.id, m.from_user.username)
-    log.info("/start от @%s (id=%s)", m.from_user.username, m.from_user.id)
-    existing = okeydb.get_profile(m.from_user.id)
-    if existing:
+async def on_start(m: Message, state: FSMContext):
+    await state.clear()
+    log.info("/start от @%s (%s)", m.from_user.username, m.from_user.id)
+    u = db_get_user(m.from_user.id)
+    if u and u.get("name"):
         await m.answer(
-            f"С возвращением, {existing['name']}!\n\n"
-            "/profile — твоя анкета\n"
-            "/edit — изменить\n"
-            "(скоро) /search — смотреть других\n"
-            "(скоро) /roulette — случайный собеседник"
+            f"С возвращением, <b>{u['name']}</b>!\nЖми кнопку внизу или /help.",
+            parse_mode="HTML",
+            reply_markup=main_menu(),
         )
     else:
         await m.answer(
             "Привет! Это <b>OKey</b> — знакомства в Telegram.\n\n"
-            "Здесь можно:\n"
-            "• Заполнить анкету и смотреть других\n"
-            "• Лайкать и получать match-уведомления\n"
-            "• Болтать случайным образом в чат-рулетке\n\n"
-            "Поехали? Жми /fill — заполним твою анкету.\n"
-            "Помощь: /help · Твой ID: /id",
+            "Заполни анкету и смотри других, лайкай, болтай в рулетке.\n\n"
+            "Жми кнопку чтобы начать ↓",
             parse_mode="HTML",
+            reply_markup=start_kb(),
         )
+        await m.answer("Главное меню всегда внизу:", reply_markup=main_menu())
 
 
 @dp.message(Command("help"))
-async def cmd_help(m: Message):
-    stats["commands_total"] += 1
+@dp.message(F.text == "❓ Помощь")
+async def on_help(m: Message):
     await m.answer(
-        "<b>Команды OKey:</b>\n\n"
-        "/fill — заполнить анкету\n"
-        "/profile — посмотреть свою анкету\n"
-        "/edit — изменить анкету\n"
-        "/cancel — прервать заполнение\n"
-        "/id — узнать свой Telegram ID\n"
-        "/ping — проверка что бот живой\n\n"
-        "<i>Скоро:</i> /search, /roulette",
+        "<b>OKey</b> — бот знакомств.\n\n"
+        "Кнопки внизу:\n"
+        "👤 <b>Моя анкета</b> — посмотреть/изменить\n"
+        "🔍 <b>Поиск</b> — смотреть анкеты других (скоро)\n"
+        "🎲 <b>Рулетка</b> — случайный собеседник (скоро)\n"
+        "❓ <b>Помощь</b> — это сообщение\n\n"
+        "Команды: /start /cancel",
+        parse_mode="HTML",
+        reply_markup=main_menu(),
+    )
+
+
+@dp.message(Command("cancel"))
+async def on_cancel(m: Message, state: FSMContext):
+    cur = await state.get_state()
+    await state.clear()
+    await m.answer("Отменено." if cur else "Нечего отменять.", reply_markup=main_menu())
+
+
+@dp.callback_query(F.data == "about")
+async def cb_about(cq: CallbackQuery):
+    await cq.answer()
+    await cq.message.answer(
+        "<b>OKey</b> — простой бот знакомств в Telegram.\n\n"
+        "Заполнил анкету → смотришь других → лайкаешь → match → переписка.\n"
+        "Плюс чат-рулетка для случайных диалогов.\n\n"
+        "Никаких подписок, никакой рекламы. Просто работает.",
+        parse_mode="HTML",
+        reply_markup=start_kb(),
+    )
+
+
+# ── Wizard: запуск ───────────────────────────────────────────────────────────
+@dp.callback_query(F.data == "fill")
+@dp.message(F.text == "👤 Моя анкета")
+async def start_wizard(event, state: FSMContext):
+    """Вход в wizard — и с кнопки, и с reply-меню."""
+    if isinstance(event, CallbackQuery):
+        await event.answer()
+        send = event.message.answer
+        uid = event.from_user.id
+    else:
+        send = event.answer
+        uid = event.from_user.id
+
+    u = db_get_user(uid)
+    # Если у юзера уже есть анкета И это reply-кнопка — показать профиль вместо wizard
+    if isinstance(event, Message) and u and u.get("name"):
+        text = format_profile(u)
+        if u.get("photo_id"):
+            await event.answer_photo(u["photo_id"], caption=text,
+                                     parse_mode="HTML", reply_markup=profile_kb())
+        else:
+            await send(text, parse_mode="HTML", reply_markup=profile_kb())
+        return
+
+    await state.clear()
+    await state.set_state(Form.name)
+    await send(
+        "Заполняем анкету. Жми /cancel чтобы прервать.\n\n"
+        "<b>Как тебя зовут?</b>\n(только имя, 2-30 символов)",
         parse_mode="HTML",
     )
 
 
-@dp.message(Command("id"))
-async def cmd_id(m: Message):
-    stats["commands_total"] += 1
-    await m.answer(f"Твой ID: <code>{m.from_user.id}</code>", parse_mode="HTML")
+@dp.message(Form.name, F.text)
+async def step_name(m: Message, state: FSMContext):
+    name = m.text.strip()
+    if not (2 <= len(name) <= 30):
+        await m.answer("Имя 2-30 символов. Попробуй ещё:")
+        return
+    await state.update_data(name=name)
+    await state.set_state(Form.age)
+    await m.answer("Сколько тебе лет? (14-99)")
 
 
-@dp.message(Command("ping"))
-async def cmd_ping(m: Message):
-    stats["commands_total"] += 1
-    await m.answer("pong")
+@dp.message(Form.age, F.text)
+async def step_age(m: Message, state: FSMContext):
+    t = m.text.strip()
+    if not t.isdigit() or not (14 <= int(t) <= 99):
+        await m.answer("Введи число 14-99:")
+        return
+    await state.update_data(age=int(t))
+    await state.set_state(Form.gender)
+    await m.answer("Твой пол?", reply_markup=gender_kb())
 
 
-# Fallback на любой текст — но НЕ во время FSM (profile-router забирает раньше)
-@dp.message(F.text)
-async def any_text(m: Message):
-    stats["users_seen"].add(m.from_user.id)
-    stats["messages_total"] += 1
-    okeydb.touch_user(m.from_user.id, m.from_user.username)
-    await m.answer("Не понял команду. /help — список доступных.")
+@dp.callback_query(Form.gender, F.data.startswith("g:"))
+async def step_gender(cq: CallbackQuery, state: FSMContext):
+    g = cq.data.split(":", 1)[1]
+    if g not in ("m", "f"):
+        await cq.answer("?"); return
+    await state.update_data(gender=g)
+    await cq.answer()
+    try: await cq.message.edit_reply_markup(reply_markup=None)
+    except: pass
+    await state.set_state(Form.looking)
+    await cq.message.answer("Кого ищешь?", reply_markup=looking_kb())
 
 
-# ── Admin command registry ────────────────────────────────────────────────────
-# Каждая команда: имя → (описание, async функция(args:list) → str)
-CommandFn = Callable[[List[str]], Awaitable[str]]
-admin_commands: Dict[str, Dict[str, Any]] = {}
+@dp.callback_query(Form.looking, F.data.startswith("l:"))
+async def step_looking(cq: CallbackQuery, state: FSMContext):
+    lf = cq.data.split(":", 1)[1]
+    if lf not in ("m", "f", "any"):
+        await cq.answer("?"); return
+    await state.update_data(looking=lf)
+    await cq.answer()
+    try: await cq.message.edit_reply_markup(reply_markup=None)
+    except: pass
+    await state.set_state(Form.bio)
+    await cq.message.answer(
+        "Расскажи о себе (до 300 символов) или пропусти:",
+        reply_markup=skip_kb("bio"),
+    )
 
 
-def admin_command(name: str, desc: str, button: bool = True):
-    """Декоратор: регистрирует команду доступную из UI-консоли и (если button=True)
-    как кнопку в меню."""
-    def wrap(fn: CommandFn):
-        admin_commands[name] = {"desc": desc, "fn": fn, "button": button}
-        return fn
-    return wrap
+@dp.message(Form.bio, F.text)
+async def step_bio(m: Message, state: FSMContext):
+    await state.update_data(bio=m.text.strip()[:300])
+    await state.set_state(Form.photo)
+    await m.answer("Отправь своё фото или пропусти:", reply_markup=skip_kb("photo"))
 
 
-@admin_command("stats", "Показать текущие статы")
-async def cmd_admin_stats(args: List[str]) -> str:
-    s = stats_snapshot()
-    return json.dumps(s, indent=2, ensure_ascii=False)
+@dp.callback_query(Form.bio, F.data == "skip:bio")
+async def skip_bio(cq: CallbackQuery, state: FSMContext):
+    await cq.answer()
+    await state.update_data(bio=None)
+    try: await cq.message.edit_reply_markup(reply_markup=None)
+    except: pass
+    await state.set_state(Form.photo)
+    await cq.message.answer("Отправь своё фото или пропусти:", reply_markup=skip_kb("photo"))
 
 
-@admin_command("ping", "Пинг Telegram API через бот")
-async def cmd_admin_ping(args: List[str]) -> str:
-    t0 = time.time()
+@dp.message(Form.photo, F.photo)
+async def step_photo(m: Message, state: FSMContext):
+    await state.update_data(photo_id=m.photo[-1].file_id)
+    await finalize(m, state)
+
+
+@dp.message(Form.photo, ~F.photo)
+async def step_photo_wrong(m: Message):
+    await m.answer("Жду именно фото (или нажми «Пропустить»):")
+
+
+@dp.callback_query(Form.photo, F.data == "skip:photo")
+async def skip_photo(cq: CallbackQuery, state: FSMContext):
+    await cq.answer()
+    await state.update_data(photo_id=None)
+    try: await cq.message.edit_reply_markup(reply_markup=None)
+    except: pass
+    await finalize(cq.message, state, uid=cq.from_user.id, username=cq.from_user.username)
+
+
+async def finalize(m: Message, state: FSMContext, uid: Optional[int] = None, username: Optional[str] = None):
+    data = await state.get_data()
+    await state.clear()
+    user_id = uid if uid is not None else m.from_user.id
+    uname = username if username is not None else m.from_user.username
+
+    db_save_user(
+        user_id,
+        username=uname,
+        name=data.get("name"),
+        age=data.get("age"),
+        gender=data.get("gender"),
+        looking=data.get("looking"),
+        bio=data.get("bio"),
+        photo_id=data.get("photo_id"),
+    )
+    u = db_get_user(user_id)
+    text = "✅ Анкета сохранена!\n\n" + format_profile(u)
+    if u.get("photo_id"):
+        await m.answer_photo(u["photo_id"], caption=text, parse_mode="HTML")
+    else:
+        await m.answer(text, parse_mode="HTML")
+    await m.answer("Дальше — поиск и рулетка появятся скоро.", reply_markup=main_menu())
+    log.info("Анкета сохранена tg=%s name=%s", user_id, data.get("name"))
+
+
+# ── Reply-кнопки stub'ы ──────────────────────────────────────────────────────
+@dp.message(F.text == "🔍 Поиск")
+async def stub_search(m: Message):
+    await m.answer("🔍 Поиск анкет — скоро.", reply_markup=main_menu())
+
+
+@dp.message(F.text == "🎲 Рулетка")
+async def stub_roulette(m: Message):
+    await m.answer("🎲 Чат-рулетка — скоро.", reply_markup=main_menu())
+
+
+# ── Fallback ─────────────────────────────────────────────────────────────────
+@dp.message()
+async def fallback(m: Message, state: FSMContext):
+    cur = await state.get_state()
+    if cur:
+        # Внутри FSM — игнорим (выше уже отработали либо ничего не подошло)
+        return
+    await m.answer("Не понял. Жми кнопки внизу или /help.", reply_markup=main_menu())
+
+
+# ── main ─────────────────────────────────────────────────────────────────────
+async def main():
+    db_init()
+    log.info("БД: %s", DB_PATH)
+
+    # Проверка коннекта + сброс webhook (если когда-то был установлен)
     try:
         me = await bot.get_me()
-        dt = (time.time() - t0) * 1000
-        return f"ok · {me.username} · {dt:.0f} ms"
+        log.info("Бот @%s (id=%s)", me.username, me.id)
     except Exception as e:
-        return f"FAIL: {e}"
+        log.error("Не могу подключиться к Telegram: %s", e)
+        log.error("Проверь BOT_TOKEN и что VPN/прокси работает.")
+        return
 
+    wh = await bot.get_webhook_info()
+    if wh.url:
+        log.warning("Webhook был установлен: %s — сбрасываю", wh.url)
+        await bot.delete_webhook(drop_pending_updates=False)
+    elif wh.pending_update_count:
+        log.info("Pending updates: %s — заберём через polling", wh.pending_update_count)
 
-@admin_command("scanports", "Найти на каких портах слушает прокси (V2RayTun)")
-async def cmd_admin_scanports(args: List[str]) -> str:
-    import socket
-    candidates = [10808, 10809, 1080, 1081, 2080, 7890, 7891, 8080, 8081, 8118]
-    found = []
-    for port in candidates:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(0.3)
-        try:
-            s.connect(("127.0.0.1", port))
-            found.append(port)
-        except Exception:
-            pass
-        finally:
-            s.close()
-    if not found:
-        return ("Открытых прокси-портов не нашёл (проверил " + ", ".join(map(str, candidates)) +
-                ").\nВключи V2RayTun и проверь Settings → Inbounds.")
-    return "Слушают порты: " + ", ".join(map(str, found)) + (
-        "\n\nОбычно SOCKS=10808, HTTP=10809.\n"
-        "Попробуй в .env:\n"
-        "  PROXY_URL=socks5://127.0.0.1:10808\n"
-        "  или\n"
-        "  PROXY_URL=http://127.0.0.1:10809"
-    )
-
-
-@admin_command("broadcast", "broadcast <текст> — отправить всем виденным юзерам")
-async def cmd_admin_broadcast(args: List[str]) -> str:
-    if not args:
-        return "usage: broadcast <текст>"
-    text = " ".join(args)
-    sent, failed = 0, 0
-    for uid in list(stats["users_seen"]):
-        try:
-            await bot.send_message(uid, text)
-            sent += 1
-        except Exception:
-            failed += 1
-        await asyncio.sleep(0.05)  # ~20 msg/sec, чтобы не словить flood limit
-    return f"Отправлено: {sent}, не доставлено: {failed}"
-
-
-@admin_command("profiles", "Последние 10 заполненных анкет")
-async def cmd_admin_profiles(args: List[str]) -> str:
-    with okeydb.conn() as c:
-        rows = c.execute("""
-            SELECT p.name, p.age, p.gender, p.looking_for, p.city, p.completed_at,
-                   u.username, u.tg_id
-            FROM profiles p JOIN users u ON u.tg_id = p.tg_id
-            ORDER BY p.completed_at DESC LIMIT 10
-        """).fetchall()
-    if not rows:
-        return "Анкет пока нет."
-    out = []
-    for r in rows:
-        ago = int(time.time() - r["completed_at"])
-        ago_str = f"{ago//3600}ч" if ago >= 3600 else f"{ago//60}мин"
-        out.append(f"  @{r['username'] or '—':20s} {r['name']:15s} {r['age']:2d} {r['gender']}→{r['looking_for']:3s} {r['city'] or '—':12s} ({ago_str} назад)")
-    return "Последние анкеты:\n" + "\n".join(out)
-
-
-@admin_command("clearlogs", "Очистить буфер логов в UI", button=True)
-async def cmd_admin_clearlogs(args: List[str]) -> str:
-    log_buffer.clear()
-    return "Логи очищены"
-
-
-@admin_command("help", "Список всех команд")
-async def cmd_admin_help(args: List[str]) -> str:
-    lines = [f"  {name:12s} — {meta['desc']}" for name, meta in sorted(admin_commands.items())]
-    return "Команды:\n" + "\n".join(lines)
-
-
-@admin_command("stop", "Завершить бот (закрыть процесс)", button=True)
-async def cmd_admin_stop(args: List[str]) -> str:
-    log.warning("Stop по запросу admin UI")
-    # Дать UI получить ответ, потом kill
-    asyncio.get_event_loop().call_later(0.5, lambda: os._exit(0))
-    return "Останавливаюсь..."
-
-
-async def run_command(line: str) -> str:
-    """Выполнить команду из UI-консоли. Формат: 'name arg1 arg2 ...'"""
-    line = line.strip()
-    if not line:
-        return ""
-    parts = line.split()
-    name, args = parts[0], parts[1:]
-    meta = admin_commands.get(name)
-    if not meta:
-        return f"Неизвестная команда: {name}. /help"
-    try:
-        return await meta["fn"](args)
-    except Exception as e:
-        log.exception("Команда %s упала", name)
-        return f"Ошибка: {e}"
-
-
-# ── Admin web app (FastAPI) ───────────────────────────────────────────────────
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-
-ADMIN_DIR = Path(__file__).parent / "admin"
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    log.info("Admin UI: http://127.0.0.1:%s", ADMIN_PORT)
-    yield
-
-
-admin_app = FastAPI(lifespan=lifespan, title="GhostRoulette admin")
-
-
-@admin_app.get("/")
-async def admin_index():
-    return FileResponse(ADMIN_DIR / "index.html")
-
-
-@admin_app.get("/api/stats")
-async def api_stats():
-    return stats_snapshot()
-
-
-@admin_app.get("/api/commands")
-async def api_commands():
-    return [
-        {"name": n, "desc": m["desc"], "button": m["button"]}
-        for n, m in sorted(admin_commands.items())
-    ]
-
-
-@admin_app.post("/api/exec")
-async def api_exec(body: dict):
-    line = (body or {}).get("line", "")
-    out = await run_command(line)
-    return {"output": out}
-
-
-@admin_app.websocket("/ws/logs")
-async def ws_logs(ws: WebSocket):
-    await ws.accept()
-    # Отправляем буфер прошлых логов
-    for entry in list(log_buffer):
-        await ws.send_json(entry)
-    # Потом стримим новые
-    while True:
-        try:
-            entry = await log_queue.get()
-            await ws.send_json(entry)
-        except WebSocketDisconnect:
-            return
-        except Exception:
-            return
-
-
-# ── main ──────────────────────────────────────────────────────────────────────
-async def main():
-    import uvicorn
-
-    config = uvicorn.Config(
-        admin_app,
-        host="127.0.0.1",
-        port=ADMIN_PORT,
-        log_level="warning",  # uvicorn-логи отдельно, чтоб не дублировались
-    )
-    server = uvicorn.Server(config)
-    server_task = asyncio.create_task(server.serve())
-
-    # Открыть браузер с админкой
-    if ADMIN_OPEN_BROWSER:
-        await asyncio.sleep(0.5)
-        try:
-            webbrowser.open(f"http://127.0.0.1:{ADMIN_PORT}/")
-        except Exception:
-            pass
-
-    # Polling — в фоне, с retry. Если упадёт — UI продолжит работать,
-    # юзер увидит ошибку в логах и сможет починить .env / V2RayTun.
-    async def polling_loop():
-        backoff = 3
-        while True:
-            try:
-                me = await bot.get_me()
-                log.info("Бот @%s (id=%s) — поехали", me.username, me.id)
-                backoff = 3  # reset
-                await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
-                # start_polling выходит только на graceful stop
-                log.info("Polling завершён")
-                break
-            except Exception as e:
-                log.error("Telegram недоступен: %s", e)
-                log.error("Проверь V2RayTun (порт %s) и BOT_TOKEN. Retry через %ds...",
-                          PROXY_URL or "—", backoff)
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 60)  # 3 → 6 → 12 → 24 → 48 → 60
-
-    polling_task = asyncio.create_task(polling_loop())
-
-    # Главный loop — uvicorn. Он держит UI до Ctrl+C
-    try:
-        await server_task
-    finally:
-        polling_task.cancel()
-        try: await polling_task
-        except: pass
-        await bot.session.close()
+    log.info("Polling запущен. Жди /start от себя в боте...")
+    await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
 
 
 if __name__ == "__main__":
@@ -439,3 +426,7 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nЗакрыто.")
+    finally:
+        # Закрываем aiohttp-session чтобы не было ResourceWarning
+        try: asyncio.run(bot.session.close())
+        except: pass
