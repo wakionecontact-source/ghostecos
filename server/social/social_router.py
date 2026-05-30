@@ -2596,7 +2596,7 @@ def my_referrals(authorization: Optional[str] = Header(None)):
     ).fetchone()["cnt"]
     # Заработано Gost через рефералов
     earned = c.execute(
-        "SELECT COALESCE(SUM(amount), 0) as s FROM soc_wallet_tx WHERE user_id=? AND source='refout'",
+        "SELECT COALESCE(SUM(delta), 0) as s FROM soc_wallet_tx WHERE user_id=? AND currency='gost' AND source='refout'",
         (user["id"],)
     ).fetchone()["s"]
     # Кто меня пригласил

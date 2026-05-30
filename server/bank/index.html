@@ -64,11 +64,12 @@ main{max-width:720px;margin:0 auto;padding:18px 16px 30px;}
 
 /* ── СВИТЧЕР ВАЛЮТ ── */
 .cur-switcher{display:grid;grid-template-columns:1fr 1.6fr 1fr;gap:10px;margin-bottom:22px;}
-.cur-card{position:relative;overflow:hidden;background:var(--surface);border:1px solid var(--border-strong);border-radius:18px;padding:14px;backdrop-filter:blur(8px);cursor:pointer;transition:all 0.5s cubic-bezier(0.34,1.56,0.64,1);display:flex;flex-direction:column;justify-content:space-between;min-height:110px;}
-.cur-card::before{content:'';position:absolute;top:-50%;right:-30%;width:200%;height:200%;background:radial-gradient(circle,var(--accent-color,transparent) 0%,transparent 60%);opacity:0.25;pointer-events:none;transition:opacity 0.4s;}
-.cur-card.active{border-color:var(--accent-color);box-shadow:0 12px 32px rgba(0,0,0,0.35),0 0 0 1px var(--accent-color);transform:scale(1.04);}
+.cur-card{position:relative;overflow:hidden;background:var(--surface);border:1px solid var(--border-strong);border-radius:18px;padding:14px;backdrop-filter:blur(8px);cursor:pointer;transition:opacity 0.2s ease-out,border-color 0.2s ease-out,box-shadow 0.2s ease-out;display:flex;flex-direction:column;justify-content:space-between;min-height:110px;pointer-events:auto;}
+.cur-card *{pointer-events:none;}
+.cur-card::before{content:'';position:absolute;top:-50%;right:-30%;width:200%;height:200%;background:radial-gradient(circle,var(--accent-color,transparent) 0%,transparent 60%);opacity:0.25;pointer-events:none;transition:opacity 0.2s ease-out;}
+.cur-card.active{border-color:var(--accent-color);box-shadow:0 12px 32px rgba(0,0,0,0.35),0 0 0 1px var(--accent-color);}
 .cur-card.active::before{opacity:0.45;}
-.cur-card:not(.active){opacity:0.78;transform:scale(0.96);}
+.cur-card:not(.active){opacity:0.7;}
 .cur-card:not(.active):hover{opacity:1;border-color:var(--accent-color);}
 .cur-card[data-currency="gost"]{--accent-color:rgba(168,85,247,0.5);}
 .cur-card[data-currency="soul"]{--accent-color:rgba(236,72,153,0.5);}
