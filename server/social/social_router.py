@@ -441,6 +441,44 @@ def init():
             FOREIGN KEY (sender_id) REFERENCES users(id),
             FOREIGN KEY (receiver_id) REFERENCES users(id)
         );
+        -- Группы (чат с N участниками). Каналы = группа с can_write_anyone=0.
+        CREATE TABLE IF NOT EXISTS chat_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            owner_id INTEGER NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'group',  -- 'group' | 'channel'
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (owner_id) REFERENCES users(id)
+        );
+        CREATE TABLE IF NOT EXISTS chat_group_members (
+            group_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            is_admin INTEGER NOT NULL DEFAULT 0,
+            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (group_id, user_id),
+            FOREIGN KEY (group_id) REFERENCES chat_groups(id),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_chat_group_members_user ON chat_group_members(user_id);
+        -- Групповые сообщения: один ciphertext + envelope_keys для каждого участника.
+        -- envelope_keys в JSON: {user_id_str: base64(encrypted AES key)}.
+        CREATE TABLE IF NOT EXISTS chat_group_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL,
+            sender_id INTEGER NOT NULL,
+            ciphertext TEXT NOT NULL,
+            envelope_keys TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (group_id) REFERENCES chat_groups(id),
+            FOREIGN KEY (sender_id) REFERENCES users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_chat_group_messages_group ON chat_group_messages(group_id, id);
+        -- ack-логика: какие group-сообщения уже получены каким юзером
+        CREATE TABLE IF NOT EXISTS chat_group_acks (
+            user_id INTEGER NOT NULL,
+            msg_id INTEGER NOT NULL,
+            PRIMARY KEY (user_id, msg_id)
+        );
         -- Зашифрованные на клиенте файлы. Сервер хранит только ciphertext blob —
         -- не знает имя, тип, размер исходного файла. Расшифровка только у получателя.
         -- TTL: ack-based — удаляется когда receiver подтвердил скачивание.

@@ -365,3 +365,401 @@ def file_ack(file_id: int, authorization: Optional[str] = Header(None)):
     c.commit(); c.close()
     return {"deleted": 1}
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUPS — групповые чаты с E2E через sender-key схему.
+#
+# Принцип:
+#   1. Sender генерирует случайный AES-256 ключ для каждого сообщения
+#   2. Шифрует payload этим ключом → один общий ciphertext
+#   3. Шифрует AES для каждого участника через их публичный ECDH-ключ → N envelope_keys
+#   4. Backend хранит {ciphertext, envelope_keys: {user_id: enc_key}}
+#   5. Каждый получатель расшифровывает свой envelope, потом общий ciphertext
+#
+# Backend остаётся blind: видит только зашифрованные blob-ы и метаданные кто-кому.
+# Каналы (kind='channel') = группы где писать может только owner+admins.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class GroupCreateBody(BaseModel):
+    name: str
+    member_usernames: list = []   # стартовые участники (помимо создателя)
+    kind: str = "group"           # 'group' | 'channel'
+
+class GroupSendBody(BaseModel):
+    ciphertext: str               # base64, общий шифротекст
+    envelope_keys: dict           # {user_id_str: base64(encrypted AES key for that user)}
+
+class GroupAckBody(BaseModel):
+    ids: list                     # msg id-шники которые юзер успешно сохранил локально
+
+
+def _is_group_member(c, group_id: int, user_id: int) -> bool:
+    r = c.execute(
+        "SELECT 1 FROM chat_group_members WHERE group_id=? AND user_id=?",
+        (group_id, user_id),
+    ).fetchone()
+    return r is not None
+
+
+def _is_group_admin(c, group_id: int, user_id: int) -> bool:
+    r = c.execute(
+        "SELECT is_admin FROM chat_group_members WHERE group_id=? AND user_id=?",
+        (group_id, user_id),
+    ).fetchone()
+    return bool(r and r["is_admin"])
+
+
+@router.post("/group/create")
+def group_create(body: GroupCreateBody, authorization: Optional[str] = Header(None)):
+    user = auth_member(authorization)
+    _rate_limit(f"groupcreate:{user['id']}", limit=10, window=3600)
+    name = (body.name or "").strip()
+    if not (1 <= len(name) <= 80):
+        raise HTTPException(400, "Название: 1-80 символов")
+    kind = body.kind if body.kind in ("group", "channel") else "group"
+    if not isinstance(body.member_usernames, list) or len(body.member_usernames) > 100:
+        raise HTTPException(400, "Слишком много участников (макс 100)")
+    c = db()
+    # Базовый лимит групп на юзера — антиспам
+    own = c.execute(
+        "SELECT COUNT(*) as cnt FROM chat_groups WHERE owner_id=?", (user["id"],)
+    ).fetchone()
+    if own["cnt"] >= 50:
+        c.close(); raise HTTPException(400, "Лимит групп исчерпан (50)")
+    c.execute(
+        "INSERT INTO chat_groups (name, owner_id, kind) VALUES (?,?,?)",
+        (name, user["id"], kind),
+    )
+    gid = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
+    # Создатель — админ
+    c.execute(
+        "INSERT INTO chat_group_members (group_id, user_id, is_admin) VALUES (?,?,1)",
+        (gid, user["id"]),
+    )
+    added = []
+    for uname in body.member_usernames:
+        if not isinstance(uname, str):
+            continue
+        peer = _get_user_by_username(c, uname)
+        if not peer or peer["id"] == user["id"]:
+            continue
+        if not peer["x25519_pub"]:
+            continue  # не может получать E2E — пропускаем
+        c.execute(
+            "INSERT OR IGNORE INTO chat_group_members (group_id, user_id) VALUES (?,?)",
+            (gid, peer["id"]),
+        )
+        added.append({"id": peer["id"], "username": peer["username"], "display_name": peer["display_name"]})
+    c.commit()
+    # Уведомим всех участников через WS — у них появилась новая группа
+    for m in added:
+        ws_hub.send_to(m["id"], "group.added", {"group_id": gid, "name": name, "kind": kind})
+    c.close()
+    return {"id": gid, "name": name, "kind": kind, "members": added}
+
+
+@router.get("/group/my")
+def group_my(authorization: Optional[str] = Header(None)):
+    """Список моих групп с базовой инфой."""
+    user = auth_member(authorization)
+    c = db()
+    rows = c.execute("""
+        SELECT g.id, g.name, g.kind, g.owner_id, g.created_at,
+               m.is_admin,
+               (SELECT COUNT(*) FROM chat_group_members WHERE group_id=g.id) as members_count
+        FROM chat_groups g
+        JOIN chat_group_members m ON m.group_id = g.id
+        WHERE m.user_id = ?
+        ORDER BY g.id DESC
+    """, (user["id"],)).fetchall()
+    c.close()
+    return [
+        {
+            "id": r["id"],
+            "name": r["name"],
+            "kind": r["kind"],
+            "owner_id": r["owner_id"],
+            "is_admin": bool(r["is_admin"]),
+            "is_owner": r["owner_id"] == user["id"],
+            "members_count": r["members_count"],
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    ]
+
+
+@router.get("/group/{gid}")
+def group_info(gid: int, authorization: Optional[str] = Header(None)):
+    """Детали группы: участники + их публичные ключи (нужны для шифрования)."""
+    user = auth_member(authorization)
+    c = db()
+    g = c.execute(
+        "SELECT id, name, kind, owner_id, created_at FROM chat_groups WHERE id=?", (gid,)
+    ).fetchone()
+    if not g:
+        c.close(); raise HTTPException(404, "Группа не найдена")
+    if not _is_group_member(c, gid, user["id"]):
+        c.close(); raise HTTPException(403, "Не участник группы")
+    members = c.execute("""
+        SELECT u.id, u.username, u.display_name, u.x25519_pub,
+               m.is_admin, m.joined_at
+        FROM chat_group_members m JOIN users u ON u.id = m.user_id
+        WHERE m.group_id = ?
+        ORDER BY m.is_admin DESC, m.joined_at ASC
+    """, (gid,)).fetchall()
+    c.close()
+    return {
+        "id": g["id"],
+        "name": g["name"],
+        "kind": g["kind"],
+        "owner_id": g["owner_id"],
+        "created_at": g["created_at"],
+        "members": [
+            {
+                "id": m["id"],
+                "username": m["username"],
+                "display_name": m["display_name"],
+                "x25519_pub": m["x25519_pub"],
+                "is_admin": bool(m["is_admin"]),
+                "is_owner": m["id"] == g["owner_id"],
+                "joined_at": m["joined_at"],
+            }
+            for m in members
+        ],
+    }
+
+
+@router.post("/group/{gid}/members/{username}")
+def group_add_member(gid: int, username: str, authorization: Optional[str] = Header(None)):
+    user = auth_member(authorization)
+    _rate_limit(f"groupadd:{user['id']}", limit=60, window=3600)
+    c = db()
+    if not _is_group_admin(c, gid, user["id"]):
+        c.close(); raise HTTPException(403, "Только админ может добавлять")
+    peer = _get_user_by_username(c, username)
+    if not peer:
+        c.close(); raise HTTPException(404, "Юзер не найден")
+    if not peer["x25519_pub"]:
+        c.close(); raise HTTPException(400, "У юзера нет E2E-ключей — пусть зайдёт в /chat")
+    c.execute(
+        "INSERT OR IGNORE INTO chat_group_members (group_id, user_id) VALUES (?,?)",
+        (gid, peer["id"]),
+    )
+    c.commit()
+    g = c.execute("SELECT name, kind FROM chat_groups WHERE id=?", (gid,)).fetchone()
+    c.close()
+    ws_hub.send_to(peer["id"], "group.added", {"group_id": gid, "name": g["name"], "kind": g["kind"]})
+    # broadcast остальным участникам что состав изменился
+    members_uids = [r["user_id"] for r in db().execute(
+        "SELECT user_id FROM chat_group_members WHERE group_id=?", (gid,)
+    ).fetchall()]
+    for uid in members_uids:
+        if uid != peer["id"]:
+            ws_hub.send_to(uid, "group.members_changed", {"group_id": gid})
+    return {"status": "ok", "user": {"id": peer["id"], "username": peer["username"], "display_name": peer["display_name"]}}
+
+
+@router.delete("/group/{gid}/members/{username}")
+def group_remove_member(gid: int, username: str, authorization: Optional[str] = Header(None)):
+    """Удалить участника. Может: админ — любого; сам юзер — себя (= покинуть)."""
+    user = auth_member(authorization)
+    c = db()
+    peer = _get_user_by_username(c, username)
+    if not peer:
+        c.close(); raise HTTPException(404, "Юзер не найден")
+    is_self = peer["id"] == user["id"]
+    if not is_self and not _is_group_admin(c, gid, user["id"]):
+        c.close(); raise HTTPException(403, "Только админ может удалять других")
+    # Owner-а удалить нельзя (только через удаление всей группы)
+    g = c.execute("SELECT owner_id, name FROM chat_groups WHERE id=?", (gid,)).fetchone()
+    if not g:
+        c.close(); raise HTTPException(404, "Группа не найдена")
+    if peer["id"] == g["owner_id"]:
+        c.close(); raise HTTPException(400, "Нельзя удалить владельца группы")
+    c.execute(
+        "DELETE FROM chat_group_members WHERE group_id=? AND user_id=?",
+        (gid, peer["id"]),
+    )
+    c.commit()
+    c.close()
+    ws_hub.send_to(peer["id"], "group.removed", {"group_id": gid})
+    return {"status": "ok"}
+
+
+@router.delete("/group/{gid}")
+def group_delete(gid: int, authorization: Optional[str] = Header(None)):
+    """Удалить группу полностью. Только owner."""
+    user = auth_member(authorization)
+    c = db()
+    g = c.execute("SELECT owner_id FROM chat_groups WHERE id=?", (gid,)).fetchone()
+    if not g:
+        c.close(); raise HTTPException(404, "Группа не найдена")
+    if g["owner_id"] != user["id"]:
+        c.close(); raise HTTPException(403, "Только владелец может удалить группу")
+    # Соберём всех участников чтобы оповестить
+    members = [r["user_id"] for r in c.execute(
+        "SELECT user_id FROM chat_group_members WHERE group_id=?", (gid,)
+    ).fetchall()]
+    c.execute("DELETE FROM chat_group_messages WHERE group_id=?", (gid,))
+    c.execute("DELETE FROM chat_group_members WHERE group_id=?", (gid,))
+    c.execute("DELETE FROM chat_groups WHERE id=?", (gid,))
+    c.commit(); c.close()
+    for uid in members:
+        ws_hub.send_to(uid, "group.removed", {"group_id": gid})
+    return {"status": "ok"}
+
+
+@router.post("/group/{gid}/send")
+def group_send(gid: int, body: GroupSendBody, authorization: Optional[str] = Header(None)):
+    """Отправить сообщение в группу.
+    Клиент шифрует payload общим AES-ключом → ciphertext,
+    затем шифрует этот AES для каждого участника → envelope_keys.
+    """
+    import json as _json
+    user = auth_member(authorization)
+    _rate_limit(f"groupsend:{user['id']}", limit=120, window=60)
+    if not _is_b64(body.ciphertext) or len(body.ciphertext) > 16000:
+        raise HTTPException(400, "ciphertext: некорректный формат или > 16KB")
+    if not isinstance(body.envelope_keys, dict) or not body.envelope_keys:
+        raise HTTPException(400, "envelope_keys: обязательно (dict)")
+    if len(body.envelope_keys) > 200:
+        raise HTTPException(400, "Слишком много envelope_keys")
+    # Каждый ключ должен быть валидной base64-строкой разумного размера
+    for uid_str, ek in body.envelope_keys.items():
+        if not isinstance(ek, str) or len(ek) > 600 or not _is_b64(ek):
+            raise HTTPException(400, f"envelope_keys[{uid_str}]: некорректный")
+    c = db()
+    if not _is_group_member(c, gid, user["id"]):
+        c.close(); raise HTTPException(403, "Не участник группы")
+    g = c.execute("SELECT kind, owner_id, name FROM chat_groups WHERE id=?", (gid,)).fetchone()
+    if not g:
+        c.close(); raise HTTPException(404, "Группа не найдена")
+    # В канале писать могут только админы
+    if g["kind"] == "channel" and not _is_group_admin(c, gid, user["id"]):
+        c.close(); raise HTTPException(403, "В канале писать могут только админы")
+    # envelope_keys должны покрывать всех участников КРОМЕ отправителя
+    members = [r["user_id"] for r in c.execute(
+        "SELECT user_id FROM chat_group_members WHERE group_id=?", (gid,)
+    ).fetchall()]
+    recipients = [uid for uid in members if uid != user["id"]]
+    keys_int = {int(k): v for k, v in body.envelope_keys.items() if str(k).lstrip('-').isdigit()}
+    missing = [uid for uid in recipients if uid not in keys_int]
+    if missing:
+        c.close()
+        raise HTTPException(400, f"envelope_keys не покрывают всех получателей: missing {missing}")
+    envelope_json = _json.dumps({str(k): v for k, v in keys_int.items()}, ensure_ascii=False)
+    c.execute(
+        "INSERT INTO chat_group_messages (group_id, sender_id, ciphertext, envelope_keys) VALUES (?,?,?,?)",
+        (gid, user["id"], body.ciphertext, envelope_json),
+    )
+    msg_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
+    row = c.execute("SELECT created_at FROM chat_group_messages WHERE id=?", (msg_id,)).fetchone()
+    c.commit()
+    payload = {
+        "id": msg_id,
+        "group_id": gid,
+        "sender_id": user["id"],
+        "from_username": user["username"],
+        "from_display_name": user["display_name"],
+        "ciphertext": body.ciphertext,
+        "envelope_keys": {str(k): v for k, v in keys_int.items()},
+        "created_at": row["created_at"],
+    }
+    # Doставка всем участникам в реальном времени
+    for uid in recipients:
+        # Каждому шлём только его envelope — экономим bandwidth и не светим чужие
+        per_user = dict(payload)
+        per_user["envelope_keys"] = {str(uid): keys_int[uid]}
+        ws_hub.send_to(uid, "group.new", per_user)
+    # Echo отправителю — он сразу видит у себя
+    echo = dict(payload)
+    echo["envelope_keys"] = {}  # себе envelope не нужен, шифровка дешифруется на стороне sender-а из локального AES-кэша
+    ws_hub.send_to(user["id"], "group.echo", echo)
+    c.close()
+    return {"status": "ok", "id": msg_id, "created_at": row["created_at"]}
+
+
+@router.get("/group/{gid}/pending")
+def group_pending(gid: int, authorization: Optional[str] = Header(None)):
+    """Сообщения в группе, которые я ещё не ack-ал."""
+    import json as _json
+    user = auth_member(authorization)
+    c = db()
+    if not _is_group_member(c, gid, user["id"]):
+        c.close(); raise HTTPException(403, "Не участник группы")
+    rows = c.execute("""
+        SELECT m.id, m.sender_id, m.ciphertext, m.envelope_keys, m.created_at,
+               u.username as from_username, u.display_name as from_display_name
+        FROM chat_group_messages m
+        JOIN users u ON u.id = m.sender_id
+        LEFT JOIN chat_group_acks a ON a.msg_id = m.id AND a.user_id = ?
+        WHERE m.group_id = ? AND a.msg_id IS NULL AND m.sender_id <> ?
+        ORDER BY m.id ASC
+        LIMIT 500
+    """, (user["id"], gid, user["id"])).fetchall()
+    c.close()
+    out = []
+    for r in rows:
+        try:
+            envs = _json.loads(r["envelope_keys"])
+        except Exception:
+            envs = {}
+        my_env = envs.get(str(user["id"]))
+        if not my_env:
+            continue  # для меня шифровки нет — пропускаем (странно, но защитимся)
+        out.append({
+            "id": r["id"],
+            "group_id": gid,
+            "sender_id": r["sender_id"],
+            "from_username": r["from_username"],
+            "from_display_name": r["from_display_name"],
+            "ciphertext": r["ciphertext"],
+            "envelope_keys": {str(user["id"]): my_env},
+            "created_at": r["created_at"],
+        })
+    return {"messages": out}
+
+
+@router.post("/group/{gid}/ack")
+def group_ack(gid: int, body: GroupAckBody, authorization: Optional[str] = Header(None)):
+    """Подтвердить получение сообщений. Если все участники ack-ли — удаляем msg.
+    Иначе только помечаем что юзер получил."""
+    user = auth_member(authorization)
+    if not body.ids or not isinstance(body.ids, list):
+        return {"acked": 0}
+    ids = [int(x) for x in body.ids if isinstance(x, (int, str)) and str(x).isdigit()][:200]
+    if not ids:
+        return {"acked": 0}
+    c = db()
+    if not _is_group_member(c, gid, user["id"]):
+        c.close(); raise HTTPException(403, "Не участник группы")
+    ph = ",".join("?" * len(ids))
+    # Записать ack-и
+    for mid in ids:
+        c.execute(
+            "INSERT OR IGNORE INTO chat_group_acks (user_id, msg_id) VALUES (?,?)",
+            (user["id"], mid),
+        )
+    c.commit()
+    # Проверим какие сообщения теперь ack-нуты всеми получателями (кроме отправителя) → удалим
+    rows = c.execute(
+        f"SELECT id, sender_id FROM chat_group_messages WHERE group_id=? AND id IN ({ph})",
+        [gid] + ids,
+    ).fetchall()
+    deleted = 0
+    for r in rows:
+        members_cnt = c.execute(
+            "SELECT COUNT(*) as cnt FROM chat_group_members WHERE group_id=? AND user_id<>?",
+            (gid, r["sender_id"]),
+        ).fetchone()["cnt"]
+        acks_cnt = c.execute(
+            "SELECT COUNT(*) as cnt FROM chat_group_acks WHERE msg_id=?",
+            (r["id"],),
+        ).fetchone()["cnt"]
+        if acks_cnt >= members_cnt:
+            c.execute("DELETE FROM chat_group_messages WHERE id=?", (r["id"],))
+            c.execute("DELETE FROM chat_group_acks WHERE msg_id=?", (r["id"],))
+            deleted += 1
+    c.commit(); c.close()
+    return {"acked": len(ids), "purged": deleted}
+
