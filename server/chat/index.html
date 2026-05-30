@@ -156,6 +156,11 @@ button,input,textarea{font-family:inherit;}
 .msg.theirs .msg-meta{color:var(--muted);}
 .msg-meta i{font-size:9px;}
 .msg.failed .msg-bubble{opacity:0.6;border-color:var(--red);}
+.msg.deleted .msg-bubble{opacity:0.7;}
+.msg-quote{border-left:3px solid var(--primary);padding:5px 9px;margin:0 0 6px;background:rgba(124,58,237,0.10);border-radius:5px;font-size:12.5px;color:var(--sub);cursor:pointer;line-height:1.35;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.msg.mine .msg-quote{background:rgba(255,255,255,0.10);border-left-color:rgba(255,255,255,0.6);color:rgba(255,255,255,0.85);}
+.msg-quote:hover{background:rgba(124,58,237,0.18);}
+#replyBar{display:none;align-items:center;background:rgba(15,23,42,0.85);border-top:1px solid var(--border);padding:6px 10px;}
 
 /* ── PREVIEW (пост GS / обычная ссылка) ── */
 .msg-preview{margin-top:6px;border-radius:14px;overflow:hidden;border:1px solid var(--border-strong);background:rgba(15,23,42,0.7);cursor:pointer;transition:border-color 0.15s;display:block;text-decoration:none;color:inherit;max-width:100%;}
@@ -489,20 +494,35 @@ async function decryptText(aesKey, b64){
 }
 
 // Зашифровать сообщение для конкретного получателя по username
-async function encryptForPeer(peerUsername, text){
+// payload: либо строка (legacy plain text), либо объект {type, ...} для нового формата
+async function encryptForPeer(peerUsername, payload){
   let pub = pubCache.get(peerUsername);
   if (!pub) {
     const r = await chat(`/keys/${encodeURIComponent(peerUsername)}`);
     if (!r.x25519_pub) throw new Error('У получателя ещё нет E2E-ключей');
     pub = r.x25519_pub;
-    // TOFU: если ключ изменился — спросить юзера перед использованием
     const trusted = await verifyAndPinPub(peerUsername, pub);
     if (!trusted) throw new Error('Отправка отменена: ключ собеседника не принят');
     pubCache.set(peerUsername, pub);
   }
   const theirPub = await importPub(pub);
   const aes = await deriveShared(myPriv, theirPub);
-  return encryptText(aes, text);
+  // Если объект — сериализуем в JSON. Если строка — оборачиваем в стандартный msg-payload.
+  const raw = (typeof payload === 'object' && payload !== null) ? JSON.stringify(payload) : String(payload);
+  return encryptText(aes, raw);
+}
+
+// Парсим расшифрованный raw в payload {type, ...}. Legacy plain text → {type:'msg', text}
+function parsePayload(raw){
+  if (typeof raw !== 'string') return {type:'msg', text:''};
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('{')) {
+    try {
+      const obj = JSON.parse(trimmed);
+      if (obj && typeof obj === 'object' && typeof obj.type === 'string') return obj;
+    } catch(_){}
+  }
+  return {type:'msg', text: raw};
 }
 
 async function decryptFromPeer(peerUsername, cipherB64){
@@ -768,6 +788,25 @@ async function idbAddMessage(m){
   await idbReq(tx, t => t.objectStore('messages').add(m));
   return true;
 }
+// Поиск сообщения по sid (для edit/delete операций)
+async function idbFindMessageBySid(sid){
+  const db = await openIDB();
+  const tx = db.transaction('messages', 'readonly');
+  const idx = tx.objectStore('messages').index('sid');
+  return new Promise(r => { const q = idx.get(sid); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
+}
+// Обновить существующее сообщение в IDB по sid (для edit/delete)
+async function idbUpdateMessage(sid, patch){
+  const db = await openIDB();
+  const tx = db.transaction('messages', 'readwrite');
+  const store = tx.objectStore('messages');
+  const idx = store.index('sid');
+  const found = await new Promise(r => { const q = idx.get(sid); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
+  if (!found) return false;
+  Object.assign(found, patch);
+  await idbReq(tx, t => t.objectStore('messages').put(found));
+  return true;
+}
 async function idbGetMessages(peer){
   const db = await openIDB();
   const tx = db.transaction('messages', 'readonly');
@@ -1024,12 +1063,44 @@ async function ingestIncoming(m){
   const isMine = m.from_username === me.username;
   const peerUsername = isMine ? m.to_username : m.from_username;
   const peerName = isMine ? null : m.from_display_name;
-  let text = '';
+  let raw = '';
   try {
-    text = await decryptFromPeer(peerUsername, m.ciphertext);
+    raw = await decryptFromPeer(peerUsername, m.ciphertext);
   } catch(e) {
-    text = '[не удалось расшифровать]';
+    raw = '[не удалось расшифровать]';
   }
+  const payload = parsePayload(raw);
+
+  // ── Операционные сообщения: edit / delete — применяем к существующему по sid ──
+  if (payload.type === 'edit' && payload.target_sid) {
+    const target = await idbFindMessageBySid(payload.target_sid);
+    if (target && target.peer === peerUsername && target.from_me === isMine) {
+      await idbUpdateMessage(payload.target_sid, {text: String(payload.new_text || ''), edited: true});
+      // Перерендерить активный чат если он открыт
+      if (activePeer && activePeer.username === peerUsername) {
+        const i = activeMessages.findIndex(x => x.sid === payload.target_sid);
+        if (i >= 0) { activeMessages[i].text = String(payload.new_text || ''); activeMessages[i].edited = true; renderMessages(); }
+      }
+      // Обновить превью диалога если редактировали последнее
+      const d = dialogs.find(x => x.username === peerUsername);
+      if (d && d.last_text === target.text) { d.last_text = String(payload.new_text || ''); await idbPutDialog(d); renderDialogs(document.getElementById('sbSearch').value); }
+    }
+    return true;
+  }
+  if (payload.type === 'delete' && payload.target_sid) {
+    const target = await idbFindMessageBySid(payload.target_sid);
+    if (target && target.peer === peerUsername && target.from_me === isMine) {
+      await idbUpdateMessage(payload.target_sid, {text: '', deleted: true});
+      if (activePeer && activePeer.username === peerUsername) {
+        const i = activeMessages.findIndex(x => x.sid === payload.target_sid);
+        if (i >= 0) { activeMessages[i].text = ''; activeMessages[i].deleted = true; renderMessages(); }
+      }
+    }
+    return true;
+  }
+
+  // ── Обычное сообщение (или legacy plain text) ──
+  const text = String(payload.text || '');
   const stored = {
     sid: m.id,
     peer: peerUsername,
@@ -1037,9 +1108,12 @@ async function ingestIncoming(m){
     text,
     created_at: m.created_at,
   };
+  if (payload.reply_to) {
+    stored.reply_to = payload.reply_to;
+    stored.reply_preview = String(payload.reply_preview || '').slice(0, 100);
+  }
   const added = await idbAddMessage(stored);
   if (!added) return false;
-  // Обновим диалог
   let d = dialogs.find(x => x.username === peerUsername);
   if (!d) {
     d = { username: peerUsername, display_name: peerName || peerUsername, last_text: text, last_at: m.created_at, last_from_me: isMine, unread: 0 };
@@ -1056,12 +1130,37 @@ async function ingestIncoming(m){
   }
   await idbPutDialog(d);
   renderDialogs(document.getElementById('sbSearch').value);
-  // Если активный чат — добавить в UI
   if (activePeer && activePeer.username === peerUsername) {
     activeMessages.push(stored);
     appendMessage(stored);
   }
   return true;
+}
+
+// Сейчас юзер отвечает на это сообщение (null если нет reply-mode)
+let replyingTo = null;
+function startReply(msg){
+  replyingTo = msg;
+  renderReplyBar();
+  const inp = document.getElementById('sendInput'); if (inp) inp.focus();
+}
+function cancelReply(){
+  replyingTo = null;
+  renderReplyBar();
+}
+function renderReplyBar(){
+  const bar = document.getElementById('replyBar');
+  if (!bar) return;
+  if (!replyingTo) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  const who = replyingTo.from_me ? 'Вы' : '@' + (activePeer?.username || '');
+  const preview = (replyingTo.text || '').slice(0, 60);
+  bar.innerHTML = `
+    <div style="flex:1;min-width:0;border-left:3px solid var(--primary);padding:4px 10px;">
+      <div style="font-size:11px;color:var(--primary);font-weight:700;">Ответ ${esc(who)}</div>
+      <div style="font-size:13px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(preview)}</div>
+    </div>
+    <button onclick="cancelReply()" style="background:none;border:none;color:var(--sub);cursor:pointer;padding:8px;font-size:14px;"><i class="fa-solid fa-xmark"></i></button>`;
 }
 
 async function sendMessage(){
@@ -1071,15 +1170,27 @@ async function sendMessage(){
   inp.value = ''; inp.style.height = '42px';
   document.getElementById('sendBtn').disabled = true;
   sendTyping(false);
-  // оптимистично добавим
+  const currentReply = replyingTo;
+  cancelReply();
   const tempId = 'tmp-' + Date.now();
-  const optimistic = { sid: tempId, peer: activePeer.username, from_me: true, text, created_at: new Date().toISOString(), pending: true };
+  const optimistic = {
+    sid: tempId, peer: activePeer.username, from_me: true, text,
+    created_at: new Date().toISOString(), pending: true,
+  };
+  if (currentReply) {
+    optimistic.reply_to = currentReply.sid;
+    optimistic.reply_preview = (currentReply.text || '').slice(0, 100);
+  }
   activeMessages.push(optimistic);
   appendMessage(optimistic);
   try {
-    const ct = await encryptForPeer(activePeer.username, text);
+    const payload = { type: 'msg', text };
+    if (currentReply) {
+      payload.reply_to = currentReply.sid;
+      payload.reply_preview = optimistic.reply_preview;
+    }
+    const ct = await encryptForPeer(activePeer.username, payload);
     const r = await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: ct });
-    // обновим оптимистичную запись на реальную (получим echo через WS, но добавим уже сюда чтобы дедуп сработал)
     optimistic.sid = r.id;
     optimistic.created_at = r.created_at;
     optimistic.pending = false;
@@ -1090,13 +1201,43 @@ async function sendMessage(){
     dialogs = [d, ...dialogs.filter(x => x.username !== activePeer.username)];
     await idbPutDialog(d);
     renderDialogs(document.getElementById('sbSearch').value);
-    // перерисуем последнее сообщение чтобы убрать "pending"
     updateLastBubble(false);
   } catch(e) {
     optimistic.failed = true;
     updateLastBubble(true);
     showToast(e.message || 'Не отправлено', true);
   }
+}
+
+// ─── Редактирование своего сообщения ───
+async function editMessage(sid){
+  const m = activeMessages.find(x => x.sid === sid);
+  if (!m || !m.from_me || m.deleted) return;
+  const newText = prompt('Изменить сообщение:', m.text);
+  if (newText == null || newText.trim() === m.text.trim()) return;
+  if (!newText.trim()) { return deleteMessage(sid); }
+  try {
+    const payload = { type: 'edit', target_sid: sid, new_text: newText.trim() };
+    const ct = await encryptForPeer(activePeer.username, payload);
+    await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: ct });
+    // Применяем у себя сразу (echo через WS придёт, ingest учтёт)
+    await idbUpdateMessage(sid, { text: newText.trim(), edited: true });
+    m.text = newText.trim(); m.edited = true;
+    renderMessages();
+  } catch(e) { showToast(e.message || 'Не удалось отредактировать', true); }
+}
+async function deleteMessage(sid){
+  const m = activeMessages.find(x => x.sid === sid);
+  if (!m || !m.from_me || m.deleted) return;
+  if (!confirm('Удалить сообщение у себя и собеседника?')) return;
+  try {
+    const payload = { type: 'delete', target_sid: sid };
+    const ct = await encryptForPeer(activePeer.username, payload);
+    await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: ct });
+    await idbUpdateMessage(sid, { text: '', deleted: true });
+    m.text = ''; m.deleted = true;
+    renderMessages();
+  } catch(e) { showToast(e.message || 'Не удалось удалить', true); }
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1256,11 +1397,13 @@ function renderChat(){
       <button class="chat-menu" onclick="openPeerProfile('${esc(p.username)}')" title="Профиль"><i class="fa-solid fa-user"></i></button>
     </div>
     <div class="chat-body" id="chatBody"></div>
+    <div id="replyBar"></div>
     <div class="chat-foot">
       <textarea class="send-input" id="sendInput" placeholder="Сообщение" rows="1"></textarea>
       <button class="send-btn" id="sendBtn" onclick="sendMessage()" disabled><i class="fa-solid fa-paper-plane"></i></button>
     </div>`;
   renderMessages();
+  cancelReply();
   const inp = document.getElementById('sendInput');
   const btn = document.getElementById('sendBtn');
   inp.addEventListener('input', () => {
@@ -1294,17 +1437,82 @@ function renderMessages(){
     const sN = next && next.from_me === m.from_me && dateKey(next.created_at) === dk;
     let cls = sP && sN ? 'middle' : sP && !sN ? 'last' : !sP && sN ? 'first' : 'solo';
     if (m.failed) cls += ' failed';
-    const meta = m.pending ? '<i class="fa-regular fa-clock"></i>' : (m.from_me ? '<i class="fa-solid fa-check"></i>' : '');
-    html += `<div class="msg ${m.from_me?'mine':'theirs'} ${cls}">
+    if (m.deleted) cls += ' deleted';
+    const meta = m.pending
+      ? '<i class="fa-regular fa-clock"></i>'
+      : (m.edited ? '<span style="opacity:0.7;font-size:10px;">изм.</span>' : '')
+        + (m.from_me ? ' <i class="fa-solid fa-check"></i>' : '');
+    // Цитата (reply)
+    let quoteHtml = '';
+    if (m.reply_to && !m.deleted) {
+      const target = activeMessages.find(x => x.sid === m.reply_to);
+      const quoteText = target ? (target.text || '[пусто]') : (m.reply_preview || '[оригинал недоступен]');
+      const sid = String(m.reply_to).replace(/[^a-zA-Z0-9_-]/g, '');
+      quoteHtml = `<div class="msg-quote" onclick="scrollToMsg('${sid}')">${esc(quoteText.slice(0, 80))}</div>`;
+    }
+    // Bubble body
+    let bubbleBody;
+    if (m.deleted) {
+      bubbleBody = `<span style="opacity:0.55;font-style:italic;font-size:13px;"><i class="fa-solid fa-ban" style="margin-right:5px;"></i>сообщение удалено</span>`;
+    } else {
+      bubbleBody = linkify(m.text || '');
+    }
+    html += `<div class="msg ${m.from_me?'mine':'theirs'} ${cls}" data-sid="${esc(m.sid)}">
       <div style="display:flex;flex-direction:column;max-width:100%;">
-        <div class="msg-bubble">${linkify(m.text)}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
-        ${previewPlaceholder(m)}
+        <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,'${esc(m.sid)}')" ontouchstart="msgLongPressStart(event,'${esc(m.sid)}')" ontouchend="msgLongPressEnd()" ontouchmove="msgLongPressEnd()">${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
+        ${m.deleted ? '' : previewPlaceholder(m)}
       </div>
     </div>`;
   }
   body.innerHTML = html;
   loadMsgPreviews();
 }
+
+function scrollToMsg(sid){
+  const el = document.querySelector(`.msg[data-sid="${sid}"]`);
+  if (!el) return;
+  el.scrollIntoView({behavior:'smooth', block:'center'});
+  const bubble = el.querySelector('.msg-bubble');
+  if (bubble) { bubble.style.transition = 'box-shadow 0.3s'; bubble.style.boxShadow = '0 0 0 2px var(--primary)';
+    setTimeout(() => bubble.style.boxShadow = '', 1200); }
+}
+
+// ─── Контекстное меню сообщения (правый клик на десктопе, long-press на тач) ───
+let _longPressTimer = null;
+function msgLongPressStart(ev, sid){
+  if (_longPressTimer) clearTimeout(_longPressTimer);
+  _longPressTimer = setTimeout(() => { openMsgMenu(ev, sid); }, 500);
+}
+function msgLongPressEnd(){ if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; } }
+
+function openMsgMenu(ev, sid){
+  closeMsgMenu();
+  const m = activeMessages.find(x => x.sid === sid);
+  if (!m || m.deleted) return;
+  const menu = document.createElement('div');
+  menu.id = 'msgMenu';
+  menu.style.cssText = 'position:fixed;background:rgba(15,23,42,0.96);backdrop-filter:blur(10px);border:1px solid var(--border-strong);border-radius:12px;padding:6px;z-index:500;box-shadow:0 12px 32px rgba(0,0,0,0.45);min-width:170px;';
+  const items = [{icon:'fa-reply', label:'Ответить', cb:() => startReply(m)}];
+  if (m.from_me) {
+    items.push({icon:'fa-pen', label:'Редактировать', cb:() => editMessage(sid)});
+    items.push({icon:'fa-trash-can', label:'Удалить', danger:true, cb:() => deleteMessage(sid)});
+  }
+  menu.innerHTML = items.map((it, i) => `<button data-i="${i}" style="display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;background:none;border:0;color:${it.danger ? 'var(--red)' : 'var(--text)'};font-size:13px;font-family:inherit;cursor:pointer;border-radius:8px;text-align:left;" onmouseover="this.style.background='rgba(255,255,255,0.06)'" onmouseout="this.style.background='none'"><i class="fa-solid ${it.icon}" style="width:14px;"></i>${esc(it.label)}</button>`).join('');
+  document.body.appendChild(menu);
+  // Позиционирование
+  const x = ev.clientX || (ev.touches && ev.touches[0]?.clientX) || 100;
+  const y = ev.clientY || (ev.touches && ev.touches[0]?.clientY) || 100;
+  const rect = menu.getBoundingClientRect();
+  const left = Math.min(x, window.innerWidth - rect.width - 10);
+  const top = Math.min(y, window.innerHeight - rect.height - 10);
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+  menu.querySelectorAll('button').forEach((b, idx) => {
+    b.onclick = () => { closeMsgMenu(); items[idx].cb(); };
+  });
+  setTimeout(() => document.addEventListener('click', closeMsgMenu, {once:true}), 50);
+}
+function closeMsgMenu(){ const m = document.getElementById('msgMenu'); if (m) m.remove(); }
 
 function appendMessage(m){
   const body = document.getElementById('chatBody');
