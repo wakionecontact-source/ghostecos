@@ -10,6 +10,8 @@ const ROOF = { house: { fill: '#36b24a', edge: '#0b2c16' }, shop: { fill: '#2E7F
 const LINE_M = { road: 7, rail: 7, path: 1 };   // ширина на земле, метры
 const SNAP_PX = 14;
 const PORCH = '#ffce86';
+const PORCH_DEPTH = 1.8, BUILD_GAP = 1.5;        // крыльцо считается частью здания
+const SIDEWALK_OFF = LINE_M.road / 2 + 1;        // тротуар вдоль дороги (от центра)
 
 const clampWH = v => Math.min(100, Math.max(1, v));
 const clampR  = v => Math.min(50, Math.max(1, v));
@@ -61,7 +63,7 @@ function initMap() {
   layers.google = L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { maxZoom: 20, subdomains: ['0', '1', '2', '3'], attribution: 'Google · GhostNation' });
   layers[currentLayer].addTo(map);
   map.on('moveend', () => { const c = map.getCenter(); state.view = { lat: c.lat, lng: c.lng, zoom: map.getZoom() }; save(); });
-  map.on('zoomend', () => { renderRoads(); renderPaths(); renderRails(); renderCrossings(); });
+  map.on('zoomend', () => { [roadLayer, pathLayer, railLayer].forEach(g => g && g.eachLayer(l => { if (l._mWidth != null) l.setStyle({ weight: Math.max(1, mToPx(l._mWidth)) }); })); });
   map.on('click', onMapClick);
   map.on('mousemove', e => { lastMouse = e.latlng; onMapMove(e); });
 }
@@ -151,7 +153,7 @@ function snapPath(latlng) {             // paths: exact; roads: offset to side (
     if (p.distanceTo(v) < bestD) { bestD = p.distanceTo(v); best = L.latLng(line[i][0], line[i][1]); }
     if (i > 0) { const a = map.latLngToLayerPoint(L.latLng(line[i - 1][0], line[i - 1][1])); const pr = projSeg(p, a, v); if (p.distanceTo(pr) < bestD) { bestD = p.distanceTo(pr); best = map.layerPointToLatLng(pr); } }
   }
-  const sideOff = mToPx(LINE_M.road / 2 + 0.8);
+  const sideOff = mToPx(SIDEWALK_OFF);
   for (const line of state.roads) for (let i = 1; i < line.length; i++) {
     const a = map.latLngToLayerPoint(L.latLng(line[i - 1][0], line[i - 1][1])), b = map.latLngToLayerPoint(L.latLng(line[i][0], line[i][1]));
     const pr = projSeg(p, a, b);
@@ -172,13 +174,14 @@ function nearestRoad(lat, lng) {        // globally nearest road point + bearing
   }
   return best;
 }
-function alignToRoad(b) {               // rotate along nearest road, entrance facing it
+function setDoorToward(b, rlat, rlng) {  // entrance side facing a given road point
+  const E = (rlng - b.lng) * mPerDegLng(b.lat), N = (rlat - b.lat) * MPD_LAT, a = (b.rot || 0) * Math.PI / 180;
+  b.door = (-E * Math.sin(a) + N * Math.cos(a)) >= 0 ? 2 : 0;
+}
+function alignToRoad(b) {                // rotate along nearest road, entrance facing it
   const info = nearestRoad(b.lat, b.lng);
   if (!info) { b.rot = Math.round(rand(0, 360)); b.door = randInt(4); return; }
-  b.rot = Math.round(info.bearing);
-  const E = (info.lng - b.lng) * mPerDegLng(b.lat), N = (info.lat - b.lat) * MPD_LAT, a = info.bearing * Math.PI / 180;
-  const ly = -E * Math.sin(a) + N * Math.cos(a);   // perpendicular component toward the road
-  b.door = ly >= 0 ? 2 : 0;                          // 0 = -h/2 side, 2 = +h/2 side
+  b.rot = Math.round(info.bearing); setDoorToward(b, info.lat, info.lng);
 }
 
 /* ════════════════ MAP CLICK / PLACE ════════════════ */
@@ -223,7 +226,7 @@ function settleToRoad(b) {
   if (b.type === 'tree') return false;
   const info = nearestRoad(b.lat, b.lng); if (!info) return false;
   const E = (info.lng - b.lng) * mPerDegLng(b.lat), N = (info.lat - b.lat) * MPD_LAT, dist = Math.hypot(E, N);
-  const want = LINE_M.road / 2 + 3 + Math.max(clampWH(b.w), clampWH(b.h)) / 2;
+  const want = LINE_M.road / 2 + clampWH(b.h) / 2 + PORCH_DEPTH + BUILD_GAP;
   if (dist <= want + 0.3) return false;
   const step = Math.min(dist - want, 12), f = step / dist;
   const nlat = b.lat + N * f / MPD_LAT, nlng = b.lng + E * f / mPerDegLng(b.lat);
@@ -234,25 +237,29 @@ function settlePass(times) { let moved = true, it = 0; while (moved && it++ < (t
 function settleAll() { pushUndo(); settlePass(25); save(); renderBuildings(); renderPaths(); updateStats(); flash('Здания подтянуты к дороге'); }
 
 /* ════════════════ AUTO-GENERATION ALONG A ROAD ════════════════ */
-function addWalkway(b) {
+function addWalkway(b) {                 // дорожка от крыльца к тротуару дороги
   const dr = doorRect(b), ent = [(dr[2][0] + dr[3][0]) / 2, (dr[2][1] + dr[3][1]) / 2];
   const info = nearestRoad(b.lat, b.lng); if (!info) return;
-  state.paths.push([ent, [info.lat, info.lng]]);
+  const a = info.bearing * Math.PI / 180; let pE = -Math.sin(a), pN = Math.cos(a);
+  const tE = (b.lng - info.lng) * mPerDegLng(b.lat), tN = (b.lat - info.lat) * MPD_LAT;
+  if (pE * tE + pN * tN < 0) { pE = -pE; pN = -pN; }
+  state.paths.push([ent, offset(info.lat, info.lng, pE * SIDEWALK_OFF, pN * SIDEWALK_OFF)]);
 }
 function runGeneration(road, segs) {
   pushUndo();
-  const stepM = 20, gap = 9;
+  const stepM = 20;
   segs.forEach(si => {
     const a = road[si], b = road[si + 1], lat = a[0];
     const E = (b[1] - a[1]) * mPerDegLng(lat), N = (b[0] - a[0]) * MPD_LAT, len = Math.hypot(E, N);
     if (len < 8) return;
-    const ux = E / len, uy = N / len, px = -uy, py = ux;
+    const ux = E / len, uy = N / len, px = -uy, py = ux, bearing = Math.round(Math.atan2(N, E) * 180 / Math.PI);
     for (let d = stepM / 2; d < len - 2; d += stepM) {
       const cy = a[0] + uy * d / MPD_LAT, cx = a[1] + ux * d / mPerDegLng(lat);
-      for (const side of [1, -1]) {
-        const sb = LINE_M.road / 2 + gap;
-        const nb = { type: Math.random() < 0.18 ? 'shop' : 'house', lat: cy + py * sb * side / MPD_LAT, lng: cx + px * sb * side / mPerDegLng(cy), w: Math.round(rand(9, 18)), h: Math.round(rand(9, 16)) };
-        alignToRoad(nb);
+      for (const side of [1, -1]) {                      // обе стороны выбранного сегмента
+        const w = Math.round(rand(9, 18)), h = Math.round(rand(9, 16));
+        const sb = LINE_M.road / 2 + h / 2 + PORCH_DEPTH + BUILD_GAP;   // крыльцо не вылезает на дорогу
+        const nb = { type: Math.random() < 0.18 ? 'shop' : 'house', lat: cy + py * sb * side / MPD_LAT, lng: cx + px * sb * side / mPerDegLng(cy), w, h, rot: bearing };
+        setDoorToward(nb, cy, cx);                        // вход к ЭТОЙ дороге, не к ближайшей
         if (!overlapsAt(nb.lat, nb.lng, bRadius(nb))) { state.buildings.push(nb); addWalkway(nb); }
       }
     }
@@ -305,7 +312,7 @@ function ridgeEnds(b) {
 }
 function doorRect(b) {                  // крыльцо на стороне входа
   const w = clampWH(b.w ?? DEF[b.type].w), h = clampWH(b.h ?? DEF[b.type].h), a = (b.rot || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
-  const d = (b.door || 0) % 4, pd = 1.8, pw = Math.max(2, Math.min(w, h) * 0.4);
+  const d = (b.door || 0) % 4, pd = PORCH_DEPTH, pw = Math.max(2, Math.min(w, h) * 0.4);
   let mid, out, tan;
   if (d === 0) { mid = [0, -h / 2]; out = [0, -1]; tan = [1, 0]; }
   else if (d === 1) { mid = [w / 2, 0]; out = [1, 0]; tan = [0, 1]; }
@@ -400,6 +407,7 @@ function nearestSeg(latlng, line) { if (line.length < 2) return null; const i = 
 function roadPx() { return Math.max(2.5, mToPx(LINE_M.road)); }
 function railPx() { return Math.max(2.5, mToPx(LINE_M.rail)); }
 function pathPx() { return Math.max(1.5, mToPx(LINE_M.path)); }
+const tagW = (layer, m) => { layer._mWidth = m; return layer; };   // mark metre-width for zoom rescale
 
 function lineHandlers(layer, key, line) {
   layer.on('click', e => { if (activeTool !== 'erase') return; L.DomEvent.stop(e); eraseSegment(key, line, e.latlng); });
@@ -408,9 +416,11 @@ function lineHandlers(layer, key, line) {
 }
 function renderRoads() {
   roadLayer.clearLayers(); const w = roadPx();
+  const sw = Math.max(2, mToPx(LINE_M.path + 0.6));
   state.roads.forEach(r => {
-    const asphalt = L.polyline(r, { pane: 'pane-lines', color: '#3b3f45', weight: w, opacity: .97, lineCap: 'round', lineJoin: 'round' }).addTo(roadLayer);
-    L.polyline(r, { pane: 'pane-lines', color: '#f2c200', weight: Math.max(1, w * 0.11), opacity: .9, dashArray: `${Math.max(4, w * 0.8)} ${Math.max(6, w * 1.3)}`, interactive: false }).addTo(roadLayer);
+    [SIDEWALK_OFF, -SIDEWALK_OFF].forEach(o => tagW(L.polyline(offsetLine(r, o), { pane: 'pane-path', color: '#b7b9bc', weight: sw, opacity: .92, interactive: false, lineCap: 'round' }).addTo(roadLayer), LINE_M.path + 0.6));   // тротуары вдоль дороги
+    const asphalt = tagW(L.polyline(r, { pane: 'pane-lines', color: '#3b3f45', weight: w, opacity: .97, lineCap: 'round', lineJoin: 'round' }).addTo(roadLayer), LINE_M.road);
+    tagW(L.polyline(r, { pane: 'pane-lines', color: '#f2c200', weight: Math.max(1, w * 0.11), opacity: .9, dashArray: `${Math.max(4, w * 0.8)} ${Math.max(6, w * 1.3)}`, interactive: false }).addTo(roadLayer), LINE_M.road * 0.11);
     asphalt.on('click', e => {
       if (activeTool === 'erase') { L.DomEvent.stop(e); eraseSegment('roads', r, e.latlng); }
       else if (!activeTool && !draw.active && !genSel.active) { L.DomEvent.stop(e); openRoadMenu(e, r); }
@@ -422,18 +432,18 @@ function renderRoads() {
 function renderPaths() {
   pathLayer.clearLayers(); const w = Math.max(2, pathPx());
   state.paths.forEach(pp => {
-    const ln = L.polyline(pp, { pane: 'pane-path', color: '#b7b9bc', weight: w, opacity: .96, lineCap: 'round', lineJoin: 'round' }).addTo(pathLayer);
+    const ln = tagW(L.polyline(pp, { pane: 'pane-path', color: '#b7b9bc', weight: w, opacity: .96, lineCap: 'round', lineJoin: 'round' }).addTo(pathLayer), LINE_M.path);
     lineHandlers(ln, 'paths', pp);
   });
 }
-function offsetLine(latlngs, metres) {
-  const px = metres / mpp(), pts = latlngs.map(p => map.latLngToLayerPoint(L.latLng(p[0], p[1])));
-  return pts.map((pt, i) => {
+function offsetLine(latlngs, metres) {     // geographic perpendicular offset (zoom-independent)
+  const segNormal = (a, b) => { const dE = (b[1] - a[1]) * mPerDegLng(a[0]), dN = (b[0] - a[0]) * MPD_LAT, l = Math.hypot(dE, dN) || 1; return [-dN / l, dE / l]; };
+  return latlngs.map((p, i) => {
     let nx = 0, ny = 0;
-    if (i > 0) { const dx = pt.x - pts[i - 1].x, dy = pt.y - pts[i - 1].y, l = Math.hypot(dx, dy) || 1; nx += -dy / l; ny += dx / l; }
-    if (i < pts.length - 1) { const dx = pts[i + 1].x - pt.x, dy = pts[i + 1].y - pt.y, l = Math.hypot(dx, dy) || 1; nx += -dy / l; ny += dx / l; }
-    const nl = Math.hypot(nx, ny) || 1, ll = map.layerPointToLatLng(L.point(pt.x + nx / nl * px, pt.y + ny / nl * px));
-    return [ll.lat, ll.lng];
+    if (i > 0) { const n = segNormal(latlngs[i - 1], p); nx += n[0]; ny += n[1]; }
+    if (i < latlngs.length - 1) { const n = segNormal(p, latlngs[i + 1]); nx += n[0]; ny += n[1]; }
+    const nl = Math.hypot(nx, ny) || 1;
+    return offset(p[0], p[1], nx / nl * metres, ny / nl * metres);
   });
 }
 function railTies(latlngs, halfM, spacingM) {
@@ -449,9 +459,9 @@ function railTies(latlngs, halfM, spacingM) {
 function renderRails() {
   railLayer.clearLayers(); const w = railPx(), tieW = Math.max(2, w * 0.2), railW = Math.max(1, w * 0.12), halfBed = LINE_M.rail * 0.5, gauge = LINE_M.rail * 0.34;
   state.rails.forEach(r => {
-    const bed = L.polyline(r, { pane: 'pane-lines', color: '#5b4f43', weight: w, opacity: .95, lineCap: 'round', lineJoin: 'round' }).addTo(railLayer);
-    railTies(r, halfBed, 4.5).forEach(seg => L.polyline(seg, { pane: 'pane-lines', color: '#d8d2c6', weight: tieW, opacity: .9, interactive: false }).addTo(railLayer));
-    [gauge, -gauge].forEach(g => L.polyline(offsetLine(r, g), { pane: 'pane-lines', color: '#20242a', weight: railW, opacity: .95, interactive: false }).addTo(railLayer));
+    const bed = tagW(L.polyline(r, { pane: 'pane-lines', color: '#5b4f43', weight: w, opacity: .95, lineCap: 'round', lineJoin: 'round' }).addTo(railLayer), LINE_M.rail);
+    railTies(r, halfBed, 6).forEach(seg => tagW(L.polyline(seg, { pane: 'pane-lines', color: '#d8d2c6', weight: tieW, opacity: .9, interactive: false }).addTo(railLayer), LINE_M.rail * 0.2));
+    [gauge, -gauge].forEach(g => tagW(L.polyline(offsetLine(r, g), { pane: 'pane-lines', color: '#20242a', weight: railW, opacity: .95, interactive: false }).addTo(railLayer), LINE_M.rail * 0.12));
     bed.on('click', e => { if (activeTool !== 'erase') return; L.DomEvent.stop(e); eraseSegment('rails', r, e.latlng); });
     bed.on('mousemove', e => hoverSeg(e.latlng, r)); bed.on('mouseout', clearHover);
   });
