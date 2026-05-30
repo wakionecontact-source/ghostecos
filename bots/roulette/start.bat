@@ -1,64 +1,63 @@
 @echo off
-chcp 65001 >nul
+chcp 65001 > nul
 title GhostRoulette Bot
 cd /d "%~dp0"
 
-echo ====================================
-echo   GhostRoulette - запуск
-echo ====================================
+echo.
+echo  GhostRoulette - startup
 echo.
 
-REM ── Проверка Python ─────────────────────────────────
-where python >nul 2>nul
+REM Check Python
+where python > nul 2>nul
 if errorlevel 1 (
-    echo [ОШИБКА] Python не найден в PATH.
+    echo [ERROR] Python not found in PATH.
     echo.
-    echo Скачай Python 3.11+ с https://python.org/downloads/
-    echo При установке поставь галку "Add Python to PATH".
+    echo Install Python 3.11+ from https://python.org/downloads/
+    echo Check "Add Python to PATH" during install.
     echo.
     pause
     exit /b 1
 )
 
-REM ── venv ────────────────────────────────────────────
+REM Create venv
 if not exist venv (
-    echo Создаю venv...
+    echo Creating venv...
     python -m venv venv
     if errorlevel 1 (
-        echo [ОШИБКА] Не удалось создать venv.
+        echo [ERROR] Could not create venv.
         pause
         exit /b 1
     )
 )
 
-REM ── Активация и зависимости ─────────────────────────
+REM Activate + install deps
 call venv\Scripts\activate.bat
 
-echo Проверяю зависимости...
+echo Installing dependencies...
 pip install -q -r requirements.txt
 if errorlevel 1 (
-    echo [ОШИБКА] Не удалось установить зависимости.
+    echo [ERROR] Could not install dependencies.
     pause
     exit /b 1
 )
 
-REM ── .env ────────────────────────────────────────────
+REM Check .env
 if not exist .env (
     echo.
-    echo [ВНИМАНИЕ] Файл .env не найден.
-    echo Создаю из .env.example - заполни BOT_TOKEN.
-    copy .env.example .env >nul
-    notepad .env
+    echo [WARN] .env not found. Creating from .env.example.
+    echo Edit it - put real BOT_TOKEN there.
+    copy .env.example .env > nul
+    start notepad .env
     echo.
-    echo После заполнения .env запусти start.bat снова.
+    echo After saving .env - run start.bat again.
     pause
     exit /b 0
 )
 
-REM ── Запуск ──────────────────────────────────────────
+REM Run
 echo.
-echo Стартую бот + admin-приложение...
-echo Закрой это окно или нажми Ctrl+C чтобы остановить.
+echo Starting bot + admin app...
+echo Close this window or press Ctrl+C to stop.
 echo.
 python bot.py
 
