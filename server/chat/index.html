@@ -1072,27 +1072,27 @@ async function ingestIncoming(m){
   const payload = parsePayload(raw);
 
   // ── Операционные сообщения: edit / delete — применяем к существующему по sid ──
-  if (payload.type === 'edit' && payload.target_sid) {
-    const target = await idbFindMessageBySid(payload.target_sid);
+  if (payload.type === 'edit' && payload.target_sid != null) {
+    const tsid = payload.target_sid;
+    const target = await idbFindMessageBySid(tsid);
     if (target && target.peer === peerUsername && target.from_me === isMine) {
-      await idbUpdateMessage(payload.target_sid, {text: String(payload.new_text || ''), edited: true});
-      // Перерендерить активный чат если он открыт
+      await idbUpdateMessage(tsid, {text: String(payload.new_text || ''), edited: true});
       if (activePeer && activePeer.username === peerUsername) {
-        const i = activeMessages.findIndex(x => x.sid === payload.target_sid);
+        const i = activeMessages.findIndex(x => String(x.sid) === String(tsid));
         if (i >= 0) { activeMessages[i].text = String(payload.new_text || ''); activeMessages[i].edited = true; renderMessages(); }
       }
-      // Обновить превью диалога если редактировали последнее
       const d = dialogs.find(x => x.username === peerUsername);
       if (d && d.last_text === target.text) { d.last_text = String(payload.new_text || ''); await idbPutDialog(d); renderDialogs(document.getElementById('sbSearch').value); }
     }
     return true;
   }
-  if (payload.type === 'delete' && payload.target_sid) {
-    const target = await idbFindMessageBySid(payload.target_sid);
+  if (payload.type === 'delete' && payload.target_sid != null) {
+    const tsid = payload.target_sid;
+    const target = await idbFindMessageBySid(tsid);
     if (target && target.peer === peerUsername && target.from_me === isMine) {
-      await idbUpdateMessage(payload.target_sid, {text: '', deleted: true});
+      await idbUpdateMessage(tsid, {text: '', deleted: true});
       if (activePeer && activePeer.username === peerUsername) {
-        const i = activeMessages.findIndex(x => x.sid === payload.target_sid);
+        const i = activeMessages.findIndex(x => String(x.sid) === String(tsid));
         if (i >= 0) { activeMessages[i].text = ''; activeMessages[i].deleted = true; renderMessages(); }
       }
     }
@@ -1211,7 +1211,7 @@ async function sendMessage(){
 
 // ─── Редактирование своего сообщения ───
 async function editMessage(sid){
-  const m = activeMessages.find(x => x.sid === sid);
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
   if (!m || !m.from_me || m.deleted) return;
   const newText = prompt('Изменить сообщение:', m.text);
   if (newText == null || newText.trim() === m.text.trim()) return;
@@ -1227,7 +1227,7 @@ async function editMessage(sid){
   } catch(e) { showToast(e.message || 'Не удалось отредактировать', true); }
 }
 async function deleteMessage(sid){
-  const m = activeMessages.find(x => x.sid === sid);
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
   if (!m || !m.from_me || m.deleted) return;
   if (!confirm('Удалить сообщение у себя и собеседника?')) return;
   try {
@@ -1444,8 +1444,8 @@ function renderMessages(){
         + (m.from_me ? ' <i class="fa-solid fa-check"></i>' : '');
     // Цитата (reply)
     let quoteHtml = '';
-    if (m.reply_to && !m.deleted) {
-      const target = activeMessages.find(x => x.sid === m.reply_to);
+    if (m.reply_to != null && !m.deleted) {
+      const target = activeMessages.find(x => String(x.sid) === String(m.reply_to));
       const quoteText = target ? (target.text || '[пусто]') : (m.reply_preview || '[оригинал недоступен]');
       const sid = String(m.reply_to).replace(/[^a-zA-Z0-9_-]/g, '');
       quoteHtml = `<div class="msg-quote" onclick="scrollToMsg('${sid}')">${esc(quoteText.slice(0, 80))}</div>`;
@@ -1487,7 +1487,7 @@ function msgLongPressEnd(){ if (_longPressTimer) { clearTimeout(_longPressTimer)
 
 function openMsgMenu(ev, sid){
   closeMsgMenu();
-  const m = activeMessages.find(x => x.sid === sid);
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
   if (!m || m.deleted) return;
   const menu = document.createElement('div');
   menu.id = 'msgMenu';
