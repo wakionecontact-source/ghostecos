@@ -188,13 +188,18 @@ button,input,textarea{font-family:inherit;}
 .prev-loading{padding:8px 12px;font-size:11px;color:var(--muted);display:flex;align-items:center;gap:8px;}
 .prev-loading .spinner-sm{width:11px;height:11px;border-width:2px;border:2px solid rgba(168,85,247,0.2);border-top-color:var(--primary);border-radius:50%;animation:spin 0.9s linear infinite;}
 
-.chat-foot{padding:10px 12px;display:flex;align-items:flex-end;gap:8px;border-top:1px solid var(--border);background:rgba(2,6,23,0.6);backdrop-filter:blur(18px);flex-shrink:0;}
-.send-input{flex:1;background:rgba(15,23,42,0.7);border:1px solid var(--border-strong);border-radius:18px;padding:11px 14px;color:var(--text);font-size:14px;outline:none;resize:none;max-height:140px;min-height:42px;line-height:1.35;}
-.send-input:focus{border-color:rgba(168,85,247,0.4);}
-.send-input::placeholder{color:#334155;}
-.send-btn{width:42px;height:42px;border-radius:50%;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-size:14px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(168,85,247,0.3);}
-.send-btn:active{transform:scale(0.92);}
-.send-btn:disabled{opacity:0.4;cursor:not-allowed;}
+.chat-foot{padding:8px 10px calc(8px + env(safe-area-inset-bottom));display:flex;align-items:flex-end;gap:6px;border-top:1px solid var(--border);background:rgba(2,6,23,0.7);backdrop-filter:blur(18px);flex-shrink:0;}
+.input-wrap{flex:1;display:flex;align-items:flex-end;background:rgba(15,23,42,0.75);border:1px solid var(--border-strong);border-radius:20px;padding:2px 6px;gap:2px;transition:border-color 0.15s;}
+.input-wrap:focus-within{border-color:rgba(168,85,247,0.4);}
+.send-input{flex:1;background:transparent;border:none;padding:10px 8px;color:var(--text);font-size:14.5px;outline:none;resize:none;max-height:140px;min-height:24px;line-height:1.4;font-family:inherit;}
+.send-input::placeholder{color:#475569;}
+.foot-btn{width:36px;height:36px;border:none;background:none;color:var(--sub);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:50%;transition:color 0.15s,background 0.15s;flex-shrink:0;}
+.foot-btn:hover{color:var(--text);background:rgba(255,255,255,0.06);}
+.foot-btn:disabled{opacity:0.5;}
+.foot-btn.send{width:42px;height:42px;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-size:14px;box-shadow:0 4px 12px rgba(168,85,247,0.3);}
+.foot-btn.send:hover{background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;}
+.foot-btn.send:disabled{opacity:1;background:rgba(15,23,42,0.75);border:1px solid var(--border-strong);box-shadow:none;color:var(--sub);}
+.foot-btn.send:active{transform:scale(0.92);}
 
 @media (max-width:799px){
   .app-grid.in-chat .sb{display:none;}
@@ -1137,6 +1142,20 @@ async function ingestIncoming(m){
   return true;
 }
 
+// Иконка отправки: микрофон когда нет текста (как в TG), стрелка когда есть
+function updateSendIcon(){
+  const inp = document.getElementById('sendInput');
+  const icon = document.getElementById('sendIcon');
+  if (!inp || !icon) return;
+  const hasText = inp.value.trim().length > 0;
+  icon.className = hasText ? 'fa-solid fa-paper-plane' : 'fa-solid fa-microphone';
+}
+function onSendBtn(){
+  const inp = document.getElementById('sendInput');
+  if (inp && inp.value.trim()) sendMessage();
+  else showToast('Голосовые сообщения — скоро');
+}
+
 // Сейчас юзер отвечает на это сообщение (null если нет reply-mode)
 let replyingTo = null;
 function startReply(msg){
@@ -1399,18 +1418,24 @@ function renderChat(){
     <div class="chat-body" id="chatBody"></div>
     <div id="replyBar"></div>
     <div class="chat-foot">
-      <textarea class="send-input" id="sendInput" placeholder="Сообщение" rows="1"></textarea>
-      <button class="send-btn" id="sendBtn" onclick="sendMessage()" disabled><i class="fa-solid fa-paper-plane"></i></button>
+      <div class="input-wrap">
+        <button class="foot-btn" title="Файл (скоро)" onclick="showToast('Передача файлов — следующий апдейт')"><i class="fa-solid fa-paperclip"></i></button>
+        <textarea class="send-input" id="sendInput" placeholder="Сообщение" rows="1"></textarea>
+        <button class="foot-btn" title="Эмодзи (скоро)" onclick="showToast('Эмодзи-палитра — скоро')"><i class="fa-regular fa-face-smile"></i></button>
+      </div>
+      <button class="foot-btn send" id="sendBtn" onclick="onSendBtn()" title="Отправить"><i class="fa-solid fa-microphone" id="sendIcon"></i></button>
     </div>`;
   renderMessages();
   cancelReply();
+  updateSendIcon();
   const inp = document.getElementById('sendInput');
   const btn = document.getElementById('sendBtn');
   inp.addEventListener('input', () => {
-    btn.disabled = !inp.value.trim();
-    inp.style.height='42px';
+    btn.disabled = false; // кнопка теперь всегда активна — пустой = mic, текст = send
+    inp.style.height='24px';
     inp.style.height=Math.min(140,inp.scrollHeight)+'px';
     if (inp.value.trim()) sendTyping(true);
+    updateSendIcon();
   });
   inp.addEventListener('blur', () => sendTyping(false));
   inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });

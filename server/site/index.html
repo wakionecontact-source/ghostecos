@@ -903,7 +903,15 @@
   <div class="footer-logo">GhostChat</div>
   <p>Приватный мессенджер нового поколения</p>
   <p id="footerVersion" style="font-size:12px; color:#475569;">v1.18 · Android Beta</p>
+  <p style="font-size:11px;color:#334155;margin-top:6px;">
+    GhostEcos ecosystem <span id="ecoVersion">v0.1.0</span> · AGPL-3.0 · <a href="https://github.com/wakionecontact-source/ghostecos" style="color:var(--primary);text-decoration:none;">GitHub</a>
+  </p>
 </footer>
+<script>
+  fetch('/api/soc/version').then(r => r.json()).then(d => {
+    if (d.version) document.getElementById('ecoVersion').textContent = 'v' + d.version;
+  }).catch(() => {});
+</script>
 
 <!-- mesh.js (floating particles) -->
 <script src="/shop/static/mesh.js"></script>

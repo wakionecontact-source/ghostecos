@@ -6,6 +6,12 @@ from collections import defaultdict
 import sqlite3, secrets, os, uuid, json, io, hashlib, hmac, re, time
 
 router = APIRouter(prefix="/api/soc", tags=["GhostSocial"])
+
+# Версия экосистемы. Semver: MAJOR.MINOR.PATCH
+# Меняй здесь при каждом релизе — она доступна через GET /api/soc/version
+# и отображается в UI лендинга. CHANGELOG.md в корне репо.
+VERSION = "0.1.0"
+
 DB = '/opt/ghostchat/ghostchat.db'
 MEDIA_DIR = "/var/www/ghostsocial/media"
 os.makedirs(MEDIA_DIR, exist_ok=True)
@@ -2326,7 +2332,11 @@ def miniska_feed(
 
 @router.get("/health")
 def health():
-    return {"status": "ok", "service": "GhostSocial"}
+    return {"status": "ok", "service": "GhostSocial", "version": VERSION}
+
+@router.get("/version")
+def get_version():
+    return {"version": VERSION}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ЭКОНОМИКА: КОШЕЛЁК (gost / soul / prem)
