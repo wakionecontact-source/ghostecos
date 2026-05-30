@@ -179,6 +179,30 @@ button,input,textarea{font-family:inherit;}
 .msg-img{max-width:280px;max-height:280px;border-radius:10px;display:block;margin-top:4px;cursor:zoom-in;transition:opacity 0.15s;}
 .msg-img:hover{opacity:0.92;}
 .msg-video{max-width:300px;max-height:300px;border-radius:10px;display:block;margin-top:4px;background:#000;}
+/* ─── Голосовое сообщение ─── */
+.msg-voice{display:flex;align-items:center;gap:10px;padding:6px 4px;min-width:200px;}
+.voice-play{width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.15);color:#fff;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;transition:background 0.15s;}
+.msg.theirs .voice-play{background:rgba(168,85,247,0.20);color:var(--primary);}
+.voice-play:hover{background:rgba(255,255,255,0.25);}
+.msg.theirs .voice-play:hover{background:rgba(168,85,247,0.35);}
+.voice-mid{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
+.voice-bar{position:relative;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;overflow:hidden;cursor:pointer;}
+.msg.theirs .voice-bar{background:rgba(255,255,255,0.10);}
+.voice-bar-fill{position:absolute;top:0;left:0;height:100%;background:#fff;width:0;transition:width 0.1s linear;}
+.msg.theirs .voice-bar-fill{background:var(--primary);}
+.voice-time{font-size:11px;opacity:0.7;font-variant-numeric:tabular-nums;}
+
+/* ─── UI записи голосового ─── */
+.rec-bar{display:none;align-items:center;gap:10px;background:rgba(244,63,94,0.10);border-top:1px solid rgba(244,63,94,0.30);padding:10px 14px;flex-shrink:0;}
+.rec-bar.on{display:flex;}
+.rec-dot{width:10px;height:10px;border-radius:50%;background:var(--red);animation:recPulse 1s ease-in-out infinite;flex-shrink:0;}
+@keyframes recPulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:0.5;transform:scale(0.85);}}
+.rec-time{font-family:'Inter',sans-serif;font-variant-numeric:tabular-nums;font-size:14px;font-weight:600;color:var(--red);}
+.rec-hint{flex:1;color:var(--sub);font-size:12px;}
+.rec-btn{width:34px;height:34px;border-radius:50%;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;}
+.rec-cancel{background:rgba(255,255,255,0.06);color:var(--sub);}
+.rec-cancel:hover{background:rgba(244,63,94,0.20);color:var(--red);}
+.rec-send{background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;box-shadow:0 4px 12px rgba(168,85,247,0.3);}
 
 /* ─── Lightbox для медиа ─── */
 #mediaViewer{position:fixed;inset:0;z-index:999;background:rgba(0,0,0,0.92);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;padding:env(safe-area-inset-top) 20px env(safe-area-inset-bottom);animation:mvIn 0.2s ease-out;}
@@ -1140,8 +1164,9 @@ async function ingestIncoming(m){
     return true;
   }
 
-  // ── File-сообщение ──
-  if (payload.type === 'file' && payload.file_id != null) {
+  // ── File / Voice сообщение ──
+  if ((payload.type === 'file' || payload.type === 'voice') && payload.file_id != null) {
+    const isVoice = payload.type === 'voice';
     const stored = {
       sid: m.id,
       peer: peerUsername,
@@ -1150,17 +1175,18 @@ async function ingestIncoming(m){
       created_at: m.created_at,
       file_payload: {
         file_id: payload.file_id,
-        file_name: String(payload.file_name || 'file'),
-        mime: String(payload.mime || 'application/octet-stream'),
+        file_name: String(payload.file_name || (isVoice ? 'voice' : 'file')),
+        mime: String(payload.mime || (isVoice ? 'audio/webm' : 'application/octet-stream')),
         size: Number(payload.size) || 0,
         key: String(payload.key || ''),
         iv: String(payload.iv || ''),
+        ...(isVoice ? {voice: true, duration: Number(payload.duration) || 0} : {}),
       },
     };
     const added = await idbAddMessage(stored);
     if (!added) return false;
     let d = dialogs.find(x => x.username === peerUsername);
-    const preview = '📎 ' + stored.file_payload.file_name;
+    const preview = isVoice ? '🎤 Голосовое сообщение' : ('📎 ' + stored.file_payload.file_name);
     if (!d) {
       d = { username: peerUsername, display_name: peerName || peerUsername, last_text: preview, last_at: m.created_at, last_from_me: isMine, unread: 0 };
       dialogs.unshift(d);
@@ -1225,7 +1251,7 @@ async function ingestIncoming(m){
 // ciphertext, в сообщении передаёт {type:'file', file_id, key, iv, ...}
 // Сервер хранит только ciphertext blob — не знает имя, тип, содержимое.
 // ═══════════════════════════════════════════════════════════════════
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // должно совпадать с backend
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // base лимит ЛС (premium = 500 MB, реализация позже)
 
 function fmtSize(n){
   if (n < 1024) return n + ' Б';
@@ -1423,7 +1449,198 @@ function updateSendIcon(){
 function onSendBtn(){
   const inp = document.getElementById('sendInput');
   if (inp && inp.value.trim()) sendMessage();
-  else showToast('Голосовые сообщения — скоро');
+  else startRecord();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Голосовые сообщения. MediaRecorder в браузере → AES-GCM blob →
+// тот же /file/upload что для файлов. Payload type='voice' + duration.
+// ═══════════════════════════════════════════════════════════════════
+let _rec = null;          // MediaRecorder instance
+let _recStream = null;    // MediaStream (микрофон)
+let _recChunks = [];      // accumulating audio chunks
+let _recStart = 0;        // timestamp начала
+let _recTimerId = null;
+let _recPeer = null;      // на случай если юзер сменил чат во время записи
+
+async function startRecord(){
+  if (!activePeer) { showToast('Откройте чат сначала', true); return; }
+  if (_rec) return; // уже идёт запись
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation:true, noiseSuppression:true}});
+  } catch(e) {
+    if (e.name === 'NotAllowedError') showToast('Доступ к микрофону отклонён', true);
+    else showToast('Микрофон недоступен: ' + e.message, true);
+    return;
+  }
+  // Лучший формат — opus в webm. Safari требует mp4.
+  let mime = 'audio/webm;codecs=opus';
+  if (!MediaRecorder.isTypeSupported(mime)) mime = 'audio/webm';
+  if (!MediaRecorder.isTypeSupported(mime)) mime = 'audio/mp4';
+  if (!MediaRecorder.isTypeSupported(mime)) mime = '';
+  try {
+    _rec = mime ? new MediaRecorder(stream, {mimeType: mime}) : new MediaRecorder(stream);
+  } catch(e) {
+    showToast('Запись не поддерживается: ' + e.message, true);
+    stream.getTracks().forEach(t => t.stop());
+    return;
+  }
+  _recStream = stream;
+  _recChunks = [];
+  _recPeer = activePeer;
+  _rec.ondataavailable = e => { if (e.data && e.data.size > 0) _recChunks.push(e.data); };
+  _rec.start();
+  _recStart = Date.now();
+  document.getElementById('recBar').classList.add('on');
+  _recTimerId = setInterval(updateRecTime, 250);
+  updateRecTime();
+}
+function updateRecTime(){
+  const sec = Math.floor((Date.now() - _recStart) / 1000);
+  const m = Math.floor(sec / 60), s = sec % 60;
+  const el = document.getElementById('recTime');
+  if (el) el.textContent = `${m}:${String(s).padStart(2, '0')}`;
+  // Авто-стоп через 5 минут
+  if (sec > 300) stopAndSendRecord();
+}
+function _cleanupRecord(){
+  clearInterval(_recTimerId); _recTimerId = null;
+  if (_recStream) { _recStream.getTracks().forEach(t => t.stop()); _recStream = null; }
+  _rec = null;
+  document.getElementById('recBar').classList.remove('on');
+}
+function cancelRecord(){
+  if (!_rec) return;
+  try { _rec.stop(); } catch(_){}
+  _recChunks = [];
+  _cleanupRecord();
+}
+async function stopAndSendRecord(){
+  if (!_rec) return;
+  const rec = _rec, peer = _recPeer, duration = Math.round((Date.now() - _recStart) / 1000);
+  // Ждём stop и финальный chunk
+  const stoppedBlob = await new Promise(resolve => {
+    rec.onstop = () => {
+      const type = rec.mimeType || 'audio/webm';
+      resolve(new Blob(_recChunks, {type}));
+    };
+    try { rec.stop(); } catch(_) { resolve(new Blob(_recChunks, {type:'audio/webm'})); }
+  });
+  _cleanupRecord();
+  if (!stoppedBlob || stoppedBlob.size === 0) { showToast('Пустая запись', true); return; }
+  if (!peer || !activePeer || peer.username !== activePeer.username) {
+    showToast('Чат был сменён, отмена', true); return;
+  }
+  await sendVoiceBlob(stoppedBlob, duration);
+}
+
+async function sendVoiceBlob(blob, duration){
+  const mime = blob.type || 'audio/webm';
+  const tempId = 'tmp-' + Date.now();
+  const optimistic = {
+    sid: tempId, peer: activePeer.username, from_me: true,
+    text: '', created_at: new Date().toISOString(), pending: true,
+    file_payload: {file_id: null, file_name: 'voice', mime, size: blob.size, duration, voice: true},
+  };
+  activeMessages.push(optimistic);
+  renderMessages(); scrollChatBottom(true);
+  try {
+    const plain = await blob.arrayBuffer();
+    const k = await crypto.subtle.generateKey({name:'AES-GCM', length:256}, true, ['encrypt','decrypt']);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, k, plain);
+    const keyRaw = await crypto.subtle.exportKey('raw', k);
+    const form = new FormData();
+    form.append('to_username', activePeer.username);
+    form.append('blob', new Blob([ct], {type:'application/octet-stream'}), 'voice');
+    const upRes = await fetch(CHAT_API + '/file/upload', {
+      method:'POST', headers:{'Authorization':'Bearer '+token}, body: form,
+    });
+    if (!upRes.ok) throw new Error((await upRes.text()) || 'upload failed');
+    const {file_id} = await upRes.json();
+    const payload = {
+      type:'voice', file_id, file_name:'voice', mime, size: blob.size,
+      duration, key: b64e(keyRaw), iv: b64e(iv),
+    };
+    const cmsg = await encryptForPeer(activePeer.username, payload);
+    const r = await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: cmsg });
+    optimistic.sid = r.id;
+    optimistic.created_at = r.created_at;
+    optimistic.pending = false;
+    optimistic.file_payload = {...payload, voice: true};
+    await idbAddMessage(optimistic);
+    let d = dialogs.find(x => x.username === activePeer.username);
+    if (!d) { d = {username: activePeer.username, display_name: activePeer.display_name||activePeer.username, unread:0}; dialogs.unshift(d); }
+    d.last_text = '🎤 Голосовое сообщение';
+    d.last_at = r.created_at; d.last_from_me = true;
+    dialogs = [d, ...dialogs.filter(x => x.username !== activePeer.username)];
+    await idbPutDialog(d);
+    renderDialogs(document.getElementById('sbSearch').value);
+    renderMessages();
+  } catch(e) {
+    optimistic.failed = true;
+    renderMessages();
+    showToast(e.message || 'Не удалось отправить голос', true);
+  }
+}
+
+// Воспроизведение голосового. Cached blob URL after first play.
+const _voiceAudios = new Map(); // sid -> {audio, url}
+async function toggleVoicePlay(sid){
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
+  if (!m || !m.file_payload) return;
+  const cached = _voiceAudios.get(String(sid));
+  if (cached) {
+    if (cached.audio.paused) cached.audio.play();
+    else cached.audio.pause();
+    return;
+  }
+  const p = m.file_payload;
+  try {
+    const r = await fetch(CHAT_API + `/file/${p.file_id}`, {headers:{'Authorization':'Bearer '+token}});
+    if (!r.ok) { showToast('Голос недоступен', true); return; }
+    const ct = await r.arrayBuffer();
+    const k = await crypto.subtle.importKey('raw', b64d(p.key), {name:'AES-GCM'}, false, ['decrypt']);
+    const plain = await crypto.subtle.decrypt({name:'AES-GCM', iv: b64d(p.iv)}, k, ct);
+    const blob = new Blob([plain], {type: p.mime || 'audio/webm'});
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    _voiceAudios.set(String(sid), {audio, url});
+    const safeSid = String(sid).replace(/[^a-zA-Z0-9_-]/g, '');
+    audio.addEventListener('timeupdate', () => {
+      const bar = document.querySelector(`.msg[data-sid="${safeSid}"] .voice-bar-fill`);
+      if (bar) bar.style.width = ((audio.currentTime / Math.max(0.001, audio.duration)) * 100) + '%';
+      const t = document.querySelector(`.msg[data-sid="${safeSid}"] .voice-time`);
+      if (t) t.textContent = fmtVoiceTime(audio.currentTime);
+    });
+    audio.addEventListener('ended', () => {
+      const ic = document.querySelector(`.msg[data-sid="${safeSid}"] .voice-play i`);
+      if (ic) ic.className = 'fa-solid fa-play';
+      const bar = document.querySelector(`.msg[data-sid="${safeSid}"] .voice-bar-fill`);
+      if (bar) bar.style.width = '0%';
+      const t = document.querySelector(`.msg[data-sid="${safeSid}"] .voice-time`);
+      if (t) t.textContent = fmtVoiceTime(p.duration || 0);
+    });
+    audio.addEventListener('play', () => {
+      const ic = document.querySelector(`.msg[data-sid="${safeSid}"] .voice-play i`);
+      if (ic) ic.className = 'fa-solid fa-pause';
+    });
+    audio.addEventListener('pause', () => {
+      if (audio.ended) return;
+      const ic = document.querySelector(`.msg[data-sid="${safeSid}"] .voice-play i`);
+      if (ic) ic.className = 'fa-solid fa-play';
+    });
+    audio.play();
+    // ACK сервер (удалит blob, у нас уже в blob URL)
+    if (!m.from_me) {
+      try { fetch(CHAT_API + `/file/${p.file_id}/ack`, {method:'POST', headers:{'Authorization':'Bearer '+token}}); } catch(_){}
+    }
+  } catch(e) { showToast('Не удалось воспроизвести: ' + e.message, true); }
+}
+function fmtVoiceTime(sec){
+  const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 // Сейчас юзер отвечает на это сообщение (null если нет reply-mode)
@@ -1687,6 +1904,13 @@ function renderChat(){
     </div>
     <div class="chat-body" id="chatBody"></div>
     <div id="replyBar"></div>
+    <div class="rec-bar" id="recBar">
+      <div class="rec-dot"></div>
+      <div class="rec-time" id="recTime">0:00</div>
+      <div class="rec-hint">Запись голосового...</div>
+      <button class="rec-btn rec-cancel" onclick="cancelRecord()" title="Отменить"><i class="fa-solid fa-xmark"></i></button>
+      <button class="rec-btn rec-send" onclick="stopAndSendRecord()" title="Отправить"><i class="fa-solid fa-paper-plane"></i></button>
+    </div>
     <div class="chat-foot">
       <div class="input-wrap">
         <button class="foot-btn" title="Прикрепить файл" onclick="document.getElementById('filePicker').click()"><i class="fa-solid fa-paperclip"></i></button>
@@ -1754,8 +1978,18 @@ function renderMessages(){
       const fp = m.file_payload || m.file;
       const isImg = fp.mime && fp.mime.startsWith('image/');
       const isVideo = fp.mime && fp.mime.startsWith('video/');
+      const isVoice = !!fp.voice || (fp.mime && fp.mime.startsWith('audio/'));
       const sidArg = JSON.stringify(String(m.sid));
-      if (isImg && m._imgUrl) {
+      if (isVoice) {
+        const dur = fmtVoiceTime(fp.duration || 0);
+        bubbleBody = `<div class="msg-voice">
+          <button class="voice-play" onclick="toggleVoicePlay(${sidArg})"><i class="fa-solid fa-play"></i></button>
+          <div class="voice-mid">
+            <div class="voice-bar"><div class="voice-bar-fill"></div></div>
+            <div class="voice-time">${dur}</div>
+          </div>
+        </div>`;
+      } else if (isImg && m._imgUrl) {
         bubbleBody = `<img class="msg-img" src="${m._imgUrl}" alt="${esc(fp.file_name||fp.name||'')}" onclick="openMediaViewer(${sidArg})">`;
       } else if (isVideo && m._imgUrl) {
         bubbleBody = `<video class="msg-video" src="${m._imgUrl}" controls preload="metadata"></video>`;
