@@ -486,8 +486,7 @@
     <a href="#crypto">Шифрование</a>
     <a href="#protocol">Протокол</a>
     <a href="#platforms">Платформы</a>
-    <a href="#ghostsocial">GhostSocial</a>
-    <a href="#ghostbank">GhostBank</a>
+    <a href="#ecosystem">Экосистема</a>
     <a href="#premium">Premium</a>
   </div>
   <div class="nav-right" style="display:flex; align-items:center; gap:10px;">
@@ -582,44 +581,37 @@
   </div>
 
   <h1>
-    Общайся<br>
-    <span class="grad">без следов.</span>
+    Мессенджер<br>
+    <span class="grad">без серверной памяти.</span>
   </h1>
 
   <p class="hero-sub">
-    GhostChat — мессенджер нового поколения. Сквозное шифрование,
-    анонимность по умолчанию, работа без интернета через LAN-сеть.
-    Никаких серверных логов. Никаких компромиссов.
+    GhostChat — приватный мессенджер. Сообщения шифруются у тебя в браузере,
+    хранятся на сервере только до доставки получателю — затем удаляются.
+    Открытый код. Бесплатно.
   </p>
 
   <div class="hero-btns">
-    <button class="btn-primary" onclick="openModal()">
-      <i class="fa-solid fa-download"></i> Скачать для Android
+    <a href="/chat/?from=/" class="btn-primary">
+      <i class="fa-solid fa-comments"></i> Открыть в браузере
+    </a>
+    <button class="btn-outline" onclick="openModal()">
+      <i class="fa-brands fa-android"></i> Скачать APK
     </button>
-    <a href="/chat/?from=/" class="btn-outline">
-      <i class="fa-solid fa-comments"></i> Открыть веб-версию
-    </a>
-    <a href="https://t.me/waki_one" target="_blank" rel="noopener" class="btn-outline">
-      <i class="fa-brands fa-telegram"></i> Подробнее
-    </a>
   </div>
 
   <div class="stats">
     <div class="stat">
       <div class="stat-num">E2E</div>
-      <div class="stat-label">Сквозное шифрование</div>
+      <div class="stat-label">P-256 + AES-256-GCM</div>
     </div>
     <div class="stat">
       <div class="stat-num">0</div>
-      <div class="stat-label">Метаданных на сервере</div>
+      <div class="stat-label">Сообщений хранится после доставки</div>
     </div>
     <div class="stat">
-      <div class="stat-num">LAN</div>
-      <div class="stat-label">Работа без интернета</div>
-    </div>
-    <div class="stat">
-      <div class="stat-num">AES</div>
-      <div class="stat-label">256-bit шифрование</div>
+      <div class="stat-num">OSS</div>
+      <div class="stat-label">Открытый код, AGPL-3.0</div>
     </div>
   </div>
 </div>
@@ -636,48 +628,23 @@
   <div class="features-grid">
     <div class="feature-card">
       <div class="feature-icon"><i class="fa-solid fa-lock"></i></div>
-      <h3>Сквозное шифрование</h3>
-      <p>Каждое сообщение шифруется на устройстве. Ключи никогда не покидают твой телефон. Сервер видит только зашифрованные данные.</p>
+      <h3>End-to-end шифрование</h3>
+      <p>Сообщения шифруются прямо в браузере через Web Crypto API. Приватный ключ никогда не покидает устройство в открытом виде.</p>
     </div>
     <div class="feature-card">
-      <div class="feature-icon"><i class="fa-solid fa-satellite-dish"></i></div>
-      <h3>LAN-режим</h3>
-      <p>Общайся в локальной сети без интернета. Прямое P2P-подключение между устройствами через Wi-Fi или Ethernet.</p>
+      <div class="feature-icon"><i class="fa-solid fa-trash-can"></i></div>
+      <h3>Серверная память — 0</h3>
+      <p>Сервер хранит ciphertext только до доставки получателю. После доставки — мгновенно DELETE. Никаких архивов.</p>
     </div>
     <div class="feature-card">
-      <div class="feature-icon"><i class="fa-solid fa-file-shield"></i></div>
-      <h3>Передача файлов</h3>
-      <p>Отправляй файлы любого типа. Всё зашифровано AES-256-GCM. Файлы не хранятся на сервере дольше необходимого.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon"><i class="fa-solid fa-users"></i></div>
-      <h3>Групповые чаты</h3>
-      <p>Создавай закрытые каналы и групповые чаты с управлением участниками, ролями и правами доступа.</p>
+      <div class="feature-icon"><i class="fa-brands fa-github"></i></div>
+      <h3>Открытый код · AGPL</h3>
+      <p>Всё проверяемо. Можешь развернуть свой сервер. Лицензия защищает от приватизации форками.</p>
     </div>
     <div class="feature-card">
       <div class="feature-icon"><i class="fa-solid fa-mobile-screen"></i></div>
-      <h3>Мультиустройство</h3>
-      <p>Один аккаунт на нескольких устройствах. Система уровней доверия — ты контролируешь кому и что разрешено.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
-      <h3>Режим паники</h3>
-      <p>Один жест — и все данные уничтожены. Экстренная очистка всей переписки и ключей шифрования по паролю тревоги.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon"><i class="fa-solid fa-microphone"></i></div>
-      <h3>Диктофон</h3>
-      <p>Запись голосовых заметок прямо в приложении. Защищён паролем, изолирован от основных чатов.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon"><i class="fa-solid fa-reply"></i></div>
-      <h3>Ответы и пересылка</h3>
-      <p>Отвечай на конкретные сообщения, пересылай контент между чатами. Полный контроль над перепиской.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon"><i class="fa-solid fa-bell"></i></div>
-      <h3>Фоновые уведомления</h3>
-      <p>Получай уведомления даже когда приложение закрыто. Фоновый сервис работает без разрядки батареи.</p>
+      <h3>Везде, без установки</h3>
+      <p>Web-версия + PWA (ставится как обычное приложение на iOS/Android). Android APK с пуш-уведомлениями.</p>
     </div>
   </div>
 </section>
@@ -696,29 +663,29 @@
       <div class="crypto-card">
         <div class="crypto-icon"><i class="fa-solid fa-key"></i></div>
         <div>
-          <h4>X25519 — обмен ключами</h4>
-          <p>Протокол Диффи-Хеллмана на эллиптической кривой. Сессионный ключ вычисляется независимо на каждом устройстве. Сервер не имеет доступа.</p>
-        </div>
-      </div>
-      <div class="crypto-card">
-        <div class="crypto-icon"><i class="fa-solid fa-pen-nib"></i></div>
-        <div>
-          <h4>Ed25519 — цифровая подпись</h4>
-          <p>Каждое сообщение подписано. Невозможно подделать отправителя или изменить содержимое без обнаружения.</p>
+          <h4>P-256 ECDH — обмен ключами</h4>
+          <p>Протокол Диффи-Хеллмана на эллиптической кривой через Web Crypto API. Сессионный ключ вычисляется независимо на каждом устройстве. Сервер не имеет доступа.</p>
         </div>
       </div>
       <div class="crypto-card">
         <div class="crypto-icon"><i class="fa-solid fa-shield-halved"></i></div>
         <div>
           <h4>AES-256-GCM — шифрование данных</h4>
-          <p>256-битный ключ, режим Galois/Counter с аутентификацией. Шифрует и сообщения, и файлы, и метаданные.</p>
+          <p>256-битный ключ, режим Galois/Counter с аутентификацией. Сообщения и медиа шифруются прямо в браузере.</p>
         </div>
       </div>
       <div class="crypto-card">
         <div class="crypto-icon"><i class="fa-solid fa-vault"></i></div>
         <div>
-          <h4>Argon2id — защита паролей</h4>
-          <p>Лучший современный алгоритм хеширования. Устойчив к GPU-атакам и брутфорсу. Твой пароль невозможно взломать перебором.</p>
+          <h4>Argon2id — пароли</h4>
+          <p>Лучший современный алгоритм хеширования паролей. Устойчив к GPU-атакам и брутфорсу.</p>
+        </div>
+      </div>
+      <div class="crypto-card">
+        <div class="crypto-icon"><i class="fa-solid fa-hand-holding"></i></div>
+        <div>
+          <h4>TOFU pinning публичных ключей</h4>
+          <p>Ключи собеседников пиннятся локально. При смене ключа — предупреждение. Защита от подмены ключа сервером (MITM).</p>
         </div>
       </div>
     </div>
@@ -840,40 +807,32 @@
   </div>
 </section>
 
-<!-- GHOSTSOCIAL -->
-<section id="ghostsocial" style="text-align:center">
-  <div class="section-label">Уже работает</div>
-  <h2>GhostSocial.<br>Социалка экосистемы.</h2>
-  <p class="section-sub" style="max-width:600px;margin:0 auto 32px;">
-    Лента, реакции, подписки, теги, упоминания, шаринг постов, уведомления.
-    Полноценный продукт, открыт прямо в браузере. Аккаунт общий с GhostChat.
+<!-- ЭКОСИСТЕМА — компактный блок про другие продукты -->
+<section id="ecosystem" style="text-align:center">
+  <div class="section-label">Бонусом</div>
+  <h2 style="margin-bottom:14px;">Аккаунт работает<br>во всей экосистеме.</h2>
+  <p class="section-sub" style="max-width:580px;margin:0 auto 36px;color:var(--sub);">
+    Войдёшь в GhostChat — те же логин и пароль работают в социалке и кошельке.
+    Можно не пользоваться, всё опционально.
   </p>
-  <a href="/social" class="btn-primary" style="display:inline-flex;align-items:center;gap:9px;font-size:15px;padding:13px 28px;text-decoration:none;">
-    <i class="fa-solid fa-ghost"></i> Открыть GhostSocial
-  </a>
-  <div style="display:flex;gap:24px;justify-content:center;margin-top:36px;flex-wrap:wrap;color:var(--sub);font-size:13px;">
-    <span><i class="fa-solid fa-check" style="color:var(--primary);margin-right:6px;"></i>Без рекламы</span>
-    <span><i class="fa-solid fa-check" style="color:var(--primary);margin-right:6px;"></i>Без алгоритмов</span>
-    <span><i class="fa-solid fa-check" style="color:var(--primary);margin-right:6px;"></i>Открытый код</span>
-  </div>
-</section>
 
-<!-- GHOSTBANK -->
-<section id="ghostbank" style="text-align:center">
-  <div class="section-label" style="background:linear-gradient(135deg,rgba(168,85,247,0.15),rgba(236,72,153,0.10));">Бета · экономика</div>
-  <h2>GhostBank.<br>Кошелёк экосистемы.</h2>
-  <p class="section-sub" style="max-width:620px;margin:0 auto 32px;">
-    Внутренняя валюта Gost — за активность в GhostSocial.
-    В разработке: Soul (основная), Prem (премиум), NFT-маркет, переводы, инвойсы, кастомные юзернеймы.
-    Полностью внутриигровая экономика, никаких реальных денег.
-  </p>
-  <a href="/bank/" class="btn-primary" style="display:inline-flex;align-items:center;gap:9px;font-size:15px;padding:13px 28px;text-decoration:none;">
-    <i class="fa-solid fa-wallet"></i> Открыть GhostBank
-  </a>
-  <div style="display:flex;gap:24px;justify-content:center;margin-top:36px;flex-wrap:wrap;color:var(--sub);font-size:13px;">
-    <span><i class="fa-solid fa-check" style="color:var(--primary);margin-right:6px;"></i>3 валюты</span>
-    <span><i class="fa-solid fa-check" style="color:var(--primary);margin-right:6px;"></i>NFT-маркет</span>
-    <span><i class="fa-solid fa-check" style="color:var(--primary);margin-right:6px;"></i>Сезонная экономика</span>
+  <div style="display:grid;grid-template-columns:1fr;gap:14px;max-width:680px;margin:0 auto;">
+    <a href="/social" style="display:flex;align-items:center;gap:14px;padding:18px 22px;background:rgba(15,23,42,0.5);border:1px solid rgba(255,255,255,0.13);border-radius:16px;color:var(--text);text-decoration:none;text-align:left;transition:border-color 0.2s,transform 0.2s;" onmouseover="this.style.borderColor='rgba(168,85,247,0.5)';this.style.transform='translateY(-2px)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.13)';this.style.transform=''">
+      <i class="fa-solid fa-ghost" style="font-size:22px;color:var(--primary);width:40px;text-align:center;"></i>
+      <div style="flex:1;">
+        <div style="font-weight:700;font-size:15px;margin-bottom:3px;">GhostSocial</div>
+        <div style="font-size:12px;color:var(--sub);">Соцсеть без рекламы и трекинга. Алгоритм — у тебя в браузере, не на сервере.</div>
+      </div>
+      <i class="fa-solid fa-arrow-right" style="color:var(--sub);font-size:13px;"></i>
+    </a>
+    <a href="/bank/" style="display:flex;align-items:center;gap:14px;padding:18px 22px;background:rgba(15,23,42,0.5);border:1px solid rgba(255,255,255,0.13);border-radius:16px;color:var(--text);text-decoration:none;text-align:left;transition:border-color 0.2s,transform 0.2s;" onmouseover="this.style.borderColor='rgba(236,72,153,0.5)';this.style.transform='translateY(-2px)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.13)';this.style.transform=''">
+      <i class="fa-solid fa-wallet" style="font-size:22px;color:#ec4899;width:40px;text-align:center;"></i>
+      <div style="flex:1;">
+        <div style="font-weight:700;font-size:15px;margin-bottom:3px;">GhostBank · бета</div>
+        <div style="font-size:12px;color:var(--sub);">Игровая экономика. 3 валюты, NFT-маркет. <b>Без реальных денег, не Web3.</b></div>
+      </div>
+      <i class="fa-solid fa-arrow-right" style="color:var(--sub);font-size:13px;"></i>
+    </a>
   </div>
 </section>
 
