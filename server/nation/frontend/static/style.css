@@ -78,7 +78,11 @@ button { cursor: pointer; background: none; border: none; color: inherit; font-f
   left: 14px; top: 50%; transform: translateY(-50%);
   display: flex; flex-direction: column; gap: 4px;
   padding: 6px;
+  max-height: 92vh; overflow-y: auto; scrollbar-width: none;
 }
+#toolbar::-webkit-scrollbar { display: none; }
+.tool:disabled { opacity: .32; cursor: default; }
+.tool:disabled:hover { background: none; color: var(--text-dim); }
 .tool {
   width: 46px; height: 46px;
   border-radius: 11px;
