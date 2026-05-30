@@ -63,6 +63,11 @@ def db_get_user(tg_id: int) -> Optional[dict]:
         return dict(r) if r else None
 
 
+def db_delete_user(tg_id: int) -> None:
+    with sqlite3.connect(DB_PATH) as c:
+        c.execute("DELETE FROM users WHERE tg_id=?", (tg_id,))
+
+
 def db_save_user(tg_id: int, **fields) -> None:
     now = int(time.time())
     with sqlite3.connect(DB_PATH) as c:
@@ -107,10 +112,25 @@ def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="👤 Моя анкета"), KeyboardButton(text="🔍 Поиск")],
-            [KeyboardButton(text="🎲 Рулетка"), KeyboardButton(text="❓ Помощь")],
+            [KeyboardButton(text="🎲 Рулетка"), KeyboardButton(text="⚙️ Настройки")],
         ],
         resize_keyboard=True,
     )
+
+
+def settings_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Изменить анкету", callback_data="fill")],
+        [InlineKeyboardButton(text="❓ Помощь", callback_data="help")],
+        [InlineKeyboardButton(text="🗑 Удалить аккаунт", callback_data="acc:del_ask")],
+    ])
+
+
+def confirm_delete_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Да, удалить", callback_data="acc:del_yes"),
+        InlineKeyboardButton(text="❌ Нет", callback_data="acc:del_no"),
+    ]])
 
 
 def start_kb() -> InlineKeyboardMarkup:
@@ -193,7 +213,6 @@ async def on_start(m: Message, state: FSMContext):
 
 
 @dp.message(Command("help"))
-@dp.message(F.text == "❓ Помощь")
 async def on_help(m: Message):
     await m.answer(
         "<b>OKey</b> — бот знакомств.\n\n"
@@ -201,8 +220,8 @@ async def on_help(m: Message):
         "👤 <b>Моя анкета</b> — посмотреть/изменить\n"
         "🔍 <b>Поиск</b> — смотреть анкеты других (скоро)\n"
         "🎲 <b>Рулетка</b> — случайный собеседник (скоро)\n"
-        "❓ <b>Помощь</b> — это сообщение\n\n"
-        "Команды: /start /cancel",
+        "⚙️ <b>Настройки</b> — изменить анкету, удалить аккаунт\n\n"
+        "Команды: /start /cancel /help",
         parse_mode="HTML",
         reply_markup=main_menu(),
     )
@@ -418,6 +437,64 @@ async def stub_search(m: Message):
 @dp.message(F.text == "🎲 Рулетка")
 async def stub_roulette(m: Message):
     await m.answer("🎲 Чат-рулетка — скоро.", reply_markup=main_menu())
+
+
+# ── Настройки + удаление аккаунта ────────────────────────────────────────────
+@dp.message(F.text == "⚙️ Настройки")
+async def on_settings(m: Message):
+    await m.answer("⚙️ <b>Настройки</b>", parse_mode="HTML", reply_markup=settings_kb())
+
+
+@dp.callback_query(F.data == "help")
+async def cb_help(cq: CallbackQuery):
+    await cq.answer()
+    await cq.message.answer(
+        "<b>OKey</b> — бот знакомств.\n\n"
+        "Кнопки внизу:\n"
+        "👤 <b>Моя анкета</b> — посмотреть/изменить\n"
+        "🔍 <b>Поиск</b> — смотреть анкеты других (скоро)\n"
+        "🎲 <b>Рулетка</b> — случайный собеседник (скоро)\n"
+        "⚙️ <b>Настройки</b> — изменить анкету, удалить аккаунт\n\n"
+        "Команды: /start /cancel",
+        parse_mode="HTML",
+    )
+
+
+@dp.callback_query(F.data == "acc:del_ask")
+async def cb_del_ask(cq: CallbackQuery):
+    await cq.answer()
+    await cq.message.answer(
+        "🗑 <b>Удалить аккаунт?</b>\n\n"
+        "Удалится:\n"
+        "• Твоя анкета\n"
+        "• Все лайки и матчи\n"
+        "• История сообщений в боте\n\n"
+        "Действие необратимо.",
+        parse_mode="HTML",
+        reply_markup=confirm_delete_kb(),
+    )
+
+
+@dp.callback_query(F.data == "acc:del_yes")
+async def cb_del_yes(cq: CallbackQuery, state: FSMContext):
+    await cq.answer("Удаляю...")
+    await state.clear()
+    db_delete_user(cq.from_user.id)
+    try: await cq.message.edit_reply_markup(reply_markup=None)
+    except: pass
+    await cq.message.answer(
+        "✅ Аккаунт удалён.\n\nЕсли захочешь вернуться — жми /start, заполнишь анкету заново.",
+        reply_markup=main_menu(),
+    )
+    log.info("Аккаунт удалён: tg=%s @%s", cq.from_user.id, cq.from_user.username)
+
+
+@dp.callback_query(F.data == "acc:del_no")
+async def cb_del_no(cq: CallbackQuery):
+    await cq.answer("Отменено")
+    try: await cq.message.edit_reply_markup(reply_markup=None)
+    except: pass
+    await cq.message.answer("Удаление отменено.", reply_markup=main_menu())
 
 
 # ── Fallback ─────────────────────────────────────────────────────────────────
