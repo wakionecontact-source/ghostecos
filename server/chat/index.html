@@ -502,6 +502,7 @@ let myPub=null;              // base64 публичного
 let pubCache=new Map();      // username -> base64 pub
 let dialogs=[];              // [{username, display_name, last_text, last_at, last_from_me, unread}]
 let groups=[];               // [{id, name, kind, owner_id, is_admin, is_owner, members_count, created_at}]
+let activeGroup=null;        // {id, name, kind, owner_id, members: [{id, username, display_name, x25519_pub, is_admin, is_owner}]}
 let activePeer=null;         // {username, display_name}
 let activeMessages=[];       // расшифрованные сообщения активного чата
 let ws=null, wsReconnect=1000, pingTimer=null;
@@ -1482,6 +1483,8 @@ function updateSendIcon(){
 }
 function onSendBtn(){
   const inp = document.getElementById('sendInput');
+  // В группах нет голосовых пока — клик всегда = sendMessage
+  if (activeGroup) { sendMessage(); return; }
   if (inp && inp.value.trim()) sendMessage();
   else startRecord();
 }
@@ -1704,6 +1707,7 @@ function renderReplyBar(){
 }
 
 async function sendMessage(){
+  if (activeGroup) { return sendGroupMessage(); }
   const inp = document.getElementById('sendInput');
   const text = inp.value.trim();
   if (!text || !activePeer) return;
@@ -1758,12 +1762,18 @@ async function editMessage(sid){
   if (!newText.trim()) { return deleteMessage(sid); }
   try {
     const payload = { type: 'edit', target_sid: sid, new_text: newText.trim() };
-    const ct = await encryptForPeer(activePeer.username, payload);
-    await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: ct });
-    // Применяем у себя сразу (echo через WS придёт, ingest учтёт)
+    if (activeGroup) {
+      const { ciphertext, envelope_keys, sharedKeyBytes } = await encryptForGroup(activeGroup.members, payload);
+      const r = await chat(`/group/${activeGroup.id}/send`, 'POST', { ciphertext, envelope_keys });
+      _myGroupSharedKeys.set(r.id, sharedKeyBytes);
+      setTimeout(() => _myGroupSharedKeys.delete(r.id), 60000);
+    } else {
+      const ct = await encryptForPeer(activePeer.username, payload);
+      await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: ct });
+    }
     await idbUpdateMessage(sid, { text: newText.trim(), edited: true });
     m.text = newText.trim(); m.edited = true;
-    renderMessages();
+    if (activeGroup) renderGroupMessages(); else renderMessages();
   } catch(e) { showToast(e.message || 'Не удалось отредактировать', true); }
 }
 async function deleteMessage(sid){
@@ -1772,11 +1782,18 @@ async function deleteMessage(sid){
   if (!confirm('Удалить сообщение у себя и собеседника?')) return;
   try {
     const payload = { type: 'delete', target_sid: sid };
-    const ct = await encryptForPeer(activePeer.username, payload);
-    await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: ct });
+    if (activeGroup) {
+      const { ciphertext, envelope_keys, sharedKeyBytes } = await encryptForGroup(activeGroup.members, payload);
+      const r = await chat(`/group/${activeGroup.id}/send`, 'POST', { ciphertext, envelope_keys });
+      _myGroupSharedKeys.set(r.id, sharedKeyBytes);
+      setTimeout(() => _myGroupSharedKeys.delete(r.id), 60000);
+    } else {
+      const ct = await encryptForPeer(activePeer.username, payload);
+      await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: ct });
+    }
     await idbUpdateMessage(sid, { text: '', deleted: true });
     m.text = ''; m.deleted = true;
-    renderMessages();
+    if (activeGroup) renderGroupMessages(); else renderMessages();
   } catch(e) { showToast(e.message || 'Не удалось удалить', true); }
 }
 
@@ -1918,7 +1935,10 @@ async function toggleContact(username){
 
 function backToList(){
   document.getElementById('appGrid').classList.remove('in-chat');
-  activePeer = null; activeMessages = [];
+  activePeer = null; activeGroup = null; activeMessages = [];
+  // Сбросим chatMain на пустой экран
+  const main = document.getElementById('chatMain');
+  if (main) main.innerHTML = `<div class="chat-empty"><i class="fa-solid fa-ghost"></i><h3>Выберите чат</h3><p>Откройте диалог слева или начните новый.</p></div>`;
   renderDialogs(document.getElementById('sbSearch').value);
 }
 
@@ -2365,6 +2385,28 @@ async function handleWs(m){
   else if (t === 'group.added' || t === 'group.removed' || t === 'group.members_changed') {
     // Состав или список групп изменился — перезагрузим
     try { await loadGroups(); } catch(_) {}
+    // Если открыт чат изменённой группы — обновим список участников
+    if (activeGroup && d.group_id === activeGroup.id && t === 'group.members_changed') {
+      try {
+        const info = await chat(`/group/${activeGroup.id}`);
+        activeGroup.members = info.members;
+        activeGroup.owner_id = info.owner_id;
+        const sub = document.getElementById('grpSub');
+        if (sub) sub.textContent = (activeGroup.kind === 'channel' ? 'Канал' : 'Группа') + ' · ' + info.members.length + ' участ.';
+      } catch(_) {}
+    }
+    if (activeGroup && d.group_id === activeGroup.id && t === 'group.removed') {
+      // Меня кикнули или группа удалена
+      activeGroup = null; activeMessages = [];
+      const main = document.getElementById('chatMain');
+      if (main) main.innerHTML = `<div class="chat-empty"><i class="fa-solid fa-ghost"></i><h3>Группа удалена</h3><p>Или вы были удалены из неё.</p></div>`;
+    }
+  }
+  else if (t === 'group.new' || t === 'group.echo') {
+    await ingestGroupIncoming(d);
+    if (t === 'group.new') {
+      try { await chat(`/group/${d.group_id}/ack`, 'POST', { ids: [d.id] }); } catch(_) {}
+    }
   }
 }
 
@@ -2465,6 +2507,10 @@ async function loadGroups(){
     const r = await chat('/group/my');
     groups = Array.isArray(r) ? r : [];
     renderDialogs(document.getElementById('sbSearch').value);
+    // Подтянем pending для каждой группы параллельно (не блокируем UI)
+    for (const g of groups) {
+      fetchGroupPending(g.id).catch(()=>{});
+    }
   } catch(e) {
     console.warn('[groups] load failed', e);
     groups = [];
@@ -2524,46 +2570,481 @@ async function doCreateGroup(){
   }
 }
 
-// Stub — полноценный чат группы (отправка/получение) реализуется в части 2.
+// ════════════════════════════════════════════════════════════════════
+// GROUP CRYPTO — sender-key схема (как в Signal lite)
+//
+// Sender:
+//   1. Генерим случайный AES-256 (32 байта raw)
+//   2. Шифруем payload общим AES → ciphertext
+//   3. Для каждого участника: ECDH(myPriv, peerPub) → derived key →
+//      шифруем 32 байта общего AES → envelope_key для этого юзера
+//   4. POST {ciphertext, envelope_keys: {user_id: enc_key}}
+//
+// Receiver:
+//   1. ECDH(myPriv, senderPub) → derived key
+//   2. Расшифровываем свой envelope_key → 32 байта общего AES
+//   3. Импортируем как AES-GCM → расшифровываем общий ciphertext
+// ════════════════════════════════════════════════════════════════════
+async function encryptForGroup(members, payload){
+  // Генерим общий случайный AES-256 ключ для этого сообщения
+  const sharedKeyBytes = crypto.getRandomValues(new Uint8Array(32));
+  const sharedKey = await crypto.subtle.importKey('raw', sharedKeyBytes,
+    {name:'AES-GCM', length:256}, false, ['encrypt']);
+  const raw = (typeof payload === 'object' && payload !== null) ? JSON.stringify(payload) : String(payload);
+  const ciphertext = await encryptText(sharedKey, raw);
+
+  // Для каждого участника — упакуем sharedKeyBytes через ECDH-derived key
+  const envelope_keys = {};
+  for (const m of members) {
+    if (m.id === me.id) continue;
+    if (!m.x25519_pub) continue;
+    try {
+      const theirPub = await importPub(m.x25519_pub);
+      const wrapKey = await deriveShared(myPriv, theirPub);
+      // Шифруем 32 байта общего ключа этим wrap-ключом
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, wrapKey, sharedKeyBytes);
+      const out = new Uint8Array(12 + ct.byteLength);
+      out.set(iv); out.set(new Uint8Array(ct), 12);
+      envelope_keys[String(m.id)] = b64e(out);
+    } catch(e) {
+      console.warn('[group-encrypt] не удалось упаковать для', m.username, e);
+    }
+  }
+  // Сохраним sharedKeyBytes локально на случай если придёт echo и нужно дешифровать своё
+  return { ciphertext, envelope_keys, sharedKeyBytes };
+}
+
+async function decryptGroupEnvelope(senderUsername, envelopeB64){
+  // Получаем pub отправителя (с кэшем + TOFU)
+  let pub = pubCache.get(senderUsername);
+  if (!pub) {
+    const r = await chat(`/keys/${encodeURIComponent(senderUsername)}`);
+    if (!r.x25519_pub) throw new Error('Нет ключа отправителя');
+    pub = r.x25519_pub;
+    const existing = await pinnedPubKey(senderUsername);
+    if (!existing) await pinPubKey(senderUsername, pub, true);
+    pubCache.set(senderUsername, pub);
+  }
+  const theirPub = await importPub(pub);
+  const wrapKey = await deriveShared(myPriv, theirPub);
+  const raw = b64d(envelopeB64);
+  const iv = raw.slice(0, 12);
+  const ct = raw.slice(12);
+  const keyBytes = await crypto.subtle.decrypt({name:'AES-GCM', iv}, wrapKey, ct);
+  return new Uint8Array(keyBytes);
+}
+
+async function decryptGroupCiphertext(sharedKeyBytes, ciphertextB64){
+  const sharedKey = await crypto.subtle.importKey('raw', sharedKeyBytes,
+    {name:'AES-GCM', length:256}, false, ['decrypt']);
+  return decryptText(sharedKey, ciphertextB64);
+}
+
+// Локальный кэш собственных sharedKey по msg_id — чтобы echo сразу дешифровался
+const _myGroupSharedKeys = new Map();  // msg_id → Uint8Array(32)
+
+// ════════════════════════════════════════════════════════════════════
+// GROUP — open / render / send / recv / IDB
+// ════════════════════════════════════════════════════════════════════
+const _grpKey = gid => 'g:' + gid;
+
+// Цвет для имени отправителя в группе (по hash username — стабильно)
+function userColor(username){
+  const colors = ['#a855f7','#ec4899','#22d3ee','#f59e0b','#10b981','#f43f5e','#6366f1','#84cc16','#0ea5e9','#fb7185'];
+  let h = 0;
+  for (let i = 0; i < username.length; i++) h = (h * 31 + username.charCodeAt(i)) | 0;
+  return colors[Math.abs(h) % colors.length];
+}
+
 async function openGroupChat(gid, name, kind){
+  if (typeof gid === 'string') gid = parseInt(gid, 10);
   try {
     const info = await chat(`/group/${gid}`);
-    const membersList = info.members.map(m =>
-      `<div style="padding:8px 12px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border);">
-         <div class="d-av" style="width:34px;height:34px;font-size:13px;">${ini(m.display_name||m.username)}</div>
-         <div style="flex:1;">
-           <div style="font-weight:600;font-size:13px;">${esc(m.display_name||m.username)}${m.is_owner?' <i class="fa-solid fa-crown" style="color:#fbbf24;font-size:10px;margin-left:4px;"></i>':(m.is_admin?' <i class="fa-solid fa-shield" style="color:var(--primary);font-size:10px;margin-left:4px;"></i>':'')}</div>
-           <div style="font-size:11px;color:var(--sub);">@${esc(m.username)}</div>
-         </div>
-       </div>`
-    ).join('');
-    const main = document.getElementById('chatMain');
-    main.innerHTML = `
-      <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;background:var(--surface);">
-        <div class="d-av" style="width:42px;height:42px;background:linear-gradient(135deg,var(--primary),var(--primary2));">
-          <i class="fa-solid fa-${info.kind==='channel'?'bullhorn':'users'}" style="color:#fff;font-size:16px;"></i>
-        </div>
-        <div style="flex:1;min-width:0;">
-          <div style="font-weight:700;font-size:15px;">${esc(info.name)}</div>
-          <div style="font-size:11px;color:var(--sub);">${info.kind==='channel'?'Канал':'Группа'} · ${info.members.length} участников</div>
-        </div>
-        ${info.owner_id === me.id ? `<button onclick="confirmDeleteGroup(${gid}, ${esc(JSON.stringify(info.name))})" title="Удалить" style="background:transparent;border:none;color:var(--red);cursor:pointer;font-size:16px;padding:8px;"><i class="fa-solid fa-trash"></i></button>` : ''}
-      </div>
-      <div style="flex:1;overflow-y:auto;padding:16px;">
-        <div style="background:rgba(168,85,247,0.08);border:1px solid rgba(168,85,247,0.25);border-radius:12px;padding:14px;margin-bottom:16px;display:flex;gap:10px;align-items:flex-start;">
-          <i class="fa-solid fa-circle-info" style="color:var(--primary);font-size:14px;margin-top:2px;"></i>
-          <div style="font-size:12px;line-height:1.5;color:var(--sub);">
-            ${info.kind==='channel'?'Канал':'Группа'} создан${info.kind==='channel'?'':'а'}. Отправка сообщений с E2E через sender-key схему появится в следующем обновлении.
-          </div>
-        </div>
-        <div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.05em;padding:0 8px 8px;">Участники</div>
-        <div style="background:var(--surface);border-radius:12px;border:1px solid var(--border);overflow:hidden;">
-          ${membersList}
-        </div>
-      </div>
-    `;
+    activePeer = null;
+    activeGroup = info;
+    document.getElementById('appGrid').classList.add('in-chat');
+    // Загрузить историю из IDB
+    activeMessages = (await idbGetMessages(_grpKey(gid))) || [];
+    activeMessages.sort((a,b) => (a.created_at || '').localeCompare(b.created_at || ''));
+    // Сначала отрисуем шапку + body
+    renderGroupChat();
+    // Сбросим unread для группы (если был)
+    const g = groups.find(x => x.id === gid);
+    if (g) { g.unread = 0; renderDialogs(document.getElementById('sbSearch').value); }
+    // Подтянуть pending с сервера
+    fetchGroupPending(gid).catch(()=>{});
   } catch(e) {
-    showToast(e.message || 'Не удалось открыть группу', true);
+    showToast(e.message || 'Не удалось открыть', true);
+  }
+}
+
+function renderGroupChat(){
+  if (!activeGroup) return;
+  const g = activeGroup;
+  const canWrite = g.kind !== 'channel' || g.members.find(m => m.id === me.id && m.is_admin);
+  const main = document.getElementById('chatMain');
+  main.innerHTML = `
+    <div class="chat-head">
+      <button class="chat-back" onclick="backToList()"><i class="fa-solid fa-arrow-left"></i></button>
+      <div class="chat-av" onclick="openGroupMembers()" style="background:linear-gradient(135deg,var(--primary),var(--primary2));cursor:pointer;">
+        <i class="fa-solid fa-${g.kind==='channel'?'bullhorn':'users'}" style="color:#fff;font-size:15px;"></i>
+      </div>
+      <div class="chat-info" onclick="openGroupMembers()" style="cursor:pointer;">
+        <div class="chat-name">${esc(g.name)}</div>
+        <div class="chat-status" id="grpSub">${g.kind==='channel'?'Канал':'Группа'} · ${g.members.length} участ.</div>
+      </div>
+      <button class="chat-menu" onclick="openGroupMembers()" title="Участники"><i class="fa-solid fa-users"></i></button>
+      <button class="chat-menu" onclick="openGroupSettings()" title="Настройки"><i class="fa-solid fa-ellipsis-vertical"></i></button>
+    </div>
+    <div class="chat-body" id="chatBody"></div>
+    <div id="replyBar"></div>
+    ${canWrite ? `
+    <div class="chat-foot">
+      <div class="input-wrap">
+        <textarea class="send-input" id="sendInput" placeholder="${g.kind==='channel'?'Сообщение в канал':'Сообщение в группу'}" rows="1"></textarea>
+        <button class="foot-btn" title="Эмодзи (скоро)" onclick="showToast('Эмодзи — скоро')"><i class="fa-regular fa-face-smile"></i></button>
+      </div>
+      <button class="foot-btn send" id="sendBtn" onclick="onSendBtn()" title="Отправить"><i class="fa-solid fa-paper-plane" id="sendIcon"></i></button>
+    </div>` : `
+    <div style="padding:14px 18px;background:var(--surface);border-top:1px solid var(--border);text-align:center;color:var(--sub);font-size:13px;">
+      <i class="fa-solid fa-lock" style="margin-right:6px;opacity:0.6;"></i>В канале писать могут только админы
+    </div>
+    `}
+  `;
+  renderGroupMessages();
+  cancelReply();
+  if (canWrite) {
+    const inp = document.getElementById('sendInput');
+    const btn = document.getElementById('sendBtn');
+    inp.addEventListener('input', () => {
+      btn.disabled = false;
+      inp.style.height='24px';
+      inp.style.height=Math.min(140,inp.scrollHeight)+'px';
+    });
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+    inp.focus();
+  }
+  scrollChatBottom(false);
+}
+
+function renderGroupMessages(){
+  const body = document.getElementById('chatBody');
+  if (!body) return;
+  let html = '';
+  if (!activeMessages.length) {
+    html += `<div style="margin:auto;color:var(--muted);font-size:13px;text-align:center;padding:40px;">Сообщений пока нет. Напишите первое.</div>`;
+    body.innerHTML = html; return;
+  }
+  let lastDateKey = '';
+  for (let i = 0; i < activeMessages.length; i++) {
+    const m = activeMessages[i];
+    const dk = dateKey(m.created_at);
+    if (dk !== lastDateKey) { html += `<div class="date-sep"><span>${dateLong(m.created_at)}</span></div>`; lastDateKey = dk; }
+    const prev = i > 0 ? activeMessages[i-1] : null;
+    const next = i < activeMessages.length-1 ? activeMessages[i+1] : null;
+    const sameSenderPrev = prev && prev.from_me === m.from_me && (prev.sender_username || '') === (m.sender_username || '') && dateKey(prev.created_at) === dk;
+    const sameSenderNext = next && next.from_me === m.from_me && (next.sender_username || '') === (m.sender_username || '') && dateKey(next.created_at) === dk;
+    let cls = sameSenderPrev && sameSenderNext ? 'middle' : sameSenderPrev && !sameSenderNext ? 'last' : !sameSenderPrev && sameSenderNext ? 'first' : 'solo';
+    if (m.failed) cls += ' failed';
+    if (m.deleted) cls += ' deleted';
+    const meta = m.pending
+      ? '<i class="fa-regular fa-clock"></i>'
+      : (m.edited ? '<span style="opacity:0.7;font-size:10px;">изм.</span>' : '')
+        + (m.from_me ? ' <i class="fa-solid fa-check"></i>' : '');
+    // Имя отправителя — только для ЧУЖИХ сообщений и только если первое в серии
+    let senderName = '';
+    if (!m.from_me && !sameSenderPrev && m.sender_username) {
+      const c = userColor(m.sender_username);
+      const display = esc(m.sender_display_name || m.sender_username);
+      senderName = `<div class="msg-sender" style="color:${c};font-size:11.5px;font-weight:700;padding:0 12px 2px;">${display}</div>`;
+    }
+    let quoteHtml = '';
+    if (m.reply_to != null && !m.deleted) {
+      const target = activeMessages.find(x => String(x.sid) === String(m.reply_to));
+      const quoteText = target ? (target.text || '[пусто]') : (m.reply_preview || '[оригинал недоступен]');
+      const sid = String(m.reply_to).replace(/[^a-zA-Z0-9_-]/g, '');
+      quoteHtml = `<div class="msg-quote" onclick="scrollToMsg('${sid}')">${esc(quoteText.slice(0, 80))}</div>`;
+    }
+    let bubbleBody;
+    if (m.deleted) {
+      bubbleBody = `<span style="opacity:0.55;font-style:italic;font-size:13px;"><i class="fa-solid fa-ban" style="margin-right:5px;"></i>сообщение удалено</span>`;
+    } else {
+      bubbleBody = linkify(m.text || '');
+    }
+    html += `<div class="msg ${m.from_me?'mine':'theirs'} ${cls}" data-sid="${esc(m.sid)}">
+      <div style="display:flex;flex-direction:column;max-width:100%;">
+        ${senderName}
+        <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,'${esc(m.sid)}')" ontouchstart="msgLongPressStart(event,'${esc(m.sid)}')" ontouchend="msgLongPressEnd()" ontouchmove="msgLongPressEnd()">${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
+      </div>
+    </div>`;
+  }
+  body.innerHTML = html;
+}
+
+// Sender: шифруем + отправляем в группу
+async function sendGroupMessage(){
+  const inp = document.getElementById('sendInput');
+  if (!inp) return;
+  const text = inp.value.trim();
+  if (!text || !activeGroup) return;
+  inp.value = ''; inp.style.height = '42px';
+  const sendBtn = document.getElementById('sendBtn');
+  if (sendBtn) sendBtn.disabled = true;
+  const currentReply = replyingTo;
+  cancelReply();
+  const tempId = 'tmp-' + Date.now();
+  const optimistic = {
+    sid: tempId, peer: _grpKey(activeGroup.id), from_me: true, text,
+    sender_username: me.username, sender_display_name: me.display_name || me.username,
+    created_at: new Date().toISOString(), pending: true,
+  };
+  if (currentReply) {
+    optimistic.reply_to = currentReply.sid;
+    optimistic.reply_preview = (currentReply.text || '').slice(0, 100);
+  }
+  activeMessages.push(optimistic);
+  renderGroupMessages();
+  scrollChatBottom(true);
+  try {
+    const payload = { type: 'msg', text };
+    if (currentReply) {
+      payload.reply_to = currentReply.sid;
+      payload.reply_preview = optimistic.reply_preview;
+    }
+    const { ciphertext, envelope_keys, sharedKeyBytes } = await encryptForGroup(activeGroup.members, payload);
+    const r = await chat(`/group/${activeGroup.id}/send`, 'POST', { ciphertext, envelope_keys });
+    optimistic.sid = r.id;
+    optimistic.created_at = r.created_at;
+    optimistic.pending = false;
+    // Запомним shared key чтобы echo не повторно дешифровать (пропустим echo по sid)
+    _myGroupSharedKeys.set(r.id, sharedKeyBytes);
+    setTimeout(() => _myGroupSharedKeys.delete(r.id), 60000);
+    await idbAddMessage(optimistic);
+    // Обновим last_text/at у группы (если она в groups)
+    const g = groups.find(x => x.id === activeGroup.id);
+    if (g) { g.last_text = text; g.last_at = r.created_at; renderDialogs(document.getElementById('sbSearch').value); }
+    renderGroupMessages();
+  } catch(e) {
+    optimistic.failed = true;
+    renderGroupMessages();
+    showToast(e.message || 'Не отправлено', true);
+  }
+}
+
+// Receiver: WS group.new / group.echo / pending
+async function ingestGroupIncoming(m){
+  // m: {id, group_id, sender_id, from_username, from_display_name, ciphertext, envelope_keys, created_at}
+  const gid = m.group_id;
+  const isMine = m.sender_id === me.id;
+  let text = '';
+  let payload = null;
+  try {
+    if (isMine) {
+      // echo — берём из локального кэша если есть
+      const cached = _myGroupSharedKeys.get(m.id);
+      if (cached) {
+        const raw = await decryptGroupCiphertext(cached, m.ciphertext);
+        payload = parsePayload(raw);
+      } else {
+        // Echo пришёл после рестарта — пропускаем (мы уже сохранили optimistic)
+        return false;
+      }
+    } else {
+      const myEnv = m.envelope_keys && m.envelope_keys[String(me.id)];
+      if (!myEnv) return false;
+      const sharedBytes = await decryptGroupEnvelope(m.from_username, myEnv);
+      const raw = await decryptGroupCiphertext(sharedBytes, m.ciphertext);
+      payload = parsePayload(raw);
+    }
+    text = String(payload.text || '');
+  } catch(e) {
+    console.warn('[group-recv] decrypt failed', e);
+    text = '[не удалось расшифровать]';
+    payload = { type: 'msg', text };
+  }
+
+  // Edit/Delete операции
+  if (payload && payload.type === 'edit' && payload.target_sid != null) {
+    const tsid = payload.target_sid;
+    const target = await idbFindMessageBySid(tsid);
+    if (target && target.peer === _grpKey(gid)) {
+      await idbUpdateMessage(tsid, {text: String(payload.new_text || ''), edited: true});
+      if (activeGroup && activeGroup.id === gid) {
+        const i = activeMessages.findIndex(x => String(x.sid) === String(tsid));
+        if (i >= 0) { activeMessages[i].text = String(payload.new_text || ''); activeMessages[i].edited = true; renderGroupMessages(); }
+      }
+    }
+    return true;
+  }
+  if (payload && payload.type === 'delete' && payload.target_sid != null) {
+    const tsid = payload.target_sid;
+    const target = await idbFindMessageBySid(tsid);
+    if (target && target.peer === _grpKey(gid)) {
+      await idbUpdateMessage(tsid, {text: '', deleted: true});
+      if (activeGroup && activeGroup.id === gid) {
+        const i = activeMessages.findIndex(x => String(x.sid) === String(tsid));
+        if (i >= 0) { activeMessages[i].text = ''; activeMessages[i].deleted = true; renderGroupMessages(); }
+      }
+    }
+    return true;
+  }
+
+  // Обычное сообщение
+  const stored = {
+    sid: m.id, peer: _grpKey(gid), from_me: isMine, text,
+    sender_username: m.from_username,
+    sender_display_name: m.from_display_name,
+    created_at: m.created_at,
+  };
+  if (payload && payload.reply_to) {
+    stored.reply_to = payload.reply_to;
+    stored.reply_preview = String(payload.reply_preview || '').slice(0, 100);
+  }
+  const added = await idbAddMessage(stored);
+  if (!added) return false;
+
+  // Обновим preview группы в sidebar
+  const g = groups.find(x => x.id === gid);
+  if (g) {
+    g.last_text = text;
+    g.last_at = m.created_at;
+    if (!isMine && (!activeGroup || activeGroup.id !== gid)) g.unread = (g.unread || 0) + 1;
+    renderDialogs(document.getElementById('sbSearch').value);
+  }
+
+  if (activeGroup && activeGroup.id === gid) {
+    activeMessages.push(stored);
+    renderGroupMessages();
+    scrollChatBottom(true);
+  }
+  return true;
+}
+
+async function fetchGroupPending(gid){
+  try {
+    const d = await chat(`/group/${gid}/pending`);
+    if (!d.messages || !d.messages.length) return;
+    const ackIds = [];
+    for (const m of d.messages) {
+      const ok = await ingestGroupIncoming(m);
+      if (ok) ackIds.push(m.id);
+    }
+    if (ackIds.length) {
+      try { await chat(`/group/${gid}/ack`, 'POST', { ids: ackIds }); } catch(_) {}
+    }
+  } catch(e) { /* offline */ }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Управление участниками
+// ════════════════════════════════════════════════════════════════════
+function openGroupMembers(){
+  if (!activeGroup) return;
+  const g = activeGroup;
+  const myMember = g.members.find(m => m.id === me.id);
+  const iAmAdmin = myMember && myMember.is_admin;
+  const list = g.members.map(m => `
+    <div style="padding:10px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border);">
+      <div class="d-av" style="width:36px;height:36px;font-size:13px;background:linear-gradient(135deg,${userColor(m.username)},${userColor(m.username)}cc);">${ini(m.display_name||m.username)}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px;">
+          ${esc(m.display_name||m.username)}
+          ${m.is_owner?'<i class="fa-solid fa-crown" style="color:#fbbf24;font-size:10px;"></i>':(m.is_admin?'<i class="fa-solid fa-shield" style="color:var(--primary);font-size:10px;"></i>':'')}
+        </div>
+        <div style="font-size:12px;color:var(--sub);">@${esc(m.username)}</div>
+      </div>
+      ${iAmAdmin && !m.is_owner && m.id !== me.id ? `<button onclick="kickMember(${esc(JSON.stringify(m.username))})" title="Удалить" style="background:transparent;border:none;color:var(--red);cursor:pointer;padding:8px;font-size:13px;"><i class="fa-solid fa-user-xmark"></i></button>` : ''}
+    </div>
+  `).join('');
+  const html = `
+    <div class="modal-overlay open" id="grpMembersModal" onclick="if(event.target===this)closeModal('grpMembersModal')">
+      <div class="modal-sheet" style="max-height:80vh;display:flex;flex-direction:column;">
+        <div class="m-handle"></div>
+        <div class="m-head">
+          <div class="m-title">${esc(g.name)} · ${g.members.length}</div>
+          <button class="m-close" onclick="closeModal('grpMembersModal')"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        ${iAmAdmin ? `
+        <div style="padding:10px 14px;border-bottom:1px solid var(--border);">
+          <button onclick="openAddMember()" style="width:100%;padding:11px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:13px;">
+            <i class="fa-solid fa-user-plus"></i>&nbsp; Добавить участника
+          </button>
+        </div>` : ''}
+        <div style="overflow-y:auto;flex:1;">
+          ${list}
+        </div>
+        ${myMember && !myMember.is_owner ? `
+        <div style="padding:12px 14px;border-top:1px solid var(--border);">
+          <button onclick="leaveGroup()" style="width:100%;padding:11px;border-radius:10px;border:1px solid rgba(244,63,94,0.4);background:transparent;color:var(--red);font-weight:600;cursor:pointer;font-family:inherit;font-size:13px;">
+            <i class="fa-solid fa-right-from-bracket"></i>&nbsp; Покинуть ${g.kind==='channel'?'канал':'группу'}
+          </button>
+        </div>` : ''}
+        ${myMember && myMember.is_owner ? `
+        <div style="padding:12px 14px;border-top:1px solid var(--border);">
+          <button onclick="closeModal('grpMembersModal');confirmDeleteGroup(${g.id}, ${esc(JSON.stringify(g.name))})" style="width:100%;padding:11px;border-radius:10px;border:1px solid rgba(244,63,94,0.4);background:transparent;color:var(--red);font-weight:600;cursor:pointer;font-family:inherit;font-size:13px;">
+            <i class="fa-solid fa-trash"></i>&nbsp; Удалить ${g.kind==='channel'?'канал':'группу'}
+          </button>
+        </div>` : ''}
+      </div>
+    </div>`;
+  // Удалим прошлую модалку если есть
+  const old = document.getElementById('grpMembersModal');
+  if (old) old.remove();
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function openGroupSettings(){
+  openGroupMembers(); // пока settings = members
+}
+
+async function openAddMember(){
+  if (!activeGroup) return;
+  const username = (prompt(`Введите @username для добавления в «${activeGroup.name}»:`, '') || '').trim().replace(/^@/, '').toLowerCase();
+  if (!username) return;
+  try {
+    await chat(`/group/${activeGroup.id}/members/${encodeURIComponent(username)}`, 'POST');
+    showToast('Добавлен');
+    const info = await chat(`/group/${activeGroup.id}`);
+    activeGroup.members = info.members;
+    closeModal('grpMembersModal');
+    openGroupMembers();
+    const sub = document.getElementById('grpSub');
+    if (sub) sub.textContent = (activeGroup.kind === 'channel' ? 'Канал' : 'Группа') + ' · ' + info.members.length + ' участ.';
+  } catch(e) {
+    showToast(e.message || 'Ошибка', true);
+  }
+}
+
+async function kickMember(username){
+  if (!activeGroup) return;
+  if (!confirm(`Удалить @${username} из «${activeGroup.name}»?`)) return;
+  try {
+    await chat(`/group/${activeGroup.id}/members/${encodeURIComponent(username)}`, 'DELETE');
+    showToast('Удалён');
+    const info = await chat(`/group/${activeGroup.id}`);
+    activeGroup.members = info.members;
+    closeModal('grpMembersModal');
+    openGroupMembers();
+    const sub = document.getElementById('grpSub');
+    if (sub) sub.textContent = (activeGroup.kind === 'channel' ? 'Канал' : 'Группа') + ' · ' + info.members.length + ' участ.';
+  } catch(e) {
+    showToast(e.message || 'Ошибка', true);
+  }
+}
+
+async function leaveGroup(){
+  if (!activeGroup) return;
+  if (!confirm(`Покинуть «${activeGroup.name}»?`)) return;
+  try {
+    await chat(`/group/${activeGroup.id}/members/${encodeURIComponent(me.username)}`, 'DELETE');
+    closeModal('grpMembersModal');
+    showToast('Покинули');
+    activeGroup = null; activeMessages = [];
+    document.getElementById('chatMain').innerHTML = `<div class="chat-empty"><i class="fa-solid fa-ghost"></i><h3>Выберите чат</h3><p>Откройте диалог слева или начните новый.</p></div>`;
+    await loadGroups();
+  } catch(e) {
+    showToast(e.message || 'Ошибка', true);
   }
 }
 
@@ -2572,8 +3053,8 @@ async function confirmDeleteGroup(gid, name){
   try {
     await chat(`/group/${gid}`, 'DELETE');
     showToast('Удалено');
+    activeGroup = null; activeMessages = [];
     await loadGroups();
-    // Вернуться к пустому экрану
     document.getElementById('chatMain').innerHTML = `
       <div class="chat-empty">
         <i class="fa-solid fa-ghost"></i>
