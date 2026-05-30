@@ -17,12 +17,17 @@ Endpoints:
 WebSocket-события (через ws_hub):
 - chat.new — новое сообщение получателю (если онлайн), затем удаляется
 """
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, UploadFile, File, Form, Response, Query
 from pydantic import BaseModel
 from typing import Optional
-import base64
+import base64, time
 
 from social_router import auth_member, db, ws_hub, _rate_limit
+
+# Лимит размера зашифрованного файла. 9MB — разумный максимум для browser-based E2E
+# (с запасом под nginx client_max_body_size 10M + overhead AES-GCM tag + multipart headers).
+MAX_FILE_SIZE = 9 * 1024 * 1024
+FILE_TTL_DAYS = 7
 
 router = APIRouter(prefix="/api/chat", tags=["GhostChat"])
 
@@ -283,3 +288,77 @@ def get_pending(authorization: Optional[str] = Header(None)):
             for r in rows
         ]
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# E2E FILES — зашифрованные файлы. Сервер видит только ciphertext blob.
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.post("/file/upload")
+async def file_upload(
+    to_username: str = Form(...),
+    blob: UploadFile = File(...),
+    authorization: Optional[str] = Header(None),
+):
+    """Загрузить зашифрованный blob. Клиент шифрует на своей стороне (AES-GCM),
+    сервер хранит только ciphertext — не знает имя, тип, содержимое.
+    Возвращает file_id, который sender передаёт receiver-у в сообщении (с ключом)."""
+    user = auth_member(authorization)
+    _rate_limit(f"fileup:{user['id']}", limit=20, window=3600)
+    data = await blob.read()
+    if not data:
+        raise HTTPException(400, "Пустой файл")
+    if len(data) > MAX_FILE_SIZE:
+        raise HTTPException(413, f"Слишком большой. Максимум {MAX_FILE_SIZE // 1024 // 1024}MB")
+    c = db()
+    to_user = _get_user_by_username(c, to_username)
+    if not to_user:
+        c.close(); raise HTTPException(404, "Получатель не найден")
+    if to_user["id"] == user["id"]:
+        c.close(); raise HTTPException(400, "Нельзя слать себе")
+    # Cleanup просроченных файлов оппортунистически (не блокируем upload)
+    c.execute("DELETE FROM chat_files WHERE created_at < datetime('now', ?)",
+              (f"-{FILE_TTL_DAYS} day",))
+    c.execute(
+        "INSERT INTO chat_files (sender_id, receiver_id, blob, size) VALUES (?,?,?,?)",
+        (user["id"], to_user["id"], data, len(data)),
+    )
+    file_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
+    c.commit(); c.close()
+    return {"file_id": file_id, "size": len(data)}
+
+
+@router.get("/file/{file_id}")
+def file_download(file_id: int, authorization: Optional[str] = Header(None)):
+    """Скачать зашифрованный blob. Доступ только sender или receiver."""
+    user = auth_member(authorization)
+    c = db()
+    row = c.execute(
+        "SELECT sender_id, receiver_id, blob, size FROM chat_files WHERE id=?",
+        (file_id,),
+    ).fetchone()
+    c.close()
+    if not row:
+        raise HTTPException(404, "Файл не найден или удалён")
+    if user["id"] not in (row["sender_id"], row["receiver_id"]):
+        raise HTTPException(403, "Нет доступа")
+    return Response(content=row["blob"], media_type="application/octet-stream", headers={
+        "Content-Length": str(row["size"]),
+        "Cache-Control": "no-store",
+    })
+
+
+@router.post("/file/{file_id}/ack")
+def file_ack(file_id: int, authorization: Optional[str] = Header(None)):
+    """Receiver подтверждает что скачал файл → сервер удаляет blob."""
+    user = auth_member(authorization)
+    c = db()
+    row = c.execute("SELECT receiver_id FROM chat_files WHERE id=?", (file_id,)).fetchone()
+    if not row:
+        c.close(); return {"deleted": 0}
+    if row["receiver_id"] != user["id"]:
+        c.close(); raise HTTPException(403, "Только получатель может удалить")
+    c.execute("DELETE FROM chat_files WHERE id=?", (file_id,))
+    c.commit(); c.close()
+    return {"deleted": 1}
+

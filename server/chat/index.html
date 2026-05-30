@@ -158,6 +158,15 @@ button,input,textarea{font-family:inherit;}
 .msg.failed .msg-bubble{opacity:0.6;border-color:var(--red);}
 .msg.deleted .msg-bubble{opacity:0.7;}
 .msg-quote{border-left:3px solid var(--primary);padding:5px 9px;margin:0 0 6px;background:rgba(124,58,237,0.10);border-radius:5px;font-size:12.5px;color:var(--sub);cursor:pointer;line-height:1.35;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.msg-file{display:flex;align-items:center;gap:10px;padding:8px 4px;cursor:pointer;}
+.msg-file-icon{width:38px;height:38px;border-radius:10px;background:rgba(124,58,237,0.20);display:flex;align-items:center;justify-content:center;color:var(--primary);font-size:16px;flex-shrink:0;}
+.msg.mine .msg-file-icon{background:rgba(255,255,255,0.20);color:#fff;}
+.msg-file-info{flex:1;min-width:0;}
+.msg-file-name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.msg-file-meta{font-size:11px;opacity:0.7;}
+.msg-img{max-width:280px;max-height:280px;border-radius:10px;display:block;margin-top:4px;cursor:pointer;}
+.file-progress{margin-top:6px;height:3px;background:rgba(255,255,255,0.15);border-radius:2px;overflow:hidden;}
+.file-progress-bar{height:100%;background:#fff;width:0;transition:width 0.2s;}
 .msg.mine .msg-quote{background:rgba(255,255,255,0.10);border-left-color:rgba(255,255,255,0.6);color:rgba(255,255,255,0.85);}
 .msg-quote:hover{background:rgba(124,58,237,0.18);}
 #replyBar{display:none;align-items:center;background:rgba(15,23,42,0.85);border-top:1px solid var(--border);padding:6px 10px;}
@@ -1104,6 +1113,48 @@ async function ingestIncoming(m){
     return true;
   }
 
+  // ── File-сообщение ──
+  if (payload.type === 'file' && payload.file_id != null) {
+    const stored = {
+      sid: m.id,
+      peer: peerUsername,
+      from_me: isMine,
+      text: '',
+      created_at: m.created_at,
+      file_payload: {
+        file_id: payload.file_id,
+        file_name: String(payload.file_name || 'file'),
+        mime: String(payload.mime || 'application/octet-stream'),
+        size: Number(payload.size) || 0,
+        key: String(payload.key || ''),
+        iv: String(payload.iv || ''),
+      },
+    };
+    const added = await idbAddMessage(stored);
+    if (!added) return false;
+    let d = dialogs.find(x => x.username === peerUsername);
+    const preview = '📎 ' + stored.file_payload.file_name;
+    if (!d) {
+      d = { username: peerUsername, display_name: peerName || peerUsername, last_text: preview, last_at: m.created_at, last_from_me: isMine, unread: 0 };
+      dialogs.unshift(d);
+    } else {
+      if (peerName) d.display_name = peerName;
+      d.last_text = preview;
+      d.last_at = m.created_at;
+      d.last_from_me = isMine;
+      dialogs = [d, ...dialogs.filter(x => x.username !== peerUsername)];
+    }
+    if (!isMine && (!activePeer || activePeer.username !== peerUsername)) d.unread = (d.unread || 0) + 1;
+    await idbPutDialog(d);
+    renderDialogs(document.getElementById('sbSearch').value);
+    if (activePeer && activePeer.username === peerUsername) {
+      activeMessages.push(stored);
+      renderMessages();
+      scrollChatBottom(true);
+    }
+    return true;
+  }
+
   // ── Обычное сообщение (или legacy plain text) ──
   const text = String(payload.text || '');
   const stored = {
@@ -1140,6 +1191,150 @@ async function ingestIncoming(m){
     appendMessage(stored);
   }
   return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// E2E файлы — клиент шифрует blob AES-GCM свежим ключом, загружает
+// ciphertext, в сообщении передаёт {type:'file', file_id, key, iv, ...}
+// Сервер хранит только ciphertext blob — не знает имя, тип, содержимое.
+// ═══════════════════════════════════════════════════════════════════
+const MAX_FILE_SIZE = 9 * 1024 * 1024; // должно совпадать с backend
+
+function fmtSize(n){
+  if (n < 1024) return n + ' Б';
+  if (n < 1048576) return Math.round(n / 102.4) / 10 + ' КБ';
+  return Math.round(n / 104857.6) / 10 + ' МБ';
+}
+const FILE_EXT_ICON = {
+  pdf:'fa-file-pdf', doc:'fa-file-word', docx:'fa-file-word', xls:'fa-file-excel', xlsx:'fa-file-excel',
+  zip:'fa-file-zipper', rar:'fa-file-zipper', '7z':'fa-file-zipper',
+  mp3:'fa-file-audio', wav:'fa-file-audio', ogg:'fa-file-audio',
+  mp4:'fa-file-video', mov:'fa-file-video', webm:'fa-file-video', avi:'fa-file-video',
+  jpg:'fa-file-image', jpeg:'fa-file-image', png:'fa-file-image', gif:'fa-file-image', webp:'fa-file-image',
+  txt:'fa-file-lines', md:'fa-file-lines',
+};
+function fileIcon(name){
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  return FILE_EXT_ICON[ext] || 'fa-file';
+}
+
+async function pickAndSendFile(input){
+  const f = input.files && input.files[0];
+  input.value = ''; // сброс чтобы можно было загрузить тот же файл снова
+  if (!f || !activePeer) return;
+  if (f.size > MAX_FILE_SIZE) {
+    showToast(`Слишком большой: ${fmtSize(f.size)}. Максимум ${fmtSize(MAX_FILE_SIZE)}`, true);
+    return;
+  }
+  const tempId = 'tmp-' + Date.now();
+  const optimistic = {
+    sid: tempId, peer: activePeer.username, from_me: true,
+    text: '', created_at: new Date().toISOString(), pending: true,
+    file: {name: f.name, mime: f.type || 'application/octet-stream', size: f.size},
+  };
+  activeMessages.push(optimistic);
+  renderMessages();
+  scrollChatBottom(true);
+  try {
+    // 1. Читаем файл как ArrayBuffer
+    const plain = await f.arrayBuffer();
+    // 2. Генерим свежий AES-256 ключ + IV для этого файла
+    const fileKey = await crypto.subtle.generateKey({name:'AES-GCM', length:256}, true, ['encrypt','decrypt']);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    // 3. Шифруем
+    const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, fileKey, plain);
+    // 4. Экспортируем ключ для передачи в сообщении
+    const keyRaw = await crypto.subtle.exportKey('raw', fileKey);
+    // 5. Загружаем ciphertext blob через multipart
+    const form = new FormData();
+    form.append('to_username', activePeer.username);
+    form.append('blob', new Blob([ct], {type:'application/octet-stream'}), 'enc');
+    const upRes = await fetch(CHAT_API + '/file/upload', {
+      method:'POST',
+      headers: { 'Authorization': 'Bearer ' + token },
+      body: form,
+    });
+    if (!upRes.ok) {
+      const text = await upRes.text();
+      let msg = text; try { msg = JSON.parse(text).detail || text; } catch(e){}
+      throw new Error(msg);
+    }
+    const { file_id } = await upRes.json();
+    // 6. Отправляем сообщение с metadata + ключом
+    const payload = {
+      type: 'file', file_id, file_name: f.name, mime: f.type || 'application/octet-stream',
+      size: f.size, key: b64e(keyRaw), iv: b64e(iv),
+    };
+    const cmsg = await encryptForPeer(activePeer.username, payload);
+    const r = await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: cmsg });
+    optimistic.sid = r.id;
+    optimistic.created_at = r.created_at;
+    optimistic.pending = false;
+    optimistic.file_payload = payload; // храним для рендера и скачивания
+    await idbAddMessage(optimistic);
+    // Обновим dialog
+    let d = dialogs.find(x => x.username === activePeer.username);
+    if (!d) { d = { username: activePeer.username, display_name: activePeer.display_name || activePeer.username, unread: 0 }; dialogs.unshift(d); }
+    d.last_text = '📎 ' + f.name; d.last_at = r.created_at; d.last_from_me = true;
+    dialogs = [d, ...dialogs.filter(x => x.username !== activePeer.username)];
+    await idbPutDialog(d);
+    renderDialogs(document.getElementById('sbSearch').value);
+    renderMessages();
+  } catch(e) {
+    optimistic.failed = true;
+    renderMessages();
+    showToast(e.message || 'Не удалось отправить файл', true);
+  }
+}
+
+// Скачать и расшифровать файл по сообщению
+async function downloadFile(sid){
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
+  if (!m || !m.file_payload) return;
+  const p = m.file_payload;
+  try {
+    showToast('Скачиваю...');
+    const r = await fetch(CHAT_API + `/file/${p.file_id}`, {
+      headers: {'Authorization': 'Bearer ' + token},
+    });
+    if (!r.ok) { showToast('Файл недоступен (возможно удалён)', true); return; }
+    const ct = await r.arrayBuffer();
+    const key = await crypto.subtle.importKey('raw', b64d(p.key), {name:'AES-GCM'}, false, ['decrypt']);
+    const iv = b64d(p.iv);
+    const plain = await crypto.subtle.decrypt({name:'AES-GCM', iv}, key, ct);
+    // Сохраняем как файл через blob URL
+    const blob = new Blob([plain], {type: p.mime || 'application/octet-stream'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = p.file_name || 'file';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    // ACK — пусть удалит с сервера (только если мы receiver, sender и так может перекачать)
+    if (!m.from_me) {
+      try { await fetch(CHAT_API + `/file/${p.file_id}/ack`, {method:'POST', headers:{'Authorization':'Bearer '+token}}); } catch(_){}
+    }
+  } catch(e) { showToast('Не удалось расшифровать: ' + e.message, true); }
+}
+
+// Превью картинки inline — скачиваем + decrypt + показываем в bubble
+async function loadImgPreview(sid){
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
+  if (!m || !m.file_payload || m._imgLoaded) return;
+  const p = m.file_payload;
+  if (!p.mime || !p.mime.startsWith('image/')) return;
+  try {
+    const r = await fetch(CHAT_API + `/file/${p.file_id}`, {headers:{'Authorization':'Bearer '+token}});
+    if (!r.ok) return;
+    const ct = await r.arrayBuffer();
+    const key = await crypto.subtle.importKey('raw', b64d(p.key), {name:'AES-GCM'}, false, ['decrypt']);
+    const plain = await crypto.subtle.decrypt({name:'AES-GCM', iv: b64d(p.iv)}, key, ct);
+    const blob = new Blob([plain], {type: p.mime});
+    const url = URL.createObjectURL(blob);
+    m._imgLoaded = true;
+    m._imgUrl = url;
+    const el = document.querySelector(`.msg[data-sid="${String(sid).replace(/[^a-zA-Z0-9_-]/g, '')}"] .msg-img-placeholder`);
+    if (el) el.outerHTML = `<img class="msg-img" src="${url}" alt="${esc(p.file_name)}" onclick="window.open('${url}','_blank')">`;
+  } catch(_){}
 }
 
 // Иконка отправки: микрофон когда нет текста (как в TG), стрелка когда есть
@@ -1419,7 +1614,8 @@ function renderChat(){
     <div id="replyBar"></div>
     <div class="chat-foot">
       <div class="input-wrap">
-        <button class="foot-btn" title="Файл (скоро)" onclick="showToast('Передача файлов — следующий апдейт')"><i class="fa-solid fa-paperclip"></i></button>
+        <button class="foot-btn" title="Прикрепить файл" onclick="document.getElementById('filePicker').click()"><i class="fa-solid fa-paperclip"></i></button>
+        <input type="file" id="filePicker" style="display:none" onchange="pickAndSendFile(this)">
         <textarea class="send-input" id="sendInput" placeholder="Сообщение" rows="1"></textarea>
         <button class="foot-btn" title="Эмодзи (скоро)" onclick="showToast('Эмодзи-палитра — скоро')"><i class="fa-regular fa-face-smile"></i></button>
       </div>
@@ -1479,6 +1675,28 @@ function renderMessages(){
     let bubbleBody;
     if (m.deleted) {
       bubbleBody = `<span style="opacity:0.55;font-style:italic;font-size:13px;"><i class="fa-solid fa-ban" style="margin-right:5px;"></i>сообщение удалено</span>`;
+    } else if (m.file_payload || m.file) {
+      const fp = m.file_payload || m.file;
+      const isImg = fp.mime && fp.mime.startsWith('image/');
+      if (isImg && m._imgUrl) {
+        bubbleBody = `<img class="msg-img" src="${m._imgUrl}" alt="${esc(fp.file_name||fp.name||'')}" onclick="window.open('${m._imgUrl}','_blank')">`;
+      } else if (isImg && m.file_payload) {
+        bubbleBody = `<div class="msg-img-placeholder" style="width:200px;height:140px;background:rgba(0,0,0,0.2);border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--sub);font-size:11px;">загружаю…</div>`;
+        // ленивая загрузка картинки
+        setTimeout(() => loadImgPreview(m.sid), 50);
+      } else {
+        const name = esc(fp.file_name || fp.name || 'file');
+        const size = fmtSize(fp.size || 0);
+        const icon = fileIcon(fp.file_name || fp.name || '');
+        const sidArg = JSON.stringify(String(m.sid));
+        bubbleBody = `<div class="msg-file" onclick="downloadFile(${sidArg})">
+          <div class="msg-file-icon"><i class="fa-solid ${icon}"></i></div>
+          <div class="msg-file-info">
+            <div class="msg-file-name">${name}</div>
+            <div class="msg-file-meta">${size} · нажмите чтобы скачать</div>
+          </div>
+        </div>`;
+      }
     } else {
       bubbleBody = linkify(m.text || '');
     }

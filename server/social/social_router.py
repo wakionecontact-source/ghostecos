@@ -441,6 +441,22 @@ def init():
             FOREIGN KEY (sender_id) REFERENCES users(id),
             FOREIGN KEY (receiver_id) REFERENCES users(id)
         );
+        -- Зашифрованные на клиенте файлы. Сервер хранит только ciphertext blob —
+        -- не знает имя, тип, размер исходного файла. Расшифровка только у получателя.
+        -- TTL: ack-based — удаляется когда receiver подтвердил скачивание.
+        -- Hard cutoff: автоудаление через 7 дней (cleanup).
+        CREATE TABLE IF NOT EXISTS chat_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender_id INTEGER NOT NULL,
+            receiver_id INTEGER NOT NULL,
+            blob BLOB NOT NULL,
+            size INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (sender_id) REFERENCES users(id),
+            FOREIGN KEY (receiver_id) REFERENCES users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_chat_files_recv ON chat_files(receiver_id);
+        CREATE INDEX IF NOT EXISTS idx_chat_files_old ON chat_files(created_at);
         CREATE TABLE IF NOT EXISTS chat_contacts (
             owner_id INTEGER NOT NULL,
             contact_id INTEGER NOT NULL,
