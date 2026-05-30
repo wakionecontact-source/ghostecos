@@ -259,7 +259,7 @@ function addWalkway(b) {                 // дорожка от крыльца �
 }
 function runGeneration(pairs) {
   pushUndo();
-  const stepM = 20, rowGap = 8;
+  const stepM = 20;
   let shops = 0; const made = [];
   pairs.forEach(([road, si]) => {
     const a = road[si], b = road[si + 1], lat = a[0];
@@ -268,19 +268,14 @@ function runGeneration(pairs) {
     const ux = E / len, uy = N / len, px = -uy, py = ux, bearing = Math.round(Math.atan2(N, E) * 180 / Math.PI);
     for (let d = stepM / 2; d < len - 2; d += stepM) {
       const cy = a[0] + uy * d / MPD_LAT, cx = a[1] + ux * d / mPerDegLng(lat);
-      for (const side of [1, -1]) {                                   // обе стороны
-        const rows = 1 + (Math.random() < 0.5 ? 1 : 0) + (Math.random() < 0.18 ? 1 : 0);
-        let edge = LINE_M.road / 2 + PORCH_DEPTH + BUILD_GAP;          // ближняя грань первого ряда
-        for (let row = 0; row < rows; row++) {
-          const w = Math.round(rand(9, 18)), h = Math.round(rand(9, 16)), c = edge + h / 2;
-          const isShop = Math.random() < 0.13 / (1 + shops * 1.3);     // шанс падает с числом магазинов
-          const nb = { type: isShop ? 'shop' : 'house', lat: cy + py * c * side / MPD_LAT, lng: cx + px * c * side / mPerDegLng(cy), w, h, rot: bearing };
-          setDoorToward(nb, cy, cx);
-          if (!overlapsAt(nb.lat, nb.lng, bRadius(nb)) && !buildingHitsRoad(nb)) {
-            state.buildings.push(nb); made.push(nb); if (isShop) shops++;
-            if (row === 0) addWalkway(nb);
-          }
-          edge = c + h / 2 + rowGap;                                    // следующий ряд дальше
+      for (const side of [1, -1]) {                                   // обе стороны, один ряд
+        const w = Math.round(rand(9, 18)), h = Math.round(rand(9, 16));
+        const c = LINE_M.road / 2 + PORCH_DEPTH + BUILD_GAP + h / 2 + rand(0, 7);   // чуть дальше, не впритык и вразнобой
+        const isShop = Math.random() < 0.13 / (1 + shops * 1.3);       // шанс падает с числом магазинов
+        const nb = { type: isShop ? 'shop' : 'house', lat: cy + py * c * side / MPD_LAT, lng: cx + px * c * side / mPerDegLng(cy), w, h, rot: bearing };
+        setDoorToward(nb, cy, cx);
+        if (!overlapsAt(nb.lat, nb.lng, bRadius(nb)) && !buildingHitsRoad(nb)) {
+          state.buildings.push(nb); made.push(nb); if (isShop) shops++; addWalkway(nb);
         }
       }
     }
