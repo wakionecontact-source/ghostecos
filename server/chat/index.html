@@ -178,6 +178,7 @@ button,input,textarea{font-family:inherit;}
 .msg-file-meta{font-size:11px;opacity:0.7;}
 .msg-img{max-width:280px;max-height:280px;border-radius:10px;display:block;margin-top:4px;cursor:zoom-in;transition:opacity 0.15s;}
 .msg-img:hover{opacity:0.92;}
+.msg-video{max-width:300px;max-height:300px;border-radius:10px;display:block;margin-top:4px;background:#000;}
 
 /* ─── Lightbox для медиа ─── */
 #mediaViewer{position:fixed;inset:0;z-index:999;background:rgba(0,0,0,0.92);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;padding:env(safe-area-inset-top) 20px env(safe-area-inset-bottom);animation:mvIn 0.2s ease-out;}
@@ -1224,7 +1225,7 @@ async function ingestIncoming(m){
 // ciphertext, в сообщении передаёт {type:'file', file_id, key, iv, ...}
 // Сервер хранит только ciphertext blob — не знает имя, тип, содержимое.
 // ═══════════════════════════════════════════════════════════════════
-const MAX_FILE_SIZE = 9 * 1024 * 1024; // должно совпадать с backend
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // должно совпадать с backend
 
 function fmtSize(n){
   if (n < 1024) return n + ' Б';
@@ -1387,10 +1388,12 @@ async function loadImgPreview(sid){
   const m = activeMessages.find(x => String(x.sid) === String(sid));
   if (!m || !m.file_payload || m._imgLoaded) return;
   const p = m.file_payload;
-  if (!p.mime || !p.mime.startsWith('image/')) return;
+  const isImg = p.mime && p.mime.startsWith('image/');
+  const isVideo = p.mime && p.mime.startsWith('video/');
+  if (!isImg && !isVideo) return;
   try {
     const r = await fetch(CHAT_API + `/file/${p.file_id}`, {headers:{'Authorization':'Bearer '+token}});
-    if (!r.ok) return;
+    if (!r.ok) { console.warn('[media preview] fetch failed', r.status); return; }
     const ct = await r.arrayBuffer();
     const key = await crypto.subtle.importKey('raw', b64d(p.key), {name:'AES-GCM'}, false, ['decrypt']);
     const plain = await crypto.subtle.decrypt({name:'AES-GCM', iv: b64d(p.iv)}, key, ct);
@@ -1400,8 +1403,13 @@ async function loadImgPreview(sid){
     m._imgUrl = url;
     const safeSid = String(sid).replace(/[^a-zA-Z0-9_-]/g, '');
     const el = document.querySelector(`.msg[data-sid="${safeSid}"] .msg-img-placeholder`);
-    if (el) el.outerHTML = `<img class="msg-img" src="${url}" alt="${esc(p.file_name)}" onclick="openMediaViewer('${safeSid}')">`;
-  } catch(_){}
+    if (!el) return;
+    if (isVideo) {
+      el.outerHTML = `<video class="msg-video" src="${url}" controls preload="metadata"></video>`;
+    } else {
+      el.outerHTML = `<img class="msg-img" src="${url}" alt="${esc(p.file_name)}" onclick="openMediaViewer('${safeSid}')">`;
+    }
+  } catch(e){ console.error('[media preview]', e); }
 }
 
 // Иконка отправки: микрофон когда нет текста (как в TG), стрелка когда есть
@@ -1745,11 +1753,16 @@ function renderMessages(){
     } else if (m.file_payload || m.file) {
       const fp = m.file_payload || m.file;
       const isImg = fp.mime && fp.mime.startsWith('image/');
+      const isVideo = fp.mime && fp.mime.startsWith('video/');
+      const sidArg = JSON.stringify(String(m.sid));
       if (isImg && m._imgUrl) {
-        bubbleBody = `<img class="msg-img" src="${m._imgUrl}" alt="${esc(fp.file_name||fp.name||'')}" onclick="window.open('${m._imgUrl}','_blank')">`;
-      } else if (isImg && m.file_payload) {
-        bubbleBody = `<div class="msg-img-placeholder" style="width:200px;height:140px;background:rgba(0,0,0,0.2);border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--sub);font-size:11px;">загружаю…</div>`;
-        // ленивая загрузка картинки
+        bubbleBody = `<img class="msg-img" src="${m._imgUrl}" alt="${esc(fp.file_name||fp.name||'')}" onclick="openMediaViewer(${sidArg})">`;
+      } else if (isVideo && m._imgUrl) {
+        bubbleBody = `<video class="msg-video" src="${m._imgUrl}" controls preload="metadata"></video>`;
+      } else if ((isImg || isVideo) && m.file_payload) {
+        const lbl = isVideo ? 'распаковываю видео…' : 'загружаю…';
+        const w = isVideo ? 260 : 200, h = isVideo ? 180 : 140;
+        bubbleBody = `<div class="msg-img-placeholder" style="width:${w}px;height:${h}px;background:rgba(0,0,0,0.25);border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--sub);font-size:11px;flex-direction:column;gap:8px;"><i class="fa-solid fa-${isVideo?'film':'image'}" style="font-size:24px;opacity:0.5;"></i>${lbl}</div>`;
         setTimeout(() => loadImgPreview(m.sid), 50);
       } else {
         const name = esc(fp.file_name || fp.name || 'file');

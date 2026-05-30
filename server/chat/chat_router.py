@@ -24,9 +24,9 @@ import base64, time
 
 from social_router import auth_member, db, ws_hub, _rate_limit
 
-# Лимит размера зашифрованного файла. 9MB — разумный максимум для browser-based E2E
-# (с запасом под nginx client_max_body_size 10M + overhead AES-GCM tag + multipart headers).
-MAX_FILE_SIZE = 9 * 1024 * 1024
+# Лимит размера зашифрованного файла. 50MB — разумно для video/больших картинок.
+# Требует nginx client_max_body_size >= 55M.
+MAX_FILE_SIZE = 50 * 1024 * 1024
 FILE_TTL_DAYS = 7
 
 router = APIRouter(prefix="/api/chat", tags=["GhostChat"])
