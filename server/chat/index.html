@@ -975,8 +975,12 @@ async function doRegister(){
   err.textContent='';if(!u||!n||!p||!c){err.textContent='Заполните все поля';return;}
   if(p!==c){err.textContent='Пароли не совпадают';return;}
   btn.disabled=true;btn.textContent='...';
+  // Реф: сначала из URL, потом из localStorage (лендинг мог сохранить)
+  let ref = (new URLSearchParams(location.search)).get('ref') || localStorage.getItem('gs_ref') || null;
+  if (ref) ref = ref.trim().replace(/^@/, '').toLowerCase();
   try{
-    const d=await soc('/register','POST',{username:u,display_name:n,password:p});
+    const d=await soc('/register','POST',{username:u,display_name:n,password:p,ref:ref||undefined});
+    if (ref) localStorage.removeItem('gs_ref');
     token=d.token;me=d;
     localStorage.setItem('gs_token',token);localStorage.setItem('gs_me',JSON.stringify(me));setSsoCookie(token);
     showBoot('Настройка профиля', 'Минуточку…');

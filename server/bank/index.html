@@ -341,7 +341,25 @@ nav#appNav a:not(.active):hover{color:var(--text);}
           <div class="src"><i class="fa-solid fa-heart"></i><span class="label">Лайк на твой пост</span><b>+1</b></div>
           <div class="src"><i class="fa-solid fa-comment"></i><span class="label">Коммент</span><b>+2</b></div>
           <div class="src"><i class="fa-solid fa-user-plus"></i><span class="label">Подписчик</span><b>+5</b></div>
+          <div class="src"><i class="fa-solid fa-user-group"></i><span class="label">Приведённый друг</span><b>+10</b></div>
           <div class="src"><i class="fa-solid fa-trophy"></i><span class="label">Welcome</span><b>+100</b></div>
+        </div>
+      </div>
+      <!-- Реферальная программа -->
+      <div class="section" id="refSection" style="display:none;">
+        <div class="section-title"><i class="fa-solid fa-share-nodes"></i>Пригласи друзей<span class="right" id="refStats" style="font-size:10px;color:var(--sub);font-weight:600;"></span></div>
+        <div style="background:linear-gradient(135deg,rgba(168,85,247,0.10),rgba(236,72,153,0.10));border:1px solid rgba(168,85,247,0.30);border-radius:14px;padding:14px;">
+          <div style="font-size:12px;color:var(--sub);margin-bottom:8px;line-height:1.5;">
+            Делись ссылкой — друг получит <b style="color:var(--primary);">+30 Gost</b> при регистрации, ты — <b style="color:var(--primary);">+10 Gost</b> за каждого.
+          </div>
+          <div style="display:flex;gap:6px;margin-bottom:10px;">
+            <input id="refLinkInp" readonly style="flex:1;padding:9px 11px;border-radius:8px;border:1px solid var(--border-strong);background:rgba(0,0,0,0.25);color:var(--text);font-family:'SF Mono',Menlo,monospace;font-size:12px;">
+            <button onclick="copyRefLink()" id="refCopyBtn" style="padding:9px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;"><i class="fa-solid fa-copy"></i></button>
+          </div>
+          <button onclick="shareRefLink()" style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;">
+            <i class="fa-solid fa-share"></i>&nbsp; Поделиться
+          </button>
+          <div id="refInvitedList" style="margin-top:12px;"></div>
         </div>
       </div>
       <div class="section">
@@ -629,6 +647,8 @@ async function loadWallet(){
     document.getElementById('claimAmt').textContent = w.daily_reward;
     setupDailyClaim(w.next_daily_in || 0);
     renderGostTx(txGost.transactions || []);
+    // Реф-блок — параллельно, не блокируем кошелёк если упадёт
+    loadRefBlock().catch(() => {});
     // Soul state
     document.getElementById('soulRate').textContent = state.rate_paused ? '⏸ паузa' : fmtNum(state.soul_rate_gost);
     document.getElementById('sysBal').textContent = fmtNum(state.system_balance);
@@ -1333,6 +1353,70 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('focus', () => { if (token) loadWallet(); });
 
 init();
+
+// ── Реферальная программа ──
+async function loadRefBlock(){
+  let data;
+  try { data = await api('/ref/me'); }
+  catch(e) { return; }
+  const sec = document.getElementById('refSection');
+  if (!sec) return;
+  sec.style.display = '';
+  const origin = location.origin || 'https://ghostecos.duckdns.org';
+  const fullLink = origin + '/?ref=' + encodeURIComponent(data.username);
+  document.getElementById('refLinkInp').value = fullLink;
+  const stats = document.getElementById('refStats');
+  if (stats) stats.textContent = `${data.total_invited} · +${data.total_earned_gost} Gost`;
+  // Список приглашённых
+  const list = document.getElementById('refInvitedList');
+  if (data.invited && data.invited.length) {
+    list.innerHTML = `<div style="font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Кого ты привёл (${data.total_invited})</div>` +
+      data.invited.slice(0, 5).map(u =>
+        `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+           <div style="width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700;">${(u.display_name||u.username||'?')[0].toUpperCase()}</div>
+           <div style="flex:1;font-size:12px;">${escape_(u.display_name || u.username)}</div>
+           <div style="font-size:10px;color:var(--muted);">@${escape_(u.username)}</div>
+         </div>`
+      ).join('') +
+      (data.total_invited > 5 ? `<div style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px;">+ ещё ${data.total_invited - 5}</div>` : '');
+  } else {
+    list.innerHTML = '';
+  }
+}
+
+function escape_(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function copyRefLink(){
+  const inp = document.getElementById('refLinkInp');
+  if (!inp || !inp.value) return;
+  try {
+    await navigator.clipboard.writeText(inp.value);
+    const btn = document.getElementById('refCopyBtn');
+    const old = btn.innerHTML;
+    btn.innerHTML = '<i class="fa-solid fa-check"></i>';
+    setTimeout(() => { btn.innerHTML = old; }, 1500);
+    showToast('Ссылка скопирована');
+  } catch(_) {
+    inp.select(); document.execCommand('copy');
+    showToast('Ссылка скопирована');
+  }
+}
+
+async function shareRefLink(){
+  const link = document.getElementById('refLinkInp').value;
+  if (!link) return;
+  const text = 'Заходи в GhostChat — мессенджер где сервер не видит твои сообщения. Получишь +30 Gost: ' + link;
+  if (navigator.share) {
+    try { await navigator.share({title:'GhostChat', text, url: link}); return; } catch(_) {}
+  }
+  // Fallback: копируем
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('Текст скопирован');
+  } catch(_) { showToast('Скопируйте ссылку вручную', true); }
+}
 </script>
 </body>
 </html>

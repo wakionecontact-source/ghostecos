@@ -1283,8 +1283,12 @@ async function doRegister() {
   if (!username || !display_name || !password || !confirm) { errEl.textContent = 'Заполните все поля'; return; }
   if (password !== confirm) { errEl.textContent = 'Пароли не совпадают'; return; }
   btn.disabled = true; btn.textContent = '...';
+  // Реф: из URL или localStorage (сохранил лендинг)
+  let ref = (new URLSearchParams(location.search)).get('ref') || localStorage.getItem('gs_ref') || null;
+  if (ref) ref = ref.trim().replace(/^@/, '').toLowerCase();
   try {
-    const d = await api('/register', 'POST', { username, display_name, password });
+    const d = await api('/register', 'POST', { username, display_name, password, ref: ref || undefined });
+    if (ref) localStorage.removeItem('gs_ref');
     token = d.token; me = d;
     localStorage.setItem('gs_token', token); setSsoCookie(token);
     localStorage.setItem('gs_me', JSON.stringify(me));

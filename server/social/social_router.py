@@ -38,6 +38,7 @@ class RegisterBody(BaseModel):
     username: str
     display_name: str
     password: str
+    ref: Optional[str] = None   # username пригласителя (из ?ref=... на лендинге)
 
 class LoginBody(BaseModel):
     username: str
@@ -680,6 +681,15 @@ def init():
         c.execute("ALTER TABLE users ADD COLUMN usernames_created INTEGER NOT NULL DEFAULT 0")
     except sqlite3.OperationalError:
         pass
+    try:
+        # Реферальная программа: кто пригласил этого юзера. NULL — пришёл сам.
+        c.execute("ALTER TABLE users ADD COLUMN referrer_id INTEGER DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("CREATE INDEX IF NOT EXISTS idx_users_referrer ON users(referrer_id)")
+    except sqlite3.OperationalError:
+        pass
     c.commit()
     c.close()
 
@@ -1008,11 +1018,22 @@ def register(body: RegisterBody, request: Request):
     seed_alpha = "abcdefghkmnpqrstuvwxyz23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
     seed = ''.join(secrets.choice(seed_alpha) for _ in range(16))
     seed_hash = hash_argon2(seed)
+    # Резолвим пригласителя ДО INSERT — чтобы записать referrer_id сразу
+    referrer_id = None
+    ref_username = (body.ref or "").strip().lower().lstrip("@")
+    if ref_username and ref_username != username:
+        c0 = db()
+        try:
+            r = c0.execute("SELECT id FROM users WHERE username=?", (ref_username,)).fetchone()
+            if r:
+                referrer_id = r["id"]
+        finally:
+            c0.close()
     c = db()
     try:
         c.execute(
-            "INSERT INTO users (username, display_name, argon2_hash, in_ghostchat, seed_hash) VALUES (?,?,?,0,?)",
-            (username, display_name, argon2, seed_hash),
+            "INSERT INTO users (username, display_name, argon2_hash, in_ghostchat, seed_hash, referrer_id) VALUES (?,?,?,0,?,?)",
+            (username, display_name, argon2, seed_hash, referrer_id),
         )
         uid = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
         c.execute("INSERT INTO soc_tokens (user_id, token) VALUES (?,?)", (uid, token))
@@ -1024,9 +1045,16 @@ def register(body: RegisterBody, request: Request):
         c.close()
     try: award_gost(uid, 'register')
     except Exception: pass
+    # Реферальные награды (отдельно, после успешной регистрации)
+    if referrer_id and referrer_id != uid:
+        try: award_gost(uid, 'refin')           # welcome бонус приглашённому
+        except Exception: pass
+        try: award_gost(referrer_id, 'refout')  # пригласителю
+        except Exception: pass
     return {
         "id": uid, "username": username, "display_name": display_name, "token": token,
         "seed_phrase": seed,  # показываем ОДИН РАЗ — юзер должен сохранить!
+        "referrer": ref_username if referrer_id else None,
     }
 
 
@@ -2408,6 +2436,8 @@ GOST_REWARDS = {
     'react':       1,   # автор поста — за чужой лайк
     'comment':     2,   # автор поста — за чужой коммент
     'follow':      5,   # юзер — за нового подписчика
+    'refout':     10,   # пригласителю — за приведённого юзера
+    'refin':      30,   # приглашённому — welcome bonus сверх register
 }
 # Cap начисления per-источник per-юзер за скользящие 24ч (защита от спама)
 GOST_DAILY_CAP = {
@@ -2415,7 +2445,8 @@ GOST_DAILY_CAP = {
     'react':    50,    # ≈ 50 лайков на свои посты
     'comment':  60,    # ≈ 30 комментов
     'follow':   25,    # ≈ 5 новых фолловеров
-    # daily/register — natural cap (1 раз/24ч / one-time)
+    'refout':   100,   # ≈ 10 рефералов в день засчитано (anti-spam)
+    # daily/register/refin — natural cap (one-time)
 }
 DAILY_CLAIM_INTERVAL = 24 * 3600   # секунд между daily-claim
 ALLOWED_CURRENCIES = {'gost', 'soul', 'prem'}
@@ -2540,6 +2571,67 @@ def award_gost(
         "balance": new_bal,
     })
     return {"credited": amount, "new_balance": new_bal, "reason": "ok"}
+
+
+# ── Referral API ──────────────────────────────────────────────────────────────
+
+@router.get("/ref/me")
+def my_referrals(authorization: Optional[str] = Header(None)):
+    """Моя реф-статистика: ссылка + сколько привёл + сколько заработал."""
+    user = auth_member(authorization)
+    c = db()
+    # Список приглашённых (последние 50)
+    rows = c.execute("""
+        SELECT id, username, display_name, created_at
+        FROM users WHERE referrer_id=?
+        ORDER BY id DESC LIMIT 50
+    """, (user["id"],)).fetchall()
+    invited = [
+        {"id": r["id"], "username": r["username"], "display_name": r["display_name"], "created_at": r["created_at"]}
+        for r in rows
+    ]
+    # Всего приведено
+    total = c.execute(
+        "SELECT COUNT(*) as cnt FROM users WHERE referrer_id=?", (user["id"],)
+    ).fetchone()["cnt"]
+    # Заработано Gost через рефералов
+    earned = c.execute(
+        "SELECT COALESCE(SUM(amount), 0) as s FROM soc_wallet_tx WHERE user_id=? AND source='refout'",
+        (user["id"],)
+    ).fetchone()["s"]
+    # Кто меня пригласил
+    invited_by = None
+    me_row = c.execute("SELECT referrer_id FROM users WHERE id=?", (user["id"],)).fetchone()
+    if me_row and me_row["referrer_id"]:
+        r2 = c.execute("SELECT username, display_name FROM users WHERE id=?", (me_row["referrer_id"],)).fetchone()
+        if r2:
+            invited_by = {"username": r2["username"], "display_name": r2["display_name"]}
+    c.close()
+    return {
+        "username": user["username"],
+        "ref_link": f"/?ref={user['username']}",
+        "total_invited": total,
+        "total_earned_gost": earned,
+        "reward_per_invite": GOST_REWARDS['refout'],
+        "welcome_bonus": GOST_REWARDS['refin'],
+        "invited": invited,
+        "invited_by": invited_by,
+    }
+
+
+@router.get("/ref/check/{username}")
+def ref_check(username: str):
+    """Публичный: проверить существует ли реферер. Используется на лендинге
+    чтобы показать "вас пригласил @user" до регистрации."""
+    uname = username.strip().lower().lstrip("@")
+    if not uname:
+        return {"exists": False}
+    c = db()
+    r = c.execute("SELECT username, display_name FROM users WHERE username=?", (uname,)).fetchone()
+    c.close()
+    if not r:
+        return {"exists": False}
+    return {"exists": True, "username": r["username"], "display_name": r["display_name"]}
 
 
 # ── Wallet API ────────────────────────────────────────────────────────────────

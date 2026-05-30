@@ -1053,6 +1053,30 @@
     });
   })();
 
+  // ── Реф-ссылка: ?ref=username → localStorage до регистрации ──
+  (function captureRef() {
+    try {
+      const params = new URLSearchParams(location.search);
+      const ref = params.get('ref');
+      if (!ref) return;
+      const clean = ref.trim().replace(/^@/, '').toLowerCase();
+      if (!/^[a-z0-9_]{2,32}$/.test(clean)) return;
+      // Проверим что юзер существует — иначе не сохраняем
+      fetch('/api/soc/ref/check/' + encodeURIComponent(clean))
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (!d || !d.exists) return;
+          localStorage.setItem('gs_ref', clean);
+          // Покажем баннер "Вас пригласил @user"
+          const banner = document.createElement('div');
+          banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:linear-gradient(135deg,#a855f7,#ec4899);color:#fff;padding:10px 16px;text-align:center;font-size:13px;font-weight:600;z-index:1000;box-shadow:0 4px 16px rgba(168,85,247,0.4);';
+          banner.innerHTML = `Вас пригласил <b>${d.display_name || '@' + d.username}</b> · +30 Gost при регистрации`;
+          document.body.appendChild(banner);
+          document.body.style.paddingTop = '44px';
+        }).catch(() => {});
+    } catch(_) {}
+  })();
+
   // ── Auth state ──
   (async function() {
     try {
