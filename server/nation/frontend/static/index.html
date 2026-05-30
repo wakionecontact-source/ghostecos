@@ -38,6 +38,7 @@
     <button class="tool" data-tool="rail"    title="Железная дорога"></button>
     <button class="tool" data-tool="tree"    title="Дерево"></button>
     <div class="tool-sep"></div>
+    <button class="tool" data-tool="select"  title="Изменить · выбрать постройку"></button>
     <button class="tool" data-tool="erase"   title="Снести · клик по объекту"></button>
     <div class="tool-sep"></div>
     <button class="tool" data-action="save"  title="Сохранить в файл"></button>
@@ -52,6 +53,22 @@
     <button id="draw-undo" class="mini">Назад</button>
     <button id="draw-done" class="mini primary">Готово</button>
     <button id="draw-cancel" class="mini ghost">Отмена</button>
+  </div>
+
+  <!-- ── EDIT PANEL (selected building) ── -->
+  <div id="edit" class="panel hidden">
+    <div class="edit-head">
+      <span id="edit-title">Постройка</span>
+      <span id="edit-meta">—</span>
+      <button id="edit-collapse" class="edit-collapse" title="Свернуть / развернуть">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M6 9 L12 15 L18 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div class="edit-hint">Тяни ручки на карте: <b>центр</b> — двигать, <b>зелёная</b> — крутить, <b>оранжевая</b> — размер</div>
+    <div class="edit-actions">
+      <button id="edit-del" class="mini danger">Удалить</button>
+      <button id="edit-done" class="mini ghost">Готово</button>
+    </div>
   </div>
 
   <!-- ── TOAST (transient feedback) ── -->
