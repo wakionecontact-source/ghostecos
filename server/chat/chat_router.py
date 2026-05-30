@@ -620,7 +620,7 @@ def group_send(gid: int, body: GroupSendBody, authorization: Optional[str] = Hea
     _rate_limit(f"groupsend:{user['id']}", limit=120, window=60)
     if not _is_b64(body.ciphertext) or len(body.ciphertext) > 16000:
         raise HTTPException(400, "ciphertext: некорректный формат или > 16KB")
-    if not isinstance(body.envelope_keys, dict) or not body.envelope_keys:
+    if not isinstance(body.envelope_keys, dict):
         raise HTTPException(400, "envelope_keys: обязательно (dict)")
     if len(body.envelope_keys) > 200:
         raise HTTPException(400, "Слишком много envelope_keys")
@@ -638,6 +638,7 @@ def group_send(gid: int, body: GroupSendBody, authorization: Optional[str] = Hea
     if g["kind"] == "channel" and not _is_group_admin(c, gid, user["id"]):
         c.close(); raise HTTPException(403, "В канале писать могут только админы")
     # envelope_keys должны покрывать всех участников КРОМЕ отправителя
+    # Если группа из одного участника (только sender) — envelope_keys может быть пустым.
     members = [r["user_id"] for r in c.execute(
         "SELECT user_id FROM chat_group_members WHERE group_id=?", (gid,)
     ).fetchall()]
@@ -647,6 +648,8 @@ def group_send(gid: int, body: GroupSendBody, authorization: Optional[str] = Hea
     if missing:
         c.close()
         raise HTTPException(400, f"envelope_keys не покрывают всех получателей: missing {missing}")
+    # Если получателей нет (Saved Messages-like) — допустим пустой envelope, но требуем ciphertext.
+    # Сообщение не будет реально доставлено никому, но останется в истории на сервере недолго.
     envelope_json = _json.dumps({str(k): v for k, v in keys_int.items()}, ensure_ascii=False)
     c.execute(
         "INSERT INTO chat_group_messages (group_id, sender_id, ciphertext, envelope_keys) VALUES (?,?,?,?)",
@@ -675,6 +678,11 @@ def group_send(gid: int, body: GroupSendBody, authorization: Optional[str] = Hea
     echo = dict(payload)
     echo["envelope_keys"] = {}  # себе envelope не нужен, шифровка дешифруется на стороне sender-а из локального AES-кэша
     ws_hub.send_to(user["id"], "group.echo", echo)
+    # Если получателей нет (Saved Messages случай) — сразу удалим серверную копию,
+    # клиент уже сохранил в IDB через echo. Сервер бессмысленно держать.
+    if not recipients:
+        c.execute("DELETE FROM chat_group_messages WHERE id=?", (msg_id,))
+        c.commit()
     c.close()
     return {"status": "ok", "id": msg_id, "created_at": row["created_at"]}
 

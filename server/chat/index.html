@@ -2827,6 +2827,7 @@ async function sendGroupMessage(){
     renderGroupMessages();
   } catch(e) {
     optimistic.failed = true;
+    optimistic.pending = false;
     renderGroupMessages();
     showToast(e.message || 'Не отправлено', true);
   }
