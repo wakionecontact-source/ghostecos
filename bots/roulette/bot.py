@@ -254,29 +254,63 @@ async def start_wizard(event, state: FSMContext):
 
     await state.clear()
     await state.set_state(Form.name)
+    # Готовим кнопку "взять из Telegram" с display_name
+    tg_name_full = " ".join(
+        x for x in [event.from_user.first_name, event.from_user.last_name] if x
+    ).strip()
+    # Обрезаем до лимита 30
+    tg_name = (tg_name_full or event.from_user.username or "")[:30]
+    name_kb = None
+    if tg_name and len(tg_name) >= 2:
+        name_kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text=f"📋 Взять из Telegram: {tg_name}", callback_data="name:tg"),
+        ]])
     await send(
         "Заполняем анкету. Жми /cancel чтобы прервать.\n\n"
         "<b>Как тебя зовут?</b>\n(только имя, 2-30 символов)",
         parse_mode="HTML",
+        reply_markup=name_kb,
     )
+
+
+async def _accept_name(name: str, send_fn, state: FSMContext):
+    """Сохранить имя и перейти к возрасту. Используется и из текста, и из кнопки."""
+    if not (2 <= len(name) <= 30):
+        await send_fn("Имя 2-30 символов. Попробуй ещё:")
+        return False
+    await state.update_data(name=name)
+    await state.set_state(Form.age)
+    await send_fn("Сколько тебе лет? (10-60)")
+    return True
 
 
 @dp.message(Form.name, F.text)
 async def step_name(m: Message, state: FSMContext):
-    name = m.text.strip()
-    if not (2 <= len(name) <= 30):
-        await m.answer("Имя 2-30 символов. Попробуй ещё:")
+    await _accept_name(m.text.strip(), m.answer, state)
+
+
+@dp.callback_query(Form.name, F.data == "name:tg")
+async def step_name_from_tg(cq: CallbackQuery, state: FSMContext):
+    tg_name = " ".join(
+        x for x in [cq.from_user.first_name, cq.from_user.last_name] if x
+    ).strip()
+    if not tg_name:
+        tg_name = cq.from_user.username or ""
+    tg_name = tg_name[:30]
+    if len(tg_name) < 2:
+        await cq.answer("В Telegram нет нормального имени — введи вручную", show_alert=True)
         return
-    await state.update_data(name=name)
-    await state.set_state(Form.age)
-    await m.answer("Сколько тебе лет? (14-99)")
+    await cq.answer(f"Взял: {tg_name}")
+    try: await cq.message.edit_reply_markup(reply_markup=None)
+    except: pass
+    await _accept_name(tg_name, cq.message.answer, state)
 
 
 @dp.message(Form.age, F.text)
 async def step_age(m: Message, state: FSMContext):
     t = m.text.strip()
-    if not t.isdigit() or not (14 <= int(t) <= 99):
-        await m.answer("Введи число 14-99:")
+    if not t.isdigit() or not (10 <= int(t) <= 60):
+        await m.answer("Введи число от 10 до 60:")
         return
     await state.update_data(age=int(t))
     await state.set_state(Form.gender)
