@@ -289,6 +289,7 @@ nav#appNav a:not(.active):hover{color:var(--text);}
 
 <div id="mesh-bg"></div>
 <script src="/mesh.js"></script>
+<script src="/dialog.js"></script>
 
 <header>
   <div class="header-top">
@@ -1000,17 +1001,21 @@ async function unlistNft(nftId){
   } catch(e) { showToast(e.message || 'Ошибка', true); }
 }
 
-function openTransferNft(nftId){
-  const username = prompt('Username получателя:');
+async function openTransferNft(nftId){
+  const raw = await Dialog.prompt('Username получателя:', '',
+    { title: 'Передать NFT', placeholder: '@user', okText: 'Далее' });
+  if (raw == null) return;
+  const username = raw.trim().replace(/^@/, '').toLowerCase();
   if (!username) return;
-  if (!confirm(`Передать NFT юзеру @${username}?\nКомиссия 1 Soul.`)) return;
-  api('/nft/transfer', 'POST', { nft_id: nftId, to_username: username.trim().toLowerCase() })
-    .then(r => {
-      showToast(`NFT передан @${r.recipient.username}`);
-      closeModal('nftModal');
-      loadWallet(); loadMyNfts();
-    })
-    .catch(e => showToast(e.message || 'Ошибка', true));
+  const ok = await Dialog.confirm(`Передать NFT юзеру @${username}?\n\nКомиссия: 1 Soul.`,
+    { title: 'Подтвердить передачу', okText: 'Передать' });
+  if (!ok) return;
+  try {
+    const r = await api('/nft/transfer', 'POST', { nft_id: nftId, to_username: username });
+    showToast(`NFT передан @${r.recipient.username}`);
+    closeModal('nftModal');
+    loadWallet(); loadMyNfts();
+  } catch(e) { showToast(e.message || 'Ошибка', true); }
 }
 
 // ── Soul transfer ──
@@ -1080,7 +1085,7 @@ function copyInvLink(ev, code){
   navigator.clipboard.writeText(url).then(() => showToast('Ссылка скопирована'));
 }
 async function cancelInvoice(code){
-  if (!confirm('Отменить счёт?')) return;
+  if (!await Dialog.confirm('Отменить счёт?', { title: 'Отменить счёт', danger: true })) return;
   try { await api(`/invoice/${code}`, 'DELETE'); showToast('Отменён'); loadInvoices(); }
   catch(e) { showToast(e.message, true); }
 }
@@ -1193,7 +1198,7 @@ async function doCreateUsername(){
   } catch(e) { showToast(e.message, true); }
 }
 async function setUsernamePrimary(u){
-  if (!confirm(`Сделать @${u} основным username?`)) return;
+  if (!await Dialog.confirm(`Сделать @${u} основным username?`, { title: 'Сменить основной', okText: 'Сделать основным' })) return;
   try {
     const r = await api('/username/set_primary', 'POST', { username: u });
     showToast(`Теперь @${r.primary}`);
@@ -1204,12 +1209,15 @@ async function setUsernamePrimary(u){
 }
 async function listUsernameForSale(u, currentPrice){
   if (currentPrice !== null) {
-    if (!confirm(`Снять @${u} с продажи?`)) return;
+    if (!await Dialog.confirm(`Снять @${u} с продажи?`, { title: 'Снять', okText: 'Снять' })) return;
     try { await api('/username/list', 'POST', { username: u, price_soul: null }); showToast('Снят'); openUsername(); }
     catch(e) { showToast(e.message, true); }
     return;
   }
-  const price = +prompt(`Цена для @${u} в Soul:`, '50');
+  const raw = await Dialog.prompt(`Цена в Soul за @${u}:`, '50',
+    { title: 'Выставить на продажу', placeholder: 'число', okText: 'Выставить' });
+  if (raw == null) return;
+  const price = +raw;
   if (!price || price < 1) return;
   try { await api('/username/list', 'POST', { username: u, price_soul: price }); showToast(`Выставлен за ${price} Soul`); openUsername(); }
   catch(e) { showToast(e.message, true); }

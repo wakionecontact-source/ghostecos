@@ -1127,6 +1127,7 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
 <div class="toast" id="toast"></div>
 
 <script src="/mesh.js"></script>
+<script src="/dialog.js"></script>
 <script>
 const API = '/api/soc';
 let token = localStorage.getItem('gs_token');
@@ -3224,8 +3225,8 @@ function renderEditPostMedia() {
   `).join('');
 }
 
-function removeEditMedia(idx) {
-  if (!confirm('Убрать этот файл? Его нельзя будет вернуть.')) return;
+async function removeEditMedia(idx) {
+  if (!await Dialog.confirm('Убрать этот файл? Его нельзя будет вернуть.', { title: 'Удалить медиа', danger: true })) return;
   _editPostMedia.splice(idx, 1);
   renderEditPostMedia();
 }
@@ -3267,16 +3268,34 @@ async function submitEditPost() {
 }
 
 async function mintPostAsNft(postId) {
-  // Простой prompt-based UI. Полноценную модалку сделаем потом.
-  const supply = +prompt('Тираж NFT (100-10000):', '100');
+  const supplyRaw = await Dialog.prompt('Тираж NFT (100-10000):', '100',
+    { title: 'Создать NFT — шаг 1/4', placeholder: 'число', okText: 'Далее' });
+  if (supplyRaw == null) return;
+  const supply = +supplyRaw;
   if (!supply || supply < 100) return;
-  const price = +prompt('Цена за штуку (Soul):', '5');
+  const priceRaw = await Dialog.prompt('Цена за штуку в Soul:', '5',
+    { title: 'Создать NFT — шаг 2/4', placeholder: 'число', okText: 'Далее' });
+  if (priceRaw == null) return;
+  const price = +priceRaw;
   if (!price || price < 1) return;
-  const autoBuy = +prompt(`Сколько штук выкупить себе (0-${supply})?\nПолучите Soul за каждую (если в системе хватает):`, '0') || 0;
-  const emoji = prompt('Эмодзи (1-2 символа, опц.):', '') || '';
+  const autoBuyRaw = await Dialog.prompt(
+    `Сколько штук выкупить себе (0-${supply})?\nПолучите Soul за каждую (если в системе хватает).`,
+    '0',
+    { title: 'Создать NFT — шаг 3/4', placeholder: 'число', okText: 'Далее' }
+  );
+  if (autoBuyRaw == null) return;
+  const autoBuy = +autoBuyRaw || 0;
+  const emojiRaw = await Dialog.prompt('Эмодзи (1-2 символа, можно пропустить):', '',
+    { title: 'Создать NFT — шаг 4/4', maxLength: 4, okText: 'Далее' });
+  if (emojiRaw == null) return;
+  const emoji = emojiRaw.trim();
   const supplyFee = Math.max(1, Math.round((10000 / supply) ** 1.1));
   const gostCost = 50 + supplyFee;
-  if (!confirm(`Создать NFT из этого поста?\n\nТираж: ${supply}\nЦена в маркете: ${price} Soul\nАвтовыкуп: ${autoBuy} шт\n\nСтоимость создания: ${gostCost} Gost\nПолучите за автовыкуп: ${autoBuy * price} Soul`)) return;
+  const ok = await Dialog.confirm(
+    `Тираж: ${supply}\nЦена в маркете: ${price} Soul\nАвтовыкуп: ${autoBuy} шт\n\nСтоимость создания: ${gostCost} Gost\nПолучите за автовыкуп: ${autoBuy * price} Soul`,
+    { title: 'Создать NFT из поста?', okText: 'Создать' }
+  );
+  if (!ok) return;
   try {
     const r = await api('/post/mint_as_nft', 'POST', {
       post_id: postId, supply, sell_price_soul: price, auto_buy: autoBuy,
@@ -3510,8 +3529,8 @@ function renderMediaPreview() {
   `).join('') + '</div>';
 }
 
-function removeMedia(idx) {
-  if (!confirm('Удалить этот файл?')) return;
+async function removeMedia(idx) {
+  if (!await Dialog.confirm('Удалить этот файл?', { title: 'Убрать вложение', danger: true })) return;
   attachedFiles.splice(idx, 1); renderMediaPreview(); updatePubBtn();
 }
 

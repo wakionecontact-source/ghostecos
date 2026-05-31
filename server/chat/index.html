@@ -523,6 +523,7 @@ button,input,textarea{font-family:inherit;}
 <div class="toast" id="toast"></div>
 
 <script src="/mesh.js"></script>
+<script src="/dialog.js"></script>
 <script>
 // ════════════════════════════════════════════════════════════════════
 // GhostChat web — E2E-зашифрованный мессенджер
@@ -880,12 +881,13 @@ async function verifyAndPinPub(username, pub){
   }
   if (existing.pub === pub) return true;
   // Ключ изменился. Спрашиваем юзера.
-  const ok = confirm(
-    `⚠ ВНИМАНИЕ: ключ шифрования собеседника @${username} изменился!\n\n` +
+  const ok = await Dialog.confirm(
+    `Ключ шифрования собеседника @${username} изменился.\n\n` +
     `Это может означать:\n` +
     `  • Собеседник зашёл с нового устройства / сменил пароль (нормально)\n` +
     `  • Кто-то подменяет ключ на сервере (опасно — ваши сообщения могут читать)\n\n` +
-    `Доверять новому ключу? (если не уверены — нажмите Отмена)`
+    `Доверять новому ключу?`,
+    { title: '⚠️ Изменился ключ', okText: 'Доверять', danger: true }
   );
   if (ok) {
     await pinPubKey(username, pub, true);
@@ -1796,7 +1798,7 @@ async function sendMessage(){
 async function editMessage(sid){
   const m = activeMessages.find(x => String(x.sid) === String(sid));
   if (!m || !m.from_me || m.deleted) return;
-  const newText = prompt('Изменить сообщение:', m.text);
+  const newText = await Dialog.prompt('Изменить сообщение:', m.text, { title: 'Редактирование', okText: 'Сохранить' });
   if (newText == null || newText.trim() === m.text.trim()) return;
   if (!newText.trim()) { return deleteMessage(sid); }
   try {
@@ -1818,7 +1820,7 @@ async function editMessage(sid){
 async function deleteMessage(sid){
   const m = activeMessages.find(x => String(x.sid) === String(sid));
   if (!m || !m.from_me || m.deleted) return;
-  if (!confirm('Удалить сообщение у себя и собеседника?')) return;
+  if (!await Dialog.confirm('Удалить сообщение у себя и собеседника?', { title: 'Удалить?', danger: true })) return;
   try {
     const payload = { type: 'delete', target_sid: sid };
     if (activeGroup) {
@@ -3153,11 +3155,18 @@ function openGroupSettings(){
 async function openSetGroupTag(){
   if (!activeGroup) return;
   const current = activeGroup.username || '';
-  const newTag = (prompt(
-    `@тег группы/канала (3-20 символов, a-z 0-9 _).\n` +
+  const raw = await Dialog.prompt(
     `Глобально уникальный. Текущий: ${current ? '@' + current : '(не задан)'}`,
-    current
-  ) || '').trim().replace(/^@/, '').toLowerCase();
+    current,
+    {
+      title: '@тег группы/канала',
+      placeholder: '3-20 символов, a-z 0-9 _',
+      maxLength: 20,
+      okText: 'Установить',
+    }
+  );
+  if (raw == null) return;
+  const newTag = raw.trim().replace(/^@/, '').toLowerCase();
   if (!newTag || newTag === current) return;
   try {
     await chat(`/group/${activeGroup.id}/username`, 'POST', { username: newTag });
@@ -3173,7 +3182,8 @@ async function openSetGroupTag(){
 async function openSetGroupBio(){
   if (!activeGroup) return;
   const current = activeGroup.bio || '';
-  const newBio = prompt('Био (до 300 символов):', current);
+  const newBio = await Dialog.prompt('Био (до 300 символов):', current,
+    { title: 'Описание канала/группы', maxLength: 300, okText: 'Сохранить' });
   if (newBio == null) return;
   try {
     await chat(`/group/${activeGroup.id}/bio`, 'POST', { bio: newBio });
@@ -3187,7 +3197,11 @@ async function openSetGroupBio(){
 async function toggleGroupVisibility(){
   if (!activeGroup || activeGroup.kind !== 'channel') return;
   const becoming = activeGroup.is_public ? 'приватным (E2E, по заявкам)' : 'публичным (открытый, без E2E)';
-  if (!confirm(`Сделать канал ${becoming}?\n\nСтарая история сохранится, но новые юзеры её не увидят (если станет приватным).`)) return;
+  const ok = await Dialog.confirm(
+    `Сделать канал ${becoming}?\n\nСтарая история сохранится, но новые юзеры её не увидят (если станет приватным).`,
+    { title: 'Сменить тип канала', okText: 'Сменить' }
+  );
+  if (!ok) return;
   try {
     const r = await chat(`/group/${activeGroup.id}/visibility`, 'POST', { is_public: !activeGroup.is_public });
     activeGroup.is_public = r.is_public;
@@ -3200,7 +3214,10 @@ async function toggleGroupVisibility(){
 
 async function openAddMember(){
   if (!activeGroup) return;
-  const username = (prompt(`Введите @username для добавления в «${activeGroup.name}»:`, '') || '').trim().replace(/^@/, '').toLowerCase();
+  const raw = await Dialog.prompt(`Введите @username:`, '',
+    { title: `Добавить в «${activeGroup.name}»`, placeholder: '@alex', okText: 'Добавить' });
+  if (raw == null) return;
+  const username = raw.trim().replace(/^@/, '').toLowerCase();
   if (!username) return;
   try {
     await chat(`/group/${activeGroup.id}/members/${encodeURIComponent(username)}`, 'POST');
@@ -3218,7 +3235,7 @@ async function openAddMember(){
 
 async function kickMember(username){
   if (!activeGroup) return;
-  if (!confirm(`Удалить @${username} из «${activeGroup.name}»?`)) return;
+  if (!await Dialog.confirm(`Удалить @${username} из «${activeGroup.name}»?`, { title: 'Удалить участника', danger: true })) return;
   try {
     await chat(`/group/${activeGroup.id}/members/${encodeURIComponent(username)}`, 'DELETE');
     showToast('Удалён');
@@ -3235,7 +3252,7 @@ async function kickMember(username){
 
 async function leaveGroup(){
   if (!activeGroup) return;
-  if (!confirm(`Покинуть «${activeGroup.name}»?`)) return;
+  if (!await Dialog.confirm(`Покинуть «${activeGroup.name}»?`, { title: 'Покинуть', okText: 'Покинуть', danger: true })) return;
   try {
     await chat(`/group/${activeGroup.id}/members/${encodeURIComponent(me.username)}`, 'DELETE');
     closeModal('grpMembersModal');
@@ -3249,7 +3266,7 @@ async function leaveGroup(){
 }
 
 async function confirmDeleteGroup(gid, name){
-  if (!confirm(`Удалить «${name}»? Это действие необратимо.`)) return;
+  if (!await Dialog.confirm(`Удалить «${name}»? Это действие необратимо.`, { title: 'Удалить?', okText: 'Удалить', danger: true })) return;
   try {
     await chat(`/group/${gid}`, 'DELETE');
     showToast('Удалено');
