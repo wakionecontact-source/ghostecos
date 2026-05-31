@@ -657,13 +657,13 @@ function roadIntersections() {
       for (let j = 1; j < rb.length; j++) if (pointSegDistM(end[0], end[1], rb[j - 1], rb[j]) < 6) { pts.push(projOnSegLL(end, rb[j - 1], rb[j])); break; }   // точку примыкания центрируем НА дорогу (если соединено чуть мимо)
     }
   }
-  const ded = []; for (const p of pts) if (!ded.some(q => distMeters(p[0], p[1], q[0], q[1]) < 7)) ded.push(p);
+  const ded = []; for (const p of pts) if (!ded.some(q => distMeters(p[0], p[1], q[0], q[1]) < 12)) ded.push(p);   // 12 м: неровный стык (точки в ~8 м) схлопываем в ОДИН перекрёсток, иначе зебры от обеих внахлёст
   return ded.filter(p => roadArmsAt(p[0], p[1], LINE_M.road * 1.4) >= 3);   // реальный перекрёсток = ≥3 рукава (T/+/Y), НЕ изгиб дороги (2 рукава)
 }
 function roadsAt(lat, lng, rad) {
   const dirs = [];
   for (const road of state.roads) for (let i = 1; i < road.length; i++) if (pointSegDistM(lat, lng, road[i - 1], road[i]) < rad) { const E = (road[i][1] - road[i - 1][1]) * mPerDegLng(lat), N = (road[i][0] - road[i - 1][0]) * MPD_LAT; dirs.push(Math.atan2(N, E)); }
-  const out = []; for (const a of dirs) { const d = ((a * 180 / Math.PI) % 180 + 180) % 180; if (!out.some(o => { const diff = Math.abs(o - d); return Math.min(diff, 180 - diff) < 15; })) out.push(a); } return out;
+  const out = []; for (const a of dirs) { const d = ((a * 180 / Math.PI) % 180 + 180) % 180; if (!out.some(o => { const od = ((o * 180 / Math.PI) % 180 + 180) % 180; const diff = Math.abs(od - d); return Math.min(diff, 180 - diff) < 15; })) out.push(a); } return out;   // дедуп в ГРАДУСАХ (o хранится в радианах — раньше сравнивали рад с град, оси N/S не схлопывались → дубли зебр)
 }
 const armBearing = (from, to) => Math.atan2((to[0] - from[0]) * MPD_LAT, (to[1] - from[1]) * mPerDegLng(from[0]));
 function projOnSegLL(p, a, b) {                  // проекция точки на отрезок (в latlng)
