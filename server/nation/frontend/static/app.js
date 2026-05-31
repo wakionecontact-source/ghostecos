@@ -74,7 +74,7 @@ function initMap() {
   layers.esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 22, maxNativeZoom: 19, attribution: 'Esri · GhostNation' });   // апскейл тайлов выше 19 — можно подъехать вплотную
   layers.google = L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { maxZoom: 22, maxNativeZoom: 20, subdomains: ['0', '1', '2', '3'], attribution: 'Google · GhostNation' });
   layers[currentLayer].addTo(map);
-  map.on('moveend', () => { if (sim.follow) return; const c = map.getCenter(); state.view = { lat: c.lat, lng: c.lng, zoom: map.getZoom() }; save(); });
+  map.on('moveend', () => { if (sim.follow) return; if (isMP()) { mpLoadWorld(); return; } const c = map.getCenter(); state.view = { lat: c.lat, lng: c.lng, zoom: map.getZoom() }; save(); });
   map.on('zoomend', () => { [roadLayer, alleyLayer, pathLayer, railLayer].forEach(g => g && g.eachLayer(l => { if (l._mWidth != null) l.setStyle({ weight: Math.max(1, mToPx(l._mWidth)) }); })); renderCountryLabels(); });
   map.on('click', onMapClick);
   map.on('mousemove', e => { lastMouse = e.latlng; onMapMove(e); });
@@ -132,7 +132,7 @@ function finishDraw() {
     if (!pts.every(p => pointInPoly(p[0], p[1], state.border))) { flash('Район — только внутри границ', true); return; }
   }
   pushUndo();
-  if (draw.mode === 'borders') { state.border = pts; renderTerritory(); }
+  if (draw.mode === 'borders') { state.border = pts; renderTerritory(); if (isMP()) mpClaim(); }
   else if (draw.mode === 'road') { state.roads.push(pts); state.roadWalk[roadKey(pts)] = 'none'; renderRoads(); renderCrossings(); renderZebras(); openWalkBar(pts); }
   else if (draw.mode === 'rail') { state.rails.push(pts); renderRails(); renderCrossings(); }
   else if (draw.mode === 'alley') { state.alleys.push(pts); state.roadWalk[roadKey(pts)] = 'none'; renderAlleys(); openWalkBar(pts); }
@@ -191,9 +191,9 @@ function snapPath(latlng) {             // paths: exact; roads: offset to side (
   }
   return best;
 }
-function nearestRoad(lat, lng) {        // globally nearest road point + bearing (no threshold)
+function nearestRoad(lat, lng) {        // ближайшая УЛИЦА (дорога ИЛИ переулок) + bearing — дорожки/ориентация ведутся к ней
   const p = map.latLngToLayerPoint(L.latLng(lat, lng)); let best = null, bestD = Infinity;
-  for (const road of state.roads) for (let i = 1; i < road.length; i++) {
+  for (const road of state.roads.concat(state.alleys)) for (let i = 1; i < road.length; i++) {
     const a = map.latLngToLayerPoint(L.latLng(road[i - 1][0], road[i - 1][1])), b = map.latLngToLayerPoint(L.latLng(road[i][0], road[i][1]));
     const pr = projSeg(p, a, b), d = p.distanceTo(pr);
     if (d < bestD) { bestD = d; const ll = map.layerPointToLatLng(pr); const E = (road[i][1] - road[i - 1][1]) * mPerDegLng(lat), N = (road[i][0] - road[i - 1][0]) * MPD_LAT; best = { bearing: Math.atan2(N, E) * 180 / Math.PI, lat: ll.lat, lng: ll.lng }; }
@@ -340,8 +340,9 @@ function runGeneration(pairs, zone) {
 }
 
 /* ════════════════ ROAD CONTEXT MENU + SEGMENT SELECTION ════════════════ */
-let genSel = { active: false, segs: null, layer: null, zone: 'res' };
+let genSel = { active: false, segs: null, side: 'both', layer: null, zone: 'res' };   // segs = Set ключей "ri:si"; side — общая сторона застройки
 const streets = () => state.roads.concat(state.alleys);   // дороги И переулки — авто-застройка/меню работают по обоим
+function updateGenSideBtn() { const b = document.getElementById('gen-side'); if (b) b.textContent = 'Сторона: ' + (genSel.side === 'left' ? 'слева' : genSel.side === 'right' ? 'справа' : 'обе'); }
 function closeCtxMenu() { const m = document.getElementById('ctx-menu'); if (m) m.classList.add('hidden'); }
 function openRoadMenu(e, road) {
   closeCtxMenu();
@@ -356,30 +357,28 @@ function openRoadMenu(e, road) {
   m.style.top = Math.min(window.innerHeight - m.offsetHeight - 8, o.clientY) + 'px';
 }
 function startGenSelect(road) {
-  genSel.active = true; genSel.segs = new Map(); genSel.zone = 'res';
+  genSel.active = true; genSel.segs = new Set(); genSel.side = 'both'; genSel.zone = 'res';
   document.querySelectorAll('[data-zone]').forEach(x => x.classList.toggle('active', x.dataset.zone === 'res'));
-  const ri = streets().indexOf(road);
-  for (let si = 0; si < road.length - 1; si++) genSel.segs.set(ri + ':' + si, 'both');   // по умолчанию — обе стороны кликнутой улицы (дорога/переулок)
   genSel.layer = L.layerGroup().addTo(map);
-  drawGenSegs();
+  drawGenSegs(); updateGenSideBtn();   // ничего не пред-выбрано — юзер кликает по улицам, что застроить
   document.getElementById('gen-bar').classList.remove('hidden');
   document.getElementById('map').classList.add('selecting');
 }
 function drawGenSegs() {                          // сегменты ВСЕХ дорог; клик циклит обе→лево→право→выкл
   genSel.layer.clearLayers();
+  const w = Math.max(11, mToPx(LINE_M.road));   // ШИРОКАЯ кликабельная линия (с дорогу) — легко попасть, удобно жать
   streets().forEach((road, ri) => {
     for (let si = 0; si < road.length - 1; si++) {
-      const key = ri + ':' + si, side = genSel.segs.get(key), seg = [road[si], road[si + 1]];
-      const cyc = ev => { L.DomEvent.stop(ev); const c = genSel.segs.get(key); const n = c === undefined ? 'both' : c === 'both' ? 'left' : c === 'left' ? 'right' : null; if (n) genSel.segs.set(key, n); else genSel.segs.delete(key); drawGenSegs(); };
-      if (!side) { L.polyline(seg, { pane: 'pane-edit', color: '#9aa0a6', weight: 9, opacity: .4 }).addTo(genSel.layer).on('click', cyc); }
-      else if (side === 'both') { L.polyline(seg, { pane: 'pane-edit', color: '#D97757', weight: 9, opacity: .85 }).addTo(genSel.layer).on('click', cyc); }
-      else { const off = (side === 'left' ? 1 : -1) * (SIDEWALK_OFF + 4); L.polyline(offsetLine(seg, off), { pane: 'pane-edit', color: '#D97757', weight: 8, opacity: .85 }).addTo(genSel.layer).on('click', cyc); L.polyline(seg, { pane: 'pane-edit', color: '#D97757', weight: 3, opacity: .35 }).addTo(genSel.layer).on('click', cyc); }
+      const key = ri + ':' + si, on = genSel.segs.has(key), seg = [road[si], road[si + 1]];
+      const tog = ev => { L.DomEvent.stop(ev); genSel.segs.has(key) ? genSel.segs.delete(key) : genSel.segs.add(key); drawGenSegs(); };   // клик = включить/выключить участок
+      L.polyline(seg, { pane: 'pane-edit', color: on ? '#D97757' : '#9aa0a6', weight: w, opacity: on ? .5 : .26, lineCap: 'round' }).addTo(genSel.layer).on('click', tog);
+      if (on && genSel.side !== 'both') { const off = (genSel.side === 'left' ? 1 : -1) * (SIDEWALK_OFF + 4); L.polyline(offsetLine(seg, off), { pane: 'pane-edit', color: '#D97757', weight: Math.max(5, w * 0.45), opacity: .92, lineCap: 'round', interactive: false }).addTo(genSel.layer); }
     }
   });
 }
 function endGenSelect() { genSel.active = false; if (genSel.layer) { map.removeLayer(genSel.layer); genSel.layer = null; } genSel.segs = null; document.getElementById('gen-bar').classList.add('hidden'); document.getElementById('map').classList.remove('selecting'); }
 function confirmGen() {
-  const S = streets(); const pairs = (genSel.segs ? [...genSel.segs] : []).map(([k, side]) => { const [ri, si] = k.split(':').map(Number); return [S[ri], si, side]; }).filter(p => p[0]);
+  const S = streets(); const pairs = (genSel.segs ? [...genSel.segs] : []).map(k => { const [ri, si] = k.split(':').map(Number); return [S[ri], si, genSel.side]; }).filter(p => p[0]);
   const zone = genSel.zone || 'res';
   endGenSelect();
   if (pairs.length) runGeneration(pairs, zone);
@@ -448,7 +447,7 @@ function bBuildHandles() {
   });
 }
 function editBorder() { borderEdit.active = true; renderTerritory(); bBuildHandles(); document.getElementById('border-bar').classList.remove('hidden'); }
-function exitBorderEdit() { borderEdit.active = false; bClearHandles(); const bar = document.getElementById('border-bar'); if (bar) bar.classList.add('hidden'); save(); }
+function exitBorderEdit() { borderEdit.active = false; bClearHandles(); const bar = document.getElementById('border-bar'); if (bar) bar.classList.add('hidden'); save(); if (isMP()) mpClaim(); }
 
 /* ── ТАБЛИЧКИ СТРАН: видны при отдалении, лейбл с названием в центре границы (структура под мультиплеер) ── */
 const LABEL_MAX_ZOOM = 14;
@@ -1125,6 +1124,7 @@ function wire() {
   document.getElementById('edit-done').onclick = deselect;
   document.getElementById('edit-collapse').onclick = () => document.getElementById('edit').classList.toggle('collapsed');
   document.getElementById('cz-close').onclick = deselectCitizen;
+  document.getElementById('gen-side').onclick = () => { genSel.side = genSel.side === 'both' ? 'left' : genSel.side === 'left' ? 'right' : 'both'; updateGenSideBtn(); drawGenSegs(); };
   document.getElementById('gen-ok').onclick = confirmGen;
   document.getElementById('gen-cancel').onclick = endGenSelect;
   document.getElementById('tb-collapse').onclick = () => document.getElementById('toolbar').classList.toggle('collapsed');

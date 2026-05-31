@@ -11,7 +11,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
-  <link rel="stylesheet" href="style.css?v=17"/>
+  <link rel="stylesheet" href="style.css?v=18"/>
 </head>
 <body>
   <div id="map"></div>
@@ -29,6 +29,31 @@
       </div>
     </div>
   </header>
+
+  <!-- ── MODE TOGGLE + MULTIPLAYER BAR (top-right) ── -->
+  <div id="mode-toggle" class="panel">
+    <button id="mode-local" class="mode-btn active">Локально</button>
+    <button id="mode-mp" class="mode-btn">Мир</button>
+  </div>
+  <div id="mp-bar" class="panel hidden">
+    <b id="mp-balance">0 gost</b>
+    <span id="mp-pop">0 чел</span>
+    <button id="mp-logout" class="mini ghost hidden">Выйти</button>
+  </div>
+
+  <!-- ── MP LOGIN OVERLAY ── -->
+  <div id="mp-login" class="hidden">
+    <div class="mp-login-box panel">
+      <div class="mp-login-title">Вход в общий мир</div>
+      <div class="mp-login-sub">Аккаунт GhostEcos — тот же, что в GhostChat и на сайте</div>
+      <input id="mp-user" placeholder="Логин" spellcheck="false" autocomplete="username"/>
+      <input id="mp-pass" type="password" placeholder="Пароль" autocomplete="current-password"/>
+      <div class="mp-login-actions">
+        <button id="mp-login-cancel" class="mini ghost">Отмена</button>
+        <button id="mp-login-go" class="mini primary">Войти</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ── TOOLBAR (left) ── -->
   <nav id="toolbar" class="panel">
@@ -99,7 +124,8 @@
 
   <!-- ── AUTO-BUILD SEGMENT SELECTION BAR ── -->
   <div id="gen-bar" class="panel hidden">
-    <span id="gen-hint">Участок (клик: обе→лево→право) · зона:</span>
+    <span id="gen-hint">Кликай по улицам, что застроить:</span>
+    <button id="gen-side" class="zone">Сторона: обе</button>
     <div id="gen-zones">
       <button class="zone active" data-zone="res">Жилая</button>
       <button class="zone" data-zone="pureRes">Без магазинов</button>
@@ -139,6 +165,6 @@
   <!-- ── FLAG COLOR PICKER ── -->
   <div id="palette" class="panel hidden"></div>
 
-  <script src="app.js?v=17"></script>
+  <script src="app.js?v=18"></script>
 </body>
 </html>

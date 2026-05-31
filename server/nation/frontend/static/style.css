@@ -289,3 +289,19 @@ button { cursor: pointer; background: none; border: none; color: inherit; font-f
 }
 /* snapped vertex — green ring, signals "joined to existing road" */
 .vertex-dot.snapped { background: #15C26B; box-shadow: 0 0 0 2px #fff, 0 0 10px rgba(21,194,107,.7); }
+
+/* ── РЕЖИМЫ (локал/мир) + МУЛЬТИПЛЕЕР ── */
+#mode-toggle { top: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 3px; padding: 4px; z-index: 500; }
+.mode-btn { font-size: 12.5px; font-weight: 650; padding: 6px 13px; border-radius: 8px; color: var(--text-dim); }
+.mode-btn.active { background: var(--accent); color: #1a0f0a; }
+.mode-btn:not(.active):hover { background: rgba(255,255,255,0.08); color: var(--text); }
+#mp-bar { top: 56px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; padding: 7px 14px; font-size: 13px; z-index: 500; }
+#mp-bar b { color: var(--accent); font-weight: 700; }
+#mp-bar #mp-pop { color: var(--text-dim); }
+#mp-login { position: fixed; inset: 0; z-index: 2000; display: grid; place-items: center; background: rgba(0,0,0,0.55); backdrop-filter: blur(3px); }
+.mp-login-box { position: static; width: 300px; max-width: 90vw; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+.mp-login-title { font-size: 17px; font-weight: 700; }
+.mp-login-sub { font-size: 12px; color: var(--text-dim); margin-bottom: 4px; line-height: 1.45; }
+.mp-login-box input { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 9px; padding: 10px 12px; color: var(--text); font-size: 14px; outline: none; }
+.mp-login-box input:focus { border-color: var(--accent); }
+.mp-login-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
