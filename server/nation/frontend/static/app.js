@@ -67,7 +67,7 @@ let buildLayer, roadLayer, pathLayer, railLayer, crossLayer, editLayer, alleyLay
 let layers = {}, currentLayer = 'esri', lastMouse = null;
 
 function initMap() {
-  map = L.map('map', { zoomControl: false, attributionControl: true, worldCopyJump: true, maxZoom: 22, zoomSnap: 0, zoomDelta: 0.6, wheelPxPerZoomLevel: 100, zoomAnimation: true }).setView([state.view.lat, state.view.lng], state.view.zoom);   // zoomSnap:0 — плавный зум без рывков; maxZoom 22 — можно ближе
+  map = L.map('map', { zoomControl: false, attributionControl: true, worldCopyJump: true, maxZoom: 22, zoomSnap: 0, zoomDelta: 0.9, wheelPxPerZoomLevel: 45, zoomAnimation: true }).setView([state.view.lat, state.view.lng], state.view.zoom);   // zoomSnap:0 — плавный зум без рывков; maxZoom 22 — можно ближе
   [['pane-territory', 410], ['pane-district', 412], ['pane-path', 415], ['pane-alley', 417], ['pane-lines', 420], ['pane-cross', 425], ['pane-builds', 430], ['pane-edit', 440]]
     .forEach(([n, z]) => { map.createPane(n); map.getPane(n).style.zIndex = z; });
   L.control.zoom({ position: 'topright' }).addTo(map);
