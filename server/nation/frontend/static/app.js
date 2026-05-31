@@ -842,9 +842,12 @@ function carBlocked(c) {
   if (!state.lights.length) return false;
   const r = c.line; if (!r || !r[c.seg + 1]) return false;
   const p = lerpPos(r, c.seg, c.t), dir = segBear(r, c.seg, c.fwd), ux = Math.cos(dir), uy = Math.sin(dir);
+  const near = LINE_M.road * 1.15, far = LINE_M.road * 2.4;       // стоп-линия за зеброй … зона начала торможения
   for (const l of state.lights) {
-    const proj = (l.lng - p[1]) * mPerDegLng(p[0]) * ux + (l.lat - p[0]) * MPD_LAT * uy;   // насколько светофор ВПЕРЕДИ по ходу
-    if (proj > 3 && proj < 11) {                 // у стоп-линии и ещё не въехал — стоп на красный; въехавшую (proj<=3) не держим
+    const dE = (l.lng - p[1]) * mPerDegLng(p[0]), dN = (l.lat - p[0]) * MPD_LAT;
+    const proj = dE * ux + dN * uy;              // светофор впереди по ходу (м)
+    const lat = Math.abs(-dE * uy + dN * ux);    // боковое смещение — светофор должен быть на ЭТОЙ дороге
+    if (proj > near && proj < far && lat < LINE_M.road) {         // перед зеброй и ещё НЕ въехал — стоп на красный; въехавшую (proj<=near) не держим → не застрянет на перекрёстке
       const a = ((dir * 180 / Math.PI) % 180 + 180) % 180, ns = a > 45 && a < 135;
       if (ns !== phaseGreenNS()) return true;
     }
