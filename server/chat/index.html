@@ -163,6 +163,41 @@ button,input,textarea{font-family:inherit;}
 .msg.last.theirs .msg-bubble{border-top-left-radius:5px;border-bottom-left-radius:16px;}
 .msg.solo.mine .msg-bubble{border-radius:16px 16px 5px 16px;}
 .msg.solo.theirs .msg-bubble{border-radius:16px 16px 16px 5px;}
+
+/* TG-style хвостик у последнего bubble в серии (last/solo) */
+.msg.last .msg-bubble::after,
+.msg.solo .msg-bubble::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  width: 9px;
+  height: 13px;
+  pointer-events: none;
+}
+.msg.mine.last .msg-bubble::after,
+.msg.mine.solo .msg-bubble::after {
+  right: -7px;
+  background: radial-gradient(circle at 100% 0%, transparent 9px, var(--bubble-mine) 9px);
+}
+.msg.theirs.last .msg-bubble::after,
+.msg.theirs.solo .msg-bubble::after {
+  left: -7px;
+  background: radial-gradient(circle at 0% 0%, transparent 9px, var(--bubble-theirs) 9px);
+}
+
+/* Свайп-reply: bubble сдвигается вправо при горизонтальном перетаскивании */
+.msg.swiping .msg-bubble { transition: transform 0.05s linear; }
+.msg.swipe-release .msg-bubble { transition: transform 0.2s ease-out; }
+.msg-swipe-icon {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--primary);
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 13px; opacity: 0;
+  pointer-events: none;
+}
+.msg.mine .msg-swipe-icon { right: 100%; margin-right: 8px; }
+.msg.theirs .msg-swipe-icon { left: 100%; margin-left: 8px; }
 .msg-meta{display:inline-flex;align-items:center;gap:4px;font-size:10px;margin-left:8px;opacity:0.75;float:right;margin-top:5px;}
 .msg.mine .msg-meta{color:rgba(255,255,255,0.85);}
 .msg.theirs .msg-meta{color:var(--muted);}
@@ -2111,7 +2146,7 @@ function renderMessages(){
     }
     html += `<div class="msg ${m.from_me?'mine':'theirs'} ${cls}" data-sid="${esc(m.sid)}">
       <div style="display:flex;flex-direction:column;max-width:100%;">
-        <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,'${esc(m.sid)}')" ontouchstart="msgLongPressStart(event,'${esc(m.sid)}')" ontouchend="msgLongPressEnd()" ontouchmove="msgLongPressEnd()">${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
+        <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,'${esc(m.sid)}')" ontouchstart="msgLongPressStart(event,'${esc(m.sid)}')" ontouchend="msgLongPressEnd()" ontouchcancel="msgLongPressEnd()" ontouchmove="msgLongPressMove(event)">${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
         ${m.deleted ? '' : previewPlaceholder(m)}
       </div>
     </div>`;
@@ -2129,13 +2164,87 @@ function scrollToMsg(sid){
     setTimeout(() => bubble.style.boxShadow = '', 1200); }
 }
 
-// ─── Контекстное меню сообщения (правый клик на десктопе, long-press на тач) ───
+// ─── Long-press для меню + swipe-вправо для reply (TG-style) ───
 let _longPressTimer = null;
+let _swipeState = null;  // {sid, msgEl, bubbleEl, startX, startY, currentDx, isHoriz, sid}
+
 function msgLongPressStart(ev, sid){
+  // Запоминаем стартовую позицию для свайпа
+  const t = (ev.touches && ev.touches[0]) || ev;
+  const msgEl = ev.currentTarget.closest('.msg');
+  const bubbleEl = msgEl && msgEl.querySelector('.msg-bubble');
+  if (msgEl && bubbleEl) {
+    _swipeState = {
+      sid, msgEl, bubbleEl,
+      startX: t.clientX, startY: t.clientY,
+      currentDx: 0, isHoriz: null,
+    };
+  }
   if (_longPressTimer) clearTimeout(_longPressTimer);
-  _longPressTimer = setTimeout(() => { openMsgMenu(ev, sid); }, 500);
+  _longPressTimer = setTimeout(() => {
+    // long-press → меню (только если не свайпали)
+    if (_swipeState && _swipeState.isHoriz) return;
+    openMsgMenu(ev, sid);
+  }, 500);
 }
-function msgLongPressEnd(){ if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; } }
+
+function msgLongPressMove(ev){
+  if (!_swipeState) return;
+  const t = (ev.touches && ev.touches[0]) || ev;
+  const dx = t.clientX - _swipeState.startX;
+  const dy = t.clientY - _swipeState.startY;
+  // Определяем направление при первом значимом движении
+  if (_swipeState.isHoriz === null) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    _swipeState.isHoriz = Math.abs(dx) > Math.abs(dy);
+    if (!_swipeState.isHoriz) {
+      // Вертикальный скролл — отменяем long-press, не свайп
+      msgLongPressEnd();
+      return;
+    }
+    // Горизонтальный — отменяем long-press, начинаем свайп
+    if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+    _swipeState.msgEl.classList.add('swiping');
+    _ensureSwipeIcon(_swipeState.msgEl);
+  }
+  if (!_swipeState.isHoriz) return;
+  // Свайп только вправо для reply (тз — TG)
+  const useDx = Math.max(0, dx) * 0.45;
+  const capped = Math.min(useDx, 80);
+  _swipeState.currentDx = capped;
+  _swipeState.bubbleEl.style.transform = `translateX(${capped}px)`;
+  const icon = _swipeState.msgEl.querySelector('.msg-swipe-icon');
+  if (icon) icon.style.opacity = Math.min(1, capped / 50);
+}
+
+function msgLongPressEnd(){
+  if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+  if (_swipeState) {
+    const triggered = _swipeState.currentDx >= 45;
+    _swipeState.msgEl.classList.remove('swiping');
+    _swipeState.msgEl.classList.add('swipe-release');
+    _swipeState.bubbleEl.style.transform = '';
+    const icon = _swipeState.msgEl.querySelector('.msg-swipe-icon');
+    if (icon) icon.style.opacity = '0';
+    const sid = _swipeState.sid;
+    const msgEl = _swipeState.msgEl;
+    setTimeout(() => msgEl.classList.remove('swipe-release'), 220);
+    _swipeState = null;
+    if (triggered) {
+      // Триггерим reply
+      const m = activeMessages.find(x => String(x.sid) === String(sid));
+      if (m && !m.deleted && typeof startReply === 'function') startReply(m);
+    }
+  }
+}
+
+function _ensureSwipeIcon(msgEl) {
+  if (msgEl.querySelector('.msg-swipe-icon')) return;
+  const icon = document.createElement('div');
+  icon.className = 'msg-swipe-icon';
+  icon.innerHTML = '<i class="fa-solid fa-reply"></i>';
+  msgEl.appendChild(icon);
+}
 
 function openMsgMenu(ev, sid){
   closeMsgMenu();
@@ -2914,7 +3023,7 @@ function renderGroupMessages(){
     html += `<div class="msg ${m.from_me?'mine':'theirs'} ${cls}" data-sid="${esc(m.sid)}">
       <div style="display:flex;flex-direction:column;max-width:100%;">
         ${senderName}
-        <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,'${esc(m.sid)}')" ontouchstart="msgLongPressStart(event,'${esc(m.sid)}')" ontouchend="msgLongPressEnd()" ontouchmove="msgLongPressEnd()">${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
+        <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,'${esc(m.sid)}')" ontouchstart="msgLongPressStart(event,'${esc(m.sid)}')" ontouchend="msgLongPressEnd()" ontouchcancel="msgLongPressEnd()" ontouchmove="msgLongPressMove(event)">${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
       </div>
     </div>`;
   }
