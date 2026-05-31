@@ -157,12 +157,18 @@ function updateDrawHint() {
 
 /* ════════════════ SNAP ════════════════ */
 function projSeg(p, a, b) { const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy; if (l2 === 0) return a; let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2; t = Math.max(0, Math.min(1, t)); return L.point(a.x + t * dx, a.y + t * dy); }
-function snapLine(latlng) {            // snap to roads + rails (exact)
-  const p = map.latLngToLayerPoint(latlng); let best = null, bestD = SNAP_PX;
-  for (const line of state.roads.concat(state.rails, state.alleys)) for (let i = 0; i < line.length; i++) {
-    const v = map.latLngToLayerPoint(L.latLng(line[i][0], line[i][1]));
-    if (p.distanceTo(v) < bestD) { bestD = p.distanceTo(v); best = L.latLng(line[i][0], line[i][1]); }
-    if (i > 0) { const a = map.latLngToLayerPoint(L.latLng(line[i - 1][0], line[i - 1][1])); const pr = projSeg(p, a, v); if (p.distanceTo(pr) < bestD) { bestD = p.distanceTo(pr); best = map.layerPointToLatLng(pr); } }
+function snapLine(latlng) {            // снап к дорогам/жд/переулкам: ВЕРШИНЫ приоритетно и с бóльшим радиусом → чистые стыки
+  const p = map.latLngToLayerPoint(latlng), lines = state.roads.concat(state.rails, state.alleys);
+  let bestV = null, bestVD = SNAP_PX * 1.7;            // 1) ближайшая ВЕРШИНА (концы «прилипают» точно → ровные перекрёстки)
+  for (const line of lines) for (let i = 0; i < line.length; i++) {
+    const v = map.latLngToLayerPoint(L.latLng(line[i][0], line[i][1])), d = p.distanceTo(v);
+    if (d < bestVD) { bestVD = d; bestV = L.latLng(line[i][0], line[i][1]); }
+  }
+  if (bestV) return bestV;
+  let best = null, bestD = SNAP_PX;                    // 2) иначе — проекция на ближайший сегмент (T точно НА дорогу)
+  for (const line of lines) for (let i = 1; i < line.length; i++) {
+    const a = map.latLngToLayerPoint(L.latLng(line[i - 1][0], line[i - 1][1])), b = map.latLngToLayerPoint(L.latLng(line[i][0], line[i][1])), pr = projSeg(p, a, b);
+    if (p.distanceTo(pr) < bestD) { bestD = p.distanceTo(pr); best = map.layerPointToLatLng(pr); }
   }
   return best;
 }
