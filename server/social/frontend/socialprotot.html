@@ -1184,17 +1184,25 @@ function showToast(msg) {
   setTimeout(() => t.classList.remove('show'), 2200);
 }
 
-async function api(path, method = 'GET', body = null) {
+async function api(path, method = 'GET', body = null, opts2 = {}) {
   const h = { 'Content-Type': 'application/json' };
   if (token) h['Authorization'] = 'Bearer ' + token;
-  // Тайм-аут 20с чтобы fetch не висел вечно (slow-loris защита со стороны клиента)
+  // Тайм-аут (по умолчанию 20с). Для постов с медиа/миниск — поднимаем через opts2.timeout.
+  const timeout = opts2.timeout || 20000;
   const ctrl = new AbortController();
-  const tid = setTimeout(() => ctrl.abort(), 20000);
+  const tid = setTimeout(() => ctrl.abort(), timeout);
   const opts = { method, headers: h, signal: ctrl.signal };
   if (body) opts.body = JSON.stringify(body);
   let r;
-  try { r = await fetch(API + path, opts); }
-  finally { clearTimeout(tid); }
+  try {
+    r = await fetch(API + path, opts);
+  } catch(e) {
+    if (e.name === 'AbortError' || /aborted/i.test(e.message || '')) {
+      const err = new Error(`Сервер не ответил за ${Math.round(timeout/1000)}с. Попробуй ещё или проверь соединение.`);
+      err.timeout = true; throw err;
+    }
+    throw e;
+  } finally { clearTimeout(tid); }
   if (!r.ok) {
     const text = await r.text();
     let msg = text;
@@ -3621,7 +3629,7 @@ pubBtn.addEventListener('click', async () => {
     try {
       const video = attachedFiles[0];
       const caption = (content + ' ' + v.tags.map(t => '#' + t).join(' ')).trim();
-      await api('/miniska/new', 'POST', { caption, video_url: video.url });
+      await api('/miniska/new', 'POST', { caption, video_url: video.url }, { timeout: 90000 });
       postText.value = ''; charCount.textContent = '0 / 1000'; attachedFiles = []; renderMediaPreview();
       resetMiniskaTags();
       document.getElementById('miniskaToggle').checked = false;
@@ -3656,7 +3664,9 @@ pubBtn.addEventListener('click', async () => {
     const mediaPayload = attachedFiles.length ? attachedFiles.map(f => ({ url: f.url, type: f.type, name: f.name })) : null;
     const body = { text: content, media: mediaPayload };
     if (pollPayload) body.poll = pollPayload;
-    const r = await api('/post/new', 'POST', body);
+    // С медиа сервер может долго обрабатывать (Pillow/ffmpeg) — таймаут больше
+    const _to = attachedFiles.length ? 60000 : 20000;
+    const r = await api('/post/new', 'POST', body, { timeout: _to });
     postText.value = ''; charCount.textContent = '0 / 1000'; attachedFiles = []; renderMediaPreview();
     _pollDraft = null; renderPollEditor();
     showToast('Пост опубликован!');
@@ -3671,7 +3681,7 @@ pubBtn.addEventListener('click', async () => {
     const el = document.querySelector(`[data-id="${r.post_id}"]`);
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     startNewCheck();
-  } catch(e) { showToast('Ошибка публикации'); }
+  } catch(e) { showToast(e.message || 'Ошибка публикации'); }
   pubBtn.disabled = false; pubBtn.textContent = 'Опубликовать';
 });
 
