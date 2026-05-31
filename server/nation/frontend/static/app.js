@@ -1151,9 +1151,52 @@ function wire() {
 const MP_API = '/api/nation', MP_STORE = 'ghostnation:mp';
 const mp = { mode: localStorage.getItem('ghostnation:mode') === 'mp' ? 'mp' : 'local', country: null, balance: 0, pop: 0, worldLayer: null, saveTimer: null };
 function isMP() { return mp.mode === 'mp'; }
-function mpToken() { return localStorage.getItem('gs_token'); }
-function mpApi(path, opts) {
-  opts = opts || {}; const h = { 'Content-Type': 'application/json' }, t = mpToken(); if (t) h['Authorization'] = 'Bearer ' + t;
+
+// SSO-токен GhostEcos (общий для всей экосистемы — НЕ ТРОГАТЬ его в игре)
+function ssoToken() { return localStorage.getItem('gs_token'); }
+// JWT игры (живёт 24ч, перевыпускается из gs_token)
+function gnJwt() { return localStorage.getItem('gn_jwt'); }
+function gnJwtExp() { return parseInt(localStorage.getItem('gn_jwt_exp') || '0', 10); }
+function gnJwtFresh() {
+  const exp = gnJwtExp();
+  return gnJwt() && exp && (Date.now() / 1000) < (exp - 60);  // запас 60с
+}
+
+// Получить или перевыпустить JWT через SSO
+async function refreshGnJwt() {
+  const sso = ssoToken();
+  if (!sso) return null;
+  try {
+    const r = await fetch('/api/soc/sso/jwt', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + sso },
+    });
+    if (!r.ok) {
+      if (r.status === 401) {
+        // gs_token недействителен (юзер разлогинился в GS / истёк).
+        // НЕ удаляем чужой gs_token — пусть GS сам разберётся.
+        return null;
+      }
+      throw new Error('sso/jwt: HTTP ' + r.status);
+    }
+    const d = await r.json();
+    localStorage.setItem('gn_jwt', d.jwt);
+    localStorage.setItem('gn_jwt_exp', String(d.expires_at));
+    return d.jwt;
+  } catch (e) { console.warn('[gn_jwt]', e); return null; }
+}
+
+// JWT для запросов в /api/nation (с автоперевыпуском)
+async function mpToken() {
+  if (gnJwtFresh()) return gnJwt();
+  return await refreshGnJwt();
+}
+
+async function mpApi(path, opts) {
+  opts = opts || {};
+  const h = { 'Content-Type': 'application/json' };
+  const t = await mpToken();
+  if (t) h['Authorization'] = 'Bearer ' + t;
   return fetch(MP_API + path, Object.assign({}, opts, { headers: Object.assign(h, opts.headers || {}) }));
 }
 function mpInit() {
@@ -1163,6 +1206,8 @@ function mpInit() {
   document.getElementById('mode-mp').onclick = () => setMode('mp');
   document.getElementById('mp-login-go').onclick = mpSubmitLogin;
   document.getElementById('mp-login-cancel').onclick = () => { hideMpLogin(); if (isMP()) setMode('local'); };
+  const regBtn = document.getElementById('mp-login-register');
+  if (regBtn) regBtn.onclick = mpGoRegister;
   document.getElementById('mp-logout').onclick = mpLogout;
   updateModeUI();
   if (isMP()) enterMP();
@@ -1183,13 +1228,21 @@ function updateModeUI() {
 function updateBalanceUI() {
   const b = document.getElementById('mp-balance'); if (b) b.textContent = Math.round(mp.balance) + ' gost';
   const p = document.getElementById('mp-pop'); if (p) p.textContent = mp.pop + ' чел';
-  const lo = document.getElementById('mp-logout'); if (lo) lo.classList.toggle('hidden', !mpToken());
+  const lo = document.getElementById('mp-logout'); if (lo) lo.classList.toggle('hidden', !ssoToken());
 }
-function enterMP() { if (!mpToken()) { showMpLogin(); return; } mpLoadMine().then(mpLoadWorld); }
+function enterMP() { if (!ssoToken()) { showMpLogin(); return; } mpLoadMine().then(mpLoadWorld); }
 async function mpLoadMine() {
   try {
     const r = await mpApi('/mine');
-    if (r.status === 401) { localStorage.removeItem('gs_token'); showMpLogin(); return; }
+    if (r.status === 401) {
+      // gn_jwt истёк или невалиден. Сначала попробуем перевыпустить через SSO.
+      localStorage.removeItem('gn_jwt'); localStorage.removeItem('gn_jwt_exp');
+      const fresh = await refreshGnJwt();
+      if (fresh) return mpLoadMine();  // retry один раз
+      // Если SSO тоже мёртв — НЕ удаляем gs_token (это общий токен экосистемы),
+      // просто показываем экран входа через GhostEcos.
+      showMpLogin(); return;
+    }
     const d = await r.json();
     if (d.country) {
       const c = d.country; mp.country = c; mp.balance = c.balance || 0; mp.pop = c.population || 0;
@@ -1201,7 +1254,7 @@ async function mpLoadMine() {
   } catch (e) { flash('Сервер недоступен', true); }
 }
 function mpSyncSave() {
-  if (!isMP() || !mpToken() || !mp.country) return;
+  if (!isMP() || !ssoToken() || !mp.country) return;
   clearTimeout(mp.saveTimer);
   mp.saveTimer = setTimeout(async () => {
     try { const r = await mpApi('/mine', { method: 'PUT', body: JSON.stringify({ state }) });
@@ -1211,7 +1264,7 @@ function mpSyncSave() {
   }, 900);
 }
 async function mpClaim() {
-  if (!isMP() || !mpToken() || !state.border || state.border.length < 3) return;
+  if (!isMP() || !ssoToken() || !state.border || state.border.length < 3) return;
   try {
     const r = await mpApi('/claim', { method: 'POST', body: JSON.stringify({ name: state.name || 'Моя страна', color: state.color, border: state.border }) });
     const d = await r.json().catch(() => ({}));
@@ -1233,19 +1286,48 @@ function mpRenderWorld(countries) {
     if (map.getZoom() <= LABEL_MAX_ZOOM) L.marker(borderCentroid(c.border), { pane: 'markerPane', interactive: false, icon: L.divIcon({ className: 'country-label-wrap', html: `<div class="country-label" style="--c:${c.color || '#888'}">${escLabel(c.name || c.owner)}</div>`, iconSize: [0, 0], iconAnchor: [0, 0] }) }).addTo(mp.worldLayer);
   }
 }
-function showMpLogin() { if (mpToken()) return; document.getElementById('mp-login').classList.remove('hidden'); }
+function showMpLogin() { if (ssoToken()) return; document.getElementById('mp-login').classList.remove('hidden'); }
 function hideMpLogin() { document.getElementById('mp-login').classList.add('hidden'); }
+
+// Вход через GhostEcos: открывает /social/ с ?return=URL, после логина юзер
+// возвращается обратно в игру с уже выставленным gs_token в localStorage.
 async function mpSubmitLogin() {
-  const u = document.getElementById('mp-user').value.trim(), p = document.getElementById('mp-pass').value;
-  if (!u || !p) { flash('Введи логин и пароль', true); return; }
-  try {
-    const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
-    const d = await r.json().catch(() => ({}));
-    if (r.ok && d.token) { localStorage.setItem('gs_token', d.token); hideMpLogin(); flash('Вход выполнен'); enterMP(); }
-    else flash('Неверный логин или пароль', true);
-  } catch (e) { flash('Сервер недоступен', true); }
+  // Если в форме оставили пароль — пробуем войти через GhostSocial напрямую.
+  // Иначе — редирект на /social/ (там и регистрация, и вход).
+  const u = (document.getElementById('mp-user') || {}).value;
+  const p = (document.getElementById('mp-pass') || {}).value;
+  if (u && p) {
+    try {
+      const r = await fetch('/api/soc/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: u.trim().toLowerCase(), password: p }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d.token) {
+        localStorage.setItem('gs_token', d.token);
+        await refreshGnJwt();
+        hideMpLogin(); flash('Вход выполнен'); enterMP(); return;
+      }
+      flash(d.detail || 'Неверный логин или пароль', true); return;
+    } catch (e) { flash('Сервер недоступен', true); return; }
+  }
+  // Без логина/пароля — редирект на GhostSocial для входа/регистрации
+  location.href = '/social/?return=' + encodeURIComponent(location.pathname);
 }
-function mpLogout() { localStorage.removeItem('gs_token'); mp.country = null; setMode('local'); flash('Вышел из аккаунта'); }
+
+// Регистрация — тоже через GhostSocial (один аккаунт на всю экосистему)
+function mpGoRegister() {
+  location.href = '/social/?action=register&return=' + encodeURIComponent(location.pathname);
+}
+
+function mpLogout() {
+  // НЕ удаляем gs_token (это общий токен GhostEcos — выход делается из GS).
+  // Удаляем только JWT игры и переходим в локальный режим.
+  localStorage.removeItem('gn_jwt');
+  localStorage.removeItem('gn_jwt_exp');
+  mp.country = null; setMode('local');
+  flash('Вышел из мультиплеера (общий аккаунт сохранён)');
+}
 
 (async function boot() {
   if (typeof L === 'undefined') { document.body.insertAdjacentHTML('beforeend', '<div style="position:fixed;inset:0;display:grid;place-items:center;background:#000;color:#fff;font:16px sans-serif;text-align:center;padding:24px">Не удалось загрузить Leaflet с CDN.<br>Проверь интернет/туннель и обнови страницу.</div>'); return; }

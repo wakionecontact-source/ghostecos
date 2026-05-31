@@ -1433,11 +1433,12 @@ def get_posts(
         params.extend([like, like, like, f'#{tag}'])
     where_sql = "WHERE " + " AND ".join(where)
 
-    # Сортировка с учётом просмотров: новое/непросмотренное наверх.
-    # Для random/old/top — оригинальная логика. Для new — фикс «уже просмотренные сверху»:
-    # сначала непросмотренные, потом просмотренные.
-    if sort in ("new", "following"):
-        order = "(CASE WHEN v.viewed_at IS NULL THEN 0 ELSE 1 END), p.created_at DESC"
+    # Сортировка:
+    #   new — чисто по дате (юзер ХОЧЕТ новые, viewed-фильтр НЕ применяем)
+    #   following — то же самое (новые от подписок)
+    #   "Для вас" / другие — viewed уходят вниз (отдельной сортировкой)
+    # Это исправляет баг "после открытия feed свой пост исчез из new".
+    # (раньше CASE WHEN viewed_at IS NULL ставил viewed в конец и юзер думал что нет постов)
 
     params_with_uid = [uid] + params + [offset]
     rows = c.execute(f"""
@@ -2413,13 +2414,22 @@ def mark_viewed(body: ViewBody, authorization: Optional[str] = Header(None)):
         return {"recorded": 0}
     now = int(time.time())
     c = db()
+    # Не помечаем как viewed СВОИ посты (иначе они проваливаются вниз "Для вас")
+    own_ids = {r["id"] for r in c.execute(
+        f"SELECT id FROM soc_posts WHERE id IN ({','.join('?'*len(ids))}) AND user_id=?",
+        ids + [user["id"]]
+    ).fetchall()}
+    cnt = 0
     for pid in ids:
+        if pid in own_ids:
+            continue
         c.execute(
             "INSERT OR IGNORE INTO soc_post_views (user_id, post_id, viewed_at) VALUES (?,?,?)",
             (user["id"], pid, now),
         )
+        cnt += 1
     c.commit(); c.close()
-    return {"recorded": len(ids)}
+    return {"recorded": cnt, "skipped_own": len(ids) - cnt}
 
 
 @router.get("/post/{post_id}/activity")
@@ -2801,6 +2811,45 @@ def my_referrals(authorization: Optional[str] = Header(None)):
         "welcome_bonus": GOST_REWARDS['refin'],
         "invited": invited,
         "invited_by": invited_by,
+    }
+
+
+# ── SSO: Bearer gs_token → JWT (для микросервисов вроде GhostNation) ──────────
+
+@router.post("/sso/jwt")
+def sso_issue_jwt(authorization: Optional[str] = Header(None)):
+    """Принимает обычный gs_token, возвращает JWT (HS256, GC_JWT_SECRET).
+    Используется микросервисами на отдельных портах (GhostNation /api/nation/
+    и т.п.) — там JWT-валидация быстрее чем походы в БД за токеном.
+
+    sub  = username
+    iat  = время выпуска
+    exp  = +24ч
+    """
+    user = auth_member(authorization)
+    try:
+        import jwt as _jwt
+    except ImportError:
+        raise HTTPException(500, "PyJWT не установлен")
+    secret = os.getenv("GC_JWT_SECRET", "").strip()
+    if not secret:
+        raise HTTPException(500, "GC_JWT_SECRET не задан в окружении")
+    now = int(time.time())
+    payload = {
+        "sub": user["username"],
+        "uid": user["id"],
+        "display_name": user.get("display_name") or user["username"],
+        "iat": now,
+        "exp": now + 86400,
+    }
+    token_jwt = _jwt.encode(payload, secret, algorithm="HS256")
+    if isinstance(token_jwt, bytes):
+        token_jwt = token_jwt.decode("utf-8")
+    return {
+        "jwt": token_jwt,
+        "username": user["username"],
+        "display_name": user.get("display_name") or user["username"],
+        "expires_at": now + 86400,
     }
 
 

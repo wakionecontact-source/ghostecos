@@ -45,12 +45,15 @@
   <div id="mp-login" class="hidden">
     <div class="mp-login-box panel">
       <div class="mp-login-title">Вход в общий мир</div>
-      <div class="mp-login-sub">Аккаунт GhostEcos — тот же, что в GhostChat и на сайте</div>
-      <input id="mp-user" placeholder="Логин" spellcheck="false" autocomplete="username"/>
+      <div class="mp-login-sub">Аккаунт GhostEcos — тот же, что в GhostChat, GhostSocial и на сайте</div>
+      <input id="mp-user" placeholder="Логин (или оставь пустым → откроется GS)" spellcheck="false" autocomplete="username"/>
       <input id="mp-pass" type="password" placeholder="Пароль" autocomplete="current-password"/>
       <div class="mp-login-actions">
         <button id="mp-login-cancel" class="mini ghost">Отмена</button>
         <button id="mp-login-go" class="mini primary">Войти</button>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:6px;justify-content:center;">
+        <button id="mp-login-register" class="mini ghost" style="flex:1;">Регистрация в GhostEcos</button>
       </div>
     </div>
   </div>
