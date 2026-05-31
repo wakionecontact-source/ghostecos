@@ -170,7 +170,8 @@ class AckBody(BaseModel):
 
 @router.post("/ack")
 def ack_messages(body: AckBody, authorization: Optional[str] = Header(None)):
-    """Клиент подтверждает что получил и сохранил сообщения локально. Сервер их удаляет."""
+    """Клиент подтверждает что получил и сохранил сообщения локально.
+    Сервер их удаляет + уведомляет отправителя через WS (для двойных галочек)."""
     user = auth_member(authorization)
     if not body.ids or not isinstance(body.ids, list):
         return {"deleted": 0}
@@ -179,12 +180,49 @@ def ack_messages(body: AckBody, authorization: Optional[str] = Header(None)):
         return {"deleted": 0}
     c = db()
     ph = ",".join("?" * len(ids))
-    # Удаляем только те, что адресованы этому юзеру
+    # До удаления — соберём какие сообщения чьи (нужно для broadcast'а sender'ам)
+    rows = c.execute(
+        f"SELECT id, sender_id FROM chat_dm WHERE receiver_id=? AND id IN ({ph})",
+        [user["id"]] + ids,
+    ).fetchall()
+    # Удаляем
     c.execute(f"DELETE FROM chat_dm WHERE receiver_id=? AND id IN ({ph})", [user["id"]] + ids)
     deleted = c.total_changes
     c.commit()
     c.close()
+    # Уведомим отправителей о delivered (двойная галочка)
+    by_sender = {}
+    for r in rows:
+        by_sender.setdefault(r["sender_id"], []).append(r["id"])
+    for sender_id, mids in by_sender.items():
+        ws_hub.send_to(sender_id, "chat.delivered", {"ids": mids, "by_username": user["username"]})
     return {"deleted": deleted}
+
+
+class ReadBody(BaseModel):
+    ids: list
+    from_username: str   # чьи именно сообщения юзер прочитал
+
+@router.post("/read")
+def read_messages(body: ReadBody, authorization: Optional[str] = Header(None)):
+    """Клиент сообщает что прочитал сообщения от {from_username}. Бэк ничего не
+    хранит (transient) — только пересылает sender'у WS event для синих галочек."""
+    user = auth_member(authorization)
+    if not body.ids or not isinstance(body.ids, list):
+        return {"sent": 0}
+    ids = [int(x) for x in body.ids if isinstance(x, (int, str)) and str(x).isdigit()][:500]
+    if not ids:
+        return {"sent": 0}
+    sender_uname = (body.from_username or "").strip().lower()
+    if not sender_uname:
+        return {"sent": 0}
+    c = db()
+    r = c.execute("SELECT id FROM users WHERE username=?", (sender_uname,)).fetchone()
+    c.close()
+    if not r:
+        return {"sent": 0}
+    ws_hub.send_to(r["id"], "chat.read", {"ids": ids, "by_username": user["username"]})
+    return {"sent": len(ids)}
 
 # ── Contacts ──────────────────────────────────────────────────────────────────
 @router.get("/contacts")

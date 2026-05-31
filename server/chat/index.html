@@ -2024,6 +2024,16 @@ async function openChat(username, display_name){
   refreshContactBtn(username);
   // Спросим у сервера, онлайн ли собеседник
   askPresence(username);
+  // Отправим read для всех непрочитанных входящих
+  const unreadIds = activeMessages.filter(m => !m.from_me && !m.read).map(m => m.sid).filter(x => typeof x === 'number');
+  if (unreadIds.length) {
+    chat('/read', 'POST', { ids: unreadIds, from_username: username }).catch(()=>{});
+    for (const id of unreadIds) {
+      const m = activeMessages.find(x => x.sid === id);
+      if (m) m.read = true;
+      idbUpdateMessage(id, { read: true }).catch(()=>{});
+    }
+  }
 }
 
 async function refreshContactBtn(username){
@@ -2142,7 +2152,7 @@ function renderMessages(){
     const meta = m.pending
       ? '<i class="fa-regular fa-clock"></i>'
       : (m.edited ? '<span style="opacity:0.7;font-size:10px;">изм.</span>' : '')
-        + (m.from_me ? ' <i class="fa-solid fa-check"></i>' : '');
+        + (m.from_me ? ' ' + renderTicks(m) : '');
     // Цитата (reply)
     let quoteHtml = '';
     if (m.reply_to != null && !m.deleted) {
@@ -2205,6 +2215,13 @@ function renderMessages(){
   }
   body.innerHTML = html;
   loadMsgPreviews();
+}
+
+// Галочки статуса: одна (отправлено) / двойная серая (доставлено) / двойная синяя (прочитано)
+function renderTicks(m) {
+  if (m.read) return '<i class="fa-solid fa-check-double" style="color:#22d3ee;"></i>';
+  if (m.delivered) return '<i class="fa-solid fa-check-double"></i>';
+  return '<i class="fa-solid fa-check"></i>';
 }
 
 // Чипы реакций под bubble
@@ -2676,6 +2693,32 @@ async function handleWs(m){
     const ok = await ingestIncoming(d);
     if (ok && t === 'chat.new') {
       try { await chat('/ack', 'POST', { ids: [d.id] }); } catch(_) {}
+      // Если чат с этим юзером открыт ПРЯМО СЕЙЧАС → сразу отправим read
+      if (activePeer && activePeer.username === d.from_username) {
+        try { await chat('/read', 'POST', { ids: [d.id], from_username: d.from_username }); } catch(_) {}
+      }
+    }
+  }
+  else if (t === 'chat.delivered') {
+    // Мои сообщения дошли (двойная серая галочка)
+    if (Array.isArray(d.ids)) {
+      for (const id of d.ids) {
+        const m = activeMessages.find(x => String(x.sid) === String(id));
+        if (m) { m.delivered = true; }
+        idbUpdateMessage(id, { delivered: true }).catch(()=>{});
+      }
+      if (activePeer && activePeer.username === d.by_username) renderMessages();
+    }
+  }
+  else if (t === 'chat.read') {
+    // Мои сообщения прочитали (двойная синяя)
+    if (Array.isArray(d.ids)) {
+      for (const id of d.ids) {
+        const m = activeMessages.find(x => String(x.sid) === String(id));
+        if (m) { m.read = true; m.delivered = true; }
+        idbUpdateMessage(id, { read: true, delivered: true }).catch(()=>{});
+      }
+      if (activePeer && activePeer.username === d.by_username) renderMessages();
     }
   }
   else if (t === 'chat.typing') {
@@ -3130,7 +3173,7 @@ function renderGroupMessages(){
     const meta = m.pending
       ? '<i class="fa-regular fa-clock"></i>'
       : (m.edited ? '<span style="opacity:0.7;font-size:10px;">изм.</span>' : '')
-        + (m.from_me ? ' <i class="fa-solid fa-check"></i>' : '');
+        + (m.from_me ? ' ' + renderTicks(m) : '');
     // Имя отправителя — только для ЧУЖИХ сообщений и только если первое в серии
     let senderName = '';
     if (!m.from_me && !sameSenderPrev && m.sender_username) {
