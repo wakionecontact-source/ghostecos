@@ -43,6 +43,7 @@
     <button class="tool" data-tool="path"     title="Пешая тропинка (1 м)"></button>
     <button class="tool" data-tool="tree"     title="Дерево"></button>
     <button class="tool" data-tool="district" title="Район · зона внутри границ"></button>
+    <button class="tool" data-tool="light"    title="Светофор · ставится на перекрёстке"></button>
     <div class="tool-sep"></div>
     <button class="tool" data-tool="select"  title="Изменить · выбрать постройку"></button>
     <button class="tool" data-tool="erase"   title="Снести · клик по объекту"></button>
@@ -83,7 +84,7 @@
 
   <!-- ── AUTO-BUILD SEGMENT SELECTION BAR ── -->
   <div id="gen-bar" class="panel hidden">
-    <span id="gen-hint">Участки дорог · зона:</span>
+    <span id="gen-hint">Участок (клик: обе→лево→право) · зона:</span>
     <div id="gen-zones">
       <button class="zone active" data-zone="res">Жилая</button>
       <button class="zone" data-zone="pureRes">Без магазинов</button>
@@ -91,6 +92,17 @@
     </div>
     <button id="gen-ok" class="mini primary">ОК</button>
     <button id="gen-cancel" class="mini ghost">Отмена</button>
+  </div>
+
+  <!-- ── SIDEWALK SIDE BAR (after drawing a road) ── -->
+  <div id="walk-bar" class="panel hidden">
+    <span>Тротуар:</span>
+    <div id="walk-opts">
+      <button class="zone active" data-walk="none">Нет</button>
+      <button class="zone" data-walk="left">Слева</button>
+      <button class="zone" data-walk="right">Справа</button>
+      <button class="zone" data-walk="both">С обеих</button>
+    </div>
   </div>
 
   <!-- ── TOAST (transient feedback) ── -->

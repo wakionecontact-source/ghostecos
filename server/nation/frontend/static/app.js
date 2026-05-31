@@ -19,10 +19,12 @@ const rand    = (a, b) => a + Math.random() * (b - a);
 const randInt = n => Math.floor(Math.random() * n);
 
 function freshState() {
-  return { name: '', color: FLAG_COLORS[0], border: null, buildings: [], roads: [], rails: [], paths: [], alleys: [], districts: [], view: { lat: 55.7512, lng: 37.6184, zoom: 12 } };
+  return { name: '', color: FLAG_COLORS[0], border: null, buildings: [], roads: [], rails: [], paths: [], alleys: [], districts: [], lights: [], roadWalk: {}, noZebra: [], view: { lat: 55.7512, lng: 37.6184, zoom: 12 } };
 }
+const roadKey = pts => `${pts[0][0].toFixed(5)},${pts[0][1].toFixed(5)}|${pts[pts.length - 1][0].toFixed(5)},${pts[pts.length - 1][1].toFixed(5)}`;
+function migrate(s) { s.roadWalk = s.roadWalk || {}; s.lights = s.lights || []; s.noZebra = s.noZebra || []; s.alleys = s.alleys || []; s.districts = s.districts || []; (s.roads || []).forEach(r => { const k = roadKey(r); if (!(k in s.roadWalk)) s.roadWalk[k] = 'both'; }); return s; }
 let state = load();
-function load() { try { const r = localStorage.getItem(STORE_KEY); if (r) return Object.assign(freshState(), JSON.parse(r)); } catch (e) { console.warn(e); } return freshState(); }
+function load() { try { const r = localStorage.getItem(STORE_KEY); if (r) return migrate(Object.assign(freshState(), JSON.parse(r))); } catch (e) { console.warn(e); } return freshState(); }
 function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { console.warn(e); } }
 
 /* ════════════════ UNDO ════════════════ */
@@ -38,7 +40,7 @@ function undo() {
 function updateUndoBtn() { const b = document.querySelector('[data-action="undo"]'); if (b) b.disabled = undoStack.length === 0; }
 
 /* ════════════════ ICONS ════════════════ */
-const ICON_NAMES = ['borders', 'house', 'shop', 'road', 'alley', 'rail', 'path', 'tree', 'district', 'select', 'trash', 'flag', 'target', 'download', 'upload', 'undo'];
+const ICON_NAMES = ['borders', 'house', 'shop', 'road', 'alley', 'rail', 'path', 'tree', 'district', 'light', 'select', 'trash', 'flag', 'target', 'download', 'upload', 'undo'];
 const ICONS = {};
 async function loadIcons() { await Promise.all(ICON_NAMES.map(async n => { try { ICONS[n] = await (await fetch(`icons/${n}.svg`)).text(); } catch (e) { ICONS[n] = ''; } })); }
 
@@ -51,7 +53,7 @@ const mToPx = m => m / mpp();
 
 /* ════════════════ MAP ════════════════ */
 let map, territory = null;
-let buildLayer, roadLayer, pathLayer, railLayer, crossLayer, editLayer, alleyLayer, districtLayer;
+let buildLayer, roadLayer, pathLayer, railLayer, crossLayer, editLayer, alleyLayer, districtLayer, zebraLayer, lightLayer;
 let layers = {}, currentLayer = 'esri', lastMouse = null;
 
 function initMap() {
@@ -73,12 +75,12 @@ let activeTool = null;
 function setTool(tool) {
   if (draw.active) cancelDraw();
   if (genSel.active) endGenSelect();
-  closeCtxMenu();
+  closeCtxMenu(); closeWalkBar();
   deselect(); clearHover();
   activeTool = (activeTool === tool) ? null : tool;
   document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === activeTool));
   const m = document.getElementById('map');
-  m.classList.toggle('drawing', ['house', 'shop', 'tree'].includes(activeTool));
+  m.classList.toggle('drawing', ['house', 'shop', 'tree', 'light'].includes(activeTool));
   m.classList.toggle('erasing', activeTool === 'erase');
   m.classList.toggle('selecting', activeTool === 'select');
   if (['borders', 'road', 'rail', 'path', 'alley', 'district'].includes(activeTool)) startDraw(activeTool);
@@ -119,7 +121,7 @@ function finishDraw() {
   }
   pushUndo();
   if (draw.mode === 'borders') { state.border = pts; renderTerritory(); }
-  else if (draw.mode === 'road') { state.roads.push(pts); renderRoads(); renderCrossings(); }
+  else if (draw.mode === 'road') { state.roads.push(pts); state.roadWalk[roadKey(pts)] = 'none'; renderRoads(); renderCrossings(); renderZebras(); openWalkBar(pts); }
   else if (draw.mode === 'rail') { state.rails.push(pts); renderRails(); renderCrossings(); }
   else if (draw.mode === 'alley') { state.alleys.push(pts); renderAlleys(); }
   else if (draw.mode === 'district') { state.districts.push({ pts, color: FLAG_COLORS[randInt(FLAG_COLORS.length)] }); renderDistricts(); }
@@ -196,6 +198,12 @@ function onMapClick(e) {
   if (genSel.active) return;
   if (draw.active) { addVertex(e.latlng); return; }
   if (activeTool === 'select') { deselect(); return; }
+  if (activeTool === 'light') {
+    const X = nearestIntersection(e.latlng);
+    if (!X) { flash('Светофор ставится на перекрёстке', true); return; }
+    if (!state.lights.some(l => distMeters(l.lat, l.lng, X[0], X[1]) < 2)) { pushUndo(); state.lights.push({ lat: X[0], lng: X[1] }); save(); renderLights(); }
+    return;
+  }
   if (['house', 'shop', 'tree'].includes(activeTool)) placeBuilding(activeTool, e.latlng);
 }
 function bRadius(b) { return b.type === 'tree' ? clampR(b.r ?? DEF.tree.r) : Math.hypot(clampWH(b.w ?? DEF[b.type].w) / 2, clampWH(b.h ?? DEF[b.type].h) / 2); }
@@ -276,18 +284,19 @@ function runGeneration(pairs, zone) {
   pushUndo();
   const stepM = 20;
   let shops = 0; const made = [];
-  pairs.forEach(([road, si]) => {
+  pairs.forEach(([road, si, pside]) => {
     const a = road[si], b = road[si + 1], lat = a[0];
     const E = (b[1] - a[1]) * mPerDegLng(lat), N = (b[0] - a[0]) * MPD_LAT, len = Math.hypot(E, N);
     if (len < 8) return;
     const ux = E / len, uy = N / len, px = -uy, py = ux, bearing = Math.round(Math.atan2(N, E) * 180 / Math.PI);
+    const sides = pside === 'left' ? [1] : pside === 'right' ? [-1] : [1, -1];   // сторона застройки участка
     for (let d = stepM / 2; d < len - 2; d += stepM) {
       const cy = a[0] + uy * d / MPD_LAT, cx = a[1] + ux * d / mPerDegLng(lat);
-      for (const side of [1, -1]) {                                   // обе стороны, один ряд
+      for (const sd of sides) {
         const w = Math.round(rand(9, 18)), h = Math.round(rand(9, 16));
         const c = LINE_M.road / 2 + PORCH_DEPTH + BUILD_GAP + h / 2 + rand(0, 7);   // чуть дальше, не впритык и вразнобой
         const isShop = zone === 'commercial' ? true : zone === 'pureRes' ? false : Math.random() < 0.13 / (1 + shops * 1.3);   // зона: торговая=всё, без магазинов=ничего, жилая=редко
-        const nb = { type: isShop ? 'shop' : 'house', lat: cy + py * c * side / MPD_LAT, lng: cx + px * c * side / mPerDegLng(cy), w, h, rot: bearing };
+        const nb = { type: isShop ? 'shop' : 'house', lat: cy + py * c * sd / MPD_LAT, lng: cx + px * c * sd / mPerDegLng(cy), w, h, rot: bearing };
         setDoorToward(nb, cy, cx);
         if (!overlapsAt(nb.lat, nb.lng, bRadius(nb)) && !buildingHitsRoad(nb)) {
           state.buildings.push(nb); made.push(nb); if (isShop) shops++; addWalkway(nb);
@@ -314,32 +323,39 @@ function openRoadMenu(e, road) {
   m.style.top = Math.min(window.innerHeight - m.offsetHeight - 8, o.clientY) + 'px';
 }
 function startGenSelect(road) {
-  genSel.active = true; genSel.segs = new Set(); genSel.zone = 'res';
-  document.querySelectorAll('.zone').forEach(x => x.classList.toggle('active', x.dataset.zone === 'res'));
+  genSel.active = true; genSel.segs = new Map(); genSel.zone = 'res';
+  document.querySelectorAll('[data-zone]').forEach(x => x.classList.toggle('active', x.dataset.zone === 'res'));
   const ri = state.roads.indexOf(road);
-  for (let si = 0; si < road.length - 1; si++) genSel.segs.add(ri + ':' + si);   // по умолчанию — кликнутая дорога
+  for (let si = 0; si < road.length - 1; si++) genSel.segs.set(ri + ':' + si, 'both');   // по умолчанию — обе стороны кликнутой дороги
   genSel.layer = L.layerGroup().addTo(map);
   drawGenSegs();
   document.getElementById('gen-bar').classList.remove('hidden');
   document.getElementById('map').classList.add('selecting');
 }
-function drawGenSegs() {                          // кликабельны сегменты ВСЕХ дорог
+function drawGenSegs() {                          // сегменты ВСЕХ дорог; клик циклит обе→лево→право→выкл
   genSel.layer.clearLayers();
   state.roads.forEach((road, ri) => {
     for (let si = 0; si < road.length - 1; si++) {
-      const key = ri + ':' + si, sel = genSel.segs.has(key);
-      const ln = L.polyline([road[si], road[si + 1]], { pane: 'pane-edit', color: sel ? '#D97757' : '#9aa0a6', weight: 9, opacity: sel ? .85 : .4 }).addTo(genSel.layer);
-      ln.on('click', ev => { L.DomEvent.stop(ev); genSel.segs.has(key) ? genSel.segs.delete(key) : genSel.segs.add(key); drawGenSegs(); });
+      const key = ri + ':' + si, side = genSel.segs.get(key), seg = [road[si], road[si + 1]];
+      const cyc = ev => { L.DomEvent.stop(ev); const c = genSel.segs.get(key); const n = c === undefined ? 'both' : c === 'both' ? 'left' : c === 'left' ? 'right' : null; if (n) genSel.segs.set(key, n); else genSel.segs.delete(key); drawGenSegs(); };
+      if (!side) { L.polyline(seg, { pane: 'pane-edit', color: '#9aa0a6', weight: 9, opacity: .4 }).addTo(genSel.layer).on('click', cyc); }
+      else if (side === 'both') { L.polyline(seg, { pane: 'pane-edit', color: '#D97757', weight: 9, opacity: .85 }).addTo(genSel.layer).on('click', cyc); }
+      else { const off = (side === 'left' ? 1 : -1) * (SIDEWALK_OFF + 4); L.polyline(offsetLine(seg, off), { pane: 'pane-edit', color: '#D97757', weight: 8, opacity: .85 }).addTo(genSel.layer).on('click', cyc); L.polyline(seg, { pane: 'pane-edit', color: '#D97757', weight: 3, opacity: .35 }).addTo(genSel.layer).on('click', cyc); }
     }
   });
 }
 function endGenSelect() { genSel.active = false; if (genSel.layer) { map.removeLayer(genSel.layer); genSel.layer = null; } genSel.segs = null; document.getElementById('gen-bar').classList.add('hidden'); document.getElementById('map').classList.remove('selecting'); }
 function confirmGen() {
-  const pairs = (genSel.segs ? [...genSel.segs] : []).map(k => { const [ri, si] = k.split(':').map(Number); return [state.roads[ri], si]; }).filter(p => p[0]);
+  const pairs = (genSel.segs ? [...genSel.segs] : []).map(([k, side]) => { const [ri, si] = k.split(':').map(Number); return [state.roads[ri], si, side]; }).filter(p => p[0]);
   const zone = genSel.zone || 'res';
   endGenSelect();
   if (pairs.length) runGeneration(pairs, zone);
 }
+
+/* ════════════════ SIDEWALK SIDE BAR ════════════════ */
+let walkBarKey = null;
+function openWalkBar(pts) { walkBarKey = roadKey(pts); document.getElementById('walk-bar').classList.remove('hidden'); document.querySelectorAll('[data-walk]').forEach(x => x.classList.toggle('active', x.dataset.walk === 'none')); }
+function closeWalkBar() { document.getElementById('walk-bar').classList.add('hidden'); walkBarKey = null; }
 
 /* ════════════════ BUILDING GEOMETRY ════════════════ */
 function rectCorners(b) {
@@ -458,7 +474,9 @@ function renderRoads() {
   roadLayer.clearLayers(); const w = roadPx();
   const sw = Math.max(2, mToPx(LINE_M.path + 0.6));
   state.roads.forEach(r => {
-    [SIDEWALK_OFF, -SIDEWALK_OFF].forEach(o => tagW(L.polyline(offsetLine(r, o), { pane: 'pane-path', color: '#b7b9bc', weight: sw, opacity: .92, interactive: false, lineCap: 'round' }).addTo(roadLayer), LINE_M.path + 0.6));   // тротуары вдоль дороги
+    const walk = state.roadWalk[roadKey(r)] || 'both';   // none | left | right | both
+    const sides = walk === 'both' ? [SIDEWALK_OFF, -SIDEWALK_OFF] : walk === 'left' ? [SIDEWALK_OFF] : walk === 'right' ? [-SIDEWALK_OFF] : [];
+    sides.forEach(o => tagW(L.polyline(offsetLine(r, o), { pane: 'pane-path', color: '#b7b9bc', weight: sw, opacity: .92, interactive: false, lineCap: 'round' }).addTo(roadLayer), LINE_M.path + 0.6));   // тротуары по выбранным сторонам
     const asphalt = tagW(L.polyline(r, { pane: 'pane-lines', color: '#3b3f45', weight: w, opacity: .97, lineCap: 'round', lineJoin: 'round' }).addTo(roadLayer), LINE_M.road);
     tagW(L.polyline(r, { pane: 'pane-lines', color: '#f2c200', weight: Math.max(1, w * 0.11), opacity: .9, dashArray: `${Math.max(4, w * 0.8)} ${Math.max(6, w * 1.3)}`, interactive: false }).addTo(roadLayer), LINE_M.road * 0.11);
     asphalt.on('click', e => {
@@ -538,7 +556,7 @@ function eraseSegment(key, line, latlng) {
   arr.splice(pos, 1, ...repl);
   clearHover(); save();
   ({ roads: renderRoads, paths: renderPaths, rails: renderRails, alleys: renderAlleys }[key])();
-  renderCrossings(); updateStats();
+  renderCrossings(); renderZebras(); updateStats();
 }
 function segInter(p1, p2, p3, p4) {
   const x1 = p1[1], y1 = p1[0], x2 = p2[1], y2 = p2[0], x3 = p3[1], y3 = p3[0], x4 = p4[1], y4 = p4[0];
@@ -562,7 +580,53 @@ function drawCrossing(X, ra, rb) {
   for (const f of [-0.5, 0.5]) L.polyline([at(f * along, across), at(f * along, -across)], { pane: 'pane-cross', color: '#f2c200', weight: 2, opacity: .95, interactive: false }).addTo(crossLayer);
 }
 
-function renderAll() { renderTerritory(); renderDistricts(); renderRoads(); renderAlleys(); renderPaths(); renderRails(); renderCrossings(); renderBuildings(); updateStats(); document.getElementById('state-name').value = state.name; paintFlag(); updateUndoBtn(); }
+/* ════════════════ ROAD INTERSECTIONS · ZEBRAS · TRAFFIC LIGHTS ════════════════ */
+function roadIntersections() {
+  const pts = [];
+  for (let a = 0; a < state.roads.length; a++) for (let b = a + 1; b < state.roads.length; b++) {
+    const ra = state.roads[a], rb = state.roads[b];
+    for (let i = 1; i < ra.length; i++) for (let j = 1; j < rb.length; j++) { const X = segInter(ra[i - 1], ra[i], rb[j - 1], rb[j]); if (X) pts.push(X); }
+  }
+  for (let a = 0; a < state.roads.length; a++) { const ra = state.roads[a];
+    for (const end of [ra[0], ra[ra.length - 1]]) for (let b = 0; b < state.roads.length; b++) { if (b === a) continue; const rb = state.roads[b];
+      for (let j = 1; j < rb.length; j++) if (pointSegDistM(end[0], end[1], rb[j - 1], rb[j]) < 3) { pts.push([end[0], end[1]]); break; }
+    }
+  }
+  const out = []; for (const p of pts) if (!out.some(q => distMeters(p[0], p[1], q[0], q[1]) < 6)) out.push(p); return out;
+}
+function roadsAt(lat, lng, rad) {
+  const dirs = [];
+  for (const road of state.roads) for (let i = 1; i < road.length; i++) if (pointSegDistM(lat, lng, road[i - 1], road[i]) < rad) { const E = (road[i][1] - road[i - 1][1]) * mPerDegLng(lat), N = (road[i][0] - road[i - 1][0]) * MPD_LAT; dirs.push(Math.atan2(N, E)); }
+  const out = []; for (const a of dirs) { const d = ((a * 180 / Math.PI) % 180 + 180) % 180; if (!out.some(o => { const diff = Math.abs(o - d); return Math.min(diff, 180 - diff) < 15; })) out.push(a); } return out;
+}
+function nearestIntersection(latlng) { let best = null, bestD = 20; for (const X of roadIntersections()) { const d = distMeters(latlng.lat, latlng.lng, X[0], X[1]); if (d < bestD) { bestD = d; best = X; } } return best; }
+function zebraKey(X, ang) { return `${X[0].toFixed(5)},${X[1].toFixed(5)}@${Math.round(((ang * 180 / Math.PI) % 180 + 180) % 180)}`; }
+function renderZebras() {
+  zebraLayer.clearLayers();
+  for (const X of roadIntersections()) for (const ang of roadsAt(X[0], X[1], LINE_M.road * 0.9)) {
+    const key = zebraKey(X, ang); if (state.noZebra.includes(key)) continue;
+    drawZebra(X, ang, key);
+  }
+}
+function drawZebra(X, ang, key) {
+  const ca = Math.cos(ang), sa = Math.sin(ang), along = 3.6, across = LINE_M.road * 0.9, n = 5;
+  const erase = e => { if (activeTool !== 'erase') return; L.DomEvent.stop(e); pushUndo(); if (!state.noZebra.includes(key)) state.noZebra.push(key); save(); renderZebras(); };
+  for (let s = 0; s < n; s++) {
+    const off = -across / 2 + (s + 0.5) * (across / n);
+    const p1 = offset(X[0], X[1], (along / 2) * ca - off * sa, (along / 2) * sa + off * ca);
+    const p2 = offset(X[0], X[1], (-along / 2) * ca - off * sa, (-along / 2) * sa + off * ca);
+    L.polyline([p1, p2], { pane: 'pane-cross', color: '#f2f2f2', weight: 3, opacity: .92 }).addTo(zebraLayer).on('click', erase);
+  }
+}
+function renderLights() {
+  lightLayer.clearLayers();
+  state.lights.forEach(l => {
+    const m = L.marker([l.lat, l.lng], { pane: 'markerPane', icon: L.divIcon({ className: '', iconSize: [11, 24], iconAnchor: [5, 12], html: '<div class="tl"><i></i><i></i><i></i></div>' }) }).addTo(lightLayer);
+    m.on('click', e => { if (activeTool !== 'erase') return; L.DomEvent.stop(e); pushUndo(); state.lights = state.lights.filter(x => x !== l); save(); renderLights(); });
+  });
+}
+
+function renderAll() { renderTerritory(); renderDistricts(); renderRoads(); renderAlleys(); renderPaths(); renderRails(); renderCrossings(); renderZebras(); renderBuildings(); renderLights(); updateStats(); document.getElementById('state-name').value = state.name; paintFlag(); updateUndoBtn(); }
 
 /* ════════════════ EDITOR ════════════════ */
 let selected = null, eh = {};
@@ -651,7 +715,7 @@ function exportFile() {
   a.href = URL.createObjectURL(blob); a.download = ((state.name || 'ghostnation').replace(/[^\wа-яё \-]/gi, '').trim() || 'ghostnation') + '.json';
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); flash('Сохранено в файл');
 }
-function importFile(file) { const r = new FileReader(); r.onload = () => { try { state = Object.assign(freshState(), JSON.parse(r.result)); undoStack = []; save(); deselect(); document.getElementById('state-name').value = state.name; buildPalette(); renderAll(); locate(); flash('Государство загружено'); } catch (e) { flash('Не удалось прочитать файл', true); } }; r.readAsText(file); }
+function importFile(file) { const r = new FileReader(); r.onload = () => { try { state = migrate(Object.assign(freshState(), JSON.parse(r.result))); undoStack = []; save(); deselect(); document.getElementById('state-name').value = state.name; buildPalette(); renderAll(); locate(); flash('Государство загружено'); } catch (e) { flash('Не удалось прочитать файл', true); } }; r.readAsText(file); }
 let flashTimer = null;
 function flash(msg, bad) { const t = document.getElementById('toast'); t.textContent = msg; t.style.color = bad ? '#E0245E' : ''; t.classList.remove('hidden'); clearTimeout(flashTimer); flashTimer = setTimeout(() => t.classList.add('hidden'), 1800); }
 
@@ -673,7 +737,8 @@ function wire() {
   document.getElementById('gen-ok').onclick = confirmGen;
   document.getElementById('gen-cancel').onclick = endGenSelect;
   document.getElementById('tb-collapse').onclick = () => document.getElementById('toolbar').classList.toggle('collapsed');
-  document.querySelectorAll('.zone').forEach(b => b.onclick = () => { genSel.zone = b.dataset.zone; document.querySelectorAll('.zone').forEach(x => x.classList.toggle('active', x === b)); });
+  document.querySelectorAll('[data-zone]').forEach(b => b.onclick = () => { genSel.zone = b.dataset.zone; document.querySelectorAll('[data-zone]').forEach(x => x.classList.toggle('active', x === b)); });
+  document.querySelectorAll('[data-walk]').forEach(b => b.onclick = () => { if (walkBarKey) { state.roadWalk[walkBarKey] = b.dataset.walk; save(); renderRoads(); } document.querySelectorAll('[data-walk]').forEach(x => x.classList.toggle('active', x === b)); closeWalkBar(); });
   const nameEl = document.getElementById('state-name'); nameEl.value = state.name; nameEl.oninput = () => { state.name = nameEl.value.trim(); save(); };
   document.getElementById('flag').onclick = () => document.getElementById('palette').classList.toggle('hidden');
   document.querySelectorAll('.layer').forEach(b => { b.onclick = () => { const id = b.dataset.layer; if (id === currentLayer) return; map.removeLayer(layers[currentLayer]); layers[id].addTo(map); currentLayer = id; document.querySelectorAll('.layer').forEach(x => x.classList.toggle('active', x === b)); }; });
@@ -685,7 +750,7 @@ function wire() {
     else if ((e.ctrlKey || e.metaKey) && k === 'v') { e.preventDefault(); paste(); }
     else if (e.key === 'Enter' && draw.active) finishDraw();
     else if (e.key === 'Delete' && selected) removeBuilding(selected);
-    else if (e.key === 'Escape') { closeCtxMenu(); if (genSel.active) endGenSelect(); else if (draw.active) { cancelDraw(); setToolIdle(); } else if (selected) deselect(); else document.getElementById('palette').classList.add('hidden'); }
+    else if (e.key === 'Escape') { closeCtxMenu(); closeWalkBar(); if (genSel.active) endGenSelect(); else if (draw.active) { cancelDraw(); setToolIdle(); } else if (selected) deselect(); else document.getElementById('palette').classList.add('hidden'); }
     else if (e.key === 'Backspace' && draw.active) { e.preventDefault(); undoVertex(); }
   });
 }
@@ -701,7 +766,9 @@ function wire() {
   pathLayer = L.layerGroup().addTo(map);
   railLayer = L.layerGroup().addTo(map);
   crossLayer = L.layerGroup().addTo(map);
+  zebraLayer = L.layerGroup().addTo(map);
   buildLayer = L.layerGroup().addTo(map);
+  lightLayer = L.layerGroup().addTo(map);
   editLayer = L.layerGroup().addTo(map);
   buildPalette(); wire(); renderAll();
 })();
