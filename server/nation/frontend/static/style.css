@@ -46,10 +46,10 @@ button { cursor: pointer; background: none; border: none; color: inherit; font-f
 
 /* ── STATE BANNER ── */
 #banner {
-  top: 14px; left: 14px;
+  top: 14px; left: 80px;
   display: flex; align-items: center; gap: 11px;
   padding: 10px 14px 10px 11px;
-  max-width: min(78vw, 340px);
+  max-width: min(72vw, 330px);
 }
 .flag-chip {
   width: 38px; height: 38px; flex-shrink: 0;
@@ -83,6 +83,14 @@ button { cursor: pointer; background: none; border: none; color: inherit; font-f
 #toolbar::-webkit-scrollbar { display: none; }
 .tool:disabled { opacity: .32; cursor: default; }
 .tool:disabled:hover { background: none; color: var(--text-dim); }
+
+/* collapse the toolbar to the left */
+.tb-collapse { width: 46px; height: 28px; flex-shrink: 0; display: grid; place-items: center; color: var(--text-muted); border-radius: 9px; margin-bottom: 2px; }
+.tb-collapse:hover { background: rgba(255,255,255,0.07); color: var(--text); }
+.tb-collapse svg { width: 18px; height: 18px; transition: transform .2s ease; }
+#toolbar.collapsed { padding: 6px; gap: 0; }
+#toolbar.collapsed .tb-collapse svg { transform: rotate(180deg); }
+#toolbar.collapsed .tool, #toolbar.collapsed .tool-sep { display: none; }
 .tool {
   width: 46px; height: 46px;
   border-radius: 11px;
@@ -155,8 +163,12 @@ button { cursor: pointer; background: none; border: none; color: inherit; font-f
 .ctx-item:hover { background: var(--accent-dim); color: var(--accent); }
 
 /* ── SEGMENT-SELECT BAR ── */
-#gen-bar { bottom: 22px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 9px 9px 9px 16px; }
+#gen-bar { bottom: 22px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 9px 9px 9px 16px; max-width: 94vw; flex-wrap: wrap; }
 #gen-hint { font-size: 13.5px; color: var(--text-dim); white-space: nowrap; }
+#gen-zones { display: flex; gap: 3px; }
+.zone { padding: 6px 11px; border-radius: 8px; font-size: 12.5px; font-weight: 600; color: var(--text-dim); background: rgba(255,255,255,0.06); }
+.zone:hover { color: var(--text); background: rgba(255,255,255,0.12); }
+.zone.active { background: var(--accent-dim); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-glow); }
 
 /* ── TOAST ── */
 #toast {

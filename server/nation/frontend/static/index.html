@@ -31,13 +31,18 @@
 
   <!-- ── TOOLBAR (left) ── -->
   <nav id="toolbar" class="panel">
-    <button class="tool" data-tool="borders" title="Провозгласить границы"></button>
-    <button class="tool" data-tool="house"   title="Жилой дом · зелёная крыша"></button>
-    <button class="tool" data-tool="shop"    title="Магазин · синяя крыша"></button>
-    <button class="tool" data-tool="road"    title="Дорога"></button>
-    <button class="tool" data-tool="rail"    title="Железная дорога"></button>
-    <button class="tool" data-tool="path"    title="Пешая тропинка (1 м)"></button>
-    <button class="tool" data-tool="tree"    title="Дерево"></button>
+    <button id="tb-collapse" class="tb-collapse" title="Свернуть / развернуть панель">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M15 6 L9 12 L15 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button class="tool" data-tool="borders"  title="Провозгласить границы"></button>
+    <button class="tool" data-tool="house"    title="Жилой дом · зелёная крыша"></button>
+    <button class="tool" data-tool="shop"     title="Магазин · синяя крыша"></button>
+    <button class="tool" data-tool="road"     title="Дорога"></button>
+    <button class="tool" data-tool="alley"    title="Переулок · узкая дорога без разметки"></button>
+    <button class="tool" data-tool="rail"     title="Железная дорога"></button>
+    <button class="tool" data-tool="path"     title="Пешая тропинка (1 м)"></button>
+    <button class="tool" data-tool="tree"     title="Дерево"></button>
+    <button class="tool" data-tool="district" title="Район · зона внутри границ"></button>
     <div class="tool-sep"></div>
     <button class="tool" data-tool="select"  title="Изменить · выбрать постройку"></button>
     <button class="tool" data-tool="erase"   title="Снести · клик по объекту"></button>
@@ -78,7 +83,12 @@
 
   <!-- ── AUTO-BUILD SEGMENT SELECTION BAR ── -->
   <div id="gen-bar" class="panel hidden">
-    <span id="gen-hint">Выбери участки любых дорог для застройки</span>
+    <span id="gen-hint">Участки дорог · зона:</span>
+    <div id="gen-zones">
+      <button class="zone active" data-zone="res">Жилая</button>
+      <button class="zone" data-zone="pureRes">Без магазинов</button>
+      <button class="zone" data-zone="commercial">Торговая</button>
+    </div>
     <button id="gen-ok" class="mini primary">ОК</button>
     <button id="gen-cancel" class="mini ghost">Отмена</button>
   </div>

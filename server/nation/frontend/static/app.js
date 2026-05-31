@@ -7,7 +7,7 @@ const STORE_KEY = 'ghostnation:v1';
 const FLAG_COLORS = ['#D97757', '#E0245E', '#F5A623', '#F8E71C', '#7ED321', '#50E3C2', '#4A90E2', '#9013FE', '#FFFFFF', '#15C26B'];
 const DEF = { house: { w: 13, h: 10 }, shop: { w: 13, h: 10 }, tree: { r: 3.5 } };
 const ROOF = { house: { fill: '#36b24a', edge: '#0b2c16' }, shop: { fill: '#2E7FE0' } };
-const LINE_M = { road: 7, rail: 7, path: 1 };   // ширина на земле, метры
+const LINE_M = { road: 7, rail: 7, path: 1, alley: 4 };   // ширина на земле, метры
 const SNAP_PX = 14;
 const PORCH = '#ffce86';
 const PORCH_DEPTH = 1.8, BUILD_GAP = 1.5;        // крыльцо считается частью здания
@@ -19,7 +19,7 @@ const rand    = (a, b) => a + Math.random() * (b - a);
 const randInt = n => Math.floor(Math.random() * n);
 
 function freshState() {
-  return { name: '', color: FLAG_COLORS[0], border: null, buildings: [], roads: [], rails: [], paths: [], view: { lat: 55.7512, lng: 37.6184, zoom: 12 } };
+  return { name: '', color: FLAG_COLORS[0], border: null, buildings: [], roads: [], rails: [], paths: [], alleys: [], districts: [], view: { lat: 55.7512, lng: 37.6184, zoom: 12 } };
 }
 let state = load();
 function load() { try { const r = localStorage.getItem(STORE_KEY); if (r) return Object.assign(freshState(), JSON.parse(r)); } catch (e) { console.warn(e); } return freshState(); }
@@ -51,19 +51,19 @@ const mToPx = m => m / mpp();
 
 /* ════════════════ MAP ════════════════ */
 let map, territory = null;
-let buildLayer, roadLayer, pathLayer, railLayer, crossLayer, editLayer;
+let buildLayer, roadLayer, pathLayer, railLayer, crossLayer, editLayer, alleyLayer, districtLayer;
 let layers = {}, currentLayer = 'esri', lastMouse = null;
 
 function initMap() {
   map = L.map('map', { zoomControl: false, attributionControl: true, worldCopyJump: true }).setView([state.view.lat, state.view.lng], state.view.zoom);
-  [['pane-territory', 410], ['pane-path', 415], ['pane-lines', 420], ['pane-cross', 425], ['pane-builds', 430], ['pane-edit', 440]]
+  [['pane-territory', 410], ['pane-district', 412], ['pane-path', 415], ['pane-lines', 420], ['pane-cross', 425], ['pane-builds', 430], ['pane-edit', 440]]
     .forEach(([n, z]) => { map.createPane(n); map.getPane(n).style.zIndex = z; });
   L.control.zoom({ position: 'topright' }).addTo(map);
   layers.esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Esri · GhostNation' });
   layers.google = L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { maxZoom: 20, subdomains: ['0', '1', '2', '3'], attribution: 'Google · GhostNation' });
   layers[currentLayer].addTo(map);
   map.on('moveend', () => { const c = map.getCenter(); state.view = { lat: c.lat, lng: c.lng, zoom: map.getZoom() }; save(); });
-  map.on('zoomend', () => { [roadLayer, pathLayer, railLayer].forEach(g => g && g.eachLayer(l => { if (l._mWidth != null) l.setStyle({ weight: Math.max(1, mToPx(l._mWidth)) }); })); });
+  map.on('zoomend', () => { [roadLayer, alleyLayer, pathLayer, railLayer].forEach(g => g && g.eachLayer(l => { if (l._mWidth != null) l.setStyle({ weight: Math.max(1, mToPx(l._mWidth)) }); })); });
   map.on('click', onMapClick);
   map.on('mousemove', e => { lastMouse = e.latlng; onMapMove(e); });
 }
@@ -81,18 +81,18 @@ function setTool(tool) {
   m.classList.toggle('drawing', ['house', 'shop', 'tree'].includes(activeTool));
   m.classList.toggle('erasing', activeTool === 'erase');
   m.classList.toggle('selecting', activeTool === 'select');
-  if (['borders', 'road', 'rail', 'path'].includes(activeTool)) startDraw(activeTool);
+  if (['borders', 'road', 'rail', 'path', 'alley', 'district'].includes(activeTool)) startDraw(activeTool);
 }
 function setToolIdle() { activeTool = null; document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.remove('active')); document.getElementById('map').classList.remove('drawing', 'erasing', 'selecting'); }
 
 /* ════════════════ DRAW ENGINE ════════════════ */
 const draw = { active: false, mode: null, points: [], preview: null, rubber: null, handles: [] };
-const LINE_STYLE = { road: '#fff', rail: '#d0d0d0', path: '#e9dec6' };
+const LINE_STYLE = { road: '#fff', rail: '#d0d0d0', path: '#e9dec6', alley: '#cfcfcf' };
 function startDraw(mode) {
   draw.active = true; draw.mode = mode; draw.points = []; draw.handles = [];
-  draw.preview = (mode === 'borders')
-    ? L.polygon([], { pane: 'pane-territory', color: state.color, weight: 2.5, fillColor: state.color, fillOpacity: .15, dashArray: '6 5' }).addTo(map)
-    : L.polyline([], { pane: 'pane-lines', color: LINE_STYLE[mode], weight: mode === 'path' ? 3 : 4, dashArray: '6 6' }).addTo(map);
+  if (mode === 'borders') draw.preview = L.polygon([], { pane: 'pane-territory', color: state.color, weight: 2.5, fillColor: state.color, fillOpacity: .15, dashArray: '6 5' }).addTo(map);
+  else if (mode === 'district') draw.preview = L.polygon([], { pane: 'pane-district', color: '#F5A623', weight: 2, fillColor: '#F5A623', fillOpacity: .15, dashArray: '6 5' }).addTo(map);
+  else draw.preview = L.polyline([], { pane: 'pane-lines', color: LINE_STYLE[mode], weight: mode === 'path' ? 3 : 4, dashArray: '6 6' }).addTo(map);
   draw.rubber = L.polyline([], { pane: 'pane-lines', color: state.color, weight: 1.6, opacity: .7, dashArray: '4 5', interactive: false }).addTo(map);
   document.getElementById('map').classList.add('drawing');
   document.getElementById('draw-bar').classList.remove('hidden');
@@ -100,7 +100,7 @@ function startDraw(mode) {
 }
 function addVertex(latlng) {
   let snapped = false;
-  if (draw.mode === 'road' || draw.mode === 'rail') { const s = snapLine(latlng); if (s) { latlng = s; snapped = true; } }
+  if (draw.mode === 'road' || draw.mode === 'rail' || draw.mode === 'alley') { const s = snapLine(latlng); if (s) { latlng = s; snapped = true; } }
   else if (draw.mode === 'path') { const s = snapPath(latlng); if (s) { latlng = s; snapped = true; } }
   draw.points.push(latlng);
   draw.handles.push(L.marker(latlng, { pane: 'markerPane', interactive: false, keyboard: false, icon: L.divIcon({ className: '', html: `<div class="vertex-dot${snapped ? ' snapped' : ''}"></div>`, iconSize: [12, 12], iconAnchor: [6, 6] }) }).addTo(map));
@@ -110,13 +110,19 @@ function addVertex(latlng) {
 function onMapMove(e) { if (draw.active && draw.points.length) draw.rubber.setLatLngs([draw.points[draw.points.length - 1], e.latlng]); }
 function undoVertex() { if (!draw.points.length) return; draw.points.pop(); const h = draw.handles.pop(); if (h) map.removeLayer(h); draw.preview.setLatLngs(draw.points); if (!draw.points.length) draw.rubber.setLatLngs([]); updateDrawHint(); }
 function finishDraw() {
-  const min = draw.mode === 'borders' ? 3 : 2;
+  const min = (draw.mode === 'borders' || draw.mode === 'district') ? 3 : 2;
   if (draw.points.length < min) return;
-  pushUndo();
   const pts = draw.points.map(p => [p.lat, p.lng]);
+  if (draw.mode === 'district') {
+    if (!state.border) { flash('Сначала проведи границы страны', true); return; }
+    if (!pts.every(p => pointInPoly(p[0], p[1], state.border))) { flash('Район — только внутри границ', true); return; }
+  }
+  pushUndo();
   if (draw.mode === 'borders') { state.border = pts; renderTerritory(); }
   else if (draw.mode === 'road') { state.roads.push(pts); renderRoads(); renderCrossings(); }
   else if (draw.mode === 'rail') { state.rails.push(pts); renderRails(); renderCrossings(); }
+  else if (draw.mode === 'alley') { state.alleys.push(pts); renderAlleys(); }
+  else if (draw.mode === 'district') { state.districts.push({ pts, color: FLAG_COLORS[randInt(FLAG_COLORS.length)] }); renderDistricts(); }
   else { state.paths.push(pts); renderPaths(); }
   save(); clearDraw(); setToolIdle(); updateStats();
 }
@@ -131,15 +137,15 @@ function clearDraw() {
 }
 function updateDrawHint() {
   const hint = document.getElementById('draw-hint'), done = document.getElementById('draw-done'), n = draw.points.length;
-  if (draw.mode === 'borders') { done.disabled = n < 3; hint.textContent = `Граница: ${n} ${plural(n, 'точка', 'точки', 'точек')}` + (n >= 3 ? ' · ~' + fmtArea(geodesicArea(draw.points)) : ''); }
-  else { const lbl = draw.mode === 'rail' ? 'Жд' : draw.mode === 'path' ? 'Тропинка' : 'Дорога'; done.disabled = n < 2; hint.textContent = `${lbl}: ${n} ${plural(n, 'точка', 'точки', 'точек')}` + (n >= 2 ? ' · ' + fmtLen(pathLength(draw.points)) : ''); }
+  if (draw.mode === 'borders' || draw.mode === 'district') { done.disabled = n < 3; hint.textContent = `${draw.mode === 'district' ? 'Район' : 'Граница'}: ${n} ${plural(n, 'точка', 'точки', 'точек')}` + (n >= 3 ? ' · ~' + fmtArea(geodesicArea(draw.points)) : ''); }
+  else { const lbl = draw.mode === 'rail' ? 'Жд' : draw.mode === 'path' ? 'Тропинка' : draw.mode === 'alley' ? 'Переулок' : 'Дорога'; done.disabled = n < 2; hint.textContent = `${lbl}: ${n} ${plural(n, 'точка', 'точки', 'точек')}` + (n >= 2 ? ' · ' + fmtLen(pathLength(draw.points)) : ''); }
 }
 
 /* ════════════════ SNAP ════════════════ */
 function projSeg(p, a, b) { const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy; if (l2 === 0) return a; let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2; t = Math.max(0, Math.min(1, t)); return L.point(a.x + t * dx, a.y + t * dy); }
 function snapLine(latlng) {            // snap to roads + rails (exact)
   const p = map.latLngToLayerPoint(latlng); let best = null, bestD = SNAP_PX;
-  for (const line of state.roads.concat(state.rails)) for (let i = 0; i < line.length; i++) {
+  for (const line of state.roads.concat(state.rails, state.alleys)) for (let i = 0; i < line.length; i++) {
     const v = map.latLngToLayerPoint(L.latLng(line[i][0], line[i][1]));
     if (p.distanceTo(v) < bestD) { bestD = p.distanceTo(v); best = L.latLng(line[i][0], line[i][1]); }
     if (i > 0) { const a = map.latLngToLayerPoint(L.latLng(line[i - 1][0], line[i - 1][1])); const pr = projSeg(p, a, v); if (p.distanceTo(pr) < bestD) { bestD = p.distanceTo(pr); best = map.layerPointToLatLng(pr); } }
@@ -197,7 +203,7 @@ function distMeters(la1, ln1, la2, ln2) { const E = (ln2 - ln1) * mPerDegLng(la1
 function overlapsAt(lat, lng, radius, exclude) { for (const o of state.buildings) { if (o === exclude) continue; if (distMeters(lat, lng, o.lat, o.lng) < radius + bRadius(o)) return true; } return false; }
 function insideBuilding(lat, lng) { for (const o of state.buildings) if (distMeters(lat, lng, o.lat, o.lng) < bRadius(o) + 1) return true; return false; }
 function freeSpot(lat, lng, radius) {
-  for (let ring = 1; ring <= 9; ring++) { const dist = ring * (radius * 2 + 3); for (let k = 0; k < 8; k++) { const ang = k / 8 * 2 * Math.PI, ll = offset(lat, lng, Math.cos(ang) * dist, Math.sin(ang) * dist); if (!overlapsAt(ll[0], ll[1], radius)) return { lat: ll[0], lng: ll[1] }; } }
+  for (let ring = 1; ring <= 9; ring++) { const dist = ring * (radius * 2 + 3); for (let k = 0; k < 8; k++) { const ang = k / 8 * 2 * Math.PI, ll = offset(lat, lng, Math.cos(ang) * dist, Math.sin(ang) * dist); if (!overlapsAt(ll[0], ll[1], radius) && nearestRoadDist(ll[0], ll[1]) >= LINE_M.road / 2 + radius * 0.7) return { lat: ll[0], lng: ll[1] }; } }
   return { lat, lng };
 }
 function pointSegDistM(plat, plng, a, b) {     // metres from point to road segment
@@ -212,24 +218,32 @@ function buildingHitsRoad(b) {                  // any corner / porch within roa
     for (const p of pts) if (pointSegDistM(p[0], p[1], road[i - 1], road[i]) < LINE_M.road / 2 + 0.3) return true;
   return false;
 }
+function nearestRoadDist(lat, lng) { let best = Infinity; for (const road of state.roads) for (let i = 1; i < road.length; i++) best = Math.min(best, pointSegDistM(lat, lng, road[i - 1], road[i])); return best; }
+function pushOffRoad(b) {                        // сдвинуть здание перпендикулярно прочь от ближайшей дороги, пока не съедет с неё
+  for (let t = 0; t < 12 && buildingHitsRoad(b); t++) {
+    const info = nearestRoad(b.lat, b.lng); if (!info) break;
+    const E = (b.lng - info.lng) * mPerDegLng(b.lat), N = (b.lat - info.lat) * MPD_LAT, d = Math.hypot(E, N) || 1;
+    const ll = offset(b.lat, b.lng, E / d * 2, N / d * 2); b.lat = ll[0]; b.lng = ll[1];
+  }
+}
 function placeBuilding(type, latlng) {
   pushUndo();
   const b = { type, lat: latlng.lat, lng: latlng.lng };
   if (type === 'tree') {
     b.r = DEF.tree.r;
-    if (overlapsAt(b.lat, b.lng, b.r, b)) { const f = freeSpot(b.lat, b.lng, b.r); b.lat = f.lat; b.lng = f.lng; }
+    if (overlapsAt(b.lat, b.lng, b.r, b) || buildingHitsRoad(b)) { const f = freeSpot(b.lat, b.lng, b.r); b.lat = f.lat; b.lng = f.lng; }
   } else {
-    if (insideBuilding(b.lat, b.lng)) { const f = freeSpot(b.lat, b.lng, 8); b.lat = f.lat; b.lng = f.lng; }
+    if (insideBuilding(b.lat, b.lng)) { const f = freeSpot(b.lat, b.lng, 9); b.lat = f.lat; b.lng = f.lng; }
+    b.w = Math.round(rand(9, 18)); b.h = Math.round(rand(9, 15));    // умеренный размер, не «очень большой»
     alignToRoad(b);
-    let maxS = 30;                                  // random size, shrink on touch, relocate if stuck
-    for (let t = 0; t < 12; t++) {
-      b.w = Math.round(rand(8, maxS)); b.h = Math.round(rand(8, maxS));
-      if (!overlapsAt(b.lat, b.lng, bRadius(b), b)) break;
-      if (maxS > 8) maxS = Math.max(8, maxS * 0.8);
-      else { const f = freeSpot(b.lat, b.lng, bRadius(b)); b.lat = f.lat; b.lng = f.lng; alignToRoad(b); }
+    pushOffRoad(b); alignToRoad(b);                                  // не на дороге, вход к дороге
+    for (let t = 0; t < 10 && overlapsAt(b.lat, b.lng, bRadius(b), b); t++) {
+      if (Math.max(b.w, b.h) > 9) { b.w = Math.max(9, Math.round(b.w * 0.85)); b.h = Math.max(9, Math.round(b.h * 0.85)); }
+      else { const f = freeSpot(b.lat, b.lng, bRadius(b)); b.lat = f.lat; b.lng = f.lng; pushOffRoad(b); alignToRoad(b); }
     }
+    addWalkway(b);                                                   // дорожка к дороге, если рядом
   }
-  state.buildings.push(b); save(); renderBuildings(); updateStats();
+  state.buildings.push(b); save(); renderBuildings(); renderPaths(); updateStats();
   return b;
 }
 
@@ -249,15 +263,16 @@ function settlePass(times) { let moved = true, it = 0; while (moved && it++ < (t
 function settleAll() { pushUndo(); settlePass(25); save(); renderBuildings(); renderPaths(); updateStats(); flash('Здания подтянуты к дороге'); }
 
 /* ════════════════ AUTO-GENERATION ALONG A ROAD ════════════════ */
-function addWalkway(b) {                 // дорожка от крыльца к тротуару дороги
-  const dr = doorRect(b), ent = [(dr[2][0] + dr[3][0]) / 2, (dr[2][1] + dr[3][1]) / 2];
+function addWalkway(b) {                 // дорожка от крыльца к тротуару ближайшей дороги
   const info = nearestRoad(b.lat, b.lng); if (!info) return;
+  if (distMeters(b.lat, b.lng, info.lat, info.lng) > 80) return;   // далеко от дороги — без дорожки
+  const dr = doorRect(b), ent = [(dr[2][0] + dr[3][0]) / 2, (dr[2][1] + dr[3][1]) / 2];
   const a = info.bearing * Math.PI / 180; let pE = -Math.sin(a), pN = Math.cos(a);
   const tE = (b.lng - info.lng) * mPerDegLng(b.lat), tN = (b.lat - info.lat) * MPD_LAT;
   if (pE * tE + pN * tN < 0) { pE = -pE; pN = -pN; }
   state.paths.push([ent, offset(info.lat, info.lng, pE * SIDEWALK_OFF, pN * SIDEWALK_OFF)]);
 }
-function runGeneration(pairs) {
+function runGeneration(pairs, zone) {
   pushUndo();
   const stepM = 20;
   let shops = 0; const made = [];
@@ -271,7 +286,7 @@ function runGeneration(pairs) {
       for (const side of [1, -1]) {                                   // обе стороны, один ряд
         const w = Math.round(rand(9, 18)), h = Math.round(rand(9, 16));
         const c = LINE_M.road / 2 + PORCH_DEPTH + BUILD_GAP + h / 2 + rand(0, 7);   // чуть дальше, не впритык и вразнобой
-        const isShop = Math.random() < 0.13 / (1 + shops * 1.3);       // шанс падает с числом магазинов
+        const isShop = zone === 'commercial' ? true : zone === 'pureRes' ? false : Math.random() < 0.13 / (1 + shops * 1.3);   // зона: торговая=всё, без магазинов=ничего, жилая=редко
         const nb = { type: isShop ? 'shop' : 'house', lat: cy + py * c * side / MPD_LAT, lng: cx + px * c * side / mPerDegLng(cy), w, h, rot: bearing };
         setDoorToward(nb, cy, cx);
         if (!overlapsAt(nb.lat, nb.lng, bRadius(nb)) && !buildingHitsRoad(nb)) {
@@ -280,12 +295,12 @@ function runGeneration(pairs) {
       }
     }
   });
-  if (shops === 0) { const hs = made.filter(b => b.type === 'house'); if (hs.length) hs[randInt(hs.length)].type = 'shop'; }  // минимум 1 магазин
+  if (zone === 'res' && shops === 0) { const hs = made.filter(b => b.type === 'house'); if (hs.length) hs[randInt(hs.length)].type = 'shop'; }  // жилая: минимум 1 магазин
   save(); renderBuildings(); renderPaths(); updateStats(); flash(`Застройка: +${made.length}`);
 }
 
 /* ════════════════ ROAD CONTEXT MENU + SEGMENT SELECTION ════════════════ */
-let genSel = { active: false, segs: null, layer: null };
+let genSel = { active: false, segs: null, layer: null, zone: 'res' };
 function closeCtxMenu() { const m = document.getElementById('ctx-menu'); if (m) m.classList.add('hidden'); }
 function openRoadMenu(e, road) {
   closeCtxMenu();
@@ -299,7 +314,8 @@ function openRoadMenu(e, road) {
   m.style.top = Math.min(window.innerHeight - m.offsetHeight - 8, o.clientY) + 'px';
 }
 function startGenSelect(road) {
-  genSel.active = true; genSel.segs = new Set();
+  genSel.active = true; genSel.segs = new Set(); genSel.zone = 'res';
+  document.querySelectorAll('.zone').forEach(x => x.classList.toggle('active', x.dataset.zone === 'res'));
   const ri = state.roads.indexOf(road);
   for (let si = 0; si < road.length - 1; si++) genSel.segs.add(ri + ':' + si);   // по умолчанию — кликнутая дорога
   genSel.layer = L.layerGroup().addTo(map);
@@ -320,8 +336,9 @@ function drawGenSegs() {                          // кликабельны се
 function endGenSelect() { genSel.active = false; if (genSel.layer) { map.removeLayer(genSel.layer); genSel.layer = null; } genSel.segs = null; document.getElementById('gen-bar').classList.add('hidden'); document.getElementById('map').classList.remove('selecting'); }
 function confirmGen() {
   const pairs = (genSel.segs ? [...genSel.segs] : []).map(k => { const [ri, si] = k.split(':').map(Number); return [state.roads[ri], si]; }).filter(p => p[0]);
+  const zone = genSel.zone || 'res';
   endGenSelect();
-  if (pairs.length) runGeneration(pairs);
+  if (pairs.length) runGeneration(pairs, zone);
 }
 
 /* ════════════════ BUILDING GEOMETRY ════════════════ */
@@ -459,6 +476,30 @@ function renderPaths() {
     lineHandlers(ln, 'paths', pp);
   });
 }
+function renderAlleys() {                         // переулок: узкий, без разметки и тротуаров
+  alleyLayer.clearLayers(); const w = Math.max(2, mToPx(LINE_M.alley));
+  state.alleys.forEach(r => {
+    const ln = tagW(L.polyline(r, { pane: 'pane-lines', color: '#54585f', weight: w, opacity: .96, lineCap: 'round', lineJoin: 'round' }).addTo(alleyLayer), LINE_M.alley);
+    ln.on('click', e => { if (activeTool !== 'erase') return; L.DomEvent.stop(e); eraseSegment('alleys', r, e.latlng); });
+    ln.on('mousemove', e => { if (activeTool === 'erase') hoverSeg(e.latlng, r); });
+    ln.on('mouseout', clearHover);
+  });
+}
+function pointInPoly(lat, lng, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const yi = poly[i][0], xi = poly[i][1], yj = poly[j][0], xj = poly[j][1];
+    if (((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+function renderDistricts() {
+  districtLayer.clearLayers();
+  state.districts.forEach(d => {
+    const poly = L.polygon(d.pts, { pane: 'pane-district', color: d.color, weight: 2, opacity: .85, fillColor: d.color, fillOpacity: .14, dashArray: '7 5' }).addTo(districtLayer);
+    poly.on('click', e => { if (activeTool !== 'erase') return; L.DomEvent.stop(e); pushUndo(); state.districts = state.districts.filter(x => x !== d); save(); renderDistricts(); updateStats(); });
+  });
+}
 function offsetLine(latlngs, metres) {     // geographic perpendicular offset (zoom-independent)
   const segNormal = (a, b) => { const dE = (b[1] - a[1]) * mPerDegLng(a[0]), dN = (b[0] - a[0]) * MPD_LAT, l = Math.hypot(dE, dN) || 1; return [-dN / l, dE / l]; };
   return latlngs.map((p, i) => {
@@ -496,7 +537,7 @@ function eraseSegment(key, line, latlng) {
   if (before.length >= 2) repl.push(before); if (after.length >= 2) repl.push(after);
   arr.splice(pos, 1, ...repl);
   clearHover(); save();
-  ({ roads: renderRoads, paths: renderPaths, rails: renderRails }[key])();
+  ({ roads: renderRoads, paths: renderPaths, rails: renderRails, alleys: renderAlleys }[key])();
   renderCrossings(); updateStats();
 }
 function segInter(p1, p2, p3, p4) {
@@ -521,7 +562,7 @@ function drawCrossing(X, ra, rb) {
   for (const f of [-0.5, 0.5]) L.polyline([at(f * along, across), at(f * along, -across)], { pane: 'pane-cross', color: '#f2c200', weight: 2, opacity: .95, interactive: false }).addTo(crossLayer);
 }
 
-function renderAll() { renderTerritory(); renderRoads(); renderPaths(); renderRails(); renderCrossings(); renderBuildings(); updateStats(); document.getElementById('state-name').value = state.name; paintFlag(); updateUndoBtn(); }
+function renderAll() { renderTerritory(); renderDistricts(); renderRoads(); renderAlleys(); renderPaths(); renderRails(); renderCrossings(); renderBuildings(); updateStats(); document.getElementById('state-name').value = state.name; paintFlag(); updateUndoBtn(); }
 
 /* ════════════════ EDITOR ════════════════ */
 let selected = null, eh = {};
@@ -631,6 +672,8 @@ function wire() {
   document.getElementById('edit-collapse').onclick = () => document.getElementById('edit').classList.toggle('collapsed');
   document.getElementById('gen-ok').onclick = confirmGen;
   document.getElementById('gen-cancel').onclick = endGenSelect;
+  document.getElementById('tb-collapse').onclick = () => document.getElementById('toolbar').classList.toggle('collapsed');
+  document.querySelectorAll('.zone').forEach(b => b.onclick = () => { genSel.zone = b.dataset.zone; document.querySelectorAll('.zone').forEach(x => x.classList.toggle('active', x === b)); });
   const nameEl = document.getElementById('state-name'); nameEl.value = state.name; nameEl.oninput = () => { state.name = nameEl.value.trim(); save(); };
   document.getElementById('flag').onclick = () => document.getElementById('palette').classList.toggle('hidden');
   document.querySelectorAll('.layer').forEach(b => { b.onclick = () => { const id = b.dataset.layer; if (id === currentLayer) return; map.removeLayer(layers[currentLayer]); layers[id].addTo(map); currentLayer = id; document.querySelectorAll('.layer').forEach(x => x.classList.toggle('active', x === b)); }; });
@@ -652,7 +695,9 @@ function wire() {
   if (typeof L === 'undefined') { document.body.insertAdjacentHTML('beforeend', '<div style="position:fixed;inset:0;display:grid;place-items:center;background:#000;color:#fff;font:16px sans-serif;text-align:center;padding:24px">Не удалось загрузить Leaflet с CDN.<br>Проверь интернет/туннель и обнови страницу.</div>'); return; }
   await loadIcons();
   initMap();
+  districtLayer = L.layerGroup().addTo(map);
   roadLayer = L.layerGroup().addTo(map);
+  alleyLayer = L.layerGroup().addTo(map);
   pathLayer = L.layerGroup().addTo(map);
   railLayer = L.layerGroup().addTo(map);
   crossLayer = L.layerGroup().addTo(map);
