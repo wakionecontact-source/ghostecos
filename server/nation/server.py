@@ -187,11 +187,10 @@ def claim(req: ClaimReq, authorization: Optional[str] = Header(None)):
     bb = _bbox(req.border); cx, cy = _centroid(req.border)
     ex = con.execute("SELECT balance FROM country WHERE owner=?", (user,)).fetchone()
     if ex:
-        if ex["balance"] < cost:
-            con.close(); raise HTTPException(402, "Недостаточно gost для такой территории")
-        con.execute("UPDATE country SET name=?,color=?,border=?,balance=balance-?,cx=?,cy=?,"
+        cost = 0   # перерисовка границы существующей страной — БЕСПЛАТНО (gost берётся только за первичный claim)
+        con.execute("UPDATE country SET name=?,color=?,border=?,cx=?,cy=?,"
                     "minlat=?,minlng=?,maxlat=?,maxlng=?,updated=? WHERE owner=?",
-                    (req.name, req.color, json.dumps(req.border), cost, cx, cy,
+                    (req.name, req.color, json.dumps(req.border), cx, cy,
                      bb[0], bb[1], bb[2], bb[3], now, user))
     else:
         cost = min(cost, START_BONUS)  # новичку хватает на стартовый участок
