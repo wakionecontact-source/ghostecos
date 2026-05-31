@@ -44,6 +44,7 @@ function undo() {
   state = Object.assign(freshState(), JSON.parse(undoStack.pop()));
   save(); deselect(); clearHover();
   document.getElementById('state-name').value = state.name; buildPalette(); renderAll();
+  if (borderEdit.active) { if (state.border && state.border.length >= 3) bBuildHandles(); else exitBorderEdit(); }   // правка границы: ручки на новый массив (иначе orphaned)
   updateUndoBtn();
 }
 function updateUndoBtn() { const b = document.querySelector('[data-action="undo"]'); if (b) b.disabled = undoStack.length === 0; }
@@ -244,6 +245,7 @@ function pointSegDistM(plat, plng, a, b) {     // metres from point to road segm
   return Math.hypot(px - t * bx, py - t * by);
 }
 function buildingHitsRoad(b) {                  // any corner / porch within road half-width of any road
+  if (b.type === 'tree') return nearestRoadDist(b.lat, b.lng) < LINE_M.road / 2 + clampR(b.r ?? DEF.tree.r) * 0.6;   // у дерева нет w/h — проверяем кругом (иначе rectCorners=NaN и дерево лезло на дорогу)
   const pts = [[b.lat, b.lng], ...rectCorners(b)]; const dr = doorRect(b); pts.push(dr[2], dr[3]);
   for (const road of state.roads) for (let i = 1; i < road.length; i++)
     for (const p of pts) if (pointSegDistM(p[0], p[1], road[i - 1], road[i]) < LINE_M.road / 2 + 0.3) return true;
