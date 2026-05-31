@@ -594,12 +594,29 @@ function roadIntersections() {
     }
   }
   const ded = []; for (const p of pts) if (!ded.some(q => distMeters(p[0], p[1], q[0], q[1]) < 7)) ded.push(p);
-  return ded.filter(p => roadsAt(p[0], p[1], LINE_M.road * 1.4).length >= 2);   // только реальный перекрёсток (≥2 направления) — не на прямой
+  return ded.filter(p => roadArmsAt(p[0], p[1], LINE_M.road * 1.4) >= 3);   // реальный перекрёсток = ≥3 рукава (T/+/Y), НЕ изгиб дороги (2 рукава)
 }
 function roadsAt(lat, lng, rad) {
   const dirs = [];
   for (const road of state.roads) for (let i = 1; i < road.length; i++) if (pointSegDistM(lat, lng, road[i - 1], road[i]) < rad) { const E = (road[i][1] - road[i - 1][1]) * mPerDegLng(lat), N = (road[i][0] - road[i - 1][0]) * MPD_LAT; dirs.push(Math.atan2(N, E)); }
   const out = []; for (const a of dirs) { const d = ((a * 180 / Math.PI) % 180 + 180) % 180; if (!out.some(o => { const diff = Math.abs(o - d); return Math.min(diff, 180 - diff) < 15; })) out.push(a); } return out;
+}
+const armBearing = (from, to) => Math.atan2((to[0] - from[0]) * MPD_LAT, (to[1] - from[1]) * mPerDegLng(from[0]));
+function roadArmsAt(lat, lng, rad) {            // число «рукавов» дорог из точки: 1 на конце дороги, 2 на проходе/изгибе
+  const arms = [];
+  for (const road of state.roads) {
+    for (let i = 0; i < road.length; i++) if (distMeters(lat, lng, road[i][0], road[i][1]) < rad) {
+      if (i > 0) arms.push(armBearing(road[i], road[i - 1]));
+      if (i < road.length - 1) arms.push(armBearing(road[i], road[i + 1]));
+    }
+    for (let i = 1; i < road.length; i++) {     // дорога проходит ЧЕРЕЗ точку (не у вершины) → 2 рукава
+      const a = road[i - 1], b = road[i];
+      if (pointSegDistM(lat, lng, a, b) < rad && distMeters(lat, lng, a[0], a[1]) > rad && distMeters(lat, lng, b[0], b[1]) > rad) { arms.push(armBearing(a, b)); arms.push(armBearing(b, a)); }
+    }
+  }
+  const uniq = [];
+  for (const x of arms) { const d = ((x * 180 / Math.PI) % 360 + 360) % 360; if (!uniq.some(o => { const df = Math.abs(o - d); return Math.min(df, 360 - df) < 22; })) uniq.push(d); }
+  return uniq.length;
 }
 function nearestIntersection(latlng) { let best = null, bestD = 28; for (const X of roadIntersections()) { const d = distMeters(latlng.lat, latlng.lng, X[0], X[1]); if (d < bestD) { bestD = d; best = X; } } return best; }
 const dirAligned = (d, ang) => { const df = Math.abs((((d - ang) * 180 / Math.PI) % 180 + 180) % 180); return Math.min(df, 180 - df) < 25; };
