@@ -487,6 +487,10 @@ function renderRoads() {
     asphalt.on('mousemove', e => { if (activeTool === 'erase') hoverSeg(e.latlng, r); });
     asphalt.on('mouseout', clearHover);
   });
+  // ── узлы перекрёстков: асфальтовое пятно сшивает близкие/смещённые дороги в единый перекрёсток
+  roadIntersections().forEach(it => {
+    L.circle([it[0], it[1]], { pane: 'pane-lines', radius: LINE_M.road * 0.78, stroke: false, fillColor: '#3b3f45', fillOpacity: .98, interactive: false }).addTo(roadLayer);
+  });
 }
 function renderPaths() {
   pathLayer.clearLayers(); const w = Math.max(2, pathPx());
