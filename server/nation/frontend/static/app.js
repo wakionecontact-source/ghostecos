@@ -19,10 +19,10 @@ const rand    = (a, b) => a + Math.random() * (b - a);
 const randInt = n => Math.floor(Math.random() * n);
 
 function freshState() {
-  return { name: '', color: FLAG_COLORS[0], border: null, buildings: [], roads: [], rails: [], paths: [], alleys: [], districts: [], lights: [], roadWalk: {}, noZebra: [], view: { lat: 55.7512, lng: 37.6184, zoom: 12 } };
+  return { name: '', color: FLAG_COLORS[0], border: null, buildings: [], roads: [], rails: [], paths: [], alleys: [], districts: [], lights: [], roadWalk: {}, noZebra: [], crosswalks: [], view: { lat: 55.7512, lng: 37.6184, zoom: 12 } };
 }
 const roadKey = pts => `${pts[0][0].toFixed(5)},${pts[0][1].toFixed(5)}|${pts[pts.length - 1][0].toFixed(5)},${pts[pts.length - 1][1].toFixed(5)}`;
-function migrate(s) { s.roadWalk = s.roadWalk || {}; s.lights = s.lights || []; s.noZebra = s.noZebra || []; s.alleys = s.alleys || []; s.districts = s.districts || []; (s.roads || []).forEach(r => { const k = roadKey(r); if (!(k in s.roadWalk)) s.roadWalk[k] = 'both'; }); return s; }
+function migrate(s) { s.roadWalk = s.roadWalk || {}; s.lights = s.lights || []; s.noZebra = s.noZebra || []; s.crosswalks = s.crosswalks || []; s.alleys = s.alleys || []; s.districts = s.districts || []; (s.roads || []).forEach(r => { const k = roadKey(r); if (!(k in s.roadWalk)) s.roadWalk[k] = 'both'; }); return s; }
 let state = load();
 function load() { try { const r = localStorage.getItem(STORE_KEY); if (r) return migrate(Object.assign(freshState(), JSON.parse(r))); } catch (e) { console.warn(e); } return freshState(); }
 function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { console.warn(e); } }
@@ -40,7 +40,7 @@ function undo() {
 function updateUndoBtn() { const b = document.querySelector('[data-action="undo"]'); if (b) b.disabled = undoStack.length === 0; }
 
 /* ════════════════ ICONS ════════════════ */
-const ICON_NAMES = ['borders', 'house', 'shop', 'road', 'alley', 'rail', 'path', 'tree', 'district', 'light', 'car', 'select', 'trash', 'flag', 'target', 'download', 'upload', 'undo'];
+const ICON_NAMES = ['borders', 'house', 'shop', 'road', 'alley', 'rail', 'path', 'tree', 'district', 'light', 'crosswalk', 'car', 'select', 'trash', 'flag', 'target', 'download', 'upload', 'undo'];
 const ICONS = {};
 async function loadIcons() { await Promise.all(ICON_NAMES.map(async n => { try { ICONS[n] = await (await fetch(`icons/${n}.svg`)).text(); } catch (e) { ICONS[n] = ''; } })); }
 
@@ -80,7 +80,7 @@ function setTool(tool) {
   activeTool = (activeTool === tool) ? null : tool;
   document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === activeTool));
   const m = document.getElementById('map');
-  m.classList.toggle('drawing', ['house', 'shop', 'tree', 'light'].includes(activeTool));
+  m.classList.toggle('drawing', ['house', 'shop', 'tree', 'light', 'crosswalk'].includes(activeTool));
   m.classList.toggle('erasing', activeTool === 'erase');
   m.classList.toggle('selecting', activeTool === 'select');
   if (['borders', 'road', 'rail', 'path', 'alley', 'district'].includes(activeTool)) startDraw(activeTool);
@@ -202,6 +202,13 @@ function onMapClick(e) {
     const X = nearestIntersection(e.latlng);
     if (!X) { flash('Светофор ставится на перекрёстке', true); return; }
     if (!state.lights.some(l => distMeters(l.lat, l.lng, X[0], X[1]) < 2)) { pushUndo(); state.lights.push({ lat: X[0], lng: X[1] }); save(); renderLights(); }
+    return;
+  }
+  if (activeTool === 'crosswalk') {
+    const info = nearestRoad(e.latlng.lat, e.latlng.lng);
+    let lat = e.latlng.lat, lng = e.latlng.lng, ang = 0;
+    if (info && distMeters(lat, lng, info.lat, info.lng) <= 25) { lat = info.lat; lng = info.lng; ang = info.bearing * Math.PI / 180; }   // снап на дорогу, поперёк неё
+    pushUndo(); state.crosswalks.push({ lat, lng, ang }); save(); renderZebras();
     return;
   }
   if (['house', 'shop', 'tree'].includes(activeTool)) placeBuilding(activeTool, e.latlng);
@@ -487,10 +494,6 @@ function renderRoads() {
     asphalt.on('mousemove', e => { if (activeTool === 'erase') hoverSeg(e.latlng, r); });
     asphalt.on('mouseout', clearHover);
   });
-  // ── узлы перекрёстков: асфальтовое пятно сшивает близкие/смещённые дороги в единый перекрёсток
-  roadIntersections().forEach(it => {
-    L.circle([it[0], it[1]], { pane: 'pane-lines', radius: LINE_M.road * 0.78, stroke: false, fillColor: '#3b3f45', fillOpacity: .98, interactive: false }).addTo(roadLayer);
-  });
 }
 function renderPaths() {
   pathLayer.clearLayers(); const w = Math.max(2, pathPx());
@@ -633,6 +636,22 @@ const dirAligned = (d, ang) => { const df = Math.abs((((d - ang) * 180 / Math.PI
 function renderZebras() {
   zebraLayer.clearLayers();
   for (const X of roadIntersections()) for (const ang of roadsAt(X[0], X[1], LINE_M.road * 1.4)) drawZebra(X, ang);
+  for (const c of state.crosswalks) drawCrosswalk(c);     // ручные переходы (инструмент «Переход»)
+}
+function drawCrosswalk(c) {                               // одиночный переход, поставленный вручную где угодно
+  const ca = Math.cos(c.ang), sa = Math.sin(c.ang), along = 3.6, across = LINE_M.road * 0.92, n = 6;
+  for (let s = 0; s < n; s++) {
+    const off = -across / 2 + (s + 0.5) * (across / n);
+    const p1 = offset(c.lat, c.lng, (along / 2) * ca - off * sa, (along / 2) * sa + off * ca);
+    const p2 = offset(c.lat, c.lng, (-along / 2) * ca - off * sa, (-along / 2) * sa + off * ca);
+    L.polyline([p1, p2], { pane: 'pane-cross', color: '#f2f2f2', weight: 3, opacity: .95, interactive: false }).addTo(zebraLayer);
+  }
+  const at = (dl, dw) => offset(c.lat, c.lng, dl * ca - dw * sa, dl * sa + dw * ca);
+  const hl = along / 2 + 1, hw = across / 2 + 1, rect = [at(hl, hw), at(hl, -hw), at(-hl, -hw), at(-hl, hw)];
+  const hit = L.polygon(rect, { pane: 'pane-cross', stroke: false, fillOpacity: 0 }).addTo(zebraLayer);
+  hit.on('click', e => { if (activeTool !== 'erase') return; L.DomEvent.stop(e); pushUndo(); state.crosswalks = state.crosswalks.filter(x => x !== c); save(); renderZebras(); });
+  hit.on('mouseover', () => { if (activeTool !== 'erase') return; clearHover(); hoverHL = L.polygon(rect, { pane: 'pane-edit', color: '#E0245E', weight: 2, fill: false, interactive: false }).addTo(map); });
+  hit.on('mouseout', clearHover);
 }
 function drawZebra(X, ang) {                              // переход поперёк дороги, на ПОДХОДАХ (рукавах), не в центре
   const ca = Math.cos(ang), sa = Math.sin(ang), along = 3.2, across = LINE_M.road * 0.82, n = 5, D = LINE_M.road * 0.95;
