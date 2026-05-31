@@ -172,6 +172,8 @@ button { cursor: pointer; background: none; border: none; color: inherit; font-f
 .h-move { width: 16px; height: 16px; background: #fff; box-shadow: 0 0 0 2px var(--accent), 0 1px 5px rgba(0,0,0,.55); }
 .h-rot  { width: 15px; height: 15px; background: #15C26B; box-shadow: 0 0 0 2px #fff, 0 1px 5px rgba(0,0,0,.55); }
 .h-size { width: 15px; height: 15px; border-radius: 3px; background: #F5A623; box-shadow: 0 0 0 2px #fff, 0 1px 5px rgba(0,0,0,.55); }
+.h-vert { width: 14px; height: 14px; background: #fff; box-shadow: 0 0 0 2px var(--accent), 0 1px 5px rgba(0,0,0,.55); }
+.h-mid  { width: 11px; height: 11px; background: var(--accent); opacity: .72; box-shadow: 0 0 0 2px #fff, 0 1px 4px rgba(0,0,0,.5); cursor: copy; }
 
 /* ── ROAD CONTEXT MENU ── */
 #ctx-menu { z-index: 700; display: flex; flex-direction: column; padding: 5px; min-width: 184px; }
@@ -187,6 +189,8 @@ button { cursor: pointer; background: none; border: none; color: inherit; font-f
 .zone.active { background: var(--accent-dim); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-glow); }
 #walk-bar { bottom: 22px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 9px 14px; }
 #walk-bar > span { font-size: 13.5px; color: var(--text-dim); }
+#border-bar { bottom: 22px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 9px 9px 9px 16px; max-width: 94vw; flex-wrap: wrap; }
+#border-bar > span { font-size: 13px; color: var(--text-dim); }
 #walk-opts { display: flex; gap: 3px; }
 
 /* traffic light marker */

@@ -84,6 +84,7 @@ let activeTool = null;
 function setTool(tool) {
   if (draw.active) cancelDraw();
   if (genSel.active) endGenSelect();
+  if (borderEdit.active) exitBorderEdit();
   closeCtxMenu(); closeWalkBar();
   deselect(); clearHover();
   activeTool = (activeTool === tool) ? null : tool;
@@ -92,7 +93,8 @@ function setTool(tool) {
   m.classList.toggle('drawing', ['house', 'shop', 'tree', 'light', 'crosswalk'].includes(activeTool));
   m.classList.toggle('erasing', activeTool === 'erase');
   m.classList.toggle('selecting', activeTool === 'select');
-  if (['borders', 'road', 'rail', 'path', 'alley', 'district'].includes(activeTool)) startDraw(activeTool);
+  if (activeTool === 'borders') { if (state.border && state.border.length >= 3) editBorder(); else startDraw('borders'); }   // граница есть → редактируем, нет → рисуем
+  else if (['road', 'rail', 'path', 'alley', 'district'].includes(activeTool)) startDraw(activeTool);
 }
 function setToolIdle() { activeTool = null; document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.remove('active')); document.getElementById('map').classList.remove('drawing', 'erasing', 'selecting'); }
 
@@ -412,6 +414,32 @@ function renderTerritory() {
   territory = L.polygon(state.border, { pane: 'pane-territory', color: state.color, weight: 2.5, opacity: .95, fillColor: state.color, fillOpacity: .18 }).addTo(map);
   territory.on('click', e => { if (activeTool !== 'erase') return; L.DomEvent.stop(e); pushUndo(); state.border = null; save(); renderTerritory(); updateStats(); });
 }
+
+/* ── РЕДАКТИРОВАНИЕ ГРАНИЦЫ: тяни вершины · средние точки добавляют · ПКМ удаляет ── */
+const borderEdit = { active: false, verts: [], mids: [] };
+function bMidPos(i) { const B = state.border, a = B[i], b = B[(i + 1) % B.length]; return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; }
+function bPositionMids() { borderEdit.mids.forEach((m, i) => m.setLatLng(bMidPos(i))); }
+function bClearHandles() { borderEdit.verts.forEach(m => map.removeLayer(m)); borderEdit.mids.forEach(m => map.removeLayer(m)); borderEdit.verts = []; borderEdit.mids = []; }
+function bBuildHandles() {
+  bClearHandles(); const B = state.border; if (!B) return;
+  B.forEach((pt, i) => {                                  // вершины — тянуть
+    const m = L.marker(pt, { pane: 'markerPane', draggable: true, icon: L.divIcon({ className: '', html: '<div class="edit-handle h-vert"></div>', iconSize: [15, 15], iconAnchor: [7.5, 7.5] }) }).addTo(map);
+    m.on('dragstart', () => pushUndo());
+    m.on('drag', e => { B[i] = [e.latlng.lat, e.latlng.lng]; if (territory) territory.setLatLngs(B); bPositionMids(); });
+    m.on('dragend', () => { save(); updateStats(); });
+    m.on('contextmenu', e => { L.DomEvent.stop(e); if (B.length > 3) { pushUndo(); B.splice(i, 1); save(); renderTerritory(); bBuildHandles(); updateStats(); } else flash('Минимум 3 точки', true); });
+    borderEdit.verts.push(m);
+  });
+  B.forEach((pt, i) => {                                  // средние точки — потяни, чтобы добавить вершину
+    const m = L.marker(bMidPos(i), { pane: 'markerPane', draggable: true, icon: L.divIcon({ className: '', html: '<div class="edit-handle h-mid"></div>', iconSize: [12, 12], iconAnchor: [6, 6] }) }).addTo(map);
+    m.on('dragstart', () => pushUndo());
+    m.on('drag', e => { const tmp = B.slice(); tmp.splice(i + 1, 0, [e.latlng.lat, e.latlng.lng]); if (territory) territory.setLatLngs(tmp); });
+    m.on('dragend', e => { B.splice(i + 1, 0, [e.latlng.lat, e.latlng.lng]); save(); renderTerritory(); bBuildHandles(); updateStats(); });
+    borderEdit.mids.push(m);
+  });
+}
+function editBorder() { borderEdit.active = true; renderTerritory(); bBuildHandles(); document.getElementById('border-bar').classList.remove('hidden'); }
+function exitBorderEdit() { borderEdit.active = false; bClearHandles(); const bar = document.getElementById('border-bar'); if (bar) bar.classList.add('hidden'); save(); }
 
 const blMap = new Map();
 function insetRect(b, s) {
@@ -1060,6 +1088,8 @@ function wire() {
   document.getElementById('draw-undo').onclick = undoVertex;
   document.getElementById('draw-done').onclick = finishDraw;
   document.getElementById('draw-cancel').onclick = () => { cancelDraw(); setToolIdle(); };
+  document.getElementById('border-done').onclick = () => { exitBorderEdit(); setToolIdle(); };
+  document.getElementById('border-redraw').onclick = () => { pushUndo(); exitBorderEdit(); state.border = null; renderTerritory(); updateStats(); startDraw('borders'); };
   document.getElementById('edit-del').onclick = () => { if (selected) removeBuilding(selected); };
   document.getElementById('edit-done').onclick = deselect;
   document.getElementById('edit-collapse').onclick = () => document.getElementById('edit').classList.toggle('collapsed');
@@ -1080,7 +1110,7 @@ function wire() {
     else if ((e.ctrlKey || e.metaKey) && k === 'v') { e.preventDefault(); paste(); }
     else if (e.key === 'Enter' && draw.active) finishDraw();
     else if (e.key === 'Delete' && selected) removeBuilding(selected);
-    else if (e.key === 'Escape') { closeCtxMenu(); closeWalkBar(); if (genSel.active) endGenSelect(); else if (draw.active) { cancelDraw(); setToolIdle(); } else if (selected) deselect(); else document.getElementById('palette').classList.add('hidden'); }
+    else if (e.key === 'Escape') { closeCtxMenu(); closeWalkBar(); if (genSel.active) endGenSelect(); else if (draw.active) { cancelDraw(); setToolIdle(); } else if (borderEdit.active) { exitBorderEdit(); setToolIdle(); } else if (selected) deselect(); else document.getElementById('palette').classList.add('hidden'); }
     else if (e.key === 'Backspace' && draw.active) { e.preventDefault(); undoVertex(); }
   });
 }
