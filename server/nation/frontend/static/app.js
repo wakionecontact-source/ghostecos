@@ -135,7 +135,7 @@ function finishDraw() {
   if (draw.mode === 'borders') { state.border = pts; renderTerritory(); }
   else if (draw.mode === 'road') { state.roads.push(pts); state.roadWalk[roadKey(pts)] = 'none'; renderRoads(); renderCrossings(); renderZebras(); openWalkBar(pts); }
   else if (draw.mode === 'rail') { state.rails.push(pts); renderRails(); renderCrossings(); }
-  else if (draw.mode === 'alley') { state.alleys.push(pts); renderAlleys(); }
+  else if (draw.mode === 'alley') { state.alleys.push(pts); state.roadWalk[roadKey(pts)] = 'none'; renderAlleys(); openWalkBar(pts); }
   else if (draw.mode === 'district') { state.districts.push({ pts, color: FLAG_COLORS[randInt(FLAG_COLORS.length)] }); renderDistricts(); }
   else { state.paths.push(pts); renderPaths(); }
   save(); clearDraw(); setToolIdle(); updateStats();
@@ -341,6 +341,7 @@ function runGeneration(pairs, zone) {
 
 /* ════════════════ ROAD CONTEXT MENU + SEGMENT SELECTION ════════════════ */
 let genSel = { active: false, segs: null, layer: null, zone: 'res' };
+const streets = () => state.roads.concat(state.alleys);   // дороги И переулки — авто-застройка/меню работают по обоим
 function closeCtxMenu() { const m = document.getElementById('ctx-menu'); if (m) m.classList.add('hidden'); }
 function openRoadMenu(e, road) {
   closeCtxMenu();
@@ -357,8 +358,8 @@ function openRoadMenu(e, road) {
 function startGenSelect(road) {
   genSel.active = true; genSel.segs = new Map(); genSel.zone = 'res';
   document.querySelectorAll('[data-zone]').forEach(x => x.classList.toggle('active', x.dataset.zone === 'res'));
-  const ri = state.roads.indexOf(road);
-  for (let si = 0; si < road.length - 1; si++) genSel.segs.set(ri + ':' + si, 'both');   // по умолчанию — обе стороны кликнутой дороги
+  const ri = streets().indexOf(road);
+  for (let si = 0; si < road.length - 1; si++) genSel.segs.set(ri + ':' + si, 'both');   // по умолчанию — обе стороны кликнутой улицы (дорога/переулок)
   genSel.layer = L.layerGroup().addTo(map);
   drawGenSegs();
   document.getElementById('gen-bar').classList.remove('hidden');
@@ -366,7 +367,7 @@ function startGenSelect(road) {
 }
 function drawGenSegs() {                          // сегменты ВСЕХ дорог; клик циклит обе→лево→право→выкл
   genSel.layer.clearLayers();
-  state.roads.forEach((road, ri) => {
+  streets().forEach((road, ri) => {
     for (let si = 0; si < road.length - 1; si++) {
       const key = ri + ':' + si, side = genSel.segs.get(key), seg = [road[si], road[si + 1]];
       const cyc = ev => { L.DomEvent.stop(ev); const c = genSel.segs.get(key); const n = c === undefined ? 'both' : c === 'both' ? 'left' : c === 'left' ? 'right' : null; if (n) genSel.segs.set(key, n); else genSel.segs.delete(key); drawGenSegs(); };
@@ -378,7 +379,7 @@ function drawGenSegs() {                          // сегменты ВСЕХ �
 }
 function endGenSelect() { genSel.active = false; if (genSel.layer) { map.removeLayer(genSel.layer); genSel.layer = null; } genSel.segs = null; document.getElementById('gen-bar').classList.add('hidden'); document.getElementById('map').classList.remove('selecting'); }
 function confirmGen() {
-  const pairs = (genSel.segs ? [...genSel.segs] : []).map(([k, side]) => { const [ri, si] = k.split(':').map(Number); return [state.roads[ri], si, side]; }).filter(p => p[0]);
+  const S = streets(); const pairs = (genSel.segs ? [...genSel.segs] : []).map(([k, side]) => { const [ri, si] = k.split(':').map(Number); return [S[ri], si, side]; }).filter(p => p[0]);
   const zone = genSel.zone || 'res';
   endGenSelect();
   if (pairs.length) runGeneration(pairs, zone);
@@ -567,11 +568,17 @@ function renderPaths() {
     lineHandlers(ln, 'paths', pp);
   });
 }
-function renderAlleys() {                         // переулок: узкий, без разметки и тротуаров
-  alleyLayer.clearLayers(); const w = Math.max(2, mToPx(LINE_M.alley));
+function renderAlleys() {                         // переулок: узкий; теперь КАК ДОРОГА — тротуары (по выбору) + меню
+  alleyLayer.clearLayers(); const w = Math.max(2, mToPx(LINE_M.alley)), sw = Math.max(2, mToPx(LINE_M.path + 0.6));
   state.alleys.forEach(r => {
+    const walk = state.roadWalk[roadKey(r)] || 'none';   // у переулка по умолчанию БЕЗ тротуаров (можно включить в меню)
+    const sides = walk === 'both' ? [SIDEWALK_OFF, -SIDEWALK_OFF] : walk === 'left' ? [SIDEWALK_OFF] : walk === 'right' ? [-SIDEWALK_OFF] : [];
+    sides.forEach(o => tagW(L.polyline(offsetLine(r, o), { pane: 'pane-path', color: '#b7b9bc', weight: sw, opacity: .9, interactive: false, lineCap: 'round' }).addTo(alleyLayer), LINE_M.path + 0.6));
     const ln = tagW(L.polyline(r, { pane: 'pane-alley', color: '#54585f', weight: w, opacity: .96, lineCap: 'round', lineJoin: 'round' }).addTo(alleyLayer), LINE_M.alley);
-    ln.on('click', e => { if (activeTool !== 'erase') return; L.DomEvent.stop(e); eraseSegment('alleys', r, e.latlng); });
+    ln.on('click', e => {
+      if (activeTool === 'erase') { L.DomEvent.stop(e); eraseSegment('alleys', r, e.latlng); }
+      else if (!activeTool && !draw.active && !genSel.active) { L.DomEvent.stop(e); openRoadMenu(e, r); }   // меню: авто-застройка/тротуар/подтянуть
+    });
     ln.on('mousemove', e => { if (activeTool === 'erase') hoverSeg(e.latlng, r); });
     ln.on('mouseout', clearHover);
   });
@@ -1122,7 +1129,7 @@ function wire() {
   document.getElementById('gen-cancel').onclick = endGenSelect;
   document.getElementById('tb-collapse').onclick = () => document.getElementById('toolbar').classList.toggle('collapsed');
   document.querySelectorAll('[data-zone]').forEach(b => b.onclick = () => { genSel.zone = b.dataset.zone; document.querySelectorAll('[data-zone]').forEach(x => x.classList.toggle('active', x === b)); });
-  document.querySelectorAll('[data-walk]').forEach(b => b.onclick = () => { if (walkBarKey) { state.roadWalk[walkBarKey] = b.dataset.walk; save(); renderRoads(); } document.querySelectorAll('[data-walk]').forEach(x => x.classList.toggle('active', x === b)); closeWalkBar(); });
+  document.querySelectorAll('[data-walk]').forEach(b => b.onclick = () => { if (walkBarKey) { state.roadWalk[walkBarKey] = b.dataset.walk; save(); renderRoads(); renderAlleys(); } document.querySelectorAll('[data-walk]').forEach(x => x.classList.toggle('active', x === b)); closeWalkBar(); });
   const nameEl = document.getElementById('state-name'); nameEl.value = state.name; nameEl.oninput = () => { state.name = nameEl.value.trim(); save(); };
   document.getElementById('flag').onclick = () => document.getElementById('palette').classList.toggle('hidden');
   document.querySelectorAll('.layer').forEach(b => { b.onclick = () => { const id = b.dataset.layer; if (id === currentLayer) return; map.removeLayer(layers[currentLayer]); layers[id].addTo(map); currentLayer = id; document.querySelectorAll('.layer').forEach(x => x.classList.toggle('active', x === b)); }; });
