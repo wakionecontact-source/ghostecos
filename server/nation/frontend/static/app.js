@@ -590,7 +590,7 @@ function roadIntersections() {
   }
   for (let a = 0; a < state.roads.length; a++) { const ra = state.roads[a];
     for (const end of [ra[0], ra[ra.length - 1]]) for (let b = 0; b < state.roads.length; b++) { if (b === a) continue; const rb = state.roads[b];
-      for (let j = 1; j < rb.length; j++) if (pointSegDistM(end[0], end[1], rb[j - 1], rb[j]) < 5) { pts.push([end[0], end[1]]); break; }   // допуск 5 м (присоединения чуть мимо)
+      for (let j = 1; j < rb.length; j++) if (pointSegDistM(end[0], end[1], rb[j - 1], rb[j]) < 6) { pts.push(projOnSegLL(end, rb[j - 1], rb[j])); break; }   // точку примыкания центрируем НА дорогу (если соединено чуть мимо)
     }
   }
   const ded = []; for (const p of pts) if (!ded.some(q => distMeters(p[0], p[1], q[0], q[1]) < 7)) ded.push(p);
@@ -602,6 +602,11 @@ function roadsAt(lat, lng, rad) {
   const out = []; for (const a of dirs) { const d = ((a * 180 / Math.PI) % 180 + 180) % 180; if (!out.some(o => { const diff = Math.abs(o - d); return Math.min(diff, 180 - diff) < 15; })) out.push(a); } return out;
 }
 const armBearing = (from, to) => Math.atan2((to[0] - from[0]) * MPD_LAT, (to[1] - from[1]) * mPerDegLng(from[0]));
+function projOnSegLL(p, a, b) {                  // проекция точки на отрезок (в latlng)
+  const m = mPerDegLng(a[0]), bx = (b[1] - a[1]) * m, by = (b[0] - a[0]) * MPD_LAT, px = (p[1] - a[1]) * m, py = (p[0] - a[0]) * MPD_LAT, l2 = bx * bx + by * by;
+  let t = l2 ? (px * bx + py * by) / l2 : 0; t = Math.max(0, Math.min(1, t));
+  return [a[0] + t * by / MPD_LAT, a[1] + t * bx / m];
+}
 function roadArmsAt(lat, lng, rad) {            // число «рукавов» дорог из точки: 1 на конце дороги, 2 на проходе/изгибе
   const arms = [];
   for (const road of state.roads) {
