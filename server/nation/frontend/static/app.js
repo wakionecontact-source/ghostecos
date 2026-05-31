@@ -315,6 +315,7 @@ function openRoadMenu(e, road) {
   closeCtxMenu();
   const m = document.getElementById('ctx-menu'); m.innerHTML = '';
   [['Авто-застройка вдоль дороги', () => { closeCtxMenu(); startGenSelect(road); }],
+   ['Тротуар (пешеходы)…', () => { closeCtxMenu(); openWalkBar(road); }],
    ['Подтянуть здания к дороге', () => { closeCtxMenu(); settleAll(); }]]
     .forEach(([label, fn]) => { const btn = document.createElement('button'); btn.className = 'ctx-item'; btn.textContent = label; btn.onclick = fn; m.appendChild(btn); });
   const o = e.originalEvent;
@@ -354,7 +355,7 @@ function confirmGen() {
 
 /* ════════════════ SIDEWALK SIDE BAR ════════════════ */
 let walkBarKey = null;
-function openWalkBar(pts) { walkBarKey = roadKey(pts); document.getElementById('walk-bar').classList.remove('hidden'); document.querySelectorAll('[data-walk]').forEach(x => x.classList.toggle('active', x.dataset.walk === 'none')); }
+function openWalkBar(pts) { walkBarKey = roadKey(pts); const cur = state.roadWalk[walkBarKey] || 'both'; document.getElementById('walk-bar').classList.remove('hidden'); document.querySelectorAll('[data-walk]').forEach(x => x.classList.toggle('active', x.dataset.walk === cur)); }
 function closeWalkBar() { document.getElementById('walk-bar').classList.add('hidden'); walkBarKey = null; }
 
 /* ════════════════ BUILDING GEOMETRY ════════════════ */
