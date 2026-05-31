@@ -164,6 +164,33 @@ button,input,textarea{font-family:inherit;}
 /* Spacer — место для аватарки у не-last сообщений в серии, чтобы bubble оставался выровнен */
 .grp-av-spacer { width:30px; flex-shrink:0; }
 
+/* Bottom sheet для attach */
+.attach-sheet-overlay {
+  position: fixed; inset: 0; z-index: 600; background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(4px); display: none; align-items: flex-end;
+}
+.attach-sheet-overlay.open { display: flex; }
+.attach-sheet {
+  width: 100%; background: var(--surface); border-top: 1px solid var(--border-strong);
+  border-radius: 18px 18px 0 0; padding: 20px 18px 28px;
+  display: flex; flex-direction: column; gap: 12px;
+  transform: translateY(100%); transition: transform .25s cubic-bezier(0.34,1.56,0.64,1);
+}
+.attach-sheet-overlay.open .attach-sheet { transform: translateY(0); }
+.attach-sheet .grab { width: 36px; height: 4px; background: rgba(255,255,255,0.2); border-radius:2px; margin: 0 auto 8px; }
+.attach-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+@media (max-width: 380px) { .attach-grid { grid-template-columns: repeat(3, 1fr); } }
+.attach-item {
+  background: rgba(168,85,247,0.08); border: 1px solid rgba(168,85,247,0.20);
+  border-radius: 12px; padding: 16px 8px; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  font-size: 11px; color: var(--text); font-weight: 600;
+  transition: transform .12s, background .12s;
+}
+.attach-item:hover { background: rgba(168,85,247,0.16); }
+.attach-item:active { transform: scale(0.95); }
+.attach-item i { font-size: 22px; color: var(--primary); }
+
 /* Реакции под bubble */
 .msg-reactions { display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; padding:0 6px; }
 .msg.mine .msg-reactions { justify-content:flex-end; }
@@ -487,6 +514,36 @@ button,input,textarea{font-family:inherit;}
     </div>
     <div class="m-results" id="newChatResults">
       <div style="padding:30px;text-align:center;color:var(--muted);font-size:13px;">Начните вводить имя</div>
+    </div>
+  </div>
+</div>
+
+<!-- Bottom sheet: переслать в чат -->
+<div class="attach-sheet-overlay" id="fwdSheet" onclick="if(event.target===this)closeFwdSheet()">
+  <div class="attach-sheet" onclick="event.stopPropagation()" style="max-height:70vh;display:flex;flex-direction:column;">
+    <div class="grab"></div>
+    <div style="font-weight:700;font-size:15px;margin:0 4px 12px;">Переслать в…</div>
+    <div id="fwdList" style="overflow-y:auto;max-height:55vh;display:flex;flex-direction:column;gap:4px;"></div>
+  </div>
+</div>
+
+<!-- Bottom sheet: выбор типа вложения -->
+<div class="attach-sheet-overlay" id="attachSheet" onclick="if(event.target===this)closeAttachSheet()">
+  <div class="attach-sheet" onclick="event.stopPropagation()">
+    <div class="grab"></div>
+    <div class="attach-grid">
+      <div class="attach-item" onclick="closeAttachSheet();document.getElementById('filePickerImg').click()">
+        <i class="fa-solid fa-image"></i><span>Фото</span>
+      </div>
+      <div class="attach-item" onclick="closeAttachSheet();document.getElementById('filePickerVid').click()">
+        <i class="fa-solid fa-video"></i><span>Видео</span>
+      </div>
+      <div class="attach-item" onclick="closeAttachSheet();document.getElementById('filePicker').click()">
+        <i class="fa-solid fa-file"></i><span>Файл</span>
+      </div>
+      <div class="attach-item" onclick="closeAttachSheet();onSendBtn()">
+        <i class="fa-solid fa-microphone"></i><span>Голосовое</span>
+      </div>
     </div>
   </div>
 </div>
@@ -1383,6 +1440,9 @@ async function ingestIncoming(m){
     stored.reply_to = payload.reply_to;
     stored.reply_preview = String(payload.reply_preview || '').slice(0, 100);
   }
+  if (payload.forwarded_from) {
+    stored.forwarded_from = String(payload.forwarded_from).slice(0, 50);
+  }
   const added = await idbAddMessage(stored);
   if (!added) return false;
   let d = dialogs.find(x => x.username === peerUsername);
@@ -2104,8 +2164,10 @@ function renderChat(){
     </div>
     <div class="chat-foot">
       <div class="input-wrap">
-        <button class="foot-btn" title="Прикрепить файл" onclick="document.getElementById('filePicker').click()"><i class="fa-solid fa-paperclip"></i></button>
+        <button class="foot-btn" title="Прикрепить" onclick="openAttachSheet()"><i class="fa-solid fa-paperclip"></i></button>
         <input type="file" id="filePicker" style="display:none" onchange="pickAndSendFile(this)">
+        <input type="file" id="filePickerImg" accept="image/*" style="display:none" onchange="pickAndSendFile(this)">
+        <input type="file" id="filePickerVid" accept="video/*" style="display:none" onchange="pickAndSendFile(this)">
         <textarea class="send-input" id="sendInput" placeholder="Сообщение" rows="1"></textarea>
         <button class="foot-btn" title="Эмодзи (скоро)" onclick="showToast('Эмодзи-палитра — скоро')"><i class="fa-regular fa-face-smile"></i></button>
       </div>
@@ -2207,7 +2269,7 @@ function renderMessages(){
     }
     html += `<div class="msg ${m.from_me?'mine':'theirs'} ${cls}" data-sid="${esc(m.sid)}">
       <div style="display:flex;flex-direction:column;max-width:100%;">
-        <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,'${esc(m.sid)}')" ontouchstart="msgLongPressStart(event,'${esc(m.sid)}')" ontouchend="msgLongPressEnd()" ontouchcancel="msgLongPressEnd()" ontouchmove="msgLongPressMove(event)">${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
+        <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,'${esc(m.sid)}')" ontouchstart="msgLongPressStart(event,'${esc(m.sid)}')" ontouchend="msgLongPressEnd()" ontouchcancel="msgLongPressEnd()" ontouchmove="msgLongPressMove(event)">${m.forwarded_from?`<div style="font-size:11px;color:var(--primary);font-weight:600;margin-bottom:3px;"><i class="fa-solid fa-share" style="margin-right:4px;font-size:10px;"></i>Переслано от @${esc(m.forwarded_from)}</div>`:''}${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
         ${renderReactions(m)}
         ${m.deleted ? '' : previewPlaceholder(m)}
       </div>
@@ -2322,6 +2384,75 @@ function msgLongPressEnd(){
   }
 }
 
+// Bottom sheet forward — выбор куда переслать
+let _fwdSid = null;
+function openForwardSheet(sid){
+  _fwdSid = sid;
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
+  if (!m) return;
+  const list = document.getElementById('fwdList');
+  // DM-диалоги + группы (кроме текущего чата)
+  const dItems = dialogs
+    .filter(d => !(activePeer && activePeer.username === d.username))
+    .map(d => `<div class="dialog" onclick="doForwardTo('dm', ${JSON.stringify(d.username)})">
+      <div class="d-av">${ini(d.display_name||d.username)}</div>
+      <div class="d-body"><div class="d-row1"><div class="d-name">${esc(d.display_name||d.username)}</div></div></div>
+    </div>`);
+  const gItems = groups
+    .filter(g => !(activeGroup && activeGroup.id === g.id))
+    .map(g => `<div class="dialog" onclick="doForwardTo('group', ${g.id})">
+      <div class="d-av" style="background:linear-gradient(135deg,var(--primary),var(--primary2));">
+        <i class="fa-solid fa-${g.kind==='channel'?'bullhorn':'users'}" style="color:#fff;font-size:14px;"></i>
+      </div>
+      <div class="d-body"><div class="d-row1"><div class="d-name">${esc(g.name)}</div></div></div>
+    </div>`);
+  list.innerHTML = (gItems.join('') + dItems.join('')) ||
+    '<div style="text-align:center;color:var(--sub);padding:24px;">Некуда переслать</div>';
+  document.getElementById('fwdSheet').classList.add('open');
+}
+function closeFwdSheet(){ document.getElementById('fwdSheet').classList.remove('open'); _fwdSid = null; }
+
+async function doForwardTo(kind, target){
+  const sid = _fwdSid;
+  closeFwdSheet();
+  if (sid == null) return;
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
+  if (!m) return;
+  const origAuthor = m.from_me ? me.username : (m.sender_username || (activePeer ? activePeer.username : ''));
+  const text = m.text || '';
+  const payload = { type: 'msg', text, forwarded_from: origAuthor || null };
+  try {
+    if (kind === 'dm') {
+      const ct = await encryptForPeer(target, payload);
+      await chat('/send', 'POST', { to_username: target, ciphertext: ct });
+    } else {
+      // group: загружаем участников если активная не та
+      const g = groups.find(x => x.id === target);
+      if (!g) return showToast('Группа не найдена', true);
+      const info = await chat(`/group/${target}`);
+      const { ciphertext, envelope_keys, sharedKeyBytes } = await encryptForGroup(info.members, payload);
+      const r = await chat(`/group/${target}/send`, 'POST', { ciphertext, envelope_keys });
+      _myGroupSharedKeys.set(r.id, sharedKeyBytes);
+      setTimeout(() => _myGroupSharedKeys.delete(r.id), 60000);
+    }
+    showToast('Переслано');
+  } catch(e) { showToast(e.message || 'Не удалось переслать', true); }
+}
+
+// Bottom sheet attach
+function openAttachSheet(){
+  if (activeGroup) {
+    // в группах файлы/голос пока не работают — сразу показываем msg
+    showToast('Файлы и голос в группах — скоро. Пока только текст.', true);
+    return;
+  }
+  if (!activePeer) return;
+  document.getElementById('attachSheet').classList.add('open');
+}
+function closeAttachSheet(){
+  document.getElementById('attachSheet').classList.remove('open');
+}
+
 function _ensureSwipeIcon(msgEl) {
   if (msgEl.querySelector('.msg-swipe-icon')) return;
   const icon = document.createElement('div');
@@ -2361,6 +2492,10 @@ function openMsgMenu(ev, sid){
   const menu = document.createElement('div');
   menu.style.cssText = 'background:rgba(15,23,42,0.96);backdrop-filter:blur(10px);border:1px solid var(--border-strong);border-radius:12px;padding:6px;box-shadow:0 12px 32px rgba(0,0,0,0.45);min-width:170px;';
   const items = [{icon:'fa-reply', label:'Ответить', cb:() => startReply(m)}];
+  // Forward — для любого не-удалённого текстового сообщения
+  if (!m.deleted && (m.text || '').trim()) {
+    items.push({icon:'fa-share', label:'Переслать', cb:() => openForwardSheet(sid)});
+  }
   if (m.from_me) {
     items.push({icon:'fa-pen', label:'Редактировать', cb:() => editMessage(sid)});
     items.push({icon:'fa-trash-can', label:'Удалить', danger:true, cb:() => deleteMessage(sid)});
@@ -3203,7 +3338,7 @@ function renderGroupMessages(){
       ${avatarSlot}
       <div style="display:flex;flex-direction:column;max-width:100%;">
         ${senderName}
-        <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,'${esc(m.sid)}')" ontouchstart="msgLongPressStart(event,'${esc(m.sid)}')" ontouchend="msgLongPressEnd()" ontouchcancel="msgLongPressEnd()" ontouchmove="msgLongPressMove(event)">${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
+        <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,'${esc(m.sid)}')" ontouchstart="msgLongPressStart(event,'${esc(m.sid)}')" ontouchend="msgLongPressEnd()" ontouchcancel="msgLongPressEnd()" ontouchmove="msgLongPressMove(event)">${m.forwarded_from?`<div style="font-size:11px;color:var(--primary);font-weight:600;margin-bottom:3px;"><i class="fa-solid fa-share" style="margin-right:4px;font-size:10px;"></i>Переслано от @${esc(m.forwarded_from)}</div>`:''}${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
         ${renderReactions(m)}
       </div>
     </div>`;
@@ -3353,6 +3488,9 @@ async function ingestGroupIncoming(m){
   if (payload && payload.reply_to) {
     stored.reply_to = payload.reply_to;
     stored.reply_preview = String(payload.reply_preview || '').slice(0, 100);
+  }
+  if (payload && payload.forwarded_from) {
+    stored.forwarded_from = String(payload.forwarded_from).slice(0, 50);
   }
   const added = await idbAddMessage(stored);
   if (!added) return false;
