@@ -151,7 +151,18 @@ button,input,textarea{font-family:inherit;}
 
 .msg{display:flex;max-width:75%;align-items:flex-end;gap:6px;margin-top:2px;}
 .msg.mine{align-self:flex-end;flex-direction:row-reverse;}
-.msg.theirs{align-self:flex-start;}
+.msg.theirs{align-self:flex-start;align-items:flex-end;gap:6px;}
+
+/* Аватарка чужого юзера в группе — слева от bubble, на уровне последнего сообщения серии */
+.grp-av {
+  width:30px; height:30px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  color:#fff; font-weight:700; font-size:12px; flex-shrink:0;
+  margin-bottom:2px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+}
+/* Spacer — место для аватарки у не-last сообщений в серии, чтобы bubble оставался выровнен */
+.grp-av-spacer { width:30px; flex-shrink:0; }
 .msg-bubble{position:relative;padding:8px 12px 6px;border-radius:16px;font-size:14.5px;line-height:1.4;color:var(--text);word-wrap:break-word;word-break:break-word;white-space:pre-wrap;max-width:100%;min-width:60px;}
 .msg.mine .msg-bubble{background:var(--bubble-mine);border-bottom-right-radius:5px;color:#fff;box-shadow:0 2px 12px rgba(124,58,237,0.25);}
 .msg.theirs .msg-bubble{background:var(--bubble-theirs);border-bottom-left-radius:5px;border:1px solid var(--border);}
@@ -3020,7 +3031,13 @@ function renderGroupMessages(){
     } else {
       bubbleBody = linkify(m.text || '');
     }
+    // Аватарка чужого юзера слева от bubble (только last/solo — низ серии)
+    const showAvatar = !m.from_me && (cls.includes('last') || cls.includes('solo')) && m.sender_username;
+    const avatarSlot = !m.from_me ? (showAvatar
+      ? `<div class="grp-av" style="background:linear-gradient(135deg,${userColor(m.sender_username)},${userColor(m.sender_username)}cc);">${ini(m.sender_display_name||m.sender_username)}</div>`
+      : `<div class="grp-av-spacer"></div>`) : '';
     html += `<div class="msg ${m.from_me?'mine':'theirs'} ${cls}" data-sid="${esc(m.sid)}">
+      ${avatarSlot}
       <div style="display:flex;flex-direction:column;max-width:100%;">
         ${senderName}
         <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,'${esc(m.sid)}')" ontouchstart="msgLongPressStart(event,'${esc(m.sid)}')" ontouchend="msgLongPressEnd()" ontouchcancel="msgLongPressEnd()" ontouchmove="msgLongPressMove(event)">${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
