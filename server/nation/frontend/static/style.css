@@ -180,6 +180,8 @@ button { cursor: pointer; background: none; border: none; color: inherit; font-f
 .tl i:nth-child(1) { background: #ff5247; }
 .tl i:nth-child(2) { background: #ffcf3f; }
 .tl i:nth-child(3) { background: #46d06a; }
+/* traffic light — top view box */
+.tl-top { width: 11px; height: 11px; background: #15171b; border: 1px solid rgba(255,255,255,0.35); border-radius: 2px; box-shadow: 0 1px 3px rgba(0,0,0,0.6); }
 
 /* ── TOAST ── */
 #toast {

@@ -628,7 +628,7 @@ function drawZebra(X, ang, key) {
 function renderLights() {
   lightLayer.clearLayers();
   state.lights.forEach(l => {
-    const m = L.marker([l.lat, l.lng], { pane: 'markerPane', icon: L.divIcon({ className: '', iconSize: [11, 24], iconAnchor: [5, 12], html: '<div class="tl"><i></i><i></i><i></i></div>' }) }).addTo(lightLayer);
+    const m = L.marker([l.lat, l.lng], { pane: 'markerPane', icon: L.divIcon({ className: '', iconSize: [12, 12], iconAnchor: [6, 6], html: '<div class="tl-top"></div>' }) }).addTo(lightLayer);
     m.on('click', e => { if (activeTool !== 'erase') return; L.DomEvent.stop(e); pushUndo(); state.lights = state.lights.filter(x => x !== l); save(); renderLights(); });
   });
 }
@@ -734,13 +734,13 @@ let simCanvas = null, simCtx = null;
 function resizeSim() { if (!simCanvas) return; const dpr = window.devicePixelRatio || 1; simCanvas.width = innerWidth * dpr; simCanvas.height = innerHeight * dpr; simCanvas.style.width = innerWidth + 'px'; simCanvas.style.height = innerHeight + 'px'; }
 
 function roadLen(r) { let d = 0; for (let i = 1; i < r.length; i++) d += distMeters(r[i - 1][0], r[i - 1][1], r[i][0], r[i][1]); return d; }
-function makeCar(ri) { const r = state.roads[ri]; return { ri, seg: randInt(Math.max(1, r.length - 1)), t: Math.random(), fwd: Math.random() < .5, spd: 7 + Math.random() * 6, color: CAR_COLORS[randInt(CAR_COLORS.length)] }; }
+function makeCar(ri) { const r = state.roads[ri]; return { ri, seg: randInt(Math.max(1, r.length - 1)), t: Math.random(), fwd: Math.random() < .5, spd: 8 + Math.random() * 6, v: 0, color: CAR_COLORS[randInt(CAR_COLORS.length)] }; }
 function makePed(key, idx) { return { key, idx, seg: randInt(Math.max(1, state[key][idx].length - 1)), t: Math.random(), fwd: Math.random() < .5, spd: 1.1 + Math.random() * 0.7, color: PED_COLORS[randInt(PED_COLORS.length)] }; }
 function buildSim() {
   sim.cars = []; sim.peds = [];
-  state.roads.forEach((r, ri) => { if (r.length < 2) return; const n = Math.max(1, Math.round(roadLen(r) / 75)); for (let k = 0; k < n; k++) sim.cars.push(makeCar(ri)); });
-  state.paths.forEach((p, i) => { if (p.length >= 2 && roadLen(p) > 5) sim.peds.push(makePed('paths', i)); });
-  if (sim.cars.length > 600) sim.cars.length = 600;
+  state.roads.forEach((r, ri) => { if (r.length < 2) return; const n = Math.max(1, Math.round(roadLen(r) / 45)); for (let k = 0; k < n; k++) sim.cars.push(makeCar(ri)); });
+  state.paths.forEach((p, i) => { if (p.length >= 2 && roadLen(p) > 5) { sim.peds.push(makePed('paths', i)); if (roadLen(p) > 20) sim.peds.push(makePed('paths', i)); } });
+  if (sim.cars.length > 800) sim.cars.length = 800;
 }
 function lerpPos(line, seg, t) { const a = line[seg], b = line[seg + 1]; t = Math.max(0, Math.min(1, t)); return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; }
 function segBear(line, seg, fwd) { const a = line[seg], b = line[seg + 1]; let ang = Math.atan2((b[0] - a[0]) * MPD_LAT, (b[1] - a[1]) * mPerDegLng(a[0])); return fwd ? ang : ang + Math.PI; }
@@ -750,7 +750,7 @@ function carBlocked(c) {
   const p = lerpPos(r, c.seg, c.t);
   for (const l of state.lights) if (distMeters(p[0], p[1], l.lat, l.lng) < 9) {
     const a = ((segBear(r, c.seg, true) * 180 / Math.PI) % 180 + 180) % 180, ns = a > 45 && a < 135;
-    if (ns !== (Math.floor(sim.t / 5) % 2 === 0)) return true;   // красный для этого направления
+    if (ns !== phaseGreenNS()) return true;   // красный для этого направления
   }
   return false;
 }
@@ -765,11 +765,29 @@ function junction(c, atEnd) {
 }
 function stepCar(c, dt) {
   const r = state.roads[c.ri]; if (!r || r.length < 2 || !r[c.seg] || !r[c.seg + 1]) { Object.assign(c, makeCar(randInt(Math.max(1, state.roads.length)))); return; }
-  if (carBlocked(c)) return;
   const a = r[c.seg], b = r[c.seg + 1], len = distMeters(a[0], a[1], b[0], b[1]) || 1;
-  c.t += (c.fwd ? 1 : -1) * c.spd * dt / len;
+  c.t += (c.fwd ? 1 : -1) * (c.v || 0) * dt / len;
   if (c.t > 1) { if (c.seg < r.length - 2) { c.seg++; c.t = 0; } else junction(c, true); }
   else if (c.t < 0) { if (c.seg > 0) { c.seg--; c.t = 1; } else junction(c, false); }
+}
+const phaseGreenNS = () => Math.floor(sim.t / 5) % 2 === 0;   // фаза: зелёный С-Ю / В-З по 5 с
+function roadCum(r) { const c = [0]; for (let i = 1; i < r.length; i++) c.push(c[i - 1] + distMeters(r[i - 1][0], r[i - 1][1], r[i][0], r[i][1])); return c; }
+function computeCarSpeeds(dt) {                 // car-following: подстройка скорости под переднюю + красный
+  const groups = {};
+  for (const c of sim.cars) { const r = state.roads[c.ri]; if (!r || r.length < 2) { c.v = 0; continue; } (groups[c.ri] || (groups[c.ri] = [])).push(c); }
+  for (const ri in groups) { const r = state.roads[ri], cum = roadCum(r), total = cum[cum.length - 1]; for (const c of groups[ri]) { const sl = (cum[c.seg + 1] - cum[c.seg]) || 1, along = cum[c.seg] + c.t * sl; c._tr = c.fwd ? along : (total - along); } }
+  for (const c of sim.cars) {
+    const r = state.roads[c.ri]; if (!r || r.length < 2) { c.v = 0; continue; }
+    let gap = Infinity;
+    for (const o of groups[c.ri]) { if (o === c || o.fwd !== c.fwd) continue; const d = o._tr - c._tr; if (d > 0 && d < gap) gap = d; }
+    gap -= 5.2;                                 // длина машины
+    let target = c.spd;
+    if (gap < 13) target = Math.min(target, Math.max(0, (gap - 2.4) * 1.3));   // тормозим за передней
+    if (carBlocked(c)) target = 0;
+    const v = c.v || 0;
+    c.v = target > v ? Math.min(target, v + 9 * dt) : Math.max(target, v - 28 * dt);   // плавный разгон/торможение
+    if (c.v < 0) c.v = 0;
+  }
 }
 function stepPed(p, dt) {
   const line = state[p.key][p.idx]; if (!line || line.length < 2 || !line[p.seg] || !line[p.seg + 1]) { p.dead = true; return; }
@@ -779,11 +797,26 @@ function stepPed(p, dt) {
   else if (p.t < 0) { if (p.seg > 0) { p.seg--; p.t = 1; } else { p.fwd = true; p.t = 0; } }
 }
 function roundRect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+function drawLightSignals(ctx, dpr, W, H) {       // цветной свет от светофора на каждую дорогу
+  if (!state.lights.length) return;
+  const greenNS = phaseGreenNS();
+  for (const l of state.lights) for (const ang of roadsAt(l.lat, l.lng, LINE_M.road)) {
+    const a = ((ang * 180 / Math.PI) % 180 + 180) % 180, isns = a > 45 && a < 135, col = (isns === greenNS) ? '70,208,106' : '255,82,71';
+    for (const s of [1, -1]) {
+      const pll = offset(l.lat, l.lng, Math.cos(ang) * 7 * s, Math.sin(ang) * 7 * s);
+      const cp = map.latLngToContainerPoint([pll[0], pll[1]]); if (cp.x < -40 || cp.y < -40 || cp.x > W + 40 || cp.y > H + 40) continue;
+      const rad = Math.max(7, mToPx(5.5)) * dpr, x = cp.x * dpr, y = cp.y * dpr, g = ctx.createRadialGradient(x, y, 0, x, y, rad);
+      g.addColorStop(0, `rgba(${col},0.6)`); g.addColorStop(1, `rgba(${col},0)`);
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, rad, 0, 6.2832); ctx.fill();
+    }
+  }
+}
 function drawSim() {
   const ctx = simCtx, dpr = window.devicePixelRatio || 1;
   ctx.clearRect(0, 0, simCanvas.width, simCanvas.height);
   const W = innerWidth, H = innerHeight;
-  const cl = Math.max(4, mToPx(4.6)), cw = Math.max(2.4, mToPx(2.2)), lane = mToPx(1.8);
+  drawLightSignals(ctx, dpr, W, H);
+  const cl = Math.max(4, mToPx(4.6)), cw = Math.max(2.4, mToPx(2.2));
   for (const c of sim.cars) {
     const r = state.roads[c.ri]; if (!r || !r[c.seg + 1]) continue;
     const ang = segBear(r, c.seg, c.fwd), pos = lerpPos(r, c.seg, c.t);
@@ -794,18 +827,20 @@ function drawSim() {
     ctx.fillStyle = 'rgba(20,24,30,.6)'; ctx.fillRect(cl * 0.12 * dpr, -cw / 2 * dpr, cl * 0.22 * dpr, cw * dpr);
     ctx.restore();
   }
-  const pr = Math.max(1.6, mToPx(0.9));
-  ctx.fillStyle = '#fff';
+  const bodyR = Math.max(1.5, mToPx(0.6)), headR = Math.max(0.9, bodyR * 0.55);   // пешеход: плечи + голова
   for (const p of sim.peds) {
     if (p.dead) continue; const line = state[p.key][p.idx]; if (!line || !line[p.seg + 1]) continue;
     const pos = lerpPos(line, p.seg, p.t), cp = map.latLngToContainerPoint([pos[0], pos[1]]); if (cp.x < -10 || cp.y < -10 || cp.x > W + 10 || cp.y > H + 10) continue;
-    ctx.beginPath(); ctx.fillStyle = p.color; ctx.arc(cp.x * dpr, cp.y * dpr, pr * dpr, 0, 6.2832); ctx.fill();
+    const x = cp.x * dpr, y = cp.y * dpr;
+    ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(x, y, bodyR * dpr, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = 'rgba(25,25,28,.9)'; ctx.beginPath(); ctx.arc(x, y, headR * dpr, 0, 6.2832); ctx.fill();
   }
 }
 function simLoop(ts) {
   if (!sim.on) return;
   if (!sim.last) sim.last = ts; let dt = (ts - sim.last) / 1000; sim.last = ts; if (dt > 0.1) dt = 0.1;
   sim.t += dt;
+  computeCarSpeeds(dt);
   for (const c of sim.cars) stepCar(c, dt);
   for (const p of sim.peds) stepPed(p, dt);
   if (sim.peds.some(p => p.dead)) sim.peds = sim.peds.filter(p => !p.dead);
