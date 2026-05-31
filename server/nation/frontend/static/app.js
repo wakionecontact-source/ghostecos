@@ -590,10 +590,11 @@ function roadIntersections() {
   }
   for (let a = 0; a < state.roads.length; a++) { const ra = state.roads[a];
     for (const end of [ra[0], ra[ra.length - 1]]) for (let b = 0; b < state.roads.length; b++) { if (b === a) continue; const rb = state.roads[b];
-      for (let j = 1; j < rb.length; j++) if (pointSegDistM(end[0], end[1], rb[j - 1], rb[j]) < 3) { pts.push([end[0], end[1]]); break; }
+      for (let j = 1; j < rb.length; j++) if (pointSegDistM(end[0], end[1], rb[j - 1], rb[j]) < 5) { pts.push([end[0], end[1]]); break; }   // допуск 5 м (присоединения чуть мимо)
     }
   }
-  const out = []; for (const p of pts) if (!out.some(q => distMeters(p[0], p[1], q[0], q[1]) < 6)) out.push(p); return out;
+  const ded = []; for (const p of pts) if (!ded.some(q => distMeters(p[0], p[1], q[0], q[1]) < 7)) ded.push(p);
+  return ded.filter(p => roadsAt(p[0], p[1], LINE_M.road * 1.4).length >= 2);   // только реальный перекрёсток (≥2 направления) — не на прямой
 }
 function roadsAt(lat, lng, rad) {
   const dirs = [];
@@ -604,7 +605,7 @@ function nearestIntersection(latlng) { let best = null, bestD = 20; for (const X
 function zebraKey(X, ang) { return `${X[0].toFixed(5)},${X[1].toFixed(5)}@${Math.round(((ang * 180 / Math.PI) % 180 + 180) % 180)}`; }
 function renderZebras() {
   zebraLayer.clearLayers();
-  for (const X of roadIntersections()) for (const ang of roadsAt(X[0], X[1], LINE_M.road * 0.9)) {
+  for (const X of roadIntersections()) for (const ang of roadsAt(X[0], X[1], LINE_M.road * 1.4)) {
     const key = zebraKey(X, ang); if (state.noZebra.includes(key)) continue;
     drawZebra(X, ang, key);
   }
@@ -729,22 +730,25 @@ function flash(msg, bad) { const t = document.getElementById('toast'); t.textCon
 /* ════════════════ TRAFFIC SIM (cars + people) ════════════════ */
 const CAR_COLORS = ['#e74c3c', '#3498db', '#ecf0f1', '#2c3e50', '#f1c40f', '#16a085', '#e67e22', '#8e44ad', '#bdc3c7'];
 const PED_COLORS = ['#ffd24a', '#5ad06a', '#ff8a5c', '#5cc8ff', '#e8e8e8', '#d98cff'];
-const sim = { on: false, cars: [], peds: [], raf: 0, last: 0, t: 0 };
+const sim = { on: false, cars: [], peds: [], driveLines: [], pedLines: [], raf: 0, last: 0, t: 0 };
 let simCanvas = null, simCtx = null;
 function resizeSim() { if (!simCanvas) return; const dpr = window.devicePixelRatio || 1; simCanvas.width = innerWidth * dpr; simCanvas.height = innerHeight * dpr; simCanvas.style.width = innerWidth + 'px'; simCanvas.style.height = innerHeight + 'px'; }
 
 function roadLen(r) { let d = 0; for (let i = 1; i < r.length; i++) d += distMeters(r[i - 1][0], r[i - 1][1], r[i][0], r[i][1]); return d; }
-function makeCar(ri) { const r = state.roads[ri]; return { ri, seg: randInt(Math.max(1, r.length - 1)), t: Math.random(), fwd: Math.random() < .5, spd: 8 + Math.random() * 6, v: 0, color: CAR_COLORS[randInt(CAR_COLORS.length)] }; }
+function makeCar(line) { return { line, seg: randInt(Math.max(1, line.length - 1)), t: Math.random(), fwd: Math.random() < .5, spd: 8 + Math.random() * 6, v: 0, color: CAR_COLORS[randInt(CAR_COLORS.length)] }; }
 function makePed(line) { return { line, seg: randInt(Math.max(1, line.length - 1)), t: Math.random(), fwd: Math.random() < .5, spd: 1.1 + Math.random() * 0.7, color: PED_COLORS[randInt(PED_COLORS.length)] }; }
 function buildSim() {
   sim.cars = []; sim.peds = [];
-  state.roads.forEach((r, ri) => { if (r.length < 2) return; const n = Math.max(1, Math.round(roadLen(r) / 45)); for (let k = 0; k < n; k++) sim.cars.push(makeCar(ri)); });
-  state.paths.forEach(p => { if (p.length >= 2 && roadLen(p) > 5) { sim.peds.push(makePed(p)); if (roadLen(p) > 20) sim.peds.push(makePed(p)); } });
-  state.roads.forEach(r => {                        // пешеходы на тротуарах вдоль дорог
+  sim.driveLines = state.roads.concat(state.alleys);          // машины ездят по дорогам И переулкам
+  sim.driveLines.forEach(r => { if (r.length < 2) return; const n = Math.max(1, Math.round(roadLen(r) / 45)); for (let k = 0; k < n; k++) sim.cars.push(makeCar(r)); });
+  sim.pedLines = [];                                           // связная пешеходная сеть: тропинки + тротуары
+  state.paths.forEach(p => { if (p.length >= 2 && roadLen(p) > 4) sim.pedLines.push(p); });
+  state.roads.forEach(r => {
     const walk = state.roadWalk[roadKey(r)] || 'both';
     const sides = walk === 'both' ? [SIDEWALK_OFF, -SIDEWALK_OFF] : walk === 'left' ? [SIDEWALK_OFF] : walk === 'right' ? [-SIDEWALK_OFF] : [];
-    sides.forEach(o => { const sw = offsetLine(r, o); if (sw.length >= 2 && roadLen(sw) > 12) { const n = Math.max(1, Math.round(roadLen(sw) / 45)); for (let k = 0; k < n; k++) sim.peds.push(makePed(sw)); } });
+    sides.forEach(o => { const sw = offsetLine(r, o); if (sw.length >= 2 && roadLen(sw) > 10) sim.pedLines.push(sw); });
   });
+  sim.pedLines.forEach(line => { const n = Math.max(1, Math.round(roadLen(line) / 40)); for (let k = 0; k < n; k++) sim.peds.push(makePed(line)); });
   if (sim.cars.length > 800) sim.cars.length = 800;
   if (sim.peds.length > 500) sim.peds.length = 500;
 }
@@ -752,7 +756,7 @@ function lerpPos(line, seg, t) { const a = line[seg], b = line[seg + 1]; t = Mat
 function segBear(line, seg, fwd) { const a = line[seg], b = line[seg + 1]; let ang = Math.atan2((b[0] - a[0]) * MPD_LAT, (b[1] - a[1]) * mPerDegLng(a[0])); return fwd ? ang : ang + Math.PI; }
 function carBlocked(c) {
   if (!state.lights.length) return false;
-  const r = state.roads[c.ri]; if (!r || !r[c.seg + 1]) return false;
+  const r = c.line; if (!r || !r[c.seg + 1]) return false;
   const p = lerpPos(r, c.seg, c.t), dir = segBear(r, c.seg, c.fwd), ux = Math.cos(dir), uy = Math.sin(dir);
   for (const l of state.lights) {
     const proj = (l.lng - p[1]) * mPerDegLng(p[0]) * ux + (l.lat - p[0]) * MPD_LAT * uy;   // насколько светофор ВПЕРЕДИ по ходу
@@ -763,17 +767,17 @@ function carBlocked(c) {
   }
   return false;
 }
-function junction(c, atEnd) {
-  const r = state.roads[c.ri], v = atEnd ? r[r.length - 1] : r[0], opts = [];
-  state.roads.forEach((r2, j) => { if (j === c.ri || r2.length < 2) return;
-    if (distMeters(r2[0][0], r2[0][1], v[0], v[1]) < 6) opts.push([j, true]);
-    if (distMeters(r2[r2.length - 1][0], r2[r2.length - 1][1], v[0], v[1]) < 6) opts.push([j, false]);
-  });
-  if (opts.length) { const [j, fromStart] = opts[randInt(opts.length)]; c.ri = j; const nr = state.roads[j]; if (fromStart) { c.seg = 0; c.t = 0; c.fwd = true; } else { c.seg = nr.length - 2; c.t = 1; c.fwd = false; } }
+function junction(c, atEnd) {                     // переход на связанную линию сети (дороги+переулки)
+  const r = c.line, v = atEnd ? r[r.length - 1] : r[0], opts = [];
+  for (const r2 of sim.driveLines) { if (r2 === r || r2.length < 2) continue;
+    if (distMeters(r2[0][0], r2[0][1], v[0], v[1]) < 6) opts.push([r2, true]);
+    if (distMeters(r2[r2.length - 1][0], r2[r2.length - 1][1], v[0], v[1]) < 6) opts.push([r2, false]);
+  }
+  if (opts.length) { const [nr, fromStart] = opts[randInt(opts.length)]; c.line = nr; if (fromStart) { c.seg = 0; c.t = 0; c.fwd = true; } else { c.seg = nr.length - 2; c.t = 1; c.fwd = false; } }
   else { c.fwd = !c.fwd; c.t = atEnd ? 0.999 : 0.001; }
 }
 function stepCar(c, dt) {
-  const r = state.roads[c.ri]; if (!r || r.length < 2 || !r[c.seg] || !r[c.seg + 1]) { Object.assign(c, makeCar(randInt(Math.max(1, state.roads.length)))); return; }
+  const r = c.line; if (!r || r.length < 2 || !r[c.seg] || !r[c.seg + 1]) { if (!sim.driveLines.length) { c.dead = true; return; } Object.assign(c, makeCar(sim.driveLines[randInt(sim.driveLines.length)])); return; }
   const a = r[c.seg], b = r[c.seg + 1], len = distMeters(a[0], a[1], b[0], b[1]) || 1;
   c.t += (c.fwd ? 1 : -1) * (c.v || 0) * dt / len;
   if (c.t > 1) { if (c.seg < r.length - 2) { c.seg++; c.t = 0; } else junction(c, true); }
@@ -782,13 +786,13 @@ function stepCar(c, dt) {
 const phaseGreenNS = () => Math.floor(sim.t / 5) % 2 === 0;   // фаза: зелёный С-Ю / В-З по 5 с
 function roadCum(r) { const c = [0]; for (let i = 1; i < r.length; i++) c.push(c[i - 1] + distMeters(r[i - 1][0], r[i - 1][1], r[i][0], r[i][1])); return c; }
 function computeCarSpeeds(dt) {                 // car-following: подстройка скорости под переднюю + красный
-  const groups = {};
-  for (const c of sim.cars) { const r = state.roads[c.ri]; if (!r || r.length < 2) { c.v = 0; continue; } (groups[c.ri] || (groups[c.ri] = [])).push(c); }
-  for (const ri in groups) { const r = state.roads[ri], cum = roadCum(r), total = cum[cum.length - 1]; for (const c of groups[ri]) { const sl = (cum[c.seg + 1] - cum[c.seg]) || 1, along = cum[c.seg] + c.t * sl; c._tr = c.fwd ? along : (total - along); } }
+  const groups = new Map();
+  for (const c of sim.cars) { const r = c.line; if (!r || r.length < 2) { c.v = 0; continue; } if (!groups.has(r)) groups.set(r, []); groups.get(r).push(c); }
+  for (const [r, list] of groups) { const cum = roadCum(r), total = cum[cum.length - 1]; for (const c of list) { const sl = (cum[c.seg + 1] - cum[c.seg]) || 1, along = cum[c.seg] + c.t * sl; c._tr = c.fwd ? along : (total - along); } }
   for (const c of sim.cars) {
-    const r = state.roads[c.ri]; if (!r || r.length < 2) { c.v = 0; continue; }
+    const r = c.line; if (!r || r.length < 2) { c.v = 0; continue; }
     let gap = Infinity;
-    for (const o of groups[c.ri]) { if (o === c || o.fwd !== c.fwd) continue; const d = o._tr - c._tr; if (d > 0 && d < gap) gap = d; }
+    for (const o of groups.get(r)) { if (o === c || o.fwd !== c.fwd) continue; const d = o._tr - c._tr; if (d > 0 && d < gap) gap = d; }
     gap -= 5.2;                                 // длина машины
     let target = c.spd;
     if (gap < 13) target = Math.min(target, Math.max(0, (gap - 2.4) * 1.3));   // тормозим за передней
@@ -798,18 +802,27 @@ function computeCarSpeeds(dt) {                 // car-following: подстро
     if (c.v < 0) c.v = 0;
   }
 }
+function pedJunction(p, atEnd) {                  // переход на связанную пешеходную линию (всё связано)
+  const line = p.line, v = atEnd ? line[line.length - 1] : line[0], opts = [];
+  for (const l2 of sim.pedLines) { if (l2 === line || l2.length < 2) continue;
+    if (distMeters(l2[0][0], l2[0][1], v[0], v[1]) < 6) opts.push([l2, true]);
+    if (distMeters(l2[l2.length - 1][0], l2[l2.length - 1][1], v[0], v[1]) < 6) opts.push([l2, false]);
+  }
+  if (opts.length) { const [nl, fromStart] = opts[randInt(opts.length)]; p.line = nl; if (fromStart) { p.seg = 0; p.t = 0; p.fwd = true; } else { p.seg = nl.length - 2; p.t = 1; p.fwd = false; } }
+  else { p.fwd = !p.fwd; p.t = atEnd ? 0.999 : 0.001; }
+}
 function stepPed(p, dt) {
   const line = p.line; if (!line || line.length < 2 || !line[p.seg] || !line[p.seg + 1]) { p.dead = true; return; }
   const a = line[p.seg], b = line[p.seg + 1], len = distMeters(a[0], a[1], b[0], b[1]) || 1;
   p.t += (p.fwd ? 1 : -1) * p.spd * dt / len;
-  if (p.t > 1) { if (p.seg < line.length - 2) { p.seg++; p.t = 0; } else { p.fwd = false; p.t = 1; } }
-  else if (p.t < 0) { if (p.seg > 0) { p.seg--; p.t = 1; } else { p.fwd = true; p.t = 0; } }
+  if (p.t > 1) { if (p.seg < line.length - 2) { p.seg++; p.t = 0; } else pedJunction(p, true); }
+  else if (p.t < 0) { if (p.seg > 0) { p.seg--; p.t = 1; } else pedJunction(p, false); }
 }
 function roundRect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
 function drawLightSignals(ctx, dpr, W, H) {       // цветной свет от светофора на каждую дорогу
   if (!state.lights.length) return;
   const greenNS = phaseGreenNS();
-  for (const l of state.lights) for (const ang of roadsAt(l.lat, l.lng, LINE_M.road)) {
+  for (const l of state.lights) for (const ang of roadsAt(l.lat, l.lng, LINE_M.road * 1.4)) {
     const a = ((ang * 180 / Math.PI) % 180 + 180) % 180, isns = a > 45 && a < 135, col = (isns === greenNS) ? '70,208,106' : '255,82,71';
     for (const s of [1, -1]) {
       const pll = offset(l.lat, l.lng, Math.cos(ang) * 7 * s, Math.sin(ang) * 7 * s);
@@ -827,7 +840,7 @@ function drawSim() {
   drawLightSignals(ctx, dpr, W, H);
   const cl = Math.max(4, mToPx(4.6)), cw = Math.max(2.4, mToPx(2.2));
   for (const c of sim.cars) {
-    const r = state.roads[c.ri]; if (!r || !r[c.seg + 1]) continue;
+    const r = c.line; if (!r || !r[c.seg + 1] || c.dead) continue;
     const ang = segBear(r, c.seg, c.fwd), pos = lerpPos(r, c.seg, c.t);
     const ll = offset(pos[0], pos[1], Math.sin(ang) * 1.8, -Math.cos(ang) * 1.8);   // правая полоса
     const cp = map.latLngToContainerPoint([ll[0], ll[1]]); if (cp.x < -30 || cp.y < -30 || cp.x > W + 30 || cp.y > H + 30) continue;
@@ -852,6 +865,7 @@ function simLoop(ts) {
   computeCarSpeeds(dt);
   for (const c of sim.cars) stepCar(c, dt);
   for (const p of sim.peds) stepPed(p, dt);
+  if (sim.cars.some(c => c.dead)) sim.cars = sim.cars.filter(c => !c.dead);
   if (sim.peds.some(p => p.dead)) sim.peds = sim.peds.filter(p => !p.dead);
   drawSim();
   sim.raf = requestAnimationFrame(simLoop);
