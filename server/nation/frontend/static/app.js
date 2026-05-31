@@ -38,7 +38,7 @@ function undo() {
 function updateUndoBtn() { const b = document.querySelector('[data-action="undo"]'); if (b) b.disabled = undoStack.length === 0; }
 
 /* ════════════════ ICONS ════════════════ */
-const ICON_NAMES = ['borders', 'house', 'shop', 'road', 'rail', 'path', 'tree', 'select', 'trash', 'flag', 'target', 'download', 'upload', 'undo'];
+const ICON_NAMES = ['borders', 'house', 'shop', 'road', 'alley', 'rail', 'path', 'tree', 'district', 'select', 'trash', 'flag', 'target', 'download', 'upload', 'undo'];
 const ICONS = {};
 async function loadIcons() { await Promise.all(ICON_NAMES.map(async n => { try { ICONS[n] = await (await fetch(`icons/${n}.svg`)).text(); } catch (e) { ICONS[n] = ''; } })); }
 
@@ -56,7 +56,7 @@ let layers = {}, currentLayer = 'esri', lastMouse = null;
 
 function initMap() {
   map = L.map('map', { zoomControl: false, attributionControl: true, worldCopyJump: true }).setView([state.view.lat, state.view.lng], state.view.zoom);
-  [['pane-territory', 410], ['pane-district', 412], ['pane-path', 415], ['pane-lines', 420], ['pane-cross', 425], ['pane-builds', 430], ['pane-edit', 440]]
+  [['pane-territory', 410], ['pane-district', 412], ['pane-path', 415], ['pane-alley', 417], ['pane-lines', 420], ['pane-cross', 425], ['pane-builds', 430], ['pane-edit', 440]]
     .forEach(([n, z]) => { map.createPane(n); map.getPane(n).style.zIndex = z; });
   L.control.zoom({ position: 'topright' }).addTo(map);
   layers.esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Esri · GhostNation' });
@@ -479,7 +479,7 @@ function renderPaths() {
 function renderAlleys() {                         // переулок: узкий, без разметки и тротуаров
   alleyLayer.clearLayers(); const w = Math.max(2, mToPx(LINE_M.alley));
   state.alleys.forEach(r => {
-    const ln = tagW(L.polyline(r, { pane: 'pane-lines', color: '#54585f', weight: w, opacity: .96, lineCap: 'round', lineJoin: 'round' }).addTo(alleyLayer), LINE_M.alley);
+    const ln = tagW(L.polyline(r, { pane: 'pane-alley', color: '#54585f', weight: w, opacity: .96, lineCap: 'round', lineJoin: 'round' }).addTo(alleyLayer), LINE_M.alley);
     ln.on('click', e => { if (activeTool !== 'erase') return; L.DomEvent.stop(e); eraseSegment('alleys', r, e.latlng); });
     ln.on('mousemove', e => { if (activeTool === 'erase') hoverSeg(e.latlng, r); });
     ln.on('mouseout', clearHover);
