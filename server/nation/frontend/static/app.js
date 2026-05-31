@@ -735,22 +735,31 @@ function resizeSim() { if (!simCanvas) return; const dpr = window.devicePixelRat
 
 function roadLen(r) { let d = 0; for (let i = 1; i < r.length; i++) d += distMeters(r[i - 1][0], r[i - 1][1], r[i][0], r[i][1]); return d; }
 function makeCar(ri) { const r = state.roads[ri]; return { ri, seg: randInt(Math.max(1, r.length - 1)), t: Math.random(), fwd: Math.random() < .5, spd: 8 + Math.random() * 6, v: 0, color: CAR_COLORS[randInt(CAR_COLORS.length)] }; }
-function makePed(key, idx) { return { key, idx, seg: randInt(Math.max(1, state[key][idx].length - 1)), t: Math.random(), fwd: Math.random() < .5, spd: 1.1 + Math.random() * 0.7, color: PED_COLORS[randInt(PED_COLORS.length)] }; }
+function makePed(line) { return { line, seg: randInt(Math.max(1, line.length - 1)), t: Math.random(), fwd: Math.random() < .5, spd: 1.1 + Math.random() * 0.7, color: PED_COLORS[randInt(PED_COLORS.length)] }; }
 function buildSim() {
   sim.cars = []; sim.peds = [];
   state.roads.forEach((r, ri) => { if (r.length < 2) return; const n = Math.max(1, Math.round(roadLen(r) / 45)); for (let k = 0; k < n; k++) sim.cars.push(makeCar(ri)); });
-  state.paths.forEach((p, i) => { if (p.length >= 2 && roadLen(p) > 5) { sim.peds.push(makePed('paths', i)); if (roadLen(p) > 20) sim.peds.push(makePed('paths', i)); } });
+  state.paths.forEach(p => { if (p.length >= 2 && roadLen(p) > 5) { sim.peds.push(makePed(p)); if (roadLen(p) > 20) sim.peds.push(makePed(p)); } });
+  state.roads.forEach(r => {                        // пешеходы на тротуарах вдоль дорог
+    const walk = state.roadWalk[roadKey(r)] || 'both';
+    const sides = walk === 'both' ? [SIDEWALK_OFF, -SIDEWALK_OFF] : walk === 'left' ? [SIDEWALK_OFF] : walk === 'right' ? [-SIDEWALK_OFF] : [];
+    sides.forEach(o => { const sw = offsetLine(r, o); if (sw.length >= 2 && roadLen(sw) > 12) { const n = Math.max(1, Math.round(roadLen(sw) / 45)); for (let k = 0; k < n; k++) sim.peds.push(makePed(sw)); } });
+  });
   if (sim.cars.length > 800) sim.cars.length = 800;
+  if (sim.peds.length > 500) sim.peds.length = 500;
 }
 function lerpPos(line, seg, t) { const a = line[seg], b = line[seg + 1]; t = Math.max(0, Math.min(1, t)); return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; }
 function segBear(line, seg, fwd) { const a = line[seg], b = line[seg + 1]; let ang = Math.atan2((b[0] - a[0]) * MPD_LAT, (b[1] - a[1]) * mPerDegLng(a[0])); return fwd ? ang : ang + Math.PI; }
 function carBlocked(c) {
   if (!state.lights.length) return false;
   const r = state.roads[c.ri]; if (!r || !r[c.seg + 1]) return false;
-  const p = lerpPos(r, c.seg, c.t);
-  for (const l of state.lights) if (distMeters(p[0], p[1], l.lat, l.lng) < 9) {
-    const a = ((segBear(r, c.seg, true) * 180 / Math.PI) % 180 + 180) % 180, ns = a > 45 && a < 135;
-    if (ns !== phaseGreenNS()) return true;   // красный для этого направления
+  const p = lerpPos(r, c.seg, c.t), dir = segBear(r, c.seg, c.fwd), ux = Math.cos(dir), uy = Math.sin(dir);
+  for (const l of state.lights) {
+    const proj = (l.lng - p[1]) * mPerDegLng(p[0]) * ux + (l.lat - p[0]) * MPD_LAT * uy;   // насколько светофор ВПЕРЕДИ по ходу
+    if (proj > 3 && proj < 11) {                 // у стоп-линии и ещё не въехал — стоп на красный; въехавшую (proj<=3) не держим
+      const a = ((dir * 180 / Math.PI) % 180 + 180) % 180, ns = a > 45 && a < 135;
+      if (ns !== phaseGreenNS()) return true;
+    }
   }
   return false;
 }
@@ -790,7 +799,7 @@ function computeCarSpeeds(dt) {                 // car-following: подстро
   }
 }
 function stepPed(p, dt) {
-  const line = state[p.key][p.idx]; if (!line || line.length < 2 || !line[p.seg] || !line[p.seg + 1]) { p.dead = true; return; }
+  const line = p.line; if (!line || line.length < 2 || !line[p.seg] || !line[p.seg + 1]) { p.dead = true; return; }
   const a = line[p.seg], b = line[p.seg + 1], len = distMeters(a[0], a[1], b[0], b[1]) || 1;
   p.t += (p.fwd ? 1 : -1) * p.spd * dt / len;
   if (p.t > 1) { if (p.seg < line.length - 2) { p.seg++; p.t = 0; } else { p.fwd = false; p.t = 1; } }
@@ -829,7 +838,7 @@ function drawSim() {
   }
   const bodyR = Math.max(1.5, mToPx(0.6)), headR = Math.max(0.9, bodyR * 0.55);   // пешеход: плечи + голова
   for (const p of sim.peds) {
-    if (p.dead) continue; const line = state[p.key][p.idx]; if (!line || !line[p.seg + 1]) continue;
+    if (p.dead) continue; const line = p.line; if (!line || !line[p.seg + 1]) continue;
     const pos = lerpPos(line, p.seg, p.t), cp = map.latLngToContainerPoint([pos[0], pos[1]]); if (cp.x < -10 || cp.y < -10 || cp.x > W + 10 || cp.y > H + 10) continue;
     const x = cp.x * dpr, y = cp.y * dpr;
     ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(x, y, bodyR * dpr, 0, 6.2832); ctx.fill();
