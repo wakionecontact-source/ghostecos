@@ -3076,6 +3076,20 @@ async function sendReaction(pid, emoji) {
 
 // Dwell-time: засекаем сколько секунд пост был в viewport — сигнал для Algo
 const _dwellTimers = new Map();  // pid -> {start, post}
+// + Сервер-side трекинг просмотров (для дедупа feed). Дебаунсный batch.
+const _viewQueue = new Set();
+let _viewFlushTimer = 0;
+function _scheduleViewFlush() {
+  if (_viewFlushTimer) return;
+  _viewFlushTimer = setTimeout(async () => {
+    _viewFlushTimer = 0;
+    if (!_viewQueue.size) return;
+    const ids = [..._viewQueue].slice(0, 50);
+    _viewQueue.clear();
+    try { await api('/post/view', 'POST', { ids }); } catch(_) {}
+  }, 2000);
+}
+
 const _dwellObs = new IntersectionObserver(entries => {
   entries.forEach(e => {
     const card = e.target;
@@ -3084,6 +3098,9 @@ const _dwellObs = new IntersectionObserver(entries => {
     if (!post) return;
     if (e.isIntersecting) {
       if (!_dwellTimers.has(pid)) _dwellTimers.set(pid, { start: performance.now(), post });
+      // Сервер view: добавляем в очередь сразу при появлении
+      _viewQueue.add(pid);
+      _scheduleViewFlush();
     } else {
       const t = _dwellTimers.get(pid);
       if (t) {

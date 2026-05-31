@@ -729,6 +729,46 @@ def init():
         c.execute("CREATE INDEX IF NOT EXISTS idx_join_req_group ON chat_group_join_requests(group_id, status)")
     except sqlite3.OperationalError:
         pass
+
+    # ── Система активности и модерации (Фаза 0+1) ──
+    # activity 0..1000: 0 = тень, 100 = низкий, 500 = середина (default), 1000 = max
+    try: c.execute("ALTER TABLE soc_posts ADD COLUMN activity INTEGER NOT NULL DEFAULT 500")
+    except sqlite3.OperationalError: pass
+    try: c.execute("ALTER TABLE soc_posts ADD COLUMN activity_set_at INTEGER")
+    except sqlite3.OperationalError: pass
+    try: c.execute("ALTER TABLE soc_posts ADD COLUMN automod_source TEXT")  # 'A'|'B'|'C'|'manual'
+    except sqlite3.OperationalError: pass
+    # Таблица просмотров — для дедупа feed («не показывать уже виденное»)
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS soc_post_views (
+                user_id INTEGER NOT NULL,
+                post_id INTEGER NOT NULL,
+                viewed_at INTEGER NOT NULL,
+                PRIMARY KEY (user_id, post_id)
+            )
+        """)
+    except sqlite3.OperationalError: pass
+    try: c.execute("CREATE INDEX IF NOT EXISTS idx_post_views_user ON soc_post_views(user_id, viewed_at DESC)")
+    except sqlite3.OperationalError: pass
+    # Аудит изменений activity (для дебага / истории моды)
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS soc_activity_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id INTEGER NOT NULL,
+                old_activity INTEGER,
+                new_activity INTEGER,
+                delta INTEGER,
+                source TEXT NOT NULL,   -- 'automod_B'|'automod_C'|'overwatch'|'system'|'manual'
+                actor_id INTEGER,        -- кто изменил (юзер/админ/null=auto)
+                note TEXT,
+                created_at INTEGER NOT NULL
+            )
+        """)
+    except sqlite3.OperationalError: pass
+    try: c.execute("CREATE INDEX IF NOT EXISTS idx_activity_log_post ON soc_activity_log(post_id, id DESC)")
+    except sqlite3.OperationalError: pass
     c.commit()
     c.close()
 
@@ -1381,6 +1421,7 @@ def get_posts(
         order = "p.created_at DESC"
 
     where = ["p.kind='post'"]  # обычная лента — без минисок
+    where.append("COALESCE(p.activity, 500) >= 10")  # ниже 10 = не показываем (модерация)
     params: list = []
     join_following = ""
     if sort == "following":
@@ -1392,18 +1433,25 @@ def get_posts(
         params.extend([like, like, like, f'#{tag}'])
     where_sql = "WHERE " + " AND ".join(where)
 
-    params.extend([offset])
+    # Сортировка с учётом просмотров: новое/непросмотренное наверх.
+    # Для random/old/top — оригинальная логика. Для new — фикс «уже просмотренные сверху»:
+    # сначала непросмотренные, потом просмотренные.
+    if sort in ("new", "following"):
+        order = "(CASE WHEN v.viewed_at IS NULL THEN 0 ELSE 1 END), p.created_at DESC"
+
+    params_with_uid = [uid] + params + [offset]
     rows = c.execute(f"""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
-               u.username, u.display_name,
+               u.username, u.display_name, p.activity,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p
         JOIN users u ON p.user_id=u.id
+        LEFT JOIN soc_post_views v ON v.post_id = p.id AND v.user_id = ?
         {join_following}
         {where_sql}
         ORDER BY {order}
         LIMIT 15 OFFSET ?
-    """, params).fetchall()
+    """, params_with_uid).fetchall()
     result = _hydrate_posts(c, rows, uid)
     c.close()
     return result
@@ -1585,8 +1633,51 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
                 raise HTTPException(400, "Викторина: укажите правильный ответ")
 
     c = db()
-    c.execute("INSERT INTO soc_posts (user_id, content, media) VALUES (?,?,?)", (user["id"], text, media_json))
+    # ── Автомодерация B (история юзера): начальная activity при создании ──
+    now_ts = int(time.time())
+    u_info = c.execute(
+        "SELECT created_at FROM users WHERE id=?", (user["id"],)
+    ).fetchone()
+    posts_cnt = c.execute(
+        "SELECT COUNT(*) as n FROM soc_posts WHERE user_id=?", (user["id"],)
+    ).fetchone()["n"]
+    is_banned = c.execute(
+        "SELECT 1 FROM users WHERE id=? AND COALESCE(blocked,0)=1", (user["id"],)
+    ).fetchone()
+    # Дни с регистрации (created_at — ISO TIMESTAMP, простая оценка)
+    try:
+        import datetime as _dt
+        reg_dt = _dt.datetime.fromisoformat(u_info["created_at"].replace('Z',''))
+        days_reg = (_dt.datetime.now() - reg_dt).days
+    except Exception:
+        days_reg = 0
+    # Базовая шкала автомодерации
+    if is_banned:
+        init_activity = 50           # бан-юзер: минимальная видимость
+    elif days_reg < 1:
+        init_activity = 200          # совсем свежий аккаунт
+    elif days_reg < 7 or posts_cnt < 3:
+        init_activity = 350          # новый/мало активный
+    elif posts_cnt < 30 or days_reg < 30:
+        init_activity = 500          # стандарт
+    else:
+        init_activity = 600          # опытный юзер
+    # Гарантируем минимум по ТЗ: не ниже 10 при автомоде
+    init_activity = max(10, min(1000, init_activity))
+
+    c.execute(
+        "INSERT INTO soc_posts (user_id, content, media, activity, activity_set_at, automod_source) "
+        "VALUES (?,?,?,?,?,?)",
+        (user["id"], text, media_json, init_activity, now_ts, 'B'),
+    )
     post_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
+    # Логируем для аудита
+    c.execute(
+        "INSERT INTO soc_activity_log (post_id, old_activity, new_activity, delta, source, actor_id, note, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (post_id, None, init_activity, init_activity, 'automod_B', None,
+         f'days_reg={days_reg} posts_cnt={posts_cnt}', now_ts),
+    )
     if poll is not None:
         c.execute(
             "INSERT INTO soc_polls (post_id, question, options, is_quiz, correct_idx) VALUES (?,?,?,?,?)",
@@ -2303,6 +2394,61 @@ async def link_preview(url: str = Query(..., max_length=2000), authorization: Op
     c.commit()
     c.close()
     return out
+
+# ── Просмотры постов + activity API (Фаза 0+1) ───────────────────────────────
+
+class ViewBody(BaseModel):
+    ids: list  # post_id-ы, попавшие в viewport
+
+@router.post("/post/view")
+def mark_viewed(body: ViewBody, authorization: Optional[str] = Header(None)):
+    """Клиент шлёт сюда id постов которые юзер увидел на экране.
+    Используется feed-ом для сортировки 'не показывать уже видённое сверху'.
+    Batch — до 50 за раз."""
+    user = auth_member(authorization)
+    if not body.ids or not isinstance(body.ids, list):
+        return {"recorded": 0}
+    ids = [int(x) for x in body.ids if isinstance(x, (int, str)) and str(x).isdigit()][:50]
+    if not ids:
+        return {"recorded": 0}
+    now = int(time.time())
+    c = db()
+    for pid in ids:
+        c.execute(
+            "INSERT OR IGNORE INTO soc_post_views (user_id, post_id, viewed_at) VALUES (?,?,?)",
+            (user["id"], pid, now),
+        )
+    c.commit(); c.close()
+    return {"recorded": len(ids)}
+
+
+@router.get("/post/{post_id}/activity")
+def post_activity(post_id: int, authorization: Optional[str] = Header(None)):
+    """Текущая activity поста + история изменений. Видит только автор."""
+    user = auth_member(authorization)
+    c = db()
+    p = c.execute(
+        "SELECT user_id, activity, activity_set_at, automod_source FROM soc_posts WHERE id=?",
+        (post_id,)
+    ).fetchone()
+    if not p:
+        c.close(); raise HTTPException(404, "Не найден")
+    if p["user_id"] != user["id"]:
+        c.close(); raise HTTPException(403, "Только автор")
+    history = c.execute(
+        "SELECT old_activity, new_activity, delta, source, note, created_at "
+        "FROM soc_activity_log WHERE post_id=? ORDER BY id DESC LIMIT 20",
+        (post_id,)
+    ).fetchall()
+    c.close()
+    return {
+        "activity": p["activity"],
+        "set_at": p["activity_set_at"],
+        "automod_source": p["automod_source"],
+        "scale": {"min": 0, "low": 100, "mid": 500, "max": 1000},
+        "history": [dict(h) for h in history],
+    }
+
 
 # ── Polls / Quizzes ───────────────────────────────────────────────────────────
 
