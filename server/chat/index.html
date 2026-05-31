@@ -163,6 +163,21 @@ button,input,textarea{font-family:inherit;}
 }
 /* Spacer — место для аватарки у не-last сообщений в серии, чтобы bubble оставался выровнен */
 .grp-av-spacer { width:30px; flex-shrink:0; }
+
+/* Реакции под bubble */
+.msg-reactions { display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; padding:0 6px; }
+.msg.mine .msg-reactions { justify-content:flex-end; }
+.msg-react-chip {
+  display:inline-flex; align-items:center; gap:4px;
+  background: rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.30);
+  border-radius:12px; padding:2px 8px; font-size:11.5px; font-weight:600;
+  color:var(--text); cursor:pointer; transition:background .12s, transform .05s;
+}
+.msg-react-chip:hover { background: rgba(168,85,247,0.22); }
+.msg-react-chip:active { transform: scale(0.94); }
+.msg-react-chip.mine { background: rgba(168,85,247,0.30); border-color: var(--primary); }
+.msg-react-chip .emo { font-size:13px; line-height:1; }
+.msg-react-chip .cnt { color:var(--sub); }
 .msg-bubble{position:relative;padding:8px 12px 6px;border-radius:16px;font-size:14.5px;line-height:1.4;color:var(--text);word-wrap:break-word;word-break:break-word;white-space:pre-wrap;max-width:100%;min-width:60px;}
 .msg.mine .msg-bubble{background:var(--bubble-mine);border-bottom-right-radius:5px;color:#fff;box-shadow:0 2px 12px rgba(124,58,237,0.25);}
 .msg.theirs .msg-bubble{background:var(--bubble-theirs);border-bottom-left-radius:5px;border:1px solid var(--border);}
@@ -1286,6 +1301,31 @@ async function ingestIncoming(m){
     return true;
   }
 
+  // ── Реакция ──
+  if (payload.type === 'react' && payload.target_sid != null) {
+    const tsid = payload.target_sid;
+    const target = await idbFindMessageBySid(tsid);
+    // Реакция от автора message — реагирует ОН сам; от собеседника — реагирует собеседник
+    const reactorKey = isMine ? me.username : peerUsername;
+    if (target && target.peer === peerUsername) {
+      const reactions = target.reactions || {};
+      // Очистим прежнюю реакцию этого юзера (один юзер = одна реакция на сообщение)
+      for (const e of Object.keys(reactions)) {
+        reactions[e] = (reactions[e] || []).filter(u => u !== reactorKey);
+        if (!reactions[e].length) delete reactions[e];
+      }
+      if (payload.emoji) {
+        reactions[payload.emoji] = [...(reactions[payload.emoji] || []), reactorKey];
+      }
+      await idbUpdateMessage(tsid, { reactions });
+      if (activePeer && activePeer.username === peerUsername) {
+        const i = activeMessages.findIndex(x => String(x.sid) === String(tsid));
+        if (i >= 0) { activeMessages[i].reactions = reactions; renderMessages(); }
+      }
+    }
+    return true;
+  }
+
   // ── File / Voice сообщение ──
   if ((payload.type === 'file' || payload.type === 'voice') && payload.file_id != null) {
     const isVoice = payload.type === 'voice';
@@ -2158,12 +2198,28 @@ function renderMessages(){
     html += `<div class="msg ${m.from_me?'mine':'theirs'} ${cls}" data-sid="${esc(m.sid)}">
       <div style="display:flex;flex-direction:column;max-width:100%;">
         <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,'${esc(m.sid)}')" ontouchstart="msgLongPressStart(event,'${esc(m.sid)}')" ontouchend="msgLongPressEnd()" ontouchcancel="msgLongPressEnd()" ontouchmove="msgLongPressMove(event)">${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
+        ${renderReactions(m)}
         ${m.deleted ? '' : previewPlaceholder(m)}
       </div>
     </div>`;
   }
   body.innerHTML = html;
   loadMsgPreviews();
+}
+
+// Чипы реакций под bubble
+function renderReactions(m) {
+  if (!m.reactions || m.deleted) return '';
+  const entries = Object.entries(m.reactions).filter(([_, users]) => users && users.length);
+  if (!entries.length) return '';
+  const sidArg = JSON.stringify(String(m.sid));
+  return '<div class="msg-reactions">' + entries.map(([emo, users]) => {
+    const mine = (users || []).includes(me.username);
+    const cnt = (users || []).length;
+    return `<button class="msg-react-chip${mine?' mine':''}" onclick="toggleReaction(${sidArg}, ${JSON.stringify(emo)})">
+      <span class="emo">${esc(emo)}</span>${cnt > 1 ? `<span class="cnt">${cnt}</span>` : ''}
+    </button>`;
+  }).join('') + '</div>';
 }
 
 function scrollToMsg(sid){
@@ -2257,34 +2313,98 @@ function _ensureSwipeIcon(msgEl) {
   msgEl.appendChild(icon);
 }
 
+const REACT_EMOJI = ['❤️','🔥','👍','😂','😮','🙏'];
+
 function openMsgMenu(ev, sid){
   closeMsgMenu();
   const m = activeMessages.find(x => String(x.sid) === String(sid));
   if (!m || m.deleted) return;
+  // Контейнер: emoji bar + menu
+  const wrap = document.createElement('div');
+  wrap.id = 'msgMenu';
+  wrap.style.cssText = 'position:fixed;z-index:500;display:flex;flex-direction:column;gap:6px;align-items:flex-start;';
+
+  // Emoji-bar (реакции)
+  const myReaction = _getMyReaction(m);
+  const bar = document.createElement('div');
+  bar.style.cssText = 'background:rgba(15,23,42,0.96);backdrop-filter:blur(10px);border:1px solid var(--border-strong);border-radius:32px;padding:6px 8px;display:flex;gap:2px;box-shadow:0 12px 32px rgba(0,0,0,0.45);';
+  REACT_EMOJI.forEach(emo => {
+    const btn = document.createElement('button');
+    btn.style.cssText = 'background:none;border:0;font-size:22px;padding:6px 8px;cursor:pointer;border-radius:50%;transition:transform .12s,background .12s;';
+    if (emo === myReaction) btn.style.background = 'rgba(168,85,247,0.25)';
+    btn.textContent = emo;
+    btn.onmouseover = () => btn.style.transform = 'scale(1.25)';
+    btn.onmouseout = () => btn.style.transform = '';
+    btn.onclick = (e) => { e.stopPropagation(); closeMsgMenu(); toggleReaction(sid, emo); };
+    bar.appendChild(btn);
+  });
+  wrap.appendChild(bar);
+
+  // Menu
   const menu = document.createElement('div');
-  menu.id = 'msgMenu';
-  menu.style.cssText = 'position:fixed;background:rgba(15,23,42,0.96);backdrop-filter:blur(10px);border:1px solid var(--border-strong);border-radius:12px;padding:6px;z-index:500;box-shadow:0 12px 32px rgba(0,0,0,0.45);min-width:170px;';
+  menu.style.cssText = 'background:rgba(15,23,42,0.96);backdrop-filter:blur(10px);border:1px solid var(--border-strong);border-radius:12px;padding:6px;box-shadow:0 12px 32px rgba(0,0,0,0.45);min-width:170px;';
   const items = [{icon:'fa-reply', label:'Ответить', cb:() => startReply(m)}];
   if (m.from_me) {
     items.push({icon:'fa-pen', label:'Редактировать', cb:() => editMessage(sid)});
     items.push({icon:'fa-trash-can', label:'Удалить', danger:true, cb:() => deleteMessage(sid)});
   }
   menu.innerHTML = items.map((it, i) => `<button data-i="${i}" style="display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;background:none;border:0;color:${it.danger ? 'var(--red)' : 'var(--text)'};font-size:13px;font-family:inherit;cursor:pointer;border-radius:8px;text-align:left;" onmouseover="this.style.background='rgba(255,255,255,0.06)'" onmouseout="this.style.background='none'"><i class="fa-solid ${it.icon}" style="width:14px;"></i>${esc(it.label)}</button>`).join('');
-  document.body.appendChild(menu);
-  // Позиционирование
+  wrap.appendChild(menu);
+  document.body.appendChild(wrap);
+  // Позиционирование (wrap)
   const x = ev.clientX || (ev.touches && ev.touches[0]?.clientX) || 100;
   const y = ev.clientY || (ev.touches && ev.touches[0]?.clientY) || 100;
-  const rect = menu.getBoundingClientRect();
-  const left = Math.min(x, window.innerWidth - rect.width - 10);
-  const top = Math.min(y, window.innerHeight - rect.height - 10);
-  menu.style.left = left + 'px';
-  menu.style.top = top + 'px';
+  const rect = wrap.getBoundingClientRect();
+  const left = Math.min(Math.max(8, x), window.innerWidth - rect.width - 10);
+  const top = Math.min(Math.max(8, y), window.innerHeight - rect.height - 10);
+  wrap.style.left = left + 'px';
+  wrap.style.top = top + 'px';
   menu.querySelectorAll('button').forEach((b, idx) => {
     b.onclick = () => { closeMsgMenu(); items[idx].cb(); };
   });
   setTimeout(() => document.addEventListener('click', closeMsgMenu, {once:true}), 50);
 }
 function closeMsgMenu(){ const m = document.getElementById('msgMenu'); if (m) m.remove(); }
+
+function _getMyReaction(m) {
+  if (!m || !m.reactions) return null;
+  for (const emo of Object.keys(m.reactions)) {
+    if ((m.reactions[emo] || []).includes(me.username)) return emo;
+  }
+  return null;
+}
+
+async function toggleReaction(sid, emoji) {
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
+  if (!m || m.deleted) return;
+  const current = _getMyReaction(m);
+  const newEmoji = current === emoji ? null : emoji;  // toggle off если та же
+  // Optimistic local update
+  const reactions = m.reactions || {};
+  for (const e of Object.keys(reactions)) {
+    reactions[e] = (reactions[e] || []).filter(u => u !== me.username);
+    if (!reactions[e].length) delete reactions[e];
+  }
+  if (newEmoji) {
+    reactions[newEmoji] = [...(reactions[newEmoji] || []), me.username];
+  }
+  m.reactions = reactions;
+  await idbUpdateMessage(sid, { reactions });
+  if (activeGroup) renderGroupMessages(); else renderMessages();
+  // Отправляем react-payload по тому же пути что edit/delete
+  try {
+    const payload = { type: 'react', target_sid: sid, emoji: newEmoji };
+    if (activeGroup) {
+      const { ciphertext, envelope_keys, sharedKeyBytes } = await encryptForGroup(activeGroup.members, payload);
+      const r = await chat(`/group/${activeGroup.id}/send`, 'POST', { ciphertext, envelope_keys });
+      _myGroupSharedKeys.set(r.id, sharedKeyBytes);
+      setTimeout(() => _myGroupSharedKeys.delete(r.id), 60000);
+    } else if (activePeer) {
+      const ct = await encryptForPeer(activePeer.username, payload);
+      await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: ct });
+    }
+  } catch(e) { showToast(e.message || 'Реакция не отправилась', true); }
+}
 
 function appendMessage(m){
   const body = document.getElementById('chatBody');
@@ -3041,6 +3161,7 @@ function renderGroupMessages(){
       <div style="display:flex;flex-direction:column;max-width:100%;">
         ${senderName}
         <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,'${esc(m.sid)}')" ontouchstart="msgLongPressStart(event,'${esc(m.sid)}')" ontouchend="msgLongPressEnd()" ontouchcancel="msgLongPressEnd()" ontouchmove="msgLongPressMove(event)">${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
+        ${renderReactions(m)}
       </div>
     </div>`;
   }
@@ -3151,6 +3272,29 @@ async function ingestGroupIncoming(m){
       if (activeGroup && activeGroup.id === gid) {
         const i = activeMessages.findIndex(x => String(x.sid) === String(tsid));
         if (i >= 0) { activeMessages[i].text = ''; activeMessages[i].deleted = true; renderGroupMessages(); }
+      }
+    }
+    return true;
+  }
+
+  // Реакция в группе
+  if (payload && payload.type === 'react' && payload.target_sid != null) {
+    const tsid = payload.target_sid;
+    const target = await idbFindMessageBySid(tsid);
+    const reactorKey = m.from_username || (isMine ? me.username : null);
+    if (target && target.peer === _grpKey(gid) && reactorKey) {
+      const reactions = target.reactions || {};
+      for (const e of Object.keys(reactions)) {
+        reactions[e] = (reactions[e] || []).filter(u => u !== reactorKey);
+        if (!reactions[e].length) delete reactions[e];
+      }
+      if (payload.emoji) {
+        reactions[payload.emoji] = [...(reactions[payload.emoji] || []), reactorKey];
+      }
+      await idbUpdateMessage(tsid, { reactions });
+      if (activeGroup && activeGroup.id === gid) {
+        const i = activeMessages.findIndex(x => String(x.sid) === String(tsid));
+        if (i >= 0) { activeMessages[i].reactions = reactions; renderGroupMessages(); }
       }
     }
     return true;
