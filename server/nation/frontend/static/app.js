@@ -67,12 +67,12 @@ let buildLayer, roadLayer, pathLayer, railLayer, crossLayer, editLayer, alleyLay
 let layers = {}, currentLayer = 'esri', lastMouse = null;
 
 function initMap() {
-  map = L.map('map', { zoomControl: false, attributionControl: true, worldCopyJump: true }).setView([state.view.lat, state.view.lng], state.view.zoom);
+  map = L.map('map', { zoomControl: false, attributionControl: true, worldCopyJump: true, maxZoom: 22, zoomSnap: 0, zoomDelta: 0.6, wheelPxPerZoomLevel: 100, zoomAnimation: true }).setView([state.view.lat, state.view.lng], state.view.zoom);   // zoomSnap:0 — плавный зум без рывков; maxZoom 22 — можно ближе
   [['pane-territory', 410], ['pane-district', 412], ['pane-path', 415], ['pane-alley', 417], ['pane-lines', 420], ['pane-cross', 425], ['pane-builds', 430], ['pane-edit', 440]]
     .forEach(([n, z]) => { map.createPane(n); map.getPane(n).style.zIndex = z; });
   L.control.zoom({ position: 'topright' }).addTo(map);
-  layers.esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Esri · GhostNation' });
-  layers.google = L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { maxZoom: 20, subdomains: ['0', '1', '2', '3'], attribution: 'Google · GhostNation' });
+  layers.esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 22, maxNativeZoom: 19, attribution: 'Esri · GhostNation' });   // апскейл тайлов выше 19 — можно подъехать вплотную
+  layers.google = L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { maxZoom: 22, maxNativeZoom: 20, subdomains: ['0', '1', '2', '3'], attribution: 'Google · GhostNation' });
   layers[currentLayer].addTo(map);
   map.on('moveend', () => { if (sim.follow) return; const c = map.getCenter(); state.view = { lat: c.lat, lng: c.lng, zoom: map.getZoom() }; save(); });
   map.on('zoomend', () => { [roadLayer, alleyLayer, pathLayer, railLayer].forEach(g => g && g.eachLayer(l => { if (l._mWidth != null) l.setStyle({ weight: Math.max(1, mToPx(l._mWidth)) }); })); renderCountryLabels(); });
@@ -1030,7 +1030,7 @@ function drawSim() {
   ctx.clearRect(0, 0, simCanvas.width, simCanvas.height);
   const W = innerWidth, H = innerHeight;
   drawLightSignals(ctx, dpr, W, H);
-  const cl = Math.max(4, mToPx(4.6)), cw = Math.max(2.4, mToPx(2.2));
+  const cl = Math.max(1.2, mToPx(3.8)), cw = Math.max(0.6, mToPx(1.7));   // машина мельче (3.8×1.7 м) + низкий пол — сильнее ужимается при отдалении (не «грузовой корабль»)
   for (const c of sim.cars) {
     const r = c.line; if (!r || !r[c.seg + 1] || c.dead) continue;
     const ang = segBear(r, c.seg, c.fwd), pos = lerpPos(r, c.seg, c.t);
@@ -1041,7 +1041,7 @@ function drawSim() {
     ctx.fillStyle = 'rgba(20,24,30,.6)'; ctx.fillRect(cl * 0.12 * dpr, -cw / 2 * dpr, cl * 0.22 * dpr, cw * dpr);
     ctx.restore();
   }
-  const bodyR = Math.max(1.5, mToPx(0.6)), headR = Math.max(0.9, bodyR * 0.55);   // пешеход: плечи + голова
+  const bodyR = Math.max(1, mToPx(0.55)), headR = Math.max(0.6, bodyR * 0.55);   // пешеход: плечи + голова (мельче)
   const sel = sim.selected;
   if (sel && !sel.dead && sel.line && sel.line[sel.seg + 1] && sel.goal) {        // пунктир выбранного жителя к его цели
     const sp = lerpPos(sel.line, sel.seg, sel.t), a = map.latLngToContainerPoint([sp[0], sp[1]]), b = map.latLngToContainerPoint([sel.goal[0], sel.goal[1]]);
