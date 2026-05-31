@@ -191,6 +191,19 @@ button { cursor: pointer; background: none; border: none; color: inherit; font-f
 #walk-bar > span { font-size: 13.5px; color: var(--text-dim); }
 #border-bar { bottom: 22px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 9px 9px 9px 16px; max-width: 94vw; flex-wrap: wrap; }
 #border-bar > span { font-size: 13px; color: var(--text-dim); }
+
+/* ── COUNTRY NAMEPLATE (видна при отдалении) ── */
+.country-label-wrap { pointer-events: none; }
+.country-label {
+  position: absolute; transform: translate(-50%, -50%); white-space: nowrap;
+  padding: 4px 12px; border-radius: 999px;
+  background: rgba(8,11,18,0.80); color: #fff;
+  font: 700 13px/1.1 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  letter-spacing: .02em;
+  border: 1.5px solid var(--c, #D97757);
+  box-shadow: 0 2px 12px rgba(0,0,0,.55);
+  text-shadow: 0 1px 2px rgba(0,0,0,.6);
+}
 #walk-opts { display: flex; gap: 3px; }
 
 /* traffic light marker */

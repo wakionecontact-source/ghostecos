@@ -62,7 +62,7 @@ const mToPx = m => m / mpp();
 
 /* ════════════════ MAP ════════════════ */
 let map, territory = null;
-let buildLayer, roadLayer, pathLayer, railLayer, crossLayer, editLayer, alleyLayer, districtLayer, zebraLayer, lightLayer;
+let buildLayer, roadLayer, pathLayer, railLayer, crossLayer, editLayer, alleyLayer, districtLayer, zebraLayer, lightLayer, countryLabelLayer;
 let layers = {}, currentLayer = 'esri', lastMouse = null;
 
 function initMap() {
@@ -74,7 +74,7 @@ function initMap() {
   layers.google = L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { maxZoom: 20, subdomains: ['0', '1', '2', '3'], attribution: 'Google · GhostNation' });
   layers[currentLayer].addTo(map);
   map.on('moveend', () => { if (sim.follow) return; const c = map.getCenter(); state.view = { lat: c.lat, lng: c.lng, zoom: map.getZoom() }; save(); });
-  map.on('zoomend', () => { [roadLayer, alleyLayer, pathLayer, railLayer].forEach(g => g && g.eachLayer(l => { if (l._mWidth != null) l.setStyle({ weight: Math.max(1, mToPx(l._mWidth)) }); })); });
+  map.on('zoomend', () => { [roadLayer, alleyLayer, pathLayer, railLayer].forEach(g => g && g.eachLayer(l => { if (l._mWidth != null) l.setStyle({ weight: Math.max(1, mToPx(l._mWidth)) }); })); renderCountryLabels(); });
   map.on('click', onMapClick);
   map.on('mousemove', e => { lastMouse = e.latlng; onMapMove(e); });
 }
@@ -441,6 +441,21 @@ function bBuildHandles() {
 function editBorder() { borderEdit.active = true; renderTerritory(); bBuildHandles(); document.getElementById('border-bar').classList.remove('hidden'); }
 function exitBorderEdit() { borderEdit.active = false; bClearHandles(); const bar = document.getElementById('border-bar'); if (bar) bar.classList.add('hidden'); save(); }
 
+/* ── ТАБЛИЧКИ СТРАН: видны при отдалении, лейбл с названием в центре границы (структура под мультиплеер) ── */
+const LABEL_MAX_ZOOM = 14;
+function borderCentroid(B) { let lat = 0, lng = 0; for (const p of B) { lat += p[0]; lng += p[1]; } return [lat / B.length, lng / B.length]; }
+function countriesForLabels() { return (state.name && state.border && state.border.length >= 3) ? [{ name: state.name, border: state.border, color: state.color }] : []; }   // пока одна страна — игрока; в мультиплеере сюда придут чужие
+function escLabel(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function renderCountryLabels() {
+  if (!countryLabelLayer) return;
+  countryLabelLayer.clearLayers();
+  if (map.getZoom() > LABEL_MAX_ZOOM) return;            // вблизи прячем — не мешает строить
+  for (const c of countriesForLabels()) {
+    const html = `<div class="country-label" style="--c:${c.color || '#D97757'}">${escLabel(c.name)}</div>`;
+    L.marker(borderCentroid(c.border), { pane: 'markerPane', interactive: false, keyboard: false, icon: L.divIcon({ className: 'country-label-wrap', html, iconSize: [0, 0], iconAnchor: [0, 0] }) }).addTo(countryLabelLayer);
+  }
+}
+
 const blMap = new Map();
 function insetRect(b, s) {
   const w = clampWH(b.w ?? DEF[b.type].w) * s, h = clampWH(b.h ?? DEF[b.type].h) * s, a = (b.rot || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
@@ -723,7 +738,7 @@ function renderLights() {
   });
 }
 
-function renderAll() { renderTerritory(); renderDistricts(); renderRoads(); renderAlleys(); renderPaths(); renderRails(); renderCrossings(); renderZebras(); renderBuildings(); renderLights(); updateStats(); document.getElementById('state-name').value = state.name; paintFlag(); updateUndoBtn(); }
+function renderAll() { renderTerritory(); renderDistricts(); renderRoads(); renderAlleys(); renderPaths(); renderRails(); renderCrossings(); renderZebras(); renderBuildings(); renderLights(); renderCountryLabels(); updateStats(); document.getElementById('state-name').value = state.name; paintFlag(); updateUndoBtn(); }
 
 /* ════════════════ EDITOR ════════════════ */
 let selected = null, eh = {};
@@ -1129,6 +1144,7 @@ function wire() {
   zebraLayer = L.layerGroup().addTo(map);
   buildLayer = L.layerGroup().addTo(map);
   lightLayer = L.layerGroup().addTo(map);
+  countryLabelLayer = L.layerGroup().addTo(map);
   editLayer = L.layerGroup().addTo(map);
   buildPalette(); wire(); renderAll();
   simCanvas = document.getElementById('sim'); simCtx = simCanvas.getContext('2d'); resizeSim();
