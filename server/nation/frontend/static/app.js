@@ -64,7 +64,7 @@ function initMap() {
   layers.esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Esri · GhostNation' });
   layers.google = L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { maxZoom: 20, subdomains: ['0', '1', '2', '3'], attribution: 'Google · GhostNation' });
   layers[currentLayer].addTo(map);
-  map.on('moveend', () => { const c = map.getCenter(); state.view = { lat: c.lat, lng: c.lng, zoom: map.getZoom() }; save(); });
+  map.on('moveend', () => { if (sim.follow) return; const c = map.getCenter(); state.view = { lat: c.lat, lng: c.lng, zoom: map.getZoom() }; save(); });
   map.on('zoomend', () => { [roadLayer, alleyLayer, pathLayer, railLayer].forEach(g => g && g.eachLayer(l => { if (l._mWidth != null) l.setStyle({ weight: Math.max(1, mToPx(l._mWidth)) }); })); });
   map.on('click', onMapClick);
   map.on('mousemove', e => { lastMouse = e.latlng; onMapMove(e); });
@@ -195,6 +195,11 @@ function alignToRoad(b) {                // rotate along nearest road, entrance 
 /* ════════════════ MAP CLICK / PLACE ════════════════ */
 function onMapClick(e) {
   closeCtxMenu();
+  if (sim.on && !activeTool && !draw.active && !genSel.active) {     // клик по жителю → выбор + слежение
+    const hit = pickCitizen(e.containerPoint);
+    if (hit) { selectCitizen(hit); return; }
+    if (sim.selected) { deselectCitizen(); return; }
+  }
   if (genSel.active) return;
   if (draw.active) { addVertex(e.latlng); return; }
   if (activeTool === 'select') { deselect(); return; }
@@ -777,13 +782,28 @@ function flash(msg, bad) { const t = document.getElementById('toast'); t.textCon
 /* ════════════════ TRAFFIC SIM (cars + people) ════════════════ */
 const CAR_COLORS = ['#e74c3c', '#3498db', '#ecf0f1', '#2c3e50', '#f1c40f', '#16a085', '#e67e22', '#8e44ad', '#bdc3c7'];
 const PED_COLORS = ['#ffd24a', '#5ad06a', '#ff8a5c', '#5cc8ff', '#e8e8e8', '#d98cff'];
-const sim = { on: false, cars: [], peds: [], driveLines: [], pedLines: [], raf: 0, last: 0, t: 0 };
+const sim = { on: false, cars: [], peds: [], driveLines: [], pedLines: [], raf: 0, last: 0, t: 0, selected: null, follow: false, _panelT: 0 };
 let simCanvas = null, simCtx = null;
 function resizeSim() { if (!simCanvas) return; const dpr = window.devicePixelRatio || 1; simCanvas.width = innerWidth * dpr; simCanvas.height = innerHeight * dpr; simCanvas.style.width = innerWidth + 'px'; simCanvas.style.height = innerHeight + 'px'; }
 
 function roadLen(r) { let d = 0; for (let i = 1; i < r.length; i++) d += distMeters(r[i - 1][0], r[i - 1][1], r[i][0], r[i][1]); return d; }
 function makeCar(line) { return { line, seg: randInt(Math.max(1, line.length - 1)), t: Math.random(), fwd: Math.random() < .5, spd: 8 + Math.random() * 6, v: 0, color: CAR_COLORS[randInt(CAR_COLORS.length)] }; }
-function makePed(line) { return { line, seg: randInt(Math.max(1, line.length - 1)), t: Math.random(), fwd: Math.random() < .5, spd: 1.1 + Math.random() * 0.7, color: PED_COLORS[randInt(PED_COLORS.length)] }; }
+const NAME_M = ['Иван', 'Пётр', 'Алексей', 'Дмитрий', 'Сергей', 'Андрей', 'Николай', 'Михаил', 'Олег', 'Артём', 'Максим', 'Роман', 'Егор', 'Кирилл', 'Фёдор', 'Павел', 'Денис', 'Глеб'];
+const NAME_F = ['Анна', 'Мария', 'Елена', 'Ольга', 'Татьяна', 'Ирина', 'Наталья', 'Светлана', 'Юлия', 'Дарья', 'Екатерина', 'Софья', 'Полина', 'Вера', 'Алиса', 'Ксения', 'Нина'];
+const SURNAME = ['Иванов', 'Петров', 'Смирнов', 'Кузнецов', 'Соколов', 'Попов', 'Лебедев', 'Козлов', 'Новиков', 'Морозов', 'Волков', 'Орлов', 'Зайцев', 'Фролов', 'Гусев', 'Беляев'];
+const JOBS = ['рабочий', 'учитель', 'врач', 'продавец', 'инженер', 'студент', 'пенсионер', 'водитель', 'повар', 'программист', 'строитель', 'бухгалтер', 'музыкант', 'садовник', 'почтальон'];
+let _cid = 0;
+function makeCitizen(line) {
+  const female = Math.random() < 0.5;
+  const first = female ? NAME_F[randInt(NAME_F.length)] : NAME_M[randInt(NAME_M.length)];
+  const last = SURNAME[randInt(SURNAME.length)] + (female ? 'а' : '');
+  return {
+    id: ++_cid, name: first + ' ' + last, female, age: 16 + randInt(64), job: JOBS[randInt(JOBS.length)],
+    line, seg: randInt(Math.max(1, line.length - 1)), t: Math.random(), fwd: Math.random() < .5,
+    spd: 1.0 + Math.random() * 0.7, color: PED_COLORS[randInt(PED_COLORS.length)],
+    dest: null, goal: null, status: 'идёт', idle: 0
+  };
+}
 function buildSim() {
   sim.cars = []; sim.peds = [];
   sim.driveLines = state.roads.concat(state.alleys);          // машины ездят по дорогам И переулкам
@@ -795,9 +815,26 @@ function buildSim() {
     const sides = walk === 'both' ? [SIDEWALK_OFF, -SIDEWALK_OFF] : walk === 'left' ? [SIDEWALK_OFF] : walk === 'right' ? [-SIDEWALK_OFF] : [];
     sides.forEach(o => { const sw = offsetLine(r, o); if (sw.length >= 2 && roadLen(sw) > 10) sim.pedLines.push(sw); });
   });
-  sim.pedLines.forEach(line => { const n = Math.max(1, Math.round(roadLen(line) / 40)); for (let k = 0; k < n; k++) sim.peds.push(makePed(line)); });
+  sim.pedLines.forEach(line => { const n = Math.max(1, Math.round(roadLen(line) / 40)); for (let k = 0; k < n; k++) sim.peds.push(makeCitizen(line)); });
   if (sim.cars.length > 800) sim.cars.length = 800;
   if (sim.peds.length > 500) sim.peds.length = 500;
+  sim.selected = null; sim.follow = false;
+  sim.peds.forEach(assignDest);                                // у каждого жителя — цель (куда направляется)
+}
+function pedNearestPoint(ll) {                                 // ближайшая точка пешеходной сети к latlng
+  let best = null, bd = Infinity;
+  for (const line of sim.pedLines) for (let i = 1; i < line.length; i++) {
+    const pr = projOnSegLL([ll[0], ll[1]], line[i - 1], line[i]), d = distMeters(ll[0], ll[1], pr[0], pr[1]);
+    if (d < bd) { bd = d; best = { line, seg: i - 1, pos: pr }; }
+  }
+  return best;
+}
+function assignDest(cit) {                                     // выбрать здание-цель и точку на сети рядом с ним
+  const builds = state.buildings.filter(b => b.type !== 'tree');
+  if (!builds.length || !sim.pedLines.length) { cit.dest = null; cit.goal = null; cit.status = 'гуляет'; return; }
+  const b = builds[randInt(builds.length)], np = pedNearestPoint([b.lat, b.lng]);
+  cit.dest = b; cit.goal = np ? np.pos : [b.lat, b.lng];
+  cit.status = 'идёт ' + (b.type === 'shop' ? 'в магазин' : 'к дому');
 }
 function lerpPos(line, seg, t) { const a = line[seg], b = line[seg + 1]; t = Math.max(0, Math.min(1, t)); return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; }
 function segBear(line, seg, fwd) { const a = line[seg], b = line[seg + 1]; let ang = Math.atan2((b[0] - a[0]) * MPD_LAT, (b[1] - a[1]) * mPerDegLng(a[0])); return fwd ? ang : ang + Math.PI; }
@@ -855,13 +892,56 @@ function computeCarSpeeds(dt) {                 // car-following: подстро
     if (c.v < 0) c.v = 0;
   }
 }
-function pedJunction(p, atEnd) { netJunction(p, sim.pedLines, atEnd, 6); }
+function citizenJunction(p, atEnd) {              // на стыке свернуть В СТОРОНУ ЦЕЛИ (жадно), иначе — случайно
+  if (!p.goal) { netJunction(p, sim.pedLines, atEnd, 6); return; }
+  const line = p.line, v = atEnd ? line[line.length - 1] : line[0], opts = [];
+  for (const l2 of sim.pedLines) { if (l2 === line || l2.length < 2) continue;
+    for (let i = 1; i < l2.length; i++) {
+      const a = l2[i - 1], b = l2[i], E = (b[1] - a[1]) * mPerDegLng(a[0]), N = (b[0] - a[0]) * MPD_LAT, L2 = E * E + N * N;
+      const vE = (v[1] - a[1]) * mPerDegLng(a[0]), vN = (v[0] - a[0]) * MPD_LAT;
+      let t = L2 ? (vE * E + vN * N) / L2 : 0; t = Math.max(0, Math.min(1, t));
+      if (Math.hypot(vE - t * E, vN - t * N) < 6) { opts.push([l2, i - 1, t]); break; }
+    }
+  }
+  if (!opts.length) { p.fwd = !p.fwd; p.t = atEnd ? 0.985 : 0.015; return; }   // тупик — разворот
+  let best = null, bestD = Infinity;
+  for (const [nl, seg, t] of opts) for (const fwd of [true, false]) {
+    const pos = lerpPos(nl, seg, fwd ? Math.min(1, t + 0.12) : Math.max(0, t - 0.12));
+    const d = distMeters(pos[0], pos[1], p.goal[0], p.goal[1]);
+    if (d < bestD) { bestD = d; best = [nl, seg, t, fwd]; }
+  }
+  p.line = best[0]; p.seg = best[1]; p.t = Math.max(0.04, Math.min(0.96, best[2])); p.fwd = best[3];
+}
 function stepPed(p, dt) {
+  if (p.idle > 0) { p.idle -= dt; if (p.idle <= 0) assignDest(p); return; }   // стоит у цели, потом новая цель
   const line = p.line; if (!line || line.length < 2 || !line[p.seg] || !line[p.seg + 1]) { p.dead = true; return; }
   const a = line[p.seg], b = line[p.seg + 1], len = distMeters(a[0], a[1], b[0], b[1]) || 1;
   p.t += (p.fwd ? 1 : -1) * p.spd * dt / len;
-  if (p.t > 1) { if (p.seg < line.length - 2) { p.seg++; p.t = 0; } else pedJunction(p, true); }
-  else if (p.t < 0) { if (p.seg > 0) { p.seg--; p.t = 1; } else pedJunction(p, false); }
+  if (p.t > 1) { if (p.seg < line.length - 2) { p.seg++; p.t = 0; } else citizenJunction(p, true); }
+  else if (p.t < 0) { if (p.seg > 0) { p.seg--; p.t = 1; } else citizenJunction(p, false); }
+  if (p.goal && p.line && p.line[p.seg + 1]) {                  // пришёл к цели?
+    const pos = lerpPos(p.line, p.seg, p.t);
+    if (distMeters(pos[0], pos[1], p.goal[0], p.goal[1]) < 7) { p.idle = 2 + Math.random() * 5; p.status = 'на месте: ' + (p.dest && p.dest.type === 'shop' ? 'магазин' : 'дом'); p.goal = null; }
+  }
+}
+function pickCitizen(cp) {                          // ближайший житель к точке экрана (для клика)
+  let best = null, bd = 16;
+  for (const p of sim.peds) { if (p.dead) continue; const line = p.line; if (!line || !line[p.seg + 1]) continue;
+    const pos = lerpPos(line, p.seg, p.t), q = map.latLngToContainerPoint([pos[0], pos[1]]), d = Math.hypot(q.x - cp.x, q.y - cp.y);
+    if (d < bd) { bd = d; best = p; }
+  }
+  return best;
+}
+function selectCitizen(c) { sim.selected = c; sim.follow = true; document.getElementById('citizen').classList.remove('hidden'); updateCitizenPanel(); }
+function deselectCitizen() { sim.selected = null; sim.follow = false; const p = document.getElementById('citizen'); if (p) p.classList.add('hidden'); }
+function updateCitizenPanel() {
+  const c = sim.selected; if (!c) return;
+  document.getElementById('cz-name').textContent = c.name;
+  const dest = c.dest ? (c.dest.type === 'shop' ? 'магазин' : 'дом') : 'нет';
+  document.getElementById('cz-body').innerHTML =
+    `<div class="cz-row"><span>${c.female ? 'Женщина' : 'Мужчина'}, ${c.age}</span><span>${c.job}</span></div>` +
+    `<div class="cz-row"><span>Статус</span><b>${c.status || 'идёт'}</b></div>` +
+    `<div class="cz-row"><span>Направляется</span><b>${dest}</b></div>`;
 }
 function roundRect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
 function drawLightSignals(ctx, dpr, W, H) {       // цветной свет от светофора на каждую дорогу
@@ -896,12 +976,19 @@ function drawSim() {
     ctx.restore();
   }
   const bodyR = Math.max(1.5, mToPx(0.6)), headR = Math.max(0.9, bodyR * 0.55);   // пешеход: плечи + голова
+  const sel = sim.selected;
+  if (sel && !sel.dead && sel.line && sel.line[sel.seg + 1] && sel.goal) {        // пунктир выбранного жителя к его цели
+    const sp = lerpPos(sel.line, sel.seg, sel.t), a = map.latLngToContainerPoint([sp[0], sp[1]]), b = map.latLngToContainerPoint([sel.goal[0], sel.goal[1]]);
+    ctx.strokeStyle = 'rgba(217,119,87,.55)'; ctx.lineWidth = 2 * dpr; ctx.setLineDash([6 * dpr, 6 * dpr]);
+    ctx.beginPath(); ctx.moveTo(a.x * dpr, a.y * dpr); ctx.lineTo(b.x * dpr, b.y * dpr); ctx.stroke(); ctx.setLineDash([]);
+  }
   for (const p of sim.peds) {
     if (p.dead) continue; const line = p.line; if (!line || !line[p.seg + 1]) continue;
     const pos = lerpPos(line, p.seg, p.t), cp = map.latLngToContainerPoint([pos[0], pos[1]]); if (cp.x < -10 || cp.y < -10 || cp.x > W + 10 || cp.y > H + 10) continue;
-    const x = cp.x * dpr, y = cp.y * dpr;
-    ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(x, y, bodyR * dpr, 0, 6.2832); ctx.fill();
-    ctx.fillStyle = 'rgba(25,25,28,.9)'; ctx.beginPath(); ctx.arc(x, y, headR * dpr, 0, 6.2832); ctx.fill();
+    const x = cp.x * dpr, y = cp.y * dpr, isSel = p === sel, br = isSel ? bodyR * 1.5 : bodyR, hr = isSel ? headR * 1.5 : headR;
+    if (isSel) { ctx.strokeStyle = '#D97757'; ctx.lineWidth = 2.2 * dpr; ctx.beginPath(); ctx.arc(x, y, (br + 4) * dpr, 0, 6.2832); ctx.stroke(); }
+    ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(x, y, br * dpr, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = 'rgba(25,25,28,.9)'; ctx.beginPath(); ctx.arc(x, y, hr * dpr, 0, 6.2832); ctx.fill();
   }
 }
 function simLoop(ts) {
@@ -913,6 +1000,17 @@ function simLoop(ts) {
   for (const p of sim.peds) stepPed(p, dt);
   if (sim.cars.some(c => c.dead)) sim.cars = sim.cars.filter(c => !c.dead);
   if (sim.peds.some(p => p.dead)) sim.peds = sim.peds.filter(p => !p.dead);
+  if (sim.selected) {
+    if (sim.selected.dead || !sim.peds.includes(sim.selected)) deselectCitizen();
+    else {
+      const s = sim.selected, line = s.line;
+      if (sim.follow && line && line[s.seg + 1]) {                 // камера следует за жителем
+        const pos = lerpPos(line, s.seg, s.t), cp = map.latLngToContainerPoint([pos[0], pos[1]]), cen = map.getSize().divideBy(2);
+        if (Math.abs(cp.x - cen.x) > 2 || Math.abs(cp.y - cen.y) > 2) map.panTo([pos[0], pos[1]], { animate: false });
+      }
+      if (sim.t - sim._panelT > 0.3) { sim._panelT = sim.t; updateCitizenPanel(); }   // живой статус
+    }
+  }
   drawSim();
   sim.raf = requestAnimationFrame(simLoop);
 }
@@ -923,7 +1021,7 @@ function startSim() {
   sim.raf = requestAnimationFrame(simLoop);
   flash(`Движение: ${sim.cars.length} машин, ${sim.peds.length} пешеходов`);
 }
-function stopSim() { sim.on = false; if (sim.raf) cancelAnimationFrame(sim.raf); if (simCtx) simCtx.clearRect(0, 0, simCanvas.width, simCanvas.height); const b = document.querySelector('[data-action="sim"]'); if (b) b.classList.remove('active'); }
+function stopSim() { sim.on = false; deselectCitizen(); if (sim.raf) cancelAnimationFrame(sim.raf); if (simCtx) simCtx.clearRect(0, 0, simCanvas.width, simCanvas.height); const b = document.querySelector('[data-action="sim"]'); if (b) b.classList.remove('active'); }
 function toggleSim() { sim.on ? stopSim() : startSim(); }
 
 /* ════════════════ WIRING ════════════════ */
@@ -942,6 +1040,7 @@ function wire() {
   document.getElementById('edit-del').onclick = () => { if (selected) removeBuilding(selected); };
   document.getElementById('edit-done').onclick = deselect;
   document.getElementById('edit-collapse').onclick = () => document.getElementById('edit').classList.toggle('collapsed');
+  document.getElementById('cz-close').onclick = deselectCitizen;
   document.getElementById('gen-ok').onclick = confirmGen;
   document.getElementById('gen-cancel').onclick = endGenSelect;
   document.getElementById('tb-collapse').onclick = () => document.getElementById('toolbar').classList.toggle('collapsed');

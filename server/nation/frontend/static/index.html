@@ -11,7 +11,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
-  <link rel="stylesheet" href="style.css?v=5"/>
+  <link rel="stylesheet" href="style.css?v=6"/>
 </head>
 <body>
   <div id="map"></div>
@@ -85,6 +85,18 @@
   <!-- ── ROAD CONTEXT MENU ── -->
   <div id="ctx-menu" class="panel hidden"></div>
 
+  <!-- ── CITIZEN INFO (selected during sim) ── -->
+  <div id="citizen" class="panel hidden">
+    <div class="cz-head">
+      <span id="cz-name">Житель</span>
+      <button id="cz-close" class="cz-close" title="Закрыть">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div id="cz-body"></div>
+    <div class="cz-foot">Камера следует за жителем · клик по пустому месту — снять выбор</div>
+  </div>
+
   <!-- ── AUTO-BUILD SEGMENT SELECTION BAR ── -->
   <div id="gen-bar" class="panel hidden">
     <span id="gen-hint">Участок (клик: обе→лево→право) · зона:</span>
@@ -120,6 +132,6 @@
   <!-- ── FLAG COLOR PICKER ── -->
   <div id="palette" class="panel hidden"></div>
 
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>

@@ -147,6 +147,21 @@ button { cursor: pointer; background: none; border: none; color: inherit; font-f
 .mini.danger { background: rgba(224,36,94,0.16); color: #ff6b93; }
 .mini.danger:hover { background: rgba(224,36,94,0.28); }
 
+/* ── CITIZEN INFO ── */
+#citizen {
+  top: 50%; right: 14px; transform: translateY(-50%);
+  padding: 12px 14px; width: 232px; max-width: 86vw; z-index: 600;
+}
+.cz-head { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; }
+#cz-name { font-size: 15px; font-weight: 650; }
+.cz-close { margin-left: auto; width: 26px; height: 26px; display: grid; place-items: center; color: var(--text-dim); border-radius: 7px; }
+.cz-close:hover { background: rgba(255,255,255,0.08); color: var(--text); }
+.cz-close svg { width: 15px; height: 15px; }
+#cz-body .cz-row { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--text-dim); padding: 5px 0; border-top: 1px solid rgba(255,255,255,0.07); }
+#cz-body .cz-row:first-child { border-top: none; }
+#cz-body .cz-row b { color: var(--text); font-weight: 600; }
+.cz-foot { font-size: 11px; color: var(--text-dim); margin-top: 9px; line-height: 1.4; opacity: .85; }
+
 /* edit handles on map */
 .edit-handle {
   border-radius: 50%;
