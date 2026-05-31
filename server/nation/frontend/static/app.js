@@ -767,15 +767,21 @@ function carBlocked(c) {
   }
   return false;
 }
-function junction(c, atEnd) {                     // переход на связанную линию сети (дороги+переулки)
-  const r = c.line, v = atEnd ? r[r.length - 1] : r[0], opts = [];
-  for (const r2 of sim.driveLines) { if (r2 === r || r2.length < 2) continue;
-    if (distMeters(r2[0][0], r2[0][1], v[0], v[1]) < 6) opts.push([r2, true]);
-    if (distMeters(r2[r2.length - 1][0], r2[r2.length - 1][1], v[0], v[1]) < 6) opts.push([r2, false]);
+function netJunction(ag, lines, atEnd, tol) {     // войти на ЛЮБУЮ линию рядом с концом — в т.ч. в середину сегмента (повороты на T-перекрёстках)
+  const line = ag.line, v = atEnd ? line[line.length - 1] : line[0], opts = [];
+  for (const l2 of lines) { if (l2 === line || l2.length < 2) continue;
+    for (let i = 1; i < l2.length; i++) {
+      const a = l2[i - 1], b = l2[i], E = (b[1] - a[1]) * mPerDegLng(a[0]), N = (b[0] - a[0]) * MPD_LAT, L2 = E * E + N * N;
+      const vE = (v[1] - a[1]) * mPerDegLng(a[0]), vN = (v[0] - a[0]) * MPD_LAT;
+      let t = L2 ? (vE * E + vN * N) / L2 : 0; t = Math.max(0, Math.min(1, t));
+      if (Math.hypot(vE - t * E, vN - t * N) < tol) { opts.push([l2, i - 1, t]); break; }
+    }
   }
-  if (opts.length) { const [nr, fromStart] = opts[randInt(opts.length)]; c.line = nr; if (fromStart) { c.seg = 0; c.t = 0; c.fwd = true; } else { c.seg = nr.length - 2; c.t = 1; c.fwd = false; } }
-  else { c.fwd = !c.fwd; c.t = atEnd ? 0.999 : 0.001; }
+  if (!opts.length) { ag.fwd = !ag.fwd; ag.t = atEnd ? 0.985 : 0.015; return; }   // тупик — разворот
+  const [nl, seg, t] = opts[randInt(opts.length)];
+  ag.line = nl; ag.seg = seg; ag.t = Math.max(0.04, Math.min(0.96, t)); ag.fwd = Math.random() < 0.5;
 }
+function junction(c, atEnd) { netJunction(c, sim.driveLines, atEnd, 6); }
 function stepCar(c, dt) {
   const r = c.line; if (!r || r.length < 2 || !r[c.seg] || !r[c.seg + 1]) { if (!sim.driveLines.length) { c.dead = true; return; } Object.assign(c, makeCar(sim.driveLines[randInt(sim.driveLines.length)])); return; }
   const a = r[c.seg], b = r[c.seg + 1], len = distMeters(a[0], a[1], b[0], b[1]) || 1;
@@ -802,15 +808,7 @@ function computeCarSpeeds(dt) {                 // car-following: подстро
     if (c.v < 0) c.v = 0;
   }
 }
-function pedJunction(p, atEnd) {                  // переход на связанную пешеходную линию (всё связано)
-  const line = p.line, v = atEnd ? line[line.length - 1] : line[0], opts = [];
-  for (const l2 of sim.pedLines) { if (l2 === line || l2.length < 2) continue;
-    if (distMeters(l2[0][0], l2[0][1], v[0], v[1]) < 6) opts.push([l2, true]);
-    if (distMeters(l2[l2.length - 1][0], l2[l2.length - 1][1], v[0], v[1]) < 6) opts.push([l2, false]);
-  }
-  if (opts.length) { const [nl, fromStart] = opts[randInt(opts.length)]; p.line = nl; if (fromStart) { p.seg = 0; p.t = 0; p.fwd = true; } else { p.seg = nl.length - 2; p.t = 1; p.fwd = false; } }
-  else { p.fwd = !p.fwd; p.t = atEnd ? 0.999 : 0.001; }
-}
+function pedJunction(p, atEnd) { netJunction(p, sim.pedLines, atEnd, 6); }
 function stepPed(p, dt) {
   const line = p.line; if (!line || line.length < 2 || !line[p.seg] || !line[p.seg + 1]) { p.dead = true; return; }
   const a = line[p.seg], b = line[p.seg + 1], len = distMeters(a[0], a[1], b[0], b[1]) || 1;
@@ -825,7 +823,8 @@ function drawLightSignals(ctx, dpr, W, H) {       // цветной свет о�
   for (const l of state.lights) for (const ang of roadsAt(l.lat, l.lng, LINE_M.road * 1.4)) {
     const a = ((ang * 180 / Math.PI) % 180 + 180) % 180, isns = a > 45 && a < 135, col = (isns === greenNS) ? '70,208,106' : '255,82,71';
     for (const s of [1, -1]) {
-      const pll = offset(l.lat, l.lng, Math.cos(ang) * 7 * s, Math.sin(ang) * 7 * s);
+      const pll = offset(l.lat, l.lng, Math.cos(ang) * 9 * s, Math.sin(ang) * 9 * s);
+      if (!roadsAt(pll[0], pll[1], LINE_M.road * 0.7).some(d => { const df = Math.abs((((d - ang) * 180 / Math.PI) % 180 + 180) % 180); return Math.min(df, 180 - df) < 25; })) continue;   // светим только туда, где дорога ПРОДОЛЖАЕТСЯ (далеко от центра, чтобы не цеплять встречную сторону)
       const cp = map.latLngToContainerPoint([pll[0], pll[1]]); if (cp.x < -40 || cp.y < -40 || cp.x > W + 40 || cp.y > H + 40) continue;
       const rad = Math.max(7, mToPx(5.5)) * dpr, x = cp.x * dpr, y = cp.y * dpr, g = ctx.createRadialGradient(x, y, 0, x, y, rad);
       g.addColorStop(0, `rgba(${col},0.6)`); g.addColorStop(1, `rgba(${col},0)`);
