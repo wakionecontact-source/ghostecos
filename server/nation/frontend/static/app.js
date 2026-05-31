@@ -22,7 +22,16 @@ function freshState() {
   return { name: '', color: FLAG_COLORS[0], border: null, buildings: [], roads: [], rails: [], paths: [], alleys: [], districts: [], lights: [], roadWalk: {}, noZebra: [], crosswalks: [], view: { lat: 55.7512, lng: 37.6184, zoom: 12 } };
 }
 const roadKey = pts => `${pts[0][0].toFixed(5)},${pts[0][1].toFixed(5)}|${pts[pts.length - 1][0].toFixed(5)},${pts[pts.length - 1][1].toFixed(5)}`;
-function migrate(s) { s.roadWalk = s.roadWalk || {}; s.lights = s.lights || []; s.noZebra = s.noZebra || []; s.crosswalks = s.crosswalks || []; s.alleys = s.alleys || []; s.districts = s.districts || []; (s.roads || []).forEach(r => { const k = roadKey(r); if (!(k in s.roadWalk)) s.roadWalk[k] = 'both'; }); return s; }
+function migrate(s) {
+  s.roadWalk = s.roadWalk || {}; s.lights = s.lights || []; s.noZebra = s.noZebra || []; s.crosswalks = s.crosswalks || []; s.districts = s.districts || [];
+  const okPt = p => Array.isArray(p) && isFinite(p[0]) && isFinite(p[1]);
+  const cleanLn = l => (Array.isArray(l) ? l.filter(okPt) : []);
+  ['roads', 'rails', 'paths', 'alleys'].forEach(k => { s[k] = (s[k] || []).map(cleanLn).filter(l => l.length >= 2); });   // выкинуть битые точки/вырожденные линии
+  s.buildings = (s.buildings || []).filter(b => b && isFinite(b.lat) && isFinite(b.lng));                                  // выкинуть постройки с битыми координатами (ломали сим и рендер)
+  s.lights = s.lights.filter(l => l && isFinite(l.lat) && isFinite(l.lng));
+  s.roads.forEach(r => { const k = roadKey(r); if (!(k in s.roadWalk)) s.roadWalk[k] = 'both'; });
+  return s;
+}
 let state = load();
 function load() { try { const r = localStorage.getItem(STORE_KEY); if (r) return migrate(Object.assign(freshState(), JSON.parse(r))); } catch (e) { console.warn(e); } return freshState(); }
 function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { console.warn(e); } }
@@ -830,11 +839,19 @@ function pedNearestPoint(ll) {                                 // ближайш
   return best;
 }
 function assignDest(cit) {                                     // выбрать здание-цель и точку на сети рядом с ним
-  const builds = state.buildings.filter(b => b.type !== 'tree');
+  const builds = state.buildings.filter(b => b.type !== 'tree' && isFinite(b.lat) && isFinite(b.lng));
   if (!builds.length || !sim.pedLines.length) { cit.dest = null; cit.goal = null; cit.status = 'гуляет'; return; }
   const b = builds[randInt(builds.length)], np = pedNearestPoint([b.lat, b.lng]);
-  cit.dest = b; cit.goal = np ? np.pos : [b.lat, b.lng];
+  const g = np ? np.pos : [b.lat, b.lng];
+  if (!isFinite(g[0]) || !isFinite(g[1])) { cit.dest = null; cit.goal = null; cit.status = 'гуляет'; return; }   // защита от битых координат
+  cit.dest = b; cit.goal = g;
   cit.status = 'идёт ' + (b.type === 'shop' ? 'в магазин' : 'к дому');
+  orientToGoal(cit);                                          // сразу повернуть В СТОРОНУ цели (а не куда смотрел)
+}
+function orientToGoal(cit) {                                   // выбрать направление по текущей линии, что ближе к цели
+  if (!cit.goal || !cit.line || !cit.line[cit.seg + 1]) return;
+  const cur = lerpPos(cit.line, cit.seg, cit.t), ah = lerpPos(cit.line, cit.seg, Math.min(1, cit.t + 0.12));
+  cit.fwd = distMeters(ah[0], ah[1], cit.goal[0], cit.goal[1]) <= distMeters(cur[0], cur[1], cit.goal[0], cit.goal[1]);
 }
 function lerpPos(line, seg, t) { const a = line[seg], b = line[seg + 1]; t = Math.max(0, Math.min(1, t)); return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; }
 function segBear(line, seg, fwd) { const a = line[seg], b = line[seg + 1]; let ang = Math.atan2((b[0] - a[0]) * MPD_LAT, (b[1] - a[1]) * mPerDegLng(a[0])); return fwd ? ang : ang + Math.PI; }
@@ -913,6 +930,7 @@ function citizenJunction(p, atEnd) {              // на стыке сверн�
     const d = distMeters(pos[0], pos[1], p.goal[0], p.goal[1]);
     if (d < bestD) { bestD = d; best = [nl, seg, t, fwd]; }
   }
+  if (!best) { const o = opts[randInt(opts.length)]; best = [o[0], o[1], o[2], Math.random() < 0.5]; p.goal = null; }   // цель недостижима/битая → идём случайно, не падаем
   p.line = best[0]; p.seg = best[1]; p.t = Math.max(0.04, Math.min(0.96, best[2])); p.fwd = best[3];
 }
 function stepPed(p, dt) {
@@ -998,23 +1016,25 @@ function simLoop(ts) {
   if (!sim.on) return;
   if (!sim.last) sim.last = ts; let dt = (ts - sim.last) / 1000; sim.last = ts; if (dt > 0.1) dt = 0.1;
   sim.t += dt;
-  computeCarSpeeds(dt);
-  for (const c of sim.cars) stepCar(c, dt);
-  for (const p of sim.peds) stepPed(p, dt);
-  if (sim.cars.some(c => c.dead)) sim.cars = sim.cars.filter(c => !c.dead);
-  if (sim.peds.some(p => p.dead)) sim.peds = sim.peds.filter(p => !p.dead);
-  if (sim.selected) {
-    if (sim.selected.dead || !sim.peds.includes(sim.selected)) deselectCitizen();
-    else {
-      const s = sim.selected, line = s.line;
-      if (sim.follow && line && line[s.seg + 1]) {                 // камера следует за жителем
-        const pos = lerpPos(line, s.seg, s.t), cp = map.latLngToContainerPoint([pos[0], pos[1]]), cen = map.getSize().divideBy(2);
-        if (Math.abs(cp.x - cen.x) > 2 || Math.abs(cp.y - cen.y) > 2) map.panTo([pos[0], pos[1]], { animate: false });
+  try {
+    computeCarSpeeds(dt);
+    for (const c of sim.cars) stepCar(c, dt);
+    for (const p of sim.peds) stepPed(p, dt);
+    if (sim.cars.some(c => c.dead)) sim.cars = sim.cars.filter(c => !c.dead);
+    if (sim.peds.some(p => p.dead)) sim.peds = sim.peds.filter(p => !p.dead);
+    if (sim.selected) {
+      if (sim.selected.dead || !sim.peds.includes(sim.selected)) deselectCitizen();
+      else {
+        const s = sim.selected, line = s.line;
+        if (sim.follow && line && line[s.seg + 1]) {               // камера следует за жителем
+          const pos = lerpPos(line, s.seg, s.t), cp = map.latLngToContainerPoint([pos[0], pos[1]]), cen = map.getSize().divideBy(2);
+          if (Math.abs(cp.x - cen.x) > 2 || Math.abs(cp.y - cen.y) > 2) map.panTo([pos[0], pos[1]], { animate: false });
+        }
+        if (sim.t - sim._panelT > 0.3) { sim._panelT = sim.t; updateCitizenPanel(); }   // живой статус
       }
-      if (sim.t - sim._panelT > 0.3) { sim._panelT = sim.t; updateCitizenPanel(); }   // живой статус
     }
-  }
-  drawSim();
+    drawSim();
+  } catch (e) { if (!sim._warned) { console.warn('sim frame error:', e); sim._warned = true; } }   // один битый кадр НЕ убивает весь сим
   sim.raf = requestAnimationFrame(simLoop);
 }
 function startSim() {
