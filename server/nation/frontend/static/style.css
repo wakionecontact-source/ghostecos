@@ -28,6 +28,7 @@ button { cursor: pointer; background: none; border: none; color: inherit; font-f
 
 /* ── MAP ── */
 #map { position: fixed; inset: 0; background: #0b1a26; z-index: 0; }
+#sim { position: fixed; inset: 0; z-index: 450; pointer-events: none; }
 #map.drawing { cursor: crosshair; }
 #map.erasing { cursor: not-allowed; }
 

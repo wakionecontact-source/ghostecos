@@ -15,6 +15,7 @@
 </head>
 <body>
   <div id="map"></div>
+  <canvas id="sim"></canvas>
 
   <!-- ── STATE BANNER (top-left) ── -->
   <header id="banner" class="panel">
@@ -51,6 +52,7 @@
     <button class="tool" data-action="undo"  title="Отменить (Ctrl+Z)"></button>
     <button class="tool" data-action="save"  title="Сохранить в файл"></button>
     <button class="tool" data-action="load"  title="Загрузить из файла"></button>
+    <button class="tool" data-action="sim"   title="Движение · машины и люди"></button>
     <button id="locate" class="tool" title="К своей стране"></button>
   </nav>
   <input type="file" id="import-file" accept="application/json,.json" hidden/>

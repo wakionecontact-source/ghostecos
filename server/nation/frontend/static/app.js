@@ -40,7 +40,7 @@ function undo() {
 function updateUndoBtn() { const b = document.querySelector('[data-action="undo"]'); if (b) b.disabled = undoStack.length === 0; }
 
 /* ════════════════ ICONS ════════════════ */
-const ICON_NAMES = ['borders', 'house', 'shop', 'road', 'alley', 'rail', 'path', 'tree', 'district', 'light', 'select', 'trash', 'flag', 'target', 'download', 'upload', 'undo'];
+const ICON_NAMES = ['borders', 'house', 'shop', 'road', 'alley', 'rail', 'path', 'tree', 'district', 'light', 'car', 'select', 'trash', 'flag', 'target', 'download', 'upload', 'undo'];
 const ICONS = {};
 async function loadIcons() { await Promise.all(ICON_NAMES.map(async n => { try { ICONS[n] = await (await fetch(`icons/${n}.svg`)).text(); } catch (e) { ICONS[n] = ''; } })); }
 
@@ -726,6 +726,102 @@ function importFile(file) { const r = new FileReader(); r.onload = () => { try {
 let flashTimer = null;
 function flash(msg, bad) { const t = document.getElementById('toast'); t.textContent = msg; t.style.color = bad ? '#E0245E' : ''; t.classList.remove('hidden'); clearTimeout(flashTimer); flashTimer = setTimeout(() => t.classList.add('hidden'), 1800); }
 
+/* ════════════════ TRAFFIC SIM (cars + people) ════════════════ */
+const CAR_COLORS = ['#e74c3c', '#3498db', '#ecf0f1', '#2c3e50', '#f1c40f', '#16a085', '#e67e22', '#8e44ad', '#bdc3c7'];
+const PED_COLORS = ['#ffd24a', '#5ad06a', '#ff8a5c', '#5cc8ff', '#e8e8e8', '#d98cff'];
+const sim = { on: false, cars: [], peds: [], raf: 0, last: 0, t: 0 };
+let simCanvas = null, simCtx = null;
+function resizeSim() { if (!simCanvas) return; const dpr = window.devicePixelRatio || 1; simCanvas.width = innerWidth * dpr; simCanvas.height = innerHeight * dpr; simCanvas.style.width = innerWidth + 'px'; simCanvas.style.height = innerHeight + 'px'; }
+
+function roadLen(r) { let d = 0; for (let i = 1; i < r.length; i++) d += distMeters(r[i - 1][0], r[i - 1][1], r[i][0], r[i][1]); return d; }
+function makeCar(ri) { const r = state.roads[ri]; return { ri, seg: randInt(Math.max(1, r.length - 1)), t: Math.random(), fwd: Math.random() < .5, spd: 7 + Math.random() * 6, color: CAR_COLORS[randInt(CAR_COLORS.length)] }; }
+function makePed(key, idx) { return { key, idx, seg: randInt(Math.max(1, state[key][idx].length - 1)), t: Math.random(), fwd: Math.random() < .5, spd: 1.1 + Math.random() * 0.7, color: PED_COLORS[randInt(PED_COLORS.length)] }; }
+function buildSim() {
+  sim.cars = []; sim.peds = [];
+  state.roads.forEach((r, ri) => { if (r.length < 2) return; const n = Math.max(1, Math.round(roadLen(r) / 75)); for (let k = 0; k < n; k++) sim.cars.push(makeCar(ri)); });
+  state.paths.forEach((p, i) => { if (p.length >= 2 && roadLen(p) > 5) sim.peds.push(makePed('paths', i)); });
+  if (sim.cars.length > 600) sim.cars.length = 600;
+}
+function lerpPos(line, seg, t) { const a = line[seg], b = line[seg + 1]; t = Math.max(0, Math.min(1, t)); return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; }
+function segBear(line, seg, fwd) { const a = line[seg], b = line[seg + 1]; let ang = Math.atan2((b[0] - a[0]) * MPD_LAT, (b[1] - a[1]) * mPerDegLng(a[0])); return fwd ? ang : ang + Math.PI; }
+function carBlocked(c) {
+  if (!state.lights.length) return false;
+  const r = state.roads[c.ri]; if (!r || !r[c.seg + 1]) return false;
+  const p = lerpPos(r, c.seg, c.t);
+  for (const l of state.lights) if (distMeters(p[0], p[1], l.lat, l.lng) < 9) {
+    const a = ((segBear(r, c.seg, true) * 180 / Math.PI) % 180 + 180) % 180, ns = a > 45 && a < 135;
+    if (ns !== (Math.floor(sim.t / 5) % 2 === 0)) return true;   // красный для этого направления
+  }
+  return false;
+}
+function junction(c, atEnd) {
+  const r = state.roads[c.ri], v = atEnd ? r[r.length - 1] : r[0], opts = [];
+  state.roads.forEach((r2, j) => { if (j === c.ri || r2.length < 2) return;
+    if (distMeters(r2[0][0], r2[0][1], v[0], v[1]) < 6) opts.push([j, true]);
+    if (distMeters(r2[r2.length - 1][0], r2[r2.length - 1][1], v[0], v[1]) < 6) opts.push([j, false]);
+  });
+  if (opts.length) { const [j, fromStart] = opts[randInt(opts.length)]; c.ri = j; const nr = state.roads[j]; if (fromStart) { c.seg = 0; c.t = 0; c.fwd = true; } else { c.seg = nr.length - 2; c.t = 1; c.fwd = false; } }
+  else { c.fwd = !c.fwd; c.t = atEnd ? 0.999 : 0.001; }
+}
+function stepCar(c, dt) {
+  const r = state.roads[c.ri]; if (!r || r.length < 2 || !r[c.seg] || !r[c.seg + 1]) { Object.assign(c, makeCar(randInt(Math.max(1, state.roads.length)))); return; }
+  if (carBlocked(c)) return;
+  const a = r[c.seg], b = r[c.seg + 1], len = distMeters(a[0], a[1], b[0], b[1]) || 1;
+  c.t += (c.fwd ? 1 : -1) * c.spd * dt / len;
+  if (c.t > 1) { if (c.seg < r.length - 2) { c.seg++; c.t = 0; } else junction(c, true); }
+  else if (c.t < 0) { if (c.seg > 0) { c.seg--; c.t = 1; } else junction(c, false); }
+}
+function stepPed(p, dt) {
+  const line = state[p.key][p.idx]; if (!line || line.length < 2 || !line[p.seg] || !line[p.seg + 1]) { p.dead = true; return; }
+  const a = line[p.seg], b = line[p.seg + 1], len = distMeters(a[0], a[1], b[0], b[1]) || 1;
+  p.t += (p.fwd ? 1 : -1) * p.spd * dt / len;
+  if (p.t > 1) { if (p.seg < line.length - 2) { p.seg++; p.t = 0; } else { p.fwd = false; p.t = 1; } }
+  else if (p.t < 0) { if (p.seg > 0) { p.seg--; p.t = 1; } else { p.fwd = true; p.t = 0; } }
+}
+function roundRect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+function drawSim() {
+  const ctx = simCtx, dpr = window.devicePixelRatio || 1;
+  ctx.clearRect(0, 0, simCanvas.width, simCanvas.height);
+  const W = innerWidth, H = innerHeight;
+  const cl = Math.max(4, mToPx(4.6)), cw = Math.max(2.4, mToPx(2.2)), lane = mToPx(1.8);
+  for (const c of sim.cars) {
+    const r = state.roads[c.ri]; if (!r || !r[c.seg + 1]) continue;
+    const ang = segBear(r, c.seg, c.fwd), pos = lerpPos(r, c.seg, c.t);
+    const ll = offset(pos[0], pos[1], Math.sin(ang) * 1.8, -Math.cos(ang) * 1.8);   // правая полоса
+    const cp = map.latLngToContainerPoint([ll[0], ll[1]]); if (cp.x < -30 || cp.y < -30 || cp.x > W + 30 || cp.y > H + 30) continue;
+    ctx.save(); ctx.translate(cp.x * dpr, cp.y * dpr); ctx.rotate(-ang);
+    ctx.fillStyle = c.color; roundRect(ctx, -cl / 2 * dpr, -cw / 2 * dpr, cl * dpr, cw * dpr, Math.min(cw / 2, 3) * dpr); ctx.fill();
+    ctx.fillStyle = 'rgba(20,24,30,.6)'; ctx.fillRect(cl * 0.12 * dpr, -cw / 2 * dpr, cl * 0.22 * dpr, cw * dpr);
+    ctx.restore();
+  }
+  const pr = Math.max(1.6, mToPx(0.9));
+  ctx.fillStyle = '#fff';
+  for (const p of sim.peds) {
+    if (p.dead) continue; const line = state[p.key][p.idx]; if (!line || !line[p.seg + 1]) continue;
+    const pos = lerpPos(line, p.seg, p.t), cp = map.latLngToContainerPoint([pos[0], pos[1]]); if (cp.x < -10 || cp.y < -10 || cp.x > W + 10 || cp.y > H + 10) continue;
+    ctx.beginPath(); ctx.fillStyle = p.color; ctx.arc(cp.x * dpr, cp.y * dpr, pr * dpr, 0, 6.2832); ctx.fill();
+  }
+}
+function simLoop(ts) {
+  if (!sim.on) return;
+  if (!sim.last) sim.last = ts; let dt = (ts - sim.last) / 1000; sim.last = ts; if (dt > 0.1) dt = 0.1;
+  sim.t += dt;
+  for (const c of sim.cars) stepCar(c, dt);
+  for (const p of sim.peds) stepPed(p, dt);
+  if (sim.peds.some(p => p.dead)) sim.peds = sim.peds.filter(p => !p.dead);
+  drawSim();
+  sim.raf = requestAnimationFrame(simLoop);
+}
+function startSim() {
+  if (!state.roads.length) { flash('Сначала проложи дороги', true); return; }
+  resizeSim(); buildSim(); sim.on = true; sim.last = 0;
+  document.querySelector('[data-action="sim"]').classList.add('active');
+  sim.raf = requestAnimationFrame(simLoop);
+  flash(`Движение: ${sim.cars.length} машин, ${sim.peds.length} пешеходов`);
+}
+function stopSim() { sim.on = false; if (sim.raf) cancelAnimationFrame(sim.raf); if (simCtx) simCtx.clearRect(0, 0, simCanvas.width, simCanvas.height); const b = document.querySelector('[data-action="sim"]'); if (b) b.classList.remove('active'); }
+function toggleSim() { sim.on ? stopSim() : startSim(); }
+
 /* ════════════════ WIRING ════════════════ */
 function wire() {
   document.querySelectorAll('.tool[data-tool]').forEach(b => { const t = b.dataset.tool; b.innerHTML = ICONS[t === 'erase' ? 'trash' : t] || ''; b.onclick = () => setTool(t); });
@@ -733,6 +829,7 @@ function wire() {
   document.querySelector('[data-action="undo"]').innerHTML = map_.undo || ''; document.querySelector('[data-action="undo"]').onclick = undo;
   document.querySelector('[data-action="save"]').innerHTML = map_.save || ''; document.querySelector('[data-action="save"]').onclick = exportFile;
   document.querySelector('[data-action="load"]').innerHTML = map_.load || ''; document.querySelector('[data-action="load"]').onclick = () => document.getElementById('import-file').click();
+  document.querySelector('[data-action="sim"]').innerHTML = ICONS.car || ''; document.querySelector('[data-action="sim"]').onclick = toggleSim;
   document.getElementById('import-file').onchange = e => { if (e.target.files[0]) importFile(e.target.files[0]); e.target.value = ''; };
   document.getElementById('locate').innerHTML = ICONS.target || ''; document.getElementById('locate').onclick = locate;
   document.getElementById('draw-undo').onclick = undoVertex;
@@ -778,4 +875,6 @@ function wire() {
   lightLayer = L.layerGroup().addTo(map);
   editLayer = L.layerGroup().addTo(map);
   buildPalette(); wire(); renderAll();
+  simCanvas = document.getElementById('sim'); simCtx = simCanvas.getContext('2d'); resizeSim();
+  window.addEventListener('resize', resizeSim);
 })();
