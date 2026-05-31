@@ -590,19 +590,18 @@ function drawCrossing(X, ra, rb) {
 
 /* ════════════════ ROAD INTERSECTIONS · ZEBRAS · TRAFFIC LIGHTS ════════════════ */
 function roadIntersections() {
-  const cand = [];
-  for (let a = 0; a < state.roads.length; a++) for (let b = a + 1; b < state.roads.length; b++) {   // пересечения дорог
+  const pts = [];
+  for (let a = 0; a < state.roads.length; a++) for (let b = a + 1; b < state.roads.length; b++) {
     const ra = state.roads[a], rb = state.roads[b];
-    for (let i = 1; i < ra.length; i++) for (let j = 1; j < rb.length; j++) { const X = segInter(ra[i - 1], ra[i], rb[j - 1], rb[j]); if (X) cand.push(X); }
+    for (let i = 1; i < ra.length; i++) for (let j = 1; j < rb.length; j++) { const X = segInter(ra[i - 1], ra[i], rb[j - 1], rb[j]); if (X) pts.push(X); }
   }
-  for (const road of state.roads) if (road.length >= 2) { cand.push(road[0]); cand.push(road[road.length - 1]); }   // все концы дорог
-  const cl = [];                                  // кластеризуем близкие точки → один перекрёсток (центр = среднее)
-  for (const p of cand) {
-    const c = cl.find(g => distMeters(p[0], p[1], g.lat, g.lng) < 14);
-    if (c) { c.lat = (c.lat * c.n + p[0]) / (c.n + 1); c.lng = (c.lng * c.n + p[1]) / (c.n + 1); c.n++; }
-    else cl.push({ lat: p[0], lng: p[1], n: 1 });
+  for (let a = 0; a < state.roads.length; a++) { const ra = state.roads[a];
+    for (const end of [ra[0], ra[ra.length - 1]]) for (let b = 0; b < state.roads.length; b++) { if (b === a) continue; const rb = state.roads[b];
+      for (let j = 1; j < rb.length; j++) if (pointSegDistM(end[0], end[1], rb[j - 1], rb[j]) < 6) { pts.push(projOnSegLL(end, rb[j - 1], rb[j])); break; }   // точку примыкания центрируем НА дорогу (если соединено чуть мимо)
+    }
   }
-  return cl.filter(c => roadArmsAt(c.lat, c.lng, LINE_M.road * 2.2) >= 3).map(c => [c.lat, c.lng]);   // перекрёсток = ≥3 рукава из близко соединённых дорог
+  const ded = []; for (const p of pts) if (!ded.some(q => distMeters(p[0], p[1], q[0], q[1]) < 7)) ded.push(p);
+  return ded.filter(p => roadArmsAt(p[0], p[1], LINE_M.road * 1.4) >= 3);   // реальный перекрёсток = ≥3 рукава (T/+/Y), НЕ изгиб дороги (2 рукава)
 }
 function roadsAt(lat, lng, rad) {
   const dirs = [];
