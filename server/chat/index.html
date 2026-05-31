@@ -448,6 +448,15 @@ button,input,textarea{font-family:inherit;}
         <input id="cgMembers" placeholder="@alex, @maria, @ghost" style="width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);font-family:inherit;font-size:14px;box-sizing:border-box;">
         <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5;">Можно добавить позже. Участники должны иметь E2E-ключи (зайти в /chat хотя бы раз).</div>
       </div>
+      <div id="cgPublicWrap" style="display:none;background:rgba(168,85,247,0.06);border:1px solid rgba(168,85,247,0.20);border-radius:10px;padding:11px 13px;">
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+          <input type="checkbox" id="cgPublic" checked style="width:18px;height:18px;cursor:pointer;accent-color:var(--primary);">
+          <div>
+            <div style="font-size:13px;font-weight:600;">Публичный канал</div>
+            <div style="font-size:11px;color:var(--sub);line-height:1.5;">Виден в поиске, без E2E. Снимешь галку — приватный, по заявкам, с E2E.</div>
+          </div>
+        </label>
+      </div>
       <div id="cgError" style="display:none;color:var(--red);font-size:12px;padding:8px 11px;background:rgba(244,63,94,0.08);border-radius:8px;"></div>
       <button id="cgSubmit" onclick="doCreateGroup()" style="padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:14px;">
         Создать
@@ -2560,6 +2569,9 @@ function openCreateGroup(kind){
   document.getElementById('cgName').value = '';
   document.getElementById('cgMembers').value = '';
   document.getElementById('cgError').style.display = 'none';
+  // Чекбокс публичности — только для канала, по умолчанию вкл (public)
+  document.getElementById('cgPublicWrap').style.display = kind === 'channel' ? '' : 'none';
+  document.getElementById('cgPublic').checked = true;
   document.getElementById('createGroupModal').classList.add('open');
   document.getElementById('createGroupModal').dataset.kind = kind;
   setTimeout(() => document.getElementById('cgName').focus(), 100);
@@ -2583,10 +2595,11 @@ async function doCreateGroup(){
   const btn = document.getElementById('cgSubmit');
   btn.disabled = true;
   btn.textContent = 'Создание...';
+  const is_public = kind === 'channel' && document.getElementById('cgPublic').checked;
   try {
-    const r = await chat('/group/create', 'POST', { name, kind, member_usernames });
+    const r = await chat('/group/create', 'POST', { name, kind, member_usernames, is_public });
     closeModal('createGroupModal');
-    showToast(kind === 'channel' ? 'Канал создан' : 'Группа создана');
+    showToast(kind === 'channel' ? (is_public ? 'Публичный канал создан' : 'Приватный канал создан') : 'Группа создана');
     await loadGroups();
     // Сразу открыть созданную группу
     if (r && r.id) openGroupChat(r.id, r.name, kind);
@@ -2720,8 +2733,8 @@ function renderGroupChat(){
         <i class="fa-solid fa-${g.kind==='channel'?'bullhorn':'users'}" style="color:#fff;font-size:15px;"></i>
       </div>
       <div class="chat-info" onclick="openGroupMembers()" style="cursor:pointer;">
-        <div class="chat-name">${esc(g.name)}</div>
-        <div class="chat-status" id="grpSub">${g.kind==='channel'?'Канал':'Группа'} · ${g.members.length} участ.</div>
+        <div class="chat-name">${esc(g.name)}${g.username?` <span style="color:var(--sub);font-weight:500;font-size:13px;">@${esc(g.username)}</span>`:''}</div>
+        <div class="chat-status" id="grpSub">${g.kind==='channel'?(g.is_public?'Публичный канал':'Приватный канал'):'Группа'} · ${g.members.length} участ.</div>
       </div>
       <button class="chat-menu" onclick="openGroupMembers()" title="Участники"><i class="fa-solid fa-users"></i></button>
       <button class="chat-menu" onclick="openGroupSettings()" title="Настройки"><i class="fa-solid fa-ellipsis-vertical"></i></button>
@@ -2995,6 +3008,20 @@ function openGroupMembers(){
           <div class="m-title">${esc(g.name)} · ${g.members.length}</div>
           <button class="m-close" onclick="closeModal('grpMembersModal')"><i class="fa-solid fa-xmark"></i></button>
         </div>
+        ${myMember && myMember.is_owner ? `
+        <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:6px;">
+          <button onclick="openSetGroupTag()" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;text-align:left;">
+            <i class="fa-solid fa-at" style="margin-right:6px;color:var(--primary);"></i>${g.username ? '@' + esc(g.username) : 'Установить @тег'}
+          </button>
+          <button onclick="openSetGroupBio()" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;text-align:left;">
+            <i class="fa-solid fa-pen-to-square" style="margin-right:6px;color:var(--primary);"></i>${g.bio ? 'Изменить био' : 'Добавить био'}
+          </button>
+          ${g.kind === 'channel' ? `
+          <button onclick="toggleGroupVisibility()" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;text-align:left;">
+            <i class="fa-solid fa-${g.is_public ? 'globe' : 'lock'}" style="margin-right:6px;color:${g.is_public ? '#4ade80' : '#fbbf24'};"></i>${g.is_public ? 'Публичный · сделать приватным' : 'Приватный · сделать публичным'}
+          </button>` : ''}
+        </div>` : ''}
+        ${g.bio ? `<div style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;color:var(--sub);font-style:italic;line-height:1.5;">${esc(g.bio)}</div>` : ''}
         ${iAmAdmin ? `
         <div style="padding:10px 14px;border-bottom:1px solid var(--border);">
           <button onclick="openAddMember()" style="width:100%;padding:11px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:13px;">
@@ -3026,6 +3053,54 @@ function openGroupMembers(){
 
 function openGroupSettings(){
   openGroupMembers(); // пока settings = members
+}
+
+async function openSetGroupTag(){
+  if (!activeGroup) return;
+  const current = activeGroup.username || '';
+  const newTag = (prompt(
+    `@тег группы/канала (3-20 символов, a-z 0-9 _).\n` +
+    `Глобально уникальный. Текущий: ${current ? '@' + current : '(не задан)'}`,
+    current
+  ) || '').trim().replace(/^@/, '').toLowerCase();
+  if (!newTag || newTag === current) return;
+  try {
+    await chat(`/group/${activeGroup.id}/username`, 'POST', { username: newTag });
+    activeGroup.username = newTag;
+    showToast('Тег установлен: @' + newTag);
+    closeModal('grpMembersModal');
+    openGroupMembers();
+    // Обновить шапку
+    renderGroupChat();
+  } catch(e) { showToast(e.message || 'Ошибка', true); }
+}
+
+async function openSetGroupBio(){
+  if (!activeGroup) return;
+  const current = activeGroup.bio || '';
+  const newBio = prompt('Био (до 300 символов):', current);
+  if (newBio == null) return;
+  try {
+    await chat(`/group/${activeGroup.id}/bio`, 'POST', { bio: newBio });
+    activeGroup.bio = newBio.trim().slice(0, 300) || null;
+    showToast('Био обновлено');
+    closeModal('grpMembersModal');
+    openGroupMembers();
+  } catch(e) { showToast(e.message || 'Ошибка', true); }
+}
+
+async function toggleGroupVisibility(){
+  if (!activeGroup || activeGroup.kind !== 'channel') return;
+  const becoming = activeGroup.is_public ? 'приватным (E2E, по заявкам)' : 'публичным (открытый, без E2E)';
+  if (!confirm(`Сделать канал ${becoming}?\n\nСтарая история сохранится, но новые юзеры её не увидят (если станет приватным).`)) return;
+  try {
+    const r = await chat(`/group/${activeGroup.id}/visibility`, 'POST', { is_public: !activeGroup.is_public });
+    activeGroup.is_public = r.is_public;
+    showToast(activeGroup.is_public ? 'Теперь публичный' : 'Теперь приватный');
+    closeModal('grpMembersModal');
+    openGroupMembers();
+    renderGroupChat();
+  } catch(e) { showToast(e.message || 'Ошибка', true); }
 }
 
 async function openAddMember(){

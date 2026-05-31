@@ -384,6 +384,7 @@ class GroupCreateBody(BaseModel):
     name: str
     member_usernames: list = []   # стартовые участники (помимо создателя)
     kind: str = "group"           # 'group' | 'channel'
+    is_public: bool = False       # только для kind='channel'; True=открытый, False=по заявкам/E2E
 
 class GroupSendBody(BaseModel):
     ciphertext: str               # base64, общий шифротекст
@@ -426,9 +427,11 @@ def group_create(body: GroupCreateBody, authorization: Optional[str] = Header(No
     ).fetchone()
     if own["cnt"] >= 50:
         c.close(); raise HTTPException(400, "Лимит групп исчерпан (50)")
+    # is_public имеет смысл только для каналов; группы всегда приватные/E2E
+    is_public = 1 if (kind == "channel" and body.is_public) else 0
     c.execute(
-        "INSERT INTO chat_groups (name, owner_id, kind) VALUES (?,?,?)",
-        (name, user["id"], kind),
+        "INSERT INTO chat_groups (name, owner_id, kind, is_public) VALUES (?,?,?,?)",
+        (name, user["id"], kind, is_public),
     )
     gid = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
     # Создатель — админ
@@ -455,7 +458,7 @@ def group_create(body: GroupCreateBody, authorization: Optional[str] = Header(No
     for m in added:
         ws_hub.send_to(m["id"], "group.added", {"group_id": gid, "name": name, "kind": kind})
     c.close()
-    return {"id": gid, "name": name, "kind": kind, "members": added}
+    return {"id": gid, "name": name, "kind": kind, "is_public": bool(is_public), "members": added}
 
 
 @router.get("/group/my")
@@ -465,6 +468,7 @@ def group_my(authorization: Optional[str] = Header(None)):
     c = db()
     rows = c.execute("""
         SELECT g.id, g.name, g.kind, g.owner_id, g.created_at,
+               g.username, g.bio, g.is_public,
                m.is_admin,
                (SELECT COUNT(*) FROM chat_group_members WHERE group_id=g.id) as members_count
         FROM chat_groups g
@@ -479,6 +483,9 @@ def group_my(authorization: Optional[str] = Header(None)):
             "name": r["name"],
             "kind": r["kind"],
             "owner_id": r["owner_id"],
+            "username": r["username"],
+            "bio": r["bio"],
+            "is_public": bool(r["is_public"]),
             "is_admin": bool(r["is_admin"]),
             "is_owner": r["owner_id"] == user["id"],
             "members_count": r["members_count"],
@@ -494,7 +501,7 @@ def group_info(gid: int, authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
     c = db()
     g = c.execute(
-        "SELECT id, name, kind, owner_id, created_at FROM chat_groups WHERE id=?", (gid,)
+        "SELECT id, name, kind, owner_id, created_at, username, bio, is_public FROM chat_groups WHERE id=?", (gid,)
     ).fetchone()
     if not g:
         c.close(); raise HTTPException(404, "Группа не найдена")
@@ -513,6 +520,9 @@ def group_info(gid: int, authorization: Optional[str] = Header(None)):
         "name": g["name"],
         "kind": g["kind"],
         "owner_id": g["owner_id"],
+        "username": g["username"],
+        "bio": g["bio"],
+        "is_public": bool(g["is_public"]),
         "created_at": g["created_at"],
         "members": [
             {
@@ -770,4 +780,133 @@ def group_ack(gid: int, body: GroupAckBody, authorization: Optional[str] = Heade
             deleted += 1
     c.commit(); c.close()
     return {"acked": len(ids), "purged": deleted}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUPS/CHANNELS — Фаза 1: теги, bio, публичность
+# ══════════════════════════════════════════════════════════════════════════════
+import re
+_USERNAME_RE = re.compile(r"^[a-z0-9_]{3,20}$")
+
+
+class GroupUsernameBody(BaseModel):
+    username: str
+
+class GroupBioBody(BaseModel):
+    bio: str
+
+class GroupVisibilityBody(BaseModel):
+    is_public: bool
+
+
+def _check_username_collision(c, username: str, exclude_group_id: Optional[int] = None) -> Optional[str]:
+    """Возвращает 'user' / 'soc_username' / 'group' если занято, иначе None.
+    Глобальный namespace: users + soc_usernames + chat_groups."""
+    r1 = c.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone()
+    if r1:
+        return "user"
+    r2 = c.execute("SELECT 1 FROM soc_usernames WHERE username=?", (username,)).fetchone()
+    if r2:
+        return "soc_username"
+    if exclude_group_id is not None:
+        r3 = c.execute("SELECT 1 FROM chat_groups WHERE username=? AND id<>?",
+                       (username, exclude_group_id)).fetchone()
+    else:
+        r3 = c.execute("SELECT 1 FROM chat_groups WHERE username=?", (username,)).fetchone()
+    if r3:
+        return "group"
+    return None
+
+
+@router.post("/group/{gid}/username")
+def group_set_username(gid: int, body: GroupUsernameBody, authorization: Optional[str] = Header(None)):
+    """Установить/изменить @тег группы или канала. Только owner.
+    Глобально уникальный namespace (общий с юзерами)."""
+    user = auth_member(authorization)
+    _rate_limit(f"gruname:{user['id']}", limit=10, window=3600)
+    new_name = (body.username or "").strip().lower().lstrip("@")
+    if not _USERNAME_RE.match(new_name):
+        raise HTTPException(400, "Тег: 3-20 символов, только a-z0-9_")
+    c = db()
+    g = c.execute("SELECT owner_id, username FROM chat_groups WHERE id=?", (gid,)).fetchone()
+    if not g:
+        c.close(); raise HTTPException(404, "Группа не найдена")
+    if g["owner_id"] != user["id"]:
+        c.close(); raise HTTPException(403, "Только владелец может менять тег")
+    if g["username"] == new_name:
+        c.close(); return {"status": "ok", "username": new_name, "unchanged": True}
+    clash = _check_username_collision(c, new_name, exclude_group_id=gid)
+    if clash:
+        c.close(); raise HTTPException(409, f"Тег @{new_name} уже занят ({clash})")
+    c.execute("UPDATE chat_groups SET username=? WHERE id=?", (new_name, gid))
+    c.commit(); c.close()
+    return {"status": "ok", "username": new_name}
+
+
+@router.post("/group/{gid}/bio")
+def group_set_bio(gid: int, body: GroupBioBody, authorization: Optional[str] = Header(None)):
+    """Установить био канала/группы. Только owner. Максимум 300 символов."""
+    user = auth_member(authorization)
+    _rate_limit(f"grbio:{user['id']}", limit=30, window=3600)
+    bio = (body.bio or "").strip()[:300]
+    c = db()
+    g = c.execute("SELECT owner_id FROM chat_groups WHERE id=?", (gid,)).fetchone()
+    if not g:
+        c.close(); raise HTTPException(404, "Группа не найдена")
+    if g["owner_id"] != user["id"]:
+        c.close(); raise HTTPException(403, "Только владелец может менять био")
+    c.execute("UPDATE chat_groups SET bio=? WHERE id=?", (bio or None, gid))
+    c.commit(); c.close()
+    return {"status": "ok", "bio": bio}
+
+
+@router.post("/group/{gid}/visibility")
+def group_set_visibility(gid: int, body: GroupVisibilityBody, authorization: Optional[str] = Header(None)):
+    """Поменять public ↔ private (только для каналов, только owner).
+    Логика истории: при смене сообщения НЕ перешифровываются. Старые юзеры
+    видят свою историю, новые — только сообщения с момента когда стали участниками."""
+    user = auth_member(authorization)
+    _rate_limit(f"grvis:{user['id']}", limit=5, window=3600)
+    c = db()
+    g = c.execute("SELECT owner_id, kind, is_public FROM chat_groups WHERE id=?", (gid,)).fetchone()
+    if not g:
+        c.close(); raise HTTPException(404, "Группа не найдена")
+    if g["owner_id"] != user["id"]:
+        c.close(); raise HTTPException(403, "Только владелец может менять видимость")
+    if g["kind"] != "channel":
+        c.close(); raise HTTPException(400, "Видимость можно менять только у канала")
+    new_val = 1 if body.is_public else 0
+    if g["is_public"] == new_val:
+        c.close(); return {"status": "ok", "is_public": bool(new_val), "unchanged": True}
+    c.execute("UPDATE chat_groups SET is_public=? WHERE id=?", (new_val, gid))
+    c.commit(); c.close()
+    return {"status": "ok", "is_public": bool(new_val)}
+
+
+@router.get("/group/by_tag/{tag}")
+def group_by_tag(tag: str, authorization: Optional[str] = Header(None)):
+    """Найти группу/канал по @тегу. Публичная инфа (любой авторизованный)."""
+    auth_member(authorization)
+    tag = tag.strip().lower().lstrip("@")
+    if not tag:
+        raise HTTPException(400, "Пустой тег")
+    c = db()
+    g = c.execute("""
+        SELECT id, name, kind, owner_id, username, bio, is_public, created_at,
+               (SELECT COUNT(*) FROM chat_group_members WHERE group_id=chat_groups.id) as members_count
+        FROM chat_groups WHERE username=?
+    """, (tag,)).fetchone()
+    c.close()
+    if not g:
+        raise HTTPException(404, "Не найдено")
+    return {
+        "id": g["id"],
+        "name": g["name"],
+        "kind": g["kind"],
+        "username": g["username"],
+        "bio": g["bio"],
+        "is_public": bool(g["is_public"]),
+        "members_count": g["members_count"],
+        "created_at": g["created_at"],
+    }
 

@@ -690,6 +690,45 @@ def init():
         c.execute("CREATE INDEX IF NOT EXISTS idx_users_referrer ON users(referrer_id)")
     except sqlite3.OperationalError:
         pass
+    # Группы и каналы — расширения для Фазы 1 (теги/bio/публичность)
+    try:
+        c.execute("ALTER TABLE chat_groups ADD COLUMN username TEXT DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE chat_groups ADD COLUMN bio TEXT DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        # Только для каналов: 1=публичный (видим в поиске, без E2E), 0=приватный (E2E, по заявкам)
+        c.execute("ALTER TABLE chat_groups ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        # Уникальный индекс на @username канала/группы. NULL разрешён (нет тега).
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_groups_username ON chat_groups(username) WHERE username IS NOT NULL")
+    except sqlite3.OperationalError:
+        pass
+    # Таблица заявок на вступление в приватный канал/группу (Фаза 2)
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS chat_group_join_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',  -- pending | accepted | rejected
+                reviewed_by INTEGER,
+                reviewed_at INTEGER,
+                UNIQUE(group_id, user_id)
+            )
+        """)
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("CREATE INDEX IF NOT EXISTS idx_join_req_group ON chat_group_join_requests(group_id, status)")
+    except sqlite3.OperationalError:
+        pass
     c.commit()
     c.close()
 
