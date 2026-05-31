@@ -611,13 +611,19 @@ function renderZebras() {
 }
 function drawZebra(X, ang, key) {
   const ca = Math.cos(ang), sa = Math.sin(ang), along = 3.6, across = LINE_M.road * 0.9, n = 5;
-  const erase = e => { if (activeTool !== 'erase') return; L.DomEvent.stop(e); pushUndo(); if (!state.noZebra.includes(key)) state.noZebra.push(key); save(); renderZebras(); };
-  for (let s = 0; s < n; s++) {
+  for (let s = 0; s < n; s++) {                          // белые полосы (только вид)
     const off = -across / 2 + (s + 0.5) * (across / n);
     const p1 = offset(X[0], X[1], (along / 2) * ca - off * sa, (along / 2) * sa + off * ca);
     const p2 = offset(X[0], X[1], (-along / 2) * ca - off * sa, (-along / 2) * sa + off * ca);
-    L.polyline([p1, p2], { pane: 'pane-cross', color: '#f2f2f2', weight: 3, opacity: .92 }).addTo(zebraLayer).on('click', erase);
+    L.polyline([p1, p2], { pane: 'pane-cross', color: '#f2f2f2', weight: 3, opacity: .92, interactive: false }).addTo(zebraLayer);
   }
+  // прозрачная кликабельная область — снести всю зебру одним кликом (erase)
+  const at = (dl, dw) => offset(X[0], X[1], dl * ca - dw * sa, dl * sa + dw * ca);
+  const hl = along / 2 + 1, hw = across / 2 + 1, rect = [at(hl, hw), at(hl, -hw), at(-hl, -hw), at(-hl, hw)];
+  const hit = L.polygon(rect, { pane: 'pane-cross', stroke: false, fillOpacity: 0 }).addTo(zebraLayer);
+  hit.on('click', e => { if (activeTool !== 'erase') return; L.DomEvent.stop(e); pushUndo(); if (!state.noZebra.includes(key)) state.noZebra.push(key); save(); renderZebras(); });
+  hit.on('mouseover', () => { if (activeTool !== 'erase') return; clearHover(); hoverHL = L.polygon(rect, { pane: 'pane-edit', color: '#E0245E', weight: 2, fill: false, interactive: false }).addTo(map); });
+  hit.on('mouseout', clearHover);
 }
 function renderLights() {
   lightLayer.clearLayers();
