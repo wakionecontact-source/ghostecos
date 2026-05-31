@@ -601,30 +601,32 @@ function roadsAt(lat, lng, rad) {
   for (const road of state.roads) for (let i = 1; i < road.length; i++) if (pointSegDistM(lat, lng, road[i - 1], road[i]) < rad) { const E = (road[i][1] - road[i - 1][1]) * mPerDegLng(lat), N = (road[i][0] - road[i - 1][0]) * MPD_LAT; dirs.push(Math.atan2(N, E)); }
   const out = []; for (const a of dirs) { const d = ((a * 180 / Math.PI) % 180 + 180) % 180; if (!out.some(o => { const diff = Math.abs(o - d); return Math.min(diff, 180 - diff) < 15; })) out.push(a); } return out;
 }
-function nearestIntersection(latlng) { let best = null, bestD = 20; for (const X of roadIntersections()) { const d = distMeters(latlng.lat, latlng.lng, X[0], X[1]); if (d < bestD) { bestD = d; best = X; } } return best; }
-function zebraKey(X, ang) { return `${X[0].toFixed(5)},${X[1].toFixed(5)}@${Math.round(((ang * 180 / Math.PI) % 180 + 180) % 180)}`; }
+function nearestIntersection(latlng) { let best = null, bestD = 28; for (const X of roadIntersections()) { const d = distMeters(latlng.lat, latlng.lng, X[0], X[1]); if (d < bestD) { bestD = d; best = X; } } return best; }
+const dirAligned = (d, ang) => { const df = Math.abs((((d - ang) * 180 / Math.PI) % 180 + 180) % 180); return Math.min(df, 180 - df) < 25; };
 function renderZebras() {
   zebraLayer.clearLayers();
-  for (const X of roadIntersections()) for (const ang of roadsAt(X[0], X[1], LINE_M.road * 1.4)) {
-    const key = zebraKey(X, ang); if (state.noZebra.includes(key)) continue;
-    drawZebra(X, ang, key);
-  }
+  for (const X of roadIntersections()) for (const ang of roadsAt(X[0], X[1], LINE_M.road * 1.4)) drawZebra(X, ang);
 }
-function drawZebra(X, ang, key) {
-  const ca = Math.cos(ang), sa = Math.sin(ang), along = 3.6, across = LINE_M.road * 0.9, n = 5;
-  for (let s = 0; s < n; s++) {                          // белые полосы (только вид)
-    const off = -across / 2 + (s + 0.5) * (across / n);
-    const p1 = offset(X[0], X[1], (along / 2) * ca - off * sa, (along / 2) * sa + off * ca);
-    const p2 = offset(X[0], X[1], (-along / 2) * ca - off * sa, (-along / 2) * sa + off * ca);
-    L.polyline([p1, p2], { pane: 'pane-cross', color: '#f2f2f2', weight: 3, opacity: .92, interactive: false }).addTo(zebraLayer);
+function drawZebra(X, ang) {                              // переход поперёк дороги, на ПОДХОДАХ (рукавах), не в центре
+  const ca = Math.cos(ang), sa = Math.sin(ang), along = 3.2, across = LINE_M.road * 0.82, n = 5, D = LINE_M.road * 0.85;
+  for (const arm of [1, -1]) {
+    const cen = offset(X[0], X[1], ca * D * arm, sa * D * arm);     // центр перехода на этом плече
+    if (!roadsAt(cen[0], cen[1], LINE_M.road * 0.7).some(d => dirAligned(d, ang))) continue;   // на плече нет дороги — нет перехода
+    const key = `${X[0].toFixed(5)},${X[1].toFixed(5)}@${Math.round(((ang * 180 / Math.PI) % 180 + 180) % 180)}#${arm}`;
+    if (state.noZebra.includes(key)) continue;
+    for (let s = 0; s < n; s++) {
+      const off = -across / 2 + (s + 0.5) * (across / n);
+      const p1 = offset(cen[0], cen[1], (along / 2) * ca - off * sa, (along / 2) * sa + off * ca);
+      const p2 = offset(cen[0], cen[1], (-along / 2) * ca - off * sa, (-along / 2) * sa + off * ca);
+      L.polyline([p1, p2], { pane: 'pane-cross', color: '#f2f2f2', weight: 3, opacity: .92, interactive: false }).addTo(zebraLayer);
+    }
+    const at = (dl, dw) => offset(cen[0], cen[1], dl * ca - dw * sa, dl * sa + dw * ca);
+    const hl = along / 2 + 1, hw = across / 2 + 1, rect = [at(hl, hw), at(hl, -hw), at(-hl, -hw), at(-hl, hw)];
+    const hit = L.polygon(rect, { pane: 'pane-cross', stroke: false, fillOpacity: 0 }).addTo(zebraLayer);
+    hit.on('click', e => { if (activeTool !== 'erase') return; L.DomEvent.stop(e); pushUndo(); if (!state.noZebra.includes(key)) state.noZebra.push(key); save(); renderZebras(); });
+    hit.on('mouseover', () => { if (activeTool !== 'erase') return; clearHover(); hoverHL = L.polygon(rect, { pane: 'pane-edit', color: '#E0245E', weight: 2, fill: false, interactive: false }).addTo(map); });
+    hit.on('mouseout', clearHover);
   }
-  // прозрачная кликабельная область — снести всю зебру одним кликом (erase)
-  const at = (dl, dw) => offset(X[0], X[1], dl * ca - dw * sa, dl * sa + dw * ca);
-  const hl = along / 2 + 1, hw = across / 2 + 1, rect = [at(hl, hw), at(hl, -hw), at(-hl, -hw), at(-hl, hw)];
-  const hit = L.polygon(rect, { pane: 'pane-cross', stroke: false, fillOpacity: 0 }).addTo(zebraLayer);
-  hit.on('click', e => { if (activeTool !== 'erase') return; L.DomEvent.stop(e); pushUndo(); if (!state.noZebra.includes(key)) state.noZebra.push(key); save(); renderZebras(); });
-  hit.on('mouseover', () => { if (activeTool !== 'erase') return; clearHover(); hoverHL = L.polygon(rect, { pane: 'pane-edit', color: '#E0245E', weight: 2, fill: false, interactive: false }).addTo(map); });
-  hit.on('mouseout', clearHover);
 }
 function renderLights() {
   lightLayer.clearLayers();
