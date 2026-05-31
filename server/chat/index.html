@@ -2279,11 +2279,14 @@ function renderMessages(){
   loadMsgPreviews();
 }
 
-// Галочки статуса: одна (отправлено) / двойная серая (доставлено) / двойная синяя (прочитано)
+// Галочки статуса (TG-style):
+// отправлено (ждём подтверждения от ресивера) → ⏱ таймер
+// доставлено (receiver получил)              → ✓ одна
+// прочитано (receiver открыл)                → ✓✓ синие
 function renderTicks(m) {
   if (m.read) return '<i class="fa-solid fa-check-double" style="color:#22d3ee;"></i>';
-  if (m.delivered) return '<i class="fa-solid fa-check-double"></i>';
-  return '<i class="fa-solid fa-check"></i>';
+  if (m.delivered) return '<i class="fa-solid fa-check"></i>';
+  return '<i class="fa-regular fa-clock" style="opacity:0.7;"></i>';
 }
 
 // Чипы реакций под bubble
