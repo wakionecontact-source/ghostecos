@@ -430,6 +430,32 @@ button,input,textarea{font-family:inherit;}
   </div>
 </div>
 
+<!-- Принудительный запрос @тега для канала-без-тега (нельзя закрыть) -->
+<div class="modal-overlay" id="forceTagModal" style="z-index:600;">
+  <div class="modal-sheet" style="max-width:420px;">
+    <div class="m-head">
+      <div class="m-title">⚠️ Нужен @тег для канала</div>
+    </div>
+    <div style="padding:16px 18px;display:flex;flex-direction:column;gap:14px;">
+      <div style="font-size:13px;line-height:1.55;color:var(--sub);">
+        У канала <b id="ftName" style="color:var(--text);"></b> нет публичного @тега. Без него канал нельзя найти и присоединиться.
+        Создай тег чтобы продолжить — это обязательно.
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">@тег (3-20, латиница/цифры/_)</div>
+        <input id="ftInput" maxlength="20" placeholder="my_channel" style="width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);font-family:'SF Mono',Menlo,monospace;font-size:14px;box-sizing:border-box;">
+      </div>
+      <div id="ftError" style="display:none;color:var(--red);font-size:12px;padding:8px 11px;background:rgba(244,63,94,0.08);border-radius:8px;"></div>
+      <button id="ftSubmit" onclick="submitForceTag()" style="padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:14px;">
+        Установить тег
+      </button>
+      <div style="font-size:11px;color:var(--muted);text-align:center;line-height:1.5;">
+        Закрыть это окно нельзя. Канал не виден другим пока без тега.
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Создание группы / канала -->
 <div class="modal-overlay" id="createGroupModal">
   <div class="modal-sheet">
@@ -2322,7 +2348,11 @@ async function openNewChat(){
   setTimeout(()=>document.getElementById('newChatSearch').focus(),100);
 }
 function closeModal(id){document.getElementById(id).classList.remove('open');}
-document.querySelectorAll('.modal-overlay').forEach(el => el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); }));
+// Закрытие модалок по клику на overlay — но НЕ для forceTagModal (его нельзя пропустить)
+document.querySelectorAll('.modal-overlay').forEach(el => {
+  if (el.id === 'forceTagModal') return;
+  el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
+});
 let _t=0;
 document.getElementById('newChatSearch').addEventListener('input', e => {
   const q = e.target.value.trim();
@@ -2549,11 +2579,76 @@ async function loadGroups(){
     for (const g of groups) {
       fetchGroupPending(g.id).catch(()=>{});
     }
+    // Принудительный запрос тега для каналов-без-тега у владельца
+    checkForceTagNeeded();
   } catch(e) {
     console.warn('[groups] load failed', e);
     groups = [];
   }
 }
+
+// ── Принудительная установка @тега для своих каналов без тега ────────────────
+let _forceTagQueue = [];
+function checkForceTagNeeded(){
+  const needsTag = groups.filter(g => g.is_owner && g.kind === 'channel' && !g.username);
+  if (!needsTag.length) return;
+  _forceTagQueue = needsTag.slice();
+  showNextForceTag();
+}
+
+function showNextForceTag(){
+  if (!_forceTagQueue.length) return;
+  const g = _forceTagQueue[0];
+  document.getElementById('ftName').textContent = g.name;
+  document.getElementById('ftInput').value = '';
+  document.getElementById('ftError').style.display = 'none';
+  document.getElementById('ftSubmit').disabled = false;
+  document.getElementById('ftSubmit').textContent = 'Установить тег';
+  document.getElementById('forceTagModal').classList.add('open');
+  setTimeout(() => document.getElementById('ftInput').focus(), 100);
+}
+
+async function submitForceTag(){
+  const g = _forceTagQueue[0];
+  if (!g) return;
+  const tag = (document.getElementById('ftInput').value || '').trim().replace(/^@/, '').toLowerCase();
+  const err = document.getElementById('ftError');
+  err.style.display = 'none';
+  if (!/^[a-z0-9_]{3,20}$/.test(tag)) {
+    err.textContent = 'Тег: 3-20 символов, только a-z 0-9 _';
+    err.style.display = 'block';
+    return;
+  }
+  const btn = document.getElementById('ftSubmit');
+  btn.disabled = true; btn.textContent = 'Сохранение...';
+  try {
+    await chat(`/group/${g.id}/username`, 'POST', { username: tag });
+    // Обновим в локальном кэше
+    const localG = groups.find(x => x.id === g.id);
+    if (localG) localG.username = tag;
+    // Уберём из очереди и идём дальше
+    _forceTagQueue.shift();
+    document.getElementById('forceTagModal').classList.remove('open');
+    showToast(`Тег @${tag} установлен`);
+    if (_forceTagQueue.length) {
+      setTimeout(showNextForceTag, 300);
+    } else {
+      renderDialogs(document.getElementById('sbSearch').value);
+    }
+  } catch(e) {
+    err.textContent = e.message || 'Ошибка установки тега';
+    err.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Установить тег';
+  }
+}
+
+// Enter в input → submit
+document.addEventListener('DOMContentLoaded', () => {
+  const inp = document.getElementById('ftInput');
+  if (inp) inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitForceTag();
+  });
+});
 
 function openNewMenu(e){
   e.stopPropagation();
