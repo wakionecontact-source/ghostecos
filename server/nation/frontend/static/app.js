@@ -34,7 +34,7 @@ function migrate(s) {
 }
 let state = load();
 function load() { try { const r = localStorage.getItem(STORE_KEY); if (r) return migrate(Object.assign(freshState(), JSON.parse(r))); } catch (e) { console.warn(e); } return freshState(); }
-function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { console.warn(e); } }
+function save() { try { localStorage.setItem(isMP() ? MP_STORE : STORE_KEY, JSON.stringify(state)); } catch (e) { console.warn(e); } if (isMP()) mpSyncSave(); }
 
 /* ════════════════ UNDO ════════════════ */
 let undoStack = [];
@@ -868,8 +868,9 @@ function buildSim() {
   sim.cars = []; sim.peds = [];
   sim.driveLines = state.roads.concat(state.alleys);          // машины ездят по дорогам И переулкам
   sim.driveLines.forEach(r => { if (r.length < 2) return; const n = Math.max(1, Math.round(roadLen(r) / 45)); for (let k = 0; k < n; k++) sim.cars.push(makeCar(r)); });
-  sim.pedLines = [];                                           // связная пешеходная сеть: тропинки + тротуары
+  sim.pedLines = [];                                           // связная пешеходная сеть: тропинки + переулки + тротуары
   state.paths.forEach(p => { if (p.length >= 2 && roadLen(p) > 4) sim.pedLines.push(p); });
+  state.alleys.forEach(a => { if (a.length >= 2 && roadLen(a) > 4) sim.pedLines.push(a); });   // пешеходы ходят и по переулкам (узкие, общие с машинами)
   state.roads.forEach(r => {
     const walk = state.roadWalk[roadKey(r)] || 'both';
     const sides = walk === 'both' ? [SIDEWALK_OFF, -SIDEWALK_OFF] : walk === 'left' ? [SIDEWALK_OFF] : walk === 'right' ? [-SIDEWALK_OFF] : [];
@@ -1040,7 +1041,7 @@ function drawSim() {
   for (const c of sim.cars) {
     const r = c.line; if (!r || !r[c.seg + 1] || c.dead) continue;
     const ang = segBear(r, c.seg, c.fwd), pos = lerpPos(r, c.seg, c.t);
-    const ll = offset(pos[0], pos[1], Math.sin(ang) * 1.8, -Math.cos(ang) * 1.8);   // правая полоса
+    const ll = pos;   // движение по ЦЕНТРУ дороги/переулка (без правой полосы)
     const cp = map.latLngToContainerPoint([ll[0], ll[1]]); if (cp.x < -30 || cp.y < -30 || cp.x > W + 30 || cp.y > H + 30) continue;
     ctx.save(); ctx.translate(cp.x * dpr, cp.y * dpr); ctx.rotate(-ang);
     ctx.fillStyle = c.color; roundRect(ctx, -cl / 2 * dpr, -cw / 2 * dpr, cl * dpr, cw * dpr, Math.min(cw / 2, 3) * dpr); ctx.fill();
@@ -1139,6 +1140,106 @@ function wire() {
 }
 
 /* ════════════════ BOOT ════════════════ */
+/* ════════════════ МУЛЬТИПЛЕЕР (общий мир, аккаунты GhostEcos) ════════════════ */
+const MP_API = '/api/nation', MP_STORE = 'ghostnation:mp';
+const mp = { mode: localStorage.getItem('ghostnation:mode') === 'mp' ? 'mp' : 'local', country: null, balance: 0, pop: 0, worldLayer: null, saveTimer: null };
+function isMP() { return mp.mode === 'mp'; }
+function mpToken() { return localStorage.getItem('gs_token'); }
+function mpApi(path, opts) {
+  opts = opts || {}; const h = { 'Content-Type': 'application/json' }, t = mpToken(); if (t) h['Authorization'] = 'Bearer ' + t;
+  return fetch(MP_API + path, Object.assign({}, opts, { headers: Object.assign(h, opts.headers || {}) }));
+}
+function mpInit() {
+  if (!document.getElementById('mode-local')) return;   // UI мультиплеера ещё не добавлен → MP спит, играем локально
+  mp.worldLayer = L.layerGroup().addTo(map);
+  document.getElementById('mode-local').onclick = () => setMode('local');
+  document.getElementById('mode-mp').onclick = () => setMode('mp');
+  document.getElementById('mp-login-go').onclick = mpSubmitLogin;
+  document.getElementById('mp-login-cancel').onclick = () => { hideMpLogin(); if (isMP()) setMode('local'); };
+  document.getElementById('mp-logout').onclick = mpLogout;
+  updateModeUI();
+  if (isMP()) enterMP();
+}
+function setMode(m) {
+  if (m === mp.mode) return;
+  if (mp.mode === 'local') localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  mp.mode = m; localStorage.setItem('ghostnation:mode', m); updateModeUI();
+  if (m === 'local') { mp.worldLayer.clearLayers(); mp.country = null; state = load(); document.getElementById('state-name').value = state.name; renderAll(); flash('Локальный режим'); }
+  else enterMP();
+}
+function updateModeUI() {
+  document.getElementById('mode-local').classList.toggle('active', !isMP());
+  document.getElementById('mode-mp').classList.toggle('active', isMP());
+  document.getElementById('mp-bar').classList.toggle('hidden', !isMP());
+  if (isMP()) updateBalanceUI();
+}
+function updateBalanceUI() {
+  const b = document.getElementById('mp-balance'); if (b) b.textContent = Math.round(mp.balance) + ' gost';
+  const p = document.getElementById('mp-pop'); if (p) p.textContent = mp.pop + ' чел';
+  const lo = document.getElementById('mp-logout'); if (lo) lo.classList.toggle('hidden', !mpToken());
+}
+function enterMP() { if (!mpToken()) { showMpLogin(); return; } mpLoadMine().then(mpLoadWorld); }
+async function mpLoadMine() {
+  try {
+    const r = await mpApi('/mine');
+    if (r.status === 401) { localStorage.removeItem('gs_token'); showMpLogin(); return; }
+    const d = await r.json();
+    if (d.country) {
+      const c = d.country; mp.country = c; mp.balance = c.balance || 0; mp.pop = c.population || 0;
+      state = migrate(Object.assign(freshState(), c.state || {})); state.name = c.name || ''; state.color = c.color || state.color; state.border = c.border || null;
+      document.getElementById('state-name').value = state.name; renderAll(); updateBalanceUI();
+      if (state.border && state.border.length) try { map.fitBounds(L.latLngBounds(state.border).pad(0.25)); } catch (e) {}
+      flash('Загружена твоя страна');
+    } else { mp.country = null; mp.balance = 1500; mp.pop = 0; state = freshState(); renderAll(); updateBalanceUI(); flash('Нарисуй границу — застолби свою территорию', true); }
+  } catch (e) { flash('Сервер недоступен', true); }
+}
+function mpSyncSave() {
+  if (!isMP() || !mpToken() || !mp.country) return;
+  clearTimeout(mp.saveTimer);
+  mp.saveTimer = setTimeout(async () => {
+    try { const r = await mpApi('/mine', { method: 'PUT', body: JSON.stringify({ state }) });
+      if (r.ok) { const d = await r.json(); mp.balance = d.balance; mp.pop = d.population != null ? d.population : mp.pop; updateBalanceUI(); }
+      else if (r.status === 402) { const d = await r.json().catch(() => ({})); flash(d.detail || 'Не хватает gost', true); }
+    } catch (e) {}
+  }, 900);
+}
+async function mpClaim() {
+  if (!isMP() || !mpToken() || !state.border || state.border.length < 3) return;
+  try {
+    const r = await mpApi('/claim', { method: 'POST', body: JSON.stringify({ name: state.name || 'Моя страна', color: state.color, border: state.border }) });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok) { mp.balance = d.balance; mp.country = mp.country || {}; updateBalanceUI(); flash('Территория застолблена' + (d.cost ? ' · −' + Math.round(d.cost) + ' gost' : '')); mpLoadWorld(); mpSyncSave(); }
+    else { flash(d.detail || 'Не удалось застолбить', true); }
+  } catch (e) { flash('Сервер недоступен', true); }
+}
+async function mpLoadWorld() {
+  if (!isMP() || !map || !mp.worldLayer) return;
+  const b = map.getBounds();
+  try { const r = await mpApi(`/world?minlat=${b.getSouth()}&minlng=${b.getWest()}&maxlat=${b.getNorth()}&maxlng=${b.getEast()}`); const d = await r.json(); mpRenderWorld(d.countries || []); } catch (e) {}
+}
+function mpRenderWorld(countries) {
+  mp.worldLayer.clearLayers();
+  const mine = mp.country && mp.country.owner;
+  for (const c of countries) {
+    if (c.owner === mine || !c.border || c.border.length < 3) continue;
+    L.polygon(c.border, { pane: 'pane-territory', color: c.color || '#888', weight: 2, opacity: .6, fillColor: c.color || '#888', fillOpacity: .07, interactive: false, dashArray: '5 4' }).addTo(mp.worldLayer);
+    if (map.getZoom() <= LABEL_MAX_ZOOM) L.marker(borderCentroid(c.border), { pane: 'markerPane', interactive: false, icon: L.divIcon({ className: 'country-label-wrap', html: `<div class="country-label" style="--c:${c.color || '#888'}">${escLabel(c.name || c.owner)}</div>`, iconSize: [0, 0], iconAnchor: [0, 0] }) }).addTo(mp.worldLayer);
+  }
+}
+function showMpLogin() { if (mpToken()) return; document.getElementById('mp-login').classList.remove('hidden'); }
+function hideMpLogin() { document.getElementById('mp-login').classList.add('hidden'); }
+async function mpSubmitLogin() {
+  const u = document.getElementById('mp-user').value.trim(), p = document.getElementById('mp-pass').value;
+  if (!u || !p) { flash('Введи логин и пароль', true); return; }
+  try {
+    const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.token) { localStorage.setItem('gs_token', d.token); hideMpLogin(); flash('Вход выполнен'); enterMP(); }
+    else flash('Неверный логин или пароль', true);
+  } catch (e) { flash('Сервер недоступен', true); }
+}
+function mpLogout() { localStorage.removeItem('gs_token'); mp.country = null; setMode('local'); flash('Вышел из аккаунта'); }
+
 (async function boot() {
   if (typeof L === 'undefined') { document.body.insertAdjacentHTML('beforeend', '<div style="position:fixed;inset:0;display:grid;place-items:center;background:#000;color:#fff;font:16px sans-serif;text-align:center;padding:24px">Не удалось загрузить Leaflet с CDN.<br>Проверь интернет/туннель и обнови страницу.</div>'); return; }
   await loadIcons();
@@ -1154,7 +1255,7 @@ function wire() {
   lightLayer = L.layerGroup().addTo(map);
   countryLabelLayer = L.layerGroup().addTo(map);
   editLayer = L.layerGroup().addTo(map);
-  buildPalette(); wire(); renderAll();
+  buildPalette(); wire(); renderAll(); mpInit();
   simCanvas = document.getElementById('sim'); simCtx = simCanvas.getContext('2d'); resizeSim();
   window.addEventListener('resize', resizeSim);
 })();
