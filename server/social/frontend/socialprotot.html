@@ -807,7 +807,7 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
         <i class="fa-solid fa-comments"></i> Открыть GhostChat
         <span class="notif-badge" id="profChatBadge" style="position:static;margin-left:6px;"></span>
       </a>
-      <button class="prof-action-btn" onclick="switchScreen('screenModeration')" style="width:100%;margin-top:8px;justify-content:center;">
+      <button class="prof-action-btn" onclick="openModerationOrAdmin()" style="width:100%;margin-top:8px;justify-content:center;">
         <i class="fa-solid fa-shield"></i> Модерация
       </button>
       <button class="prof-action-btn" id="profInstallBtn" onclick="openInstall()" style="width:100%;margin-top:8px;justify-content:center;display:none;">
@@ -4582,6 +4582,15 @@ init();
 // ══════════════════════════════════════════════════════════════════════════════
 // MODERATION SCREEN
 // ══════════════════════════════════════════════════════════════════════════════
+function openModerationOrAdmin() {
+  // Admin → отдельная админка. Модератор/юзер → старый экран в социалке.
+  if (me && me.is_admin) {
+    location.href = '/social/admin';
+    return;
+  }
+  switchScreen('screenModeration');
+}
+
 async function loadModerationScreen() {
   const root = document.getElementById('modContent');
   const badge = document.getElementById('modBadge');

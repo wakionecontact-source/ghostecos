@@ -2360,15 +2360,15 @@ function renderMessages(){
   loadMsgPreviews();
 }
 
-// Статусы доставки:
-// pending (ещё не отправлено серверу)            → ⏱ таймер (рендер выше, не здесь)
-// сохранено на сервере (ждём receiver онлайн)    → 💾 дискета
-// доставлено (receiver получил)                  → ✓ одна
-// прочитано (receiver открыл чат)                → ✓✓ синие
+// Статусы доставки (после успешного POST /send pending=false автоматически):
+//   pending (POST ещё не дошёл)        → fa-clock (выше в meta, до этого renderTicks)
+//   !pending !delivered                 → 1 галочка (сервер принял)
+//   delivered (receiver сделал /ack)    → 2 галочки серые
+//   read (receiver открыл чат)          → 2 галочки синие
 function renderTicks(m) {
   if (m.read) return '<i class="fa-solid fa-check-double" style="color:#22d3ee;"></i>';
-  if (m.delivered) return '<i class="fa-solid fa-check"></i>';
-  return '<i class="fa-solid fa-floppy-disk" style="opacity:0.75;"></i>';
+  if (m.delivered) return '<i class="fa-solid fa-check-double"></i>';
+  return '<i class="fa-solid fa-check"></i>';
 }
 
 // Чипы реакций под bubble
@@ -2730,18 +2730,16 @@ function sendLongPressEnd() {
 }
 
 async function openSendOptions() {
-  // Только в активном канале (kind='channel') и у админа имеет смысл показывать "опубликовать в GS"
+  // Только в активном канале (kind='channel') и у админа имеет смысл показывать опции
   const isChannel = activeGroup && activeGroup.kind === 'channel';
-  const isPublicChannel = isChannel && activeGroup.is_public;
-  const myMember = activeGroup && activeGroup.members && activeGroup.members.find(m => m.id === me.id);
+  if (!isChannel) return onSendBtn();
+  const myMember = activeGroup.members && activeGroup.members.find(m => m.id === me.id);
   const iAmAdmin = myMember && (myMember.is_admin || myMember.is_owner);
-  if (!isPublicChannel || !iAmAdmin) {
-    // Обычный send — нет смысла в опциях
-    return onSendBtn();
-  }
+  if (!iAmAdmin) return onSendBtn();
   const inp = document.getElementById('sendInput');
   const text = (inp ? inp.value : '').trim();
   if (!text) { showToast('Напиши сообщение сначала'); return; }
+  const isPublic = !!activeGroup.is_public;
   const opts = await new Promise(resolve => {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay open';
@@ -2755,11 +2753,13 @@ async function openSendOptions() {
         <button id="sendOptOnly" style="padding:12px;border-radius:10px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-weight:600;cursor:pointer;font-family:inherit;font-size:13px;text-align:left;">
           <i class="fa-solid fa-paper-plane" style="margin-right:8px;color:var(--primary);"></i>Только в канал
         </button>
-        <button id="sendOptBoth" style="padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:13px;text-align:left;">
+        <button id="sendOptBoth" ${isPublic ? '' : 'disabled style="opacity:0.5;cursor:not-allowed;"'} style="padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:13px;text-align:left;">
           <i class="fa-solid fa-share-nodes" style="margin-right:8px;"></i>В канал + пост в GhostSocial
         </button>
         <div style="font-size:11px;color:var(--sub);text-align:center;line-height:1.5;margin-top:4px;">
-          Пост в GS будет доступен публично, с пометкой канала. Комменты и реакции — там же.
+          ${isPublic
+            ? 'Пост в GS будет доступен публично с пометкой канала. Комменты и реакции там же.'
+            : 'Публикация в GS доступна только для публичных каналов. Сделай канал публичным в настройках.'}
         </div>
       </div>
     </div>`;
