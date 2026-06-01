@@ -178,21 +178,25 @@
         placeholder: opts.placeholder || '',
         maxLength: opts.maxLength,
       });
+      // Once-guard — resolve вызывается только один раз
+      let done = false;
+      const finish = (v) => { if (done) return; done = true; close(overlay); resolve(v); };
+
       const cancel = document.createElement('button');
       cancel.className = 'ge-dlg-btn cancel';
       cancel.textContent = opts.cancelText || 'Отмена';
-      cancel.onclick = () => { close(overlay); resolve(null); };
+      cancel.onclick = () => finish(null);
       actions.appendChild(cancel);
 
       const ok = document.createElement('button');
       ok.className = 'ge-dlg-btn ' + (opts.danger ? 'danger' : 'ok');
       ok.textContent = opts.okText || 'ОК';
-      ok.onclick = () => { close(overlay); resolve(inputEl.value); };
+      ok.onclick = () => finish(inputEl.value);
       actions.appendChild(ok);
 
       inputEl.addEventListener('keydown', e => {
-        if (e.key === 'Enter') { e.preventDefault(); close(overlay); resolve(inputEl.value); }
-        else if (e.key === 'Escape') { close(overlay); resolve(null); }
+        if (e.key === 'Enter') { e.preventDefault(); finish(inputEl.value); }
+        else if (e.key === 'Escape') { e.preventDefault(); finish(null); }
       });
       setTimeout(() => { inputEl.focus(); inputEl.select(); }, 100);
     });

@@ -2742,12 +2742,13 @@ function mediaHTML(media) {
     visual.forEach(m => {
       const tall = n === 1 ? 'tall' : '';
       const urlAttr = esc(m.url);
+      const urlJs = jsAttr(m.url);
       if (m.type === 'image') {
-        html += `<div class="mg-item ${tall} media-el" data-media-url="${urlAttr}" onclick="openViewer('${urlAttr}','image')">
+        html += `<div class="mg-item ${tall} media-el" data-media-url="${urlAttr}" onclick="openViewer(${urlJs},'image')">
           <img src="${urlAttr}" loading="lazy" alt="">
         </div>`;
       } else {
-        html += `<div class="mg-item ${tall} media-el" data-media-url="${urlAttr}" onclick="openViewer('${urlAttr}','video')">
+        html += `<div class="mg-item ${tall} media-el" data-media-url="${urlAttr}" onclick="openViewer(${urlJs},'video')">
           <video src="${urlAttr}" preload="metadata" muted playsinline></video>
           <div class="video-play-overlay"><div class="video-play-btn"><i class="fa-solid fa-play"></i></div></div>
         </div>`;
@@ -3433,8 +3434,8 @@ function notifHTML(n) {
       if (n.preview) preview = `<div class="notif-preview">${esc(n.preview)}</div>`;
   }
   const click = n.type === 'follow'
-    ? `openFullProfile('${esc(n.actor_username)}')`
-    : `goToPost(${n.post_id})`;
+    ? `openFullProfile(${jsAttr(n.actor_username)})`
+    : `goToPost(${Number(n.post_id) || 0})`;
   return `<div class="notif-card${n.is_read ? '' : ' unread'}" onclick="${click}">
     <div class="notif-av">${ini(n.actor_name)}${icon}</div>
     <div class="notif-body">

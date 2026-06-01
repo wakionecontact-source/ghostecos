@@ -2143,6 +2143,14 @@ function backToList(){
     for (const m of activeMessages) {
       if (m && m._imgUrl) { URL.revokeObjectURL(m._imgUrl); m._imgUrl = null; }
     }
+    // Voice URL-ы тоже (lives in _voiceAudios Map)
+    if (typeof _voiceAudios !== 'undefined' && _voiceAudios.forEach) {
+      _voiceAudios.forEach(entry => {
+        try { entry && entry.audio && entry.audio.pause(); } catch(_){}
+        if (entry && entry.url) URL.revokeObjectURL(entry.url);
+      });
+      _voiceAudios.clear();
+    }
   } catch(_) {}
   activePeer = null; activeGroup = null; activeMessages = [];
   // Сбросим chatMain на пустой экран
@@ -2281,7 +2289,7 @@ function renderMessages(){
     }
     html += `<div class="msg ${m.from_me?'mine':'theirs'} ${cls}" data-sid="${esc(m.sid)}">
       <div style="display:flex;flex-direction:column;max-width:100%;">
-        <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,'${esc(m.sid)}')" ontouchstart="msgLongPressStart(event,'${esc(m.sid)}')" ontouchend="msgLongPressEnd()" ontouchcancel="msgLongPressEnd()" ontouchmove="msgLongPressMove(event)">${m.forwarded_from?`<div style="font-size:11px;color:var(--primary);font-weight:600;margin-bottom:3px;"><i class="fa-solid fa-share" style="margin-right:4px;font-size:10px;"></i>Переслано от @${esc(m.forwarded_from)}</div>`:''}${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
+        <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,${jsAttr(m.sid)})" ontouchstart="msgLongPressStart(event,${jsAttr(m.sid)})" ontouchend="msgLongPressEnd()" ontouchcancel="msgLongPressEnd()" ontouchmove="msgLongPressMove(event)">${m.forwarded_from?`<div style="font-size:11px;color:var(--primary);font-weight:600;margin-bottom:3px;"><i class="fa-solid fa-share" style="margin-right:4px;font-size:10px;"></i>Переслано от @${esc(m.forwarded_from)}</div>`:''}${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
         ${renderReactions(m)}
         ${m.deleted ? '' : previewPlaceholder(m)}
       </div>
@@ -3359,7 +3367,7 @@ function renderGroupMessages(){
       ${avatarSlot}
       <div style="display:flex;flex-direction:column;max-width:100%;">
         ${senderName}
-        <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,'${esc(m.sid)}')" ontouchstart="msgLongPressStart(event,'${esc(m.sid)}')" ontouchend="msgLongPressEnd()" ontouchcancel="msgLongPressEnd()" ontouchmove="msgLongPressMove(event)">${m.forwarded_from?`<div style="font-size:11px;color:var(--primary);font-weight:600;margin-bottom:3px;"><i class="fa-solid fa-share" style="margin-right:4px;font-size:10px;"></i>Переслано от @${esc(m.forwarded_from)}</div>`:''}${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
+        <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,${jsAttr(m.sid)})" ontouchstart="msgLongPressStart(event,${jsAttr(m.sid)})" ontouchend="msgLongPressEnd()" ontouchcancel="msgLongPressEnd()" ontouchmove="msgLongPressMove(event)">${m.forwarded_from?`<div style="font-size:11px;color:var(--primary);font-weight:600;margin-bottom:3px;"><i class="fa-solid fa-share" style="margin-right:4px;font-size:10px;"></i>Переслано от @${esc(m.forwarded_from)}</div>`:''}${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
         ${renderReactions(m)}
       </div>
     </div>`;

@@ -1,10 +1,20 @@
 // Mesh-сеть на canvas: точки с линиями, разбегаются от курсора.
 // Вставляет <canvas id="mesh-bg"> в body и сам его рисует.
 (function () {
-  // Уважаем prefers-reduced-motion — реактивно (если юзер включит позже, тоже остановимся)
+  // Уважаем prefers-reduced-motion — реактивно (если юзер включит позже, остановимся)
   const mqReduce = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
   if (mqReduce && mqReduce.matches) {
     return;
+  }
+  // Listener вешаем уже здесь — `running` будет управляться позже
+  let _stopOnReduce = null;
+  if (mqReduce) {
+    _stopOnReduce = (e) => {
+      if (e.matches && typeof window._meshStop === 'function') window._meshStop();
+    };
+    try { mqReduce.addEventListener('change', _stopOnReduce); } catch(_) {
+      try { mqReduce.addListener(_stopOnReduce); } catch(__){}
+    }
   }
   const canvas = document.createElement("canvas");
   canvas.id = "mesh-bg";
@@ -195,4 +205,10 @@
   window.addEventListener("touchend", onLeave, { passive: true });
   resize();
   schedule();
+
+  // Глобальная точка остановки (для реактивного prefers-reduced-motion)
+  window._meshStop = function() {
+    running = false;
+    if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+  };
 })();

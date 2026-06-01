@@ -1096,8 +1096,10 @@ function copyInvLink(ev, code){
 }
 async function cancelInvoice(code){
   if (!await Dialog.confirm('Отменить счёт?', { title: 'Отменить счёт', danger: true })) return;
-  try { await api(`/invoice/${code}`, 'DELETE'); showToast('Отменён'); loadInvoices(); }
-  catch(e) { showToast(e.message, true); }
+  return withLock('inv-cancel:'+code, async () => {
+    try { await api(`/invoice/${code}`, 'DELETE'); showToast('Отменён'); loadInvoices(); }
+    catch(e) { showToast(e.message, true); }
+  });
 }
 function openInvoiceCreate(){
   document.getElementById('invcAmount').value = '';
@@ -1107,16 +1109,17 @@ function openInvoiceCreate(){
 async function doCreateInvoice(){
   const amount = +document.getElementById('invcAmount').value;
   const note = document.getElementById('invcNote').value.trim();
-  if (!amount || amount < 1) { showToast('Введите сумму', true); return; }
-  try {
-    const r = await api('/invoice/create', 'POST', { amount_soul: amount, note: note || null });
-    showToast(`Счёт создан · ${r.code}`);
-    closeModal('invCreateModal');
-    await Promise.all([loadInvoices(), loadWallet()]);
-    // Сразу копируем ссылку
-    const url = `${location.origin}/bank/?pay=${encodeURIComponent(r.code)}`;
-    navigator.clipboard.writeText(url).then(() => showToast('Ссылка скопирована'));
-  } catch(e) { showToast(e.message, true); }
+  if (!amount || !Number.isFinite(amount) || amount < 1) { showToast('Введите сумму', true); return; }
+  return withLock('inv-create', async () => {
+    try {
+      const r = await api('/invoice/create', 'POST', { amount_soul: amount, note: note || null });
+      showToast(`Счёт создан · ${r.code}`);
+      closeModal('invCreateModal');
+      await Promise.all([loadInvoices(), loadWallet()]);
+      const url = `${location.origin}/bank/?pay=${encodeURIComponent(r.code)}`;
+      navigator.clipboard.writeText(url).then(() => showToast('Ссылка скопирована'));
+    } catch(e) { showToast(e.message, true); }
+  });
 }
 
 // Открыть страницу оплаты при ?pay=CODE
@@ -1152,13 +1155,15 @@ async function checkInvoicePayParam(){
   } catch(e) { showToast(e.message || 'Счёт не найден', true); }
 }
 async function payInvoice(code){
-  try {
-    const r = await api(`/invoice/${encodeURIComponent(code)}/pay`, 'POST');
-    showToast(`Оплачено! −${fmtNum(r.amount + r.fee)} Soul`);
-    closeModal('invPayModal');
-    history.replaceState(null, '', location.pathname);
-    loadWallet();
-  } catch(e) { showToast(e.message, true); }
+  return withLock('pay:'+code, async () => {
+    try {
+      const r = await api(`/invoice/${encodeURIComponent(code)}/pay`, 'POST');
+      showToast(`Оплачено! −${fmtNum(r.amount + r.fee)} Soul`);
+      closeModal('invPayModal');
+      history.replaceState(null, '', location.pathname);
+      loadWallet();
+    } catch(e) { showToast(e.message, true); }
+  });
 }
 
 // ══════════════ USERNAMES ══════════════
@@ -1276,12 +1281,16 @@ async function doMintNft(){
     sell_price_soul: +document.getElementById('mintSellPrice').value,
   };
   if (!body.slug || !body.name || !body.image_emoji) { showToast('Заполните slug, имя и эмодзи', true); return; }
-  try {
-    const r = await api('/nft/mint', 'POST', body);
-    showToast(`NFT создан! −${r.gost_paid} Gost, +${r.soul_received} Soul`);
-    closeModal('mintModal');
-    await Promise.all([loadWallet(), loadCatalog(), loadMyNfts(), loadMarket()]);
-  } catch(e) { showToast(e.message, true); }
+  if (!Number.isInteger(body.supply) || body.supply < 1) { showToast('Тираж: целое число > 0', true); return; }
+  if (!Number.isFinite(body.sell_price_soul) || body.sell_price_soul < 0) { showToast('Цена: число ≥ 0', true); return; }
+  return withLock('mint:'+body.slug, async () => {
+    try {
+      const r = await api('/nft/mint', 'POST', body);
+      showToast(`NFT создан! −${r.gost_paid} Gost, +${r.soul_received} Soul`);
+      closeModal('mintModal');
+      await Promise.all([loadWallet(), loadCatalog(), loadMyNfts(), loadMarket()]);
+    } catch(e) { showToast(e.message, true); }
+  });
 }
 
 // ══════════════ SEED PHRASE ══════════════

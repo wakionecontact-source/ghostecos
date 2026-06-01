@@ -2195,6 +2195,9 @@ def write_comment(post_id: int, body: CommentBody, authorization: Optional[str] 
     c.execute(
         "INSERT INTO soc_comments (post_id, user_id, text) VALUES (?,?,?)", (post_id, user["id"], text)
     )
+    # ВАЖНО: забираем id комментария СРАЗУ. Если делать после _add_notif,
+    # last_insert_rowid() вернёт id уведомления (ломает ответ + WS broadcast + award dedup).
+    comment_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
     notified = {user["id"]}
     _add_notif(c, post["user_id"], user["id"], "comment", post_id, text[:120])
     notified.add(post["user_id"])
@@ -2204,7 +2207,6 @@ def write_comment(post_id: int, body: CommentBody, authorization: Optional[str] 
             _add_notif(c, u["id"], user["id"], "mention", post_id, text[:120])
             notified.add(u["id"])
     c.commit()
-    comment_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
     total = c.execute("SELECT COUNT(*) as cnt FROM soc_comments WHERE post_id=?", (post_id,)).fetchone()["cnt"]
     c.close()
     # Награда автору поста за чужой коммент. ref_id = comment_id чтобы каждый отдельный коммент засчитывался.
