@@ -12,9 +12,10 @@ router = APIRouter(prefix="/api/soc", tags=["GhostSocial"])
 # и отображается в UI лендинга. CHANGELOG.md в корне репо.
 VERSION = "0.1.0"
 
-DB = '/opt/ghostchat/ghostchat.db'
-MEDIA_DIR = "/var/www/ghostsocial/media"
-os.makedirs(MEDIA_DIR, exist_ok=True)
+DB = os.getenv("SOCIAL_DB_PATH", '/opt/ghostchat/ghostchat.db')
+MEDIA_DIR = os.getenv("SOCIAL_MEDIA_DIR", "/var/www/ghostsocial/media")
+try: os.makedirs(MEDIA_DIR, exist_ok=True)
+except Exception: pass
 
 ALLOWED_IMAGE = {"jpg","jpeg","png","gif","webp"}
 ALLOWED_VIDEO = {"mp4","webm","mov"}
@@ -840,6 +841,15 @@ def init():
     try: c.execute("CREATE INDEX IF NOT EXISTS idx_activity_log_post ON soc_activity_log(post_id, id DESC)")
     except sqlite3.OperationalError: pass
 
+    # ── kind: 'post' | 'miniska' (миниски — короткие 48ч-видео) ──
+    try: c.execute("ALTER TABLE soc_posts ADD COLUMN kind TEXT NOT NULL DEFAULT 'post'")
+    except sqlite3.OperationalError: pass
+    try: c.execute("CREATE INDEX IF NOT EXISTS idx_posts_kind ON soc_posts(kind, id DESC)")
+    except sqlite3.OperationalError: pass
+    # ── edited_at: timestamp последнего редактирования (NULL = не редактировался) ──
+    try: c.execute("ALTER TABLE soc_posts ADD COLUMN edited_at TIMESTAMP")
+    except sqlite3.OperationalError: pass
+
     # ── NSFW (18+ контент с обязательным блюром) ──
     try: c.execute("ALTER TABLE soc_posts ADD COLUMN is_nsfw INTEGER NOT NULL DEFAULT 0")
     except sqlite3.OperationalError: pass
@@ -1161,7 +1171,11 @@ def _client_ip(request: Request) -> str:
         return fwd.split(',')[0].strip()
     return request.client.host if request.client else 'unknown'
 
+_RATE_LIMIT_DISABLED = os.getenv("DISABLE_RATE_LIMIT") == "1"
+
 def _rate_limit(key: str, limit: int, window: int):
+    if _RATE_LIMIT_DISABLED:
+        return  # для тестов / dev окружения
     now = time.time()
     arr = _rl_buckets[key] = [t for t in _rl_buckets[key] if now - t < window]
     if len(arr) >= limit:
@@ -2930,6 +2944,207 @@ def _is_admin_user(user) -> bool:
     return bool(owner) and user.get("username", "").lower() == owner
 
 
+# ── OG PNG-генерация (превью карточки для шеринга в TG/WA/Twitter) ──
+_OG_CACHE_DIR = "/tmp/ge_og_cache"
+try: os.makedirs(_OG_CACHE_DIR, exist_ok=True)
+except Exception: pass
+
+def _og_cached(key: str, max_age_s: int = 3600):
+    """Возвращает путь к закэшированному PNG если свежий, иначе None."""
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", key)
+    p = os.path.join(_OG_CACHE_DIR, safe + ".png")
+    if os.path.exists(p):
+        age = time.time() - os.path.getmtime(p)
+        if age < max_age_s:
+            return p
+    return None
+
+def _og_save(key: str, png_bytes: bytes) -> str:
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", key)
+    p = os.path.join(_OG_CACHE_DIR, safe + ".png")
+    try:
+        with open(p, "wb") as f:
+            f.write(png_bytes)
+    except Exception:
+        pass
+    return p
+
+def _og_render(title: str, subtitle: str, footer: str, accent: str = "") -> bytes:
+    """Базовый OG-генератор 1200×630, тёмно-фиолетовый градиент."""
+    from PIL import Image, ImageDraw, ImageFont
+    W, H = 1200, 630
+    img = Image.new("RGB", (W, H), (10, 4, 26))  # #0a041a
+    # Градиент через прямоугольники (без numpy)
+    overlay = Image.new("RGB", (W, H), (10, 4, 26))
+    od = ImageDraw.Draw(overlay)
+    for y in range(H):
+        # верх — фиолетовый, низ — тёмный
+        t = y / H
+        r = int(20 + (10 - 20) * t)
+        g = int(8 + (4 - 8) * t)
+        b = int(40 + (26 - 40) * t)
+        od.line([(0, y), (W, y)], fill=(r, g, b))
+    img = overlay
+    d = ImageDraw.Draw(img)
+    # Радиальные «звёздные пятна» — статичные кружки
+    for (cx, cy, rr, alpha) in [(200, 100, 220, 22), (1000, 530, 280, 18), (1100, 150, 160, 16)]:
+        layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ld = ImageDraw.Draw(layer)
+        ld.ellipse([cx - rr, cy - rr, cx + rr, cy + rr], fill=(168, 85, 247, alpha))
+        img = Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
+        d = ImageDraw.Draw(img)
+    # Шрифты — fallback на DejaVuSans
+    def _font(size, bold=False):
+        for path in (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
+        ):
+            if os.path.exists(path):
+                try: return ImageFont.truetype(path, size)
+                except Exception: pass
+        return ImageFont.load_default()
+    f_brand = _font(28, bold=True)
+    f_title = _font(60, bold=True)
+    f_sub = _font(34)
+    f_accent = _font(22, bold=True)
+    f_footer = _font(20)
+    # Брендинг сверху
+    d.text((60, 56), "GHOSTECOS", font=f_brand, fill=(168, 85, 247))
+    # Accent-бейдж (опционально, справа)
+    if accent:
+        try:
+            tw = d.textlength(accent, font=f_accent)
+        except Exception:
+            tw = len(accent) * 12
+        bx, by = W - 60 - int(tw) - 28, 60
+        d.rounded_rectangle([bx, by, W - 60, by + 36], radius=18, fill=(74, 222, 128, 30), outline=(74, 222, 128, 180), width=2)
+        d.text((bx + 14, by + 6), accent, font=f_accent, fill=(74, 222, 128))
+    # Title — может занимать 2 строки
+    def _wrap(text, font, max_w):
+        words = text.split(); lines = []; cur = ""
+        for w in words:
+            t = (cur + " " + w).strip()
+            try: w_w = d.textlength(t, font=font)
+            except Exception: w_w = len(t) * 14
+            if w_w > max_w and cur:
+                lines.append(cur); cur = w
+            else:
+                cur = t
+        if cur: lines.append(cur)
+        return lines
+    title_lines = _wrap(title or "", f_title, W - 120)[:3]
+    y = 200
+    for ln in title_lines:
+        d.text((60, y), ln, font=f_title, fill=(241, 245, 249))
+        y += 76
+    # Subtitle
+    if subtitle:
+        sub_lines = _wrap(subtitle, f_sub, W - 120)[:2]
+        y += 14
+        for ln in sub_lines:
+            d.text((60, y), ln, font=f_sub, fill=(148, 163, 184))
+            y += 42
+    # Footer
+    d.text((60, H - 60), footer or "ghostecos.duckdns.org", font=f_footer, fill=(168, 85, 247))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+def _og_response(png_bytes: bytes):
+    from fastapi.responses import Response
+    return Response(content=png_bytes, media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=3600"})
+
+
+@router.get("/og/user/{username}.png")
+def og_user_png(username: str):
+    uname = (username or "").strip().lower().lstrip("@")
+    if not uname:
+        raise HTTPException(400, "Empty username")
+    cached = _og_cached(f"u_{uname}")
+    if cached:
+        with open(cached, "rb") as f:
+            return _og_response(f.read())
+    c = db()
+    u = c.execute(
+        "SELECT display_name, username, reputation_score FROM users WHERE username=?", (uname,)
+    ).fetchone()
+    if not u:
+        c.close(); raise HTTPException(404, "User not found")
+    posts = c.execute("SELECT COUNT(*) as n FROM soc_posts WHERE user_id=(SELECT id FROM users WHERE username=?)", (uname,)).fetchone()["n"]
+    followers = c.execute("SELECT COUNT(*) as n FROM soc_follows WHERE followee_id=(SELECT id FROM users WHERE username=?)", (uname,)).fetchone()["n"]
+    c.close()
+    rep = int(u["reputation_score"] or 100)
+    title = u["display_name"] or u["username"]
+    sub = f"@{u['username']} · {posts} постов · {followers} подписчиков · репутация {rep}/100"
+    png = _og_render(title=title, subtitle=sub, footer="ghostecos.duckdns.org/social",
+                     accent=("18+" if False else ""))
+    _og_save(f"u_{uname}", png)
+    return _og_response(png)
+
+
+@router.get("/og/post/{post_id}.png")
+def og_post_png(post_id: int):
+    cached = _og_cached(f"p_{post_id}")
+    if cached:
+        with open(cached, "rb") as f:
+            return _og_response(f.read())
+    c = db()
+    row = c.execute(
+        "SELECT p.content, p.is_nsfw, u.username, u.display_name "
+        "FROM soc_posts p JOIN users u ON p.user_id=u.id WHERE p.id=?",
+        (post_id,),
+    ).fetchone()
+    if not row:
+        c.close(); raise HTTPException(404, "Post not found")
+    reactions = c.execute("SELECT COUNT(*) as n FROM soc_reactions WHERE post_id=?", (post_id,)).fetchone()["n"]
+    comments = c.execute("SELECT COUNT(*) as n FROM soc_comments WHERE post_id=?", (post_id,)).fetchone()["n"]
+    c.close()
+    # NSFW-посты не показываем содержимое в превью
+    is_nsfw = bool(row["is_nsfw"])
+    if is_nsfw:
+        title = "Пост помечен 18+"
+        sub = f"От {row['display_name']} (@{row['username']}). Откройте чтобы посмотреть."
+        accent = "18+ NSFW"
+    else:
+        content = (row["content"] or "").strip()
+        title = content[:140] + ("..." if len(content) > 140 else "")
+        sub = f"{row['display_name']} (@{row['username']}) · {reactions} реакций · {comments} комментариев"
+        accent = ""
+    png = _og_render(title=title or "Пост в GhostSocial", subtitle=sub,
+                     footer=f"ghostecos.duckdns.org/p/{post_id}", accent=accent)
+    _og_save(f"p_{post_id}", png)
+    return _og_response(png)
+
+
+@router.get("/og/wrapped/{username}.png")
+def og_wrapped_png(username: str):
+    uname = (username or "").strip().lower().lstrip("@")
+    if not uname:
+        raise HTTPException(400, "Empty username")
+    cached = _og_cached(f"w_{uname}")
+    if cached:
+        with open(cached, "rb") as f:
+            return _og_response(f.read())
+    c = db()
+    u = c.execute("SELECT display_name, username FROM users WHERE username=?", (uname,)).fetchone()
+    if not u:
+        c.close(); raise HTTPException(404, "User not found")
+    posts = c.execute("SELECT COUNT(*) as n FROM soc_posts WHERE user_id=(SELECT id FROM users WHERE username=?)", (uname,)).fetchone()["n"]
+    reactions = c.execute(
+        "SELECT COUNT(*) as n FROM soc_reactions r JOIN soc_posts p ON r.post_id=p.id "
+        "WHERE p.user_id=(SELECT id FROM users WHERE username=?)", (uname,)
+    ).fetchone()["n"]
+    c.close()
+    title = f"{u['display_name']}: год в GhostEcos"
+    sub = f"@{u['username']} · {posts} публикаций · {reactions} реакций"
+    png = _og_render(title=title, subtitle=sub,
+                     footer=f"ghostecos.duckdns.org/wrapped/{uname}", accent="WRAPPED")
+    _og_save(f"w_{uname}", png)
+    return _og_response(png)
+
+
 @router.get("/wrapped/{username}")
 def wrapped_data(username: str):
     """Публичная Wrapped-страница юзера. Не требует авторизации — shareable URL."""
@@ -3519,7 +3734,9 @@ def mod_set_nsfw(post_id: int, body: SetNsfwBody, authorization: Optional[str] =
     user = auth_member(authorization)
     c = db()
     me_row = c.execute("SELECT is_admin, is_moderator FROM users WHERE id=?", (user["id"],)).fetchone()
-    if not me_row or not (me_row["is_admin"] or me_row["is_moderator"]):
+    is_mod = bool(me_row and me_row["is_moderator"])
+    is_admin = _is_admin_user({**user, "is_admin": (me_row["is_admin"] if me_row else 0)})
+    if not (is_admin or is_mod):
         c.close(); raise HTTPException(403, "Только для модераторов")
     p = c.execute("SELECT id, user_id, is_nsfw, nsfw_set_by FROM soc_posts WHERE id=?", (post_id,)).fetchone()
     if not p:
