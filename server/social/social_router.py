@@ -39,6 +39,7 @@ class RegisterBody(BaseModel):
     display_name: str
     password: str
     ref: Optional[str] = None   # username пригласителя (из ?ref=... на лендинге)
+    age_18_confirm: bool = False  # ToS: подтверждение что юзеру 18+
 
 class LoginBody(BaseModel):
     username: str
@@ -54,6 +55,7 @@ class PostBody(BaseModel):
     text: str
     media: Optional[List[dict]] = None
     poll: Optional[PollBody] = None
+    is_nsfw: Optional[bool] = False  # 18+ контент с обязательным блюром в ленте
 
 class VoteBody(BaseModel):
     option_idx: int
@@ -836,6 +838,58 @@ def init():
     except sqlite3.OperationalError: pass
     try: c.execute("CREATE INDEX IF NOT EXISTS idx_activity_log_post ON soc_activity_log(post_id, id DESC)")
     except sqlite3.OperationalError: pass
+
+    # ── NSFW (18+ контент с обязательным блюром) ──
+    try: c.execute("ALTER TABLE soc_posts ADD COLUMN is_nsfw INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError: pass
+    try: c.execute("ALTER TABLE soc_posts ADD COLUMN nsfw_set_by INTEGER")  # NULL=автор сам, INT=ID админа/мода
+    except sqlite3.OperationalError: pass
+    try: c.execute("CREATE INDEX IF NOT EXISTS idx_posts_nsfw ON soc_posts(is_nsfw, id DESC)")
+    except sqlite3.OperationalError: pass
+
+    # ── Репутация юзера (0..100, по умолчанию 100) ──
+    # Снижается на 10 за NSFW-блюр админом, на 20 — за повторное; восстанавливается +1/неделю.
+    try: c.execute("ALTER TABLE users ADD COLUMN reputation_score INTEGER NOT NULL DEFAULT 100")
+    except sqlite3.OperationalError: pass
+    try: c.execute("ALTER TABLE users ADD COLUMN reputation_updated_at INTEGER")
+    except sqlite3.OperationalError: pass
+    # Аудит репутации
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS soc_reputation_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                delta INTEGER NOT NULL,
+                old_score INTEGER NOT NULL,
+                new_score INTEGER NOT NULL,
+                reason TEXT NOT NULL,  -- 'nsfw_admin'|'restore_weekly'|'manual'
+                actor_id INTEGER,       -- кто изменил (NULL=система)
+                post_id INTEGER,        -- если связано с постом
+                created_at INTEGER NOT NULL
+            )
+        """)
+    except sqlite3.OperationalError: pass
+    try: c.execute("CREATE INDEX IF NOT EXISTS idx_rep_log_user ON soc_reputation_log(user_id, id DESC)")
+    except sqlite3.OperationalError: pass
+
+    # ── Подтверждение возраста 18+ (для соответствия ToS) ──
+    try: c.execute("ALTER TABLE users ADD COLUMN confirmed_18_at INTEGER")
+    except sqlite3.OperationalError: pass
+
+    # ── Cooldown освобождения username (30 дней после удаления) ──
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS soc_username_cooldown (
+                username TEXT PRIMARY KEY,
+                released_at INTEGER NOT NULL,  -- когда username освободится для повторной регистрации
+                prev_user_id INTEGER,           -- кто владел до удаления (для audit)
+                reason TEXT NOT NULL DEFAULT 'account_deleted'  -- account_deleted|username_changed|account_banned
+            )
+        """)
+    except sqlite3.OperationalError: pass
+    try: c.execute("CREATE INDEX IF NOT EXISTS idx_username_cd_released ON soc_username_cooldown(released_at)")
+    except sqlite3.OperationalError: pass
+
     c.commit()
     c.close()
 
@@ -1002,6 +1056,12 @@ def fmt_post(row: dict, user_id: int, reactions: Optional[dict] = None, am_follo
             media_list = json.loads(row["media"])
         except Exception:
             pass
+    # is_nsfw / nsfw_set_by могут отсутствовать в старых SELECT-выборках (поле
+    # доступно только если SELECT включает p.is_nsfw); тогда считаем 0.
+    is_nsfw = 0
+    try: is_nsfw = int(row.get("is_nsfw") or 0)
+    except Exception: is_nsfw = 0
+    nsfw_by = row.get("nsfw_set_by") if "nsfw_set_by" in row.keys() else None
     return {
         "id": row["id"],
         "content": row["content"],
@@ -1014,6 +1074,9 @@ def fmt_post(row: dict, user_id: int, reactions: Optional[dict] = None, am_follo
         "comments_count": row["comments_count"],
         "media": media_list,
         "am_following": am_following,
+        "is_nsfw": bool(is_nsfw),
+        # nsfw_set_by_admin=true → пост был помечен NSFW админом (а не самим автором)
+        "nsfw_set_by_admin": bool(nsfw_by) if is_nsfw else False,
     }
 
 def get_user_stats(c, user_id: int) -> dict:
@@ -1176,10 +1239,29 @@ def register(body: RegisterBody, request: Request):
         finally:
             c0.close()
     c = db()
+    # 30-day cooldown на username: если был удалён аккаунт — должно пройти 30 дней
+    now_ts = int(time.time())
+    cd_row = c.execute(
+        "SELECT released_at FROM soc_username_cooldown WHERE username=?", (username,)
+    ).fetchone()
+    if cd_row and int(cd_row["released_at"]) > now_ts:
+        days_left = max(1, (int(cd_row["released_at"]) - now_ts) // 86400)
+        c.close()
+        raise HTTPException(409, f"Имя освободится через {days_left} дн.")
+    # Истёкший cooldown — просто чистим запись (косметика)
+    if cd_row:
+        try: c.execute("DELETE FROM soc_username_cooldown WHERE username=?", (username,))
+        except Exception: pass
+    # Подтверждение возраста 18+ — required по ToS
+    confirmed_18_ts = now_ts if getattr(body, 'age_18_confirm', False) else None
+    if not confirmed_18_ts:
+        c.close()
+        raise HTTPException(422, "Для регистрации необходимо подтвердить, что вам исполнилось 18 лет")
     try:
         c.execute(
-            "INSERT INTO users (username, display_name, argon2_hash, in_ghostchat, seed_hash, referrer_id) VALUES (?,?,?,0,?,?)",
-            (username, display_name, argon2, seed_hash, referrer_id),
+            "INSERT INTO users (username, display_name, argon2_hash, in_ghostchat, seed_hash, referrer_id, confirmed_18_at) "
+            "VALUES (?,?,?,0,?,?,?)",
+            (username, display_name, argon2, seed_hash, referrer_id, confirmed_18_ts),
         )
         uid = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
         c.execute("INSERT INTO soc_tokens (user_id, token) VALUES (?,?)", (uid, token))
@@ -1543,7 +1625,7 @@ def get_posts(
 
     params_with_uid = [uid] + params + [offset]
     rows = c.execute(f"""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
                u.username, u.display_name, p.activity,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p
@@ -1608,7 +1690,7 @@ def get_feed_candidates(
         follow_sql_excl = f"AND p.id NOT IN ({ph_excl})"
         follow_params = [uid] + list(excluded) + [MIN_ACTIVITY, n_follow]
     follow_rows = c.execute(f"""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p
@@ -1630,7 +1712,7 @@ def get_feed_candidates(
         fresh_sql = ""
         fresh_params = [MIN_ACTIVITY, n_new + offset]
     fresh = c.execute(f"""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -1651,7 +1733,7 @@ def get_feed_candidates(
         not_in_sql_top = ""
         top_params = [MIN_ACTIVITY, n_top]
     top = c.execute(f"""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -1675,7 +1757,7 @@ def get_feed_candidates(
         where_rnd = "WHERE p.kind='post' AND COALESCE(p.activity,500) >= ?"
         rnd_params = [MIN_ACTIVITY, n_rnd]
     rnd = c.execute(f"""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -1747,7 +1829,7 @@ def get_one_post(post_id: int, authorization: Optional[str] = Header(None)):
     uid = user["id"]
     c = db()
     row = c.execute("""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -1820,10 +1902,12 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
     # Гарантируем минимум по ТЗ: не ниже 10 при автомоде
     init_activity = max(10, min(1000, init_activity))
 
+    nsfw_flag = 1 if body.is_nsfw else 0
+    # nsfw_set_by=NULL → автор сам отметил; запоминаем для аудита/правил восстановления репутации
     c.execute(
-        "INSERT INTO soc_posts (user_id, content, media, activity, activity_set_at, automod_source) "
-        "VALUES (?,?,?,?,?,?)",
-        (user["id"], text, media_json, init_activity, now_ts, 'B'),
+        "INSERT INTO soc_posts (user_id, content, media, activity, activity_set_at, automod_source, is_nsfw, nsfw_set_by) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (user["id"], text, media_json, init_activity, now_ts, 'B', nsfw_flag, None),
     )
     post_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
     # Логируем для аудита
@@ -1866,7 +1950,7 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
     # Подтянуть только что созданный пост в полном формате и разослать
     c2 = db()
     row = c2.execute("""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
                u.username, u.display_name,
                0 as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id WHERE p.id=?
@@ -1964,7 +2048,7 @@ def edit_post(post_id: int, body: EditPostBody, authorization: Optional[str] = H
     c.commit()
     # Broadcast обновлённого поста
     row = c.execute("""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id WHERE p.id=?
@@ -2032,7 +2116,7 @@ def search(q: str = Query(...), offset: int = Query(0), authorization: Optional[
         return {"type": "users", "results": [dict(r) for r in rows]}
     else:
         rows = c.execute("""
-            SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
+            SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
                    u.username, u.display_name,
                    (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
             FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -2060,7 +2144,7 @@ def get_profile(username: str, offset: int = Query(0), authorization: Optional[s
         "SELECT 1 FROM soc_follows WHERE follower_id=? AND followee_id=?", (uid, u["id"])
     ).fetchone() is not None
     rows = c.execute("""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -2068,12 +2152,16 @@ def get_profile(username: str, offset: int = Query(0), authorization: Optional[s
     """, (u["id"], offset)).fetchall()
     posts = _hydrate_posts(c, rows, uid)
     c.close()
+    rep_score = int(u.get("reputation_score") if u.get("reputation_score") is not None else 100)
     return {
         "user_id": u["id"],
         "username": u["username"],
         "display_name": u["display_name"],
         "am_following": am_following,
         "is_me": uid == u["id"],
+        "reputation_score": rep_score,
+        # Метка: репутация ниже 30 = «плохая», от 70 = «хорошая» (для UI)
+        "reputation_band": "low" if rep_score < 30 else ("mid" if rep_score < 70 else "good"),
         **stats,
         "posts": posts,
     }
@@ -2089,7 +2177,7 @@ def get_profile_posts(username: str, offset: int = Query(0), authorization: Opti
         c.close()
         raise HTTPException(404, "User not found")
     rows = c.execute("""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -2247,6 +2335,161 @@ def edit_me(body: EditProfileBody, authorization: Optional[str] = Header(None)):
         out["token"] = new_token
         out["password_changed"] = True
     return out
+
+
+class DeleteAccountBody(BaseModel):
+    password: str  # подтверждение паролем — без него уничтожить аккаунт нельзя
+
+
+@router.delete("/me/account")
+def delete_my_account(body: DeleteAccountBody, authorization: Optional[str] = Header(None)):
+    """Полное удаление аккаунта.
+    Передаёт wallet-балансы и NFT системному пользователю GhostEcos,
+    добавляет username в cooldown на 30 дней, стирает посты/комменты/реакции/follow.
+    """
+    user = auth_member(authorization)
+    _rate_limit(f"delacc:{user['id']}", limit=3, window=3600)
+    # Проверка пароля
+    stored_hash = user.get("argon2_hash") or user.get("password_hash")
+    if not stored_hash or not verify_argon2(body.password, stored_hash):
+        raise HTTPException(401, "Неверный пароль")
+    if (user.get("username") or "") == GHOSTECOS_USERNAME:
+        raise HTTPException(403, "Системный аккаунт нельзя удалить")
+
+    uid = user["id"]
+    uname = (user["username"] or "").lower()
+    now = int(time.time())
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        # Найти system uid (GhostEcos) для передачи активов
+        sys_row = c.execute("SELECT id FROM users WHERE username=?", (GHOSTECOS_USERNAME,)).fetchone()
+        sys_uid = sys_row["id"] if sys_row else None
+
+        # 1. Передача активов системе: NFT, активные листинги
+        if sys_uid:
+            # NFT перешли владельцу-системе
+            c.execute("UPDATE soc_nfts SET owner_id=? WHERE owner_id=?", (sys_uid, uid))
+            # Активные листинги юзера — снимаем (NFT уже передан)
+            c.execute("DELETE FROM soc_nft_listings WHERE seller_id=?", (uid,))
+            # Кошелёк: переводим балансы Gost/Soul/Prem системе
+            try:
+                w = c.execute("SELECT gost, soul, prem FROM soc_wallets WHERE user_id=?", (uid,)).fetchone()
+                if w:
+                    gost = int(w["gost"] or 0); soul = int(w["soul"] or 0); prem = int(w["prem"] or 0)
+                    if gost or soul or prem:
+                        c.execute("UPDATE soc_wallets SET gost=0, soul=0, prem=0 WHERE user_id=?", (uid,))
+                        c.execute(
+                            "UPDATE soc_wallets SET gost=gost+?, soul=soul+?, prem=prem+? WHERE user_id=?",
+                            (gost, soul, prem, sys_uid),
+                        )
+                        # Логируем для аудита (если есть таблица wallet_tx)
+                        try:
+                            c.execute(
+                                "INSERT INTO soc_wallet_tx (user_id, kind, currency, amount, reason, created_at) "
+                                "VALUES (?,?,?,?,?,?)",
+                                (uid, 'account_deleted', 'gost', -gost, 'transfer_to_system', now),
+                            )
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        # 2. Стираем контент юзера
+        # Реакции на свои посты + реакции которые юзер ставил
+        c.execute(
+            "DELETE FROM soc_reactions WHERE post_id IN (SELECT id FROM soc_posts WHERE user_id=?)", (uid,)
+        )
+        c.execute("DELETE FROM soc_reactions WHERE user_id=?", (uid,))
+        # Комментарии под чужими постами + комменты под своими
+        c.execute("DELETE FROM soc_comments WHERE user_id=?", (uid,))
+        c.execute(
+            "DELETE FROM soc_comments WHERE post_id IN (SELECT id FROM soc_posts WHERE user_id=?)", (uid,)
+        )
+        # Опросы и голоса
+        try:
+            c.execute("DELETE FROM soc_poll_votes WHERE user_id=?", (uid,))
+            c.execute(
+                "DELETE FROM soc_polls WHERE post_id IN (SELECT id FROM soc_posts WHERE user_id=?)", (uid,)
+            )
+        except Exception:
+            pass
+        # Посты и миниски (kind='post'|'miniska')
+        c.execute("DELETE FROM soc_posts WHERE user_id=?", (uid,))
+        # Подписки в обе стороны
+        c.execute("DELETE FROM soc_follows WHERE follower_id=? OR followee_id=?", (uid, uid))
+        # Уведомления
+        try:
+            c.execute("DELETE FROM soc_notifications WHERE user_id=? OR actor_id=?", (uid, uid))
+        except Exception:
+            pass
+        # Чат: контакты, сообщения, ack, member-ship
+        try:
+            c.execute("DELETE FROM chat_dm WHERE from_id=? OR to_id=?", (uid, uid))
+            c.execute("DELETE FROM chat_contacts WHERE user_id=? OR contact_id=?", (uid, uid))
+            c.execute("DELETE FROM chat_group_members WHERE user_id=?", (uid,))
+            c.execute("DELETE FROM chat_group_acks WHERE user_id=?", (uid,))
+            c.execute("DELETE FROM chat_group_join_requests WHERE user_id=?", (uid,))
+        except Exception:
+            pass
+        # Жалобы модерации (overwatch и заявки)
+        try:
+            c.execute("DELETE FROM soc_moderator_applications WHERE user_id=?", (uid,))
+            c.execute("DELETE FROM soc_overwatch_votes WHERE moderator_id=?", (uid,))
+        except Exception:
+            pass
+        # Tokens
+        c.execute("DELETE FROM soc_tokens WHERE user_id=?", (uid,))
+
+        # 3. Custom usernames — освобождаются с cooldown 30 дней
+        try:
+            owned_unames = [r["username"] for r in c.execute(
+                "SELECT username FROM soc_usernames WHERE owner_id=?", (uid,)
+            ).fetchall()]
+            for un in owned_unames:
+                c.execute(
+                    "INSERT OR REPLACE INTO soc_username_cooldown (username, released_at, prev_user_id, reason) "
+                    "VALUES (?,?,?,?)",
+                    (un.lower(), now + 30 * 86400, uid, 'account_deleted'),
+                )
+            c.execute("DELETE FROM soc_usernames WHERE owner_id=?", (uid,))
+        except Exception:
+            pass
+
+        # 4. Primary username юзера — тоже на 30-day cooldown
+        if uname:
+            c.execute(
+                "INSERT OR REPLACE INTO soc_username_cooldown (username, released_at, prev_user_id, reason) "
+                "VALUES (?,?,?,?)",
+                (uname, now + 30 * 86400, uid, 'account_deleted'),
+            )
+
+        # 5. Удаляем сам аккаунт + wallet
+        try: c.execute("DELETE FROM soc_wallets WHERE user_id=?", (uid,))
+        except Exception: pass
+        c.execute("DELETE FROM users WHERE id=?", (uid,))
+
+        c.commit()
+        # 6. Best-effort: архивируем страну в GhostNation (постройки остаются на карте)
+        _nation_token = os.getenv("NATION_INTERNAL_TOKEN")
+        if _nation_token and uname:
+            try:
+                import urllib.request, urllib.error
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:8010/api/nation/archive/{uname}",
+                    method="POST",
+                    headers={"X-Internal-Token": _nation_token},
+                )
+                urllib.request.urlopen(req, timeout=3).read()
+            except Exception:
+                pass  # GhostNation может быть offline — не критично, страна останется orphaned
+    except Exception as e:
+        c.rollback()
+        c.close()
+        raise HTTPException(500, f"Ошибка удаления: {e}")
+    c.close()
+    return {"status": "ok", "deleted": True, "username_freed_in_days": 30}
+
 
 # ── Likes ──────────────────────────────────────────────────────────────────────
 
@@ -3007,6 +3250,84 @@ def mod_promote(username: str, authorization: Optional[str] = Header(None)):
     return {"status": "ok", "user_id": target["id"], "username": target["username"]}
 
 
+class SetNsfwBody(BaseModel):
+    value: bool  # true → пометить 18+, false → снять пометку
+
+
+@router.post("/mod/post/{post_id}/nsfw")
+def mod_set_nsfw(post_id: int, body: SetNsfwBody, authorization: Optional[str] = Header(None)):
+    """Модератор/админ ставит NSFW-блюр на пост (если автор сам не пометил).
+    Снижает репутацию автора на 10 при пометке; восстанавливает +10 при снятии.
+    Идемпотентно: повторный вызов с тем же value возвращает unchanged=true.
+    """
+    user = auth_member(authorization)
+    c = db()
+    me_row = c.execute("SELECT is_admin, is_moderator FROM users WHERE id=?", (user["id"],)).fetchone()
+    if not me_row or not (me_row["is_admin"] or me_row["is_moderator"]):
+        c.close(); raise HTTPException(403, "Только для модераторов")
+    p = c.execute("SELECT id, user_id, is_nsfw, nsfw_set_by FROM soc_posts WHERE id=?", (post_id,)).fetchone()
+    if not p:
+        c.close(); raise HTTPException(404, "Пост не найден")
+    new_val = 1 if body.value else 0
+    if int(p["is_nsfw"] or 0) == new_val:
+        c.close()
+        return {"status": "ok", "unchanged": True, "is_nsfw": bool(new_val)}
+
+    author_id = p["user_id"]
+    now = int(time.time())
+    # Снижение репутации только при пометке админом (не при снятии и не если автор сам пометил)
+    delta = 0
+    reason = "nsfw_admin_clear"
+    if new_val == 1:
+        # Пометили мы — был не помечен → штраф автору
+        delta = -10
+        reason = "nsfw_admin_set"
+        c.execute(
+            "UPDATE soc_posts SET is_nsfw=1, nsfw_set_by=? WHERE id=?",
+            (user["id"], post_id),
+        )
+    else:
+        # Снимаем пометку. Если она была поставлена админом — возвращаем +10. Если автор сам пометил — без compensation.
+        if p["nsfw_set_by"]:
+            delta = 10
+        c.execute(
+            "UPDATE soc_posts SET is_nsfw=0, nsfw_set_by=NULL WHERE id=?",
+            (post_id,),
+        )
+    new_score = None
+    if delta != 0:
+        au = c.execute("SELECT reputation_score FROM users WHERE id=?", (author_id,)).fetchone()
+        old_score = int(au["reputation_score"] if au and au["reputation_score"] is not None else 100)
+        new_score = max(0, min(100, old_score + delta))
+        if new_score != old_score:
+            c.execute(
+                "UPDATE users SET reputation_score=?, reputation_updated_at=? WHERE id=?",
+                (new_score, now, author_id),
+            )
+            c.execute(
+                "INSERT INTO soc_reputation_log (user_id, delta, old_score, new_score, reason, actor_id, post_id, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (author_id, delta, old_score, new_score, reason, user["id"], post_id, now),
+            )
+    c.commit(); c.close()
+    # Уведомление автору
+    try:
+        ws_hub.send_to(
+            author_id,
+            "post.nsfw_changed",
+            {"post_id": post_id, "is_nsfw": bool(new_val), "by_admin": True, "reputation": new_score},
+        )
+    except Exception:
+        pass
+    return {
+        "status": "ok",
+        "post_id": post_id,
+        "is_nsfw": bool(new_val),
+        "by_admin": True,
+        "author_reputation": new_score,
+    }
+
+
 @router.post("/mod/demote/{username}")
 def mod_demote(username: str, authorization: Optional[str] = Header(None)):
     """Admin снимает роль модератора."""
@@ -3206,7 +3527,7 @@ def miniska_feed(
     seed = (uid * 9973 + offset * 17 + 1) % 1000003 if uid else 12345
     c = db()
     rows = c.execute(f"""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id

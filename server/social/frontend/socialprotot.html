@@ -256,6 +256,23 @@ body.guest-mode .prof-action-btn[onclick*="openAlgoSettings"]{display:none;}
 .ptr-indicator.spin i{animation:spin 0.8s linear infinite;}
 .post-content{font-size:15px;line-height:1.6;color:#cbd5e1;word-break:break-word;margin-bottom:12px;white-space:pre-wrap}
 .post-media{margin-bottom:12px;display:flex;flex-direction:column;gap:8px;}
+
+/* ── NSFW: блюр поста до клика «Показать» ── */
+.post-card.nsfw .nsfw-blurable{filter:blur(22px);transition:filter 0.35s ease;pointer-events:none;user-select:none;}
+.post-card.nsfw.revealed .nsfw-blurable{filter:none;pointer-events:auto;user-select:auto;}
+.nsfw-overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;z-index:5;background:rgba(15,23,42,0.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border-radius:14px;cursor:pointer;transition:opacity 0.25s;}
+.post-card.nsfw.revealed .nsfw-overlay{opacity:0;pointer-events:none;}
+.nsfw-overlay-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;background:rgba(248,113,113,0.18);border:1px solid rgba(248,113,113,0.45);color:#f87171;border-radius:99px;font-size:11px;font-weight:700;letter-spacing:1px;}
+.nsfw-overlay-text{color:var(--text);font-size:13px;font-weight:600;}
+.nsfw-overlay-cta{margin-top:4px;padding:8px 18px;background:rgba(168,85,247,0.18);border:1px solid rgba(168,85,247,0.4);color:var(--primary);border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;}
+.nsfw-badge-header{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;margin-left:8px;background:rgba(248,113,113,0.15);border:1px solid rgba(248,113,113,0.35);color:#f87171;border-radius:6px;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;vertical-align:middle;}
+.nsfw-by-admin{color:#fbbf24;border-color:rgba(251,191,36,0.45);background:rgba(251,191,36,0.12);}
+
+/* ── Репутация в профиле ── */
+.rep-badge{margin:6px auto 8px;padding:5px 14px;border-radius:99px;font-size:11px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;display:inline-flex;align-items:center;gap:6px;}
+.rep-badge.rep-good{background:rgba(74,222,128,0.12);border:1px solid rgba(74,222,128,0.35);color:#4ade80;}
+.rep-badge.rep-mid{background:rgba(168,85,247,0.12);border:1px solid rgba(168,85,247,0.35);color:var(--primary);}
+.rep-badge.rep-low{background:rgba(248,113,113,0.12);border:1px solid rgba(248,113,113,0.4);color:#f87171;}
 .media-grid{display:grid;gap:3px;border-radius:12px;overflow:hidden;}
 .media-grid.g1{grid-template-columns:1fr;}
 .media-grid.g2{grid-template-columns:1fr 1fr;}
@@ -692,6 +709,10 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
       <input class="auth-input" id="regName" placeholder="Отображаемое имя (2–100 символов)" autocomplete="name">
       <input class="auth-input" id="regPassword" type="password" placeholder="Пароль (минимум 8 символов)" autocomplete="new-password">
       <input class="auth-input" id="regPasswordConfirm" type="password" placeholder="Повторите пароль" autocomplete="new-password">
+      <label style="display:flex;align-items:flex-start;gap:8px;margin:12px 2px 4px;font-size:13px;color:var(--sub);cursor:pointer;line-height:1.5;">
+        <input type="checkbox" id="regAge18" style="margin-top:3px;width:16px;height:16px;accent-color:var(--primary);cursor:pointer;flex-shrink:0;">
+        <span>Подтверждаю, что мне исполнилось <b>18 лет</b>, и согласен с <a href="/terms" target="_blank" style="color:var(--primary);text-decoration:none;">условиями пользования</a> и <a href="/privacy" target="_blank" style="color:var(--primary);text-decoration:none;">политикой приватности</a></span>
+      </label>
       <button class="auth-btn" id="regBtn" onclick="doRegister()">Зарегистрироваться</button>
       <div class="auth-error" id="regError"></div>
     </div>
@@ -751,6 +772,18 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
       <div id="mediaPreviewList"></div>
       <div id="pollEditor"></div>
 
+      <!-- 18+ (NSFW) переключатель: блюр в ленте, обязательно для эротики/гуро/шок-контента -->
+      <label class="msk-toggle" style="border-color:rgba(248,113,113,0.25);background:rgba(248,113,113,0.04);">
+        <span class="msk-toggle-info">
+          <i class="fa-solid fa-eye-slash" style="color:#f87171;"></i>
+          <div>
+            <div class="msk-toggle-title">Пометить 18+ (NSFW)</div>
+            <div class="msk-toggle-sub">Контент будет с блюром в ленте · обязательно для эротики/гуро/шок-контента</div>
+          </div>
+        </span>
+        <span class="msk-switch"><input type="checkbox" id="nsfwToggle"><span class="msk-switch-slider"></span></span>
+      </label>
+
       <!-- Хэштеги для миниски (минимум 3, до 10) -->
       <div id="miniskaTagsBlock" style="display:none;">
         <div style="font-size:12px;font-weight:700;color:var(--sub);letter-spacing:0.4px;text-transform:uppercase;margin:14px 0 8px;display:flex;justify-content:space-between;align-items:center;">
@@ -792,6 +825,7 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
       <div class="prof-av" id="profAv">?</div>
       <div class="prof-name" id="profName">—</div>
       <div class="prof-username" id="profUser">—</div>
+      <div id="profReputation" class="rep-badge" style="display:none;"></div>
       <div class="stats-row">
         <div class="stat-box"><div class="stat-val" id="sPosts">0</div><div class="stat-lbl">постов</div></div>
         <div class="stat-box"><div class="stat-val" id="sFollowers">0</div><div class="stat-lbl">подписчиков</div></div>
@@ -835,6 +869,7 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
       <div class="prof-av" id="fpAv">?</div>
       <div class="prof-name" id="fpName">—</div>
       <div class="prof-username" id="fpUser">—</div>
+      <div id="fpReputation" class="rep-badge" style="display:none;"></div>
       <div class="stats-row">
         <div class="stat-box"><div class="stat-val" id="fpPosts">0</div><div class="stat-lbl">постов</div></div>
         <div class="stat-box"><div class="stat-val" id="fpFollowers">0</div><div class="stat-lbl">подписчиков</div></div>
@@ -1308,15 +1343,17 @@ async function doRegister() {
   const display_name = document.getElementById('regName').value.trim();
   const password = document.getElementById('regPassword').value;
   const confirm = document.getElementById('regPasswordConfirm').value;
+  const age18 = !!document.getElementById('regAge18').checked;
   errEl.textContent = '';
   if (!username || !display_name || !password || !confirm) { errEl.textContent = 'Заполните все поля'; return; }
   if (password !== confirm) { errEl.textContent = 'Пароли не совпадают'; return; }
+  if (!age18) { errEl.textContent = 'Подтвердите, что вам исполнилось 18 лет'; return; }
   btn.disabled = true; btn.textContent = '...';
   // Реф: из URL или localStorage (сохранил лендинг)
   let ref = (new URLSearchParams(location.search)).get('ref') || localStorage.getItem('gs_ref') || null;
   if (ref) ref = ref.trim().replace(/^@/, '').toLowerCase();
   try {
-    const d = await api('/register', 'POST', { username, display_name, password, ref: ref || undefined });
+    const d = await api('/register', 'POST', { username, display_name, password, ref: ref || undefined, age_18_confirm: true });
     if (ref) localStorage.removeItem('gs_ref');
     token = d.token; me = d;
     localStorage.setItem('gs_token', token); setSsoCookie(token);
@@ -2922,7 +2959,19 @@ function postHTML(p, hq) {
   const isNew = !seenIds.has(p.id);
   const isOwn = me && p.user_id === me.id;
   const your = p.reactions && p.reactions.your_emoji;
-  return `<div class="post-card" data-id="${p.id}">
+  const isNsfw = !!p.is_nsfw;
+  const nsfwByAdmin = !!p.nsfw_set_by_admin;
+  const nsfwBadge = isNsfw
+    ? `<span class="nsfw-badge-header${nsfwByAdmin ? ' nsfw-by-admin' : ''}" title="${nsfwByAdmin ? 'Помечено модерацией: автор не указал NSFW' : 'Автор пометил 18+'}">18+</span>`
+    : '';
+  const nsfwOverlay = isNsfw
+    ? `<div class="nsfw-overlay" data-action="nsfw-reveal" data-post="${p.id}">
+         <span class="nsfw-overlay-badge"><i class="fa-solid fa-eye-slash"></i> 18+ NSFW</span>
+         <span class="nsfw-overlay-text">${nsfwByAdmin ? 'Помечено модерацией' : 'Содержит контент для взрослых'}</span>
+         <span class="nsfw-overlay-cta">Показать</span>
+       </div>`
+    : '';
+  return `<div class="post-card${isNsfw ? ' nsfw' : ''}" data-id="${p.id}" style="${isNsfw ? 'position:relative;' : ''}">
     ${isNew ? `<div class="new-marker" data-dot="${p.id}">NEW</div>` : ''}
     <button class="post-menu-btn" data-action="menu" data-post="${p.id}" title="Меню"><i class="fa-solid fa-ellipsis"></i></button>
     ${p.from_channel ? `<div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:rgba(168,85,247,0.10);border:1px solid rgba(168,85,247,0.25);border-radius:8px;margin-bottom:8px;font-size:11px;color:var(--primary);font-weight:600;">
@@ -2932,7 +2981,7 @@ function postHTML(p, hq) {
     <div class="post-header" data-username="${esc(p.username)}">
       <div class="post-av">${ini(p.display_name)}</div>
       <div class="post-info">
-        <div class="post-name">${esc(p.display_name)}</div>
+        <div class="post-name">${esc(p.display_name)}${nsfwBadge}</div>
         <div class="post-user">@${esc(p.username)}</div>
       </div>
       ${isOwn
@@ -2942,10 +2991,13 @@ function postHTML(p, hq) {
           : '')}
       <div class="post-time" style="margin-right:36px">${ago(p.created_at)}${p.edited_at ? `<span class="post-edited" title="Отредактировано ${ago(p.edited_at)} назад">(ред.)</span>` : ''}${readTime(p) ? `<span class="post-read-time"><i class="fa-regular fa-clock"></i>${readTime(p)}</span>` : ''}</div>
     </div>
+    ${nsfwOverlay}
+    <div class="nsfw-blurable">
     <div class="post-content">${linkifyContent(p.content, hq)}</div>
     ${linkPreviewPlaceholder(p)}
     ${pollHTML(p)}
     ${mediaHTML(p.media)}
+    </div>
     <div class="post-footer">
       <div class="react-trigger" data-post="${p.id}">
         <button class="act-btn${your ? ' liked' : ''}" data-post="${p.id}" data-action="react-toggle">
@@ -3004,6 +3056,15 @@ function attachEvents() {
   document.querySelectorAll('[data-action="comment"]').forEach(btn => {
     if (btn._b) return; btn._b = 1;
     btn.addEventListener('click', () => openComments(+btn.dataset.post));
+  });
+  // NSFW reveal — клик по оверлею показывает контент
+  document.querySelectorAll('[data-action="nsfw-reveal"]').forEach(ov => {
+    if (ov._b) return; ov._b = 1;
+    ov.addEventListener('click', e => {
+      e.stopPropagation();
+      const card = ov.closest('.post-card');
+      if (card) card.classList.add('revealed');
+    });
   });
   // Post menu (3 dots)
   document.querySelectorAll('[data-action="menu"]').forEach(btn => {
@@ -3715,13 +3776,15 @@ pubBtn.addEventListener('click', async () => {
   pubBtn.disabled = true; pubBtn.textContent = '...';
   try {
     const mediaPayload = attachedFiles.length ? attachedFiles.map(f => ({ url: f.url, type: f.type, name: f.name })) : null;
-    const body = { text: content, media: mediaPayload };
+    const nsfwEl = document.getElementById('nsfwToggle');
+    const body = { text: content, media: mediaPayload, is_nsfw: !!(nsfwEl && nsfwEl.checked) };
     if (pollPayload) body.poll = pollPayload;
     // С медиа сервер может долго обрабатывать (Pillow/ffmpeg) — таймаут больше
     const _to = attachedFiles.length ? 60000 : 20000;
     const r = await api('/post/new', 'POST', body, { timeout: _to });
     postText.value = ''; charCount.textContent = '0 / 1000'; attachedFiles = []; renderMediaPreview();
     _pollDraft = null; renderPollEditor();
+    const _nsfwEl = document.getElementById('nsfwToggle'); if (_nsfwEl) _nsfwEl.checked = false;
     showToast('Пост опубликован!');
     refreshWallet();  // +5 Gost за свой пост (WS придёт сам; это страховка)
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
@@ -4315,6 +4378,7 @@ async function openFullProfile(username) {
     document.getElementById('fpAv').textContent = ini(d.display_name);
     document.getElementById('fpName').textContent = d.display_name;
     document.getElementById('fpUser').textContent = '@' + d.username;
+    renderReputation('fpReputation', d.reputation_score, d.reputation_band);
     document.getElementById('fpPosts').textContent = d.posts_count;
     document.getElementById('fpFollowers').textContent = d.followers_count;
     document.getElementById('fpFollowing').textContent = d.following_count;
@@ -4397,6 +4461,18 @@ function renderFollowBtn(btnId, username, following) {
   };
 }
 
+function renderReputation(elId, score, band) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (score === undefined || score === null) { el.style.display = 'none'; return; }
+  const b = band || (score < 30 ? 'low' : (score < 70 ? 'mid' : 'good'));
+  const icon = b === 'good' ? 'shield-halved' : (b === 'low' ? 'triangle-exclamation' : 'shield');
+  const label = b === 'good' ? 'хорошая репутация' : (b === 'low' ? 'низкая репутация' : 'репутация');
+  el.className = 'rep-badge rep-' + b;
+  el.style.display = 'inline-flex';
+  el.innerHTML = `<i class="fa-solid fa-${icon}"></i> ${label} · ${score}/100`;
+}
+
 async function loadMyProfile() {
   if (!me) return;
   document.getElementById('profList').innerHTML = skeletonPosts(2);
@@ -4405,6 +4481,7 @@ async function loadMyProfile() {
     document.getElementById('profAv').textContent = ini(d.display_name);
     document.getElementById('profName').textContent = d.display_name;
     document.getElementById('profUser').textContent = '@' + d.username;
+    renderReputation('profReputation', d.reputation_score, d.reputation_band);
     document.getElementById('sPosts').textContent = d.posts_count;
     document.getElementById('sFollowers').textContent = d.followers_count;
     document.getElementById('sFollowing').textContent = d.following_count;

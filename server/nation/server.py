@@ -43,6 +43,12 @@ def _db():
         border TEXT, state TEXT, balance REAL DEFAULT 0, built_value REAL DEFAULT 0,
         cx REAL, cy REAL, minlat REAL, minlng REAL, maxlat REAL, maxlng REAL,
         created INTEGER, updated INTEGER, last_income INTEGER)""")
+    # Архивация: страна остаётся видимой на карте, но без владельца (когда аккаунт удалён)
+    for col, ddl in (("archived", "INTEGER NOT NULL DEFAULT 0"),
+                     ("archived_at", "INTEGER"),
+                     ("prev_owner", "TEXT")):
+        try: con.execute(f"ALTER TABLE country ADD COLUMN {col} {ddl}")
+        except Exception: pass
     return con
 
 
@@ -155,7 +161,7 @@ def world(minlat: float = Query(...), minlng: float = Query(...),
 def get_mine(authorization: Optional[str] = Header(None)):
     user = _user(authorization)
     con = _db()
-    r = con.execute("SELECT * FROM country WHERE owner=?", (user,)).fetchone()
+    r = con.execute("SELECT * FROM country WHERE owner=? AND archived=0", (user,)).fetchone()
     if not r:
         con.close(); return {"country": None}
     state = json.loads(r["state"] or "{}")
@@ -235,3 +241,34 @@ def save_mine(req: SaveReq, authorization: Optional[str] = Header(None)):
 @app.get("/api/nation/health")
 def health():
     return {"ok": True, "service": "ghostnation"}
+
+
+# ── Архивирование страны (вызывается из социалки при удалении аккаунта) ──
+_NATION_INTERNAL_TOKEN = os.getenv("NATION_INTERNAL_TOKEN")
+
+@app.post("/api/nation/archive/{username}")
+def archive_country(username: str, x_internal_token: Optional[str] = Header(None)):
+    """Архивирует страну юзера (постройки остаются на карте, но без владельца).
+    Защищено внутренним токеном — вызывается из social_router при DELETE /me/account.
+    """
+    if not _NATION_INTERNAL_TOKEN or x_internal_token != _NATION_INTERNAL_TOKEN:
+        raise HTTPException(403, "Forbidden")
+    uname = username.strip().lower()
+    if not uname:
+        raise HTTPException(400, "Empty username")
+    con = _db()
+    r = con.execute("SELECT owner FROM country WHERE owner=?", (uname,)).fetchone()
+    if not r:
+        con.close()
+        return {"ok": True, "archived": False, "reason": "no country"}
+    now = int(time.time())
+    new_owner = f"__archived__:{uname}"
+    # Если такое имя уже занято (повторный архив) — добавим суффикс времени
+    if con.execute("SELECT 1 FROM country WHERE owner=?", (new_owner,)).fetchone():
+        new_owner = f"__archived__:{uname}:{now}"
+    con.execute(
+        "UPDATE country SET owner=?, archived=1, archived_at=?, prev_owner=? WHERE owner=?",
+        (new_owner, now, uname, uname),
+    )
+    con.commit(); con.close()
+    return {"ok": True, "archived": True, "username": uname}
