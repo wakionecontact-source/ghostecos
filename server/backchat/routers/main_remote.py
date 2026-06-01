@@ -223,6 +223,13 @@ async def privacy():
         return FileResponse(p)
     return {"error": "not found"}
 
+@app.get("/terms", include_in_schema=False)
+async def terms():
+    p = os.path.join(_SITE_DIR, "terms.html")
+    if os.path.exists(p):
+        return FileResponse(p)
+    return {"error": "not found"}
+
 @app.get("/api/download/latest", include_in_schema=False)
 async def download_latest():
     apks = sorted(
