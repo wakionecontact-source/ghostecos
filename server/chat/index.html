@@ -1992,6 +1992,10 @@ async function sendMessage(){
     optimistic.sid = r.id;
     optimistic.created_at = r.created_at;
     optimistic.pending = false;
+    // Если получатель онлайн в момент отправки — он почти точно сейчас сделает /ack
+    // (chat.new доставлен через WS); ставим delivered=true оптимистично, WS-event
+    // chat.delivered подтвердит/перезапишет позже если надо.
+    if (r.recipient_online) optimistic.delivered = true;
     await idbAddMessage(optimistic);
     let d = dialogs.find(x => x.username === activePeer.username);
     if (!d) { d = { username: activePeer.username, display_name: activePeer.display_name || activePeer.username, unread: 0 }; dialogs.unshift(d); }
@@ -2360,15 +2364,15 @@ function renderMessages(){
   loadMsgPreviews();
 }
 
-// Статусы доставки (после успешного POST /send pending=false автоматически):
-//   pending (POST ещё не дошёл)        → fa-clock (выше в meta, до этого renderTicks)
-//   !pending !delivered                 → 1 галочка (сервер принял)
-//   delivered (receiver сделал /ack)    → 2 галочки серые
-//   read (receiver открыл чат)          → 2 галочки синие
+// Статусы доставки:
+//   pending (POST ещё не дошёл)        → fa-clock (выше в meta)
+//   !pending !delivered                 → дискета (сохранено на серве, ждём receiver)
+//   delivered (receiver сделал /ack)    → ✓ одна галочка
+//   read (receiver открыл чат)          → ✓✓ синие
 function renderTicks(m) {
   if (m.read) return '<i class="fa-solid fa-check-double" style="color:#22d3ee;"></i>';
-  if (m.delivered) return '<i class="fa-solid fa-check-double"></i>';
-  return '<i class="fa-solid fa-check"></i>';
+  if (m.delivered) return '<i class="fa-solid fa-check"></i>';
+  return '<i class="fa-solid fa-floppy-disk" style="opacity:0.75;"></i>';
 }
 
 // Чипы реакций под bubble

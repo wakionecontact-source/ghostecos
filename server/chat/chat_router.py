@@ -157,13 +157,16 @@ def send_message(body: SendBody, authorization: Optional[str] = Header(None)):
     ws_hub.send_to(to_user["id"], "chat.new", payload)
     # Echo отправителю — он не из БД получает, а сразу отображает
     ws_hub.send_to(user["id"], "chat.echo", payload)
-    if sent:
-        # Получатель онлайн — стираем pending сразу. Если WS-send в очереди дойдёт после — это OK,
-        # т.к. payload уже в JSON в очереди отправки. Если WS отвалится между — клиент получит через /pending при reconnect (но мы уже удалили!).
-        # Поэтому стираем только при явном ack от клиента. На пока — не стираем здесь, удалим по /ack.
-        pass
     c.close()
-    return {"status": "ok", "id": msg_id, "created_at": row["created_at"]}
+    # Возвращаем `delivered_now` чтобы клиент сразу показал галочку
+    # (если receiver онлайн — он почти точно сделает /ack в течение секунды;
+    # это лучше чем "дискета навсегда" когда WS chat.delivered пропадает при offline)
+    return {
+        "status": "ok",
+        "id": msg_id,
+        "created_at": row["created_at"],
+        "recipient_online": bool(sent),
+    }
 
 class AckBody(BaseModel):
     ids: list
