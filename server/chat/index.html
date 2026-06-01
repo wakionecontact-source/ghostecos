@@ -164,6 +164,54 @@ button,input,textarea{font-family:inherit;}
 /* Spacer — место для аватарки у не-last сообщений в серии, чтобы bubble оставался выровнен */
 .grp-av-spacer { width:30px; flex-shrink:0; }
 
+/* Bottom sheet для эмодзи-палитры */
+.emoji-sheet-overlay {
+  position: fixed; inset: 0; z-index: 600; background: rgba(0,0,0,0.45);
+  backdrop-filter: blur(4px); display: none; align-items: flex-end;
+}
+.emoji-sheet-overlay.open { display: flex; }
+.emoji-sheet {
+  width: 100%; max-height: 60vh; background: var(--surface);
+  border-top: 1px solid var(--border-strong);
+  border-radius: 18px 18px 0 0; padding: 14px 12px 18px;
+  display: flex; flex-direction: column; gap: 8px;
+  transform: translateY(100%); transition: transform .25s cubic-bezier(0.34,1.56,0.64,1);
+}
+.emoji-sheet-overlay.open .emoji-sheet { transform: translateY(0); }
+.emoji-sheet .grab { width: 36px; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; margin: 0 auto 4px; }
+.emoji-search { display: flex; align-items: center; gap: 8px; padding: 4px 8px; }
+.emoji-search input {
+  flex: 1; background: rgba(0,0,0,0.30); border: 1px solid var(--border-strong);
+  color: var(--text); padding: 8px 12px; border-radius: 10px;
+  font-family: inherit; font-size: 13px; outline: none;
+}
+.emoji-search input:focus { border-color: var(--primary); }
+.emoji-cats {
+  display: flex; gap: 4px; padding: 4px 8px; overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+}
+.emoji-cat-btn {
+  background: transparent; border: 0; color: var(--sub);
+  padding: 6px 10px; font-size: 18px; cursor: pointer; border-radius: 8px;
+  flex-shrink: 0; transition: background .12s;
+  font-family: "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif;
+}
+.emoji-cat-btn:hover { background: rgba(255,255,255,0.05); }
+.emoji-cat-btn.active { background: rgba(168,85,247,0.20); color: var(--text); }
+.emoji-grid {
+  display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px;
+  overflow-y: auto; padding: 8px; flex: 1; max-height: 38vh;
+}
+@media(max-width: 380px) { .emoji-grid { grid-template-columns: repeat(7, 1fr); } }
+.emoji-btn {
+  background: transparent; border: 0; padding: 6px; font-size: 24px;
+  cursor: pointer; border-radius: 8px; transition: background .08s, transform .05s;
+  font-family: "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif;
+  line-height: 1;
+}
+.emoji-btn:hover { background: rgba(168,85,247,0.15); }
+.emoji-btn:active { transform: scale(0.88); }
+
 /* Bottom sheet для attach */
 .attach-sheet-overlay {
   position: fixed; inset: 0; z-index: 600; background: rgba(0,0,0,0.5);
@@ -515,6 +563,19 @@ button,input,textarea{font-family:inherit;}
     <div class="m-results" id="newChatResults">
       <div style="padding:30px;text-align:center;color:var(--muted);font-size:13px;">Начните вводить имя</div>
     </div>
+  </div>
+</div>
+
+<!-- Bottom sheet: emoji-палитра -->
+<div class="emoji-sheet-overlay" id="emojiSheet" onclick="if(event.target===this)closeEmojiSheet()">
+  <div class="emoji-sheet" onclick="event.stopPropagation()">
+    <div class="grab"></div>
+    <div class="emoji-search">
+      <input id="emojiSearchInp" placeholder="Поиск (по тегам: heart, fire, smile...)" oninput="emojiFilterBySearch(this.value)">
+      <button class="foot-btn" onclick="closeEmojiSheet()" title="Закрыть" style="background:transparent;border:0;color:var(--sub);font-size:16px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="emoji-cats" id="emojiCats"></div>
+    <div class="emoji-grid" id="emojiGrid"></div>
   </div>
 </div>
 
@@ -2189,7 +2250,7 @@ function renderChat(){
         <input type="file" id="filePickerImg" accept="image/*" style="display:none" onchange="pickAndSendFile(this)">
         <input type="file" id="filePickerVid" accept="video/*" style="display:none" onchange="pickAndSendFile(this)">
         <textarea class="send-input" id="sendInput" placeholder="Сообщение" rows="1"></textarea>
-        <button class="foot-btn" title="Эмодзи (скоро)" onclick="showToast('Эмодзи-палитра — скоро')"><i class="fa-regular fa-face-smile"></i></button>
+        <button class="foot-btn" title="Эмодзи" onclick="openEmojiSheet()"><i class="fa-regular fa-face-smile"></i></button>
       </div>
       <button class="foot-btn send" id="sendBtn" onclick="onSendBtn()" title="Отправить"><i class="fa-solid fa-microphone" id="sendIcon"></i></button>
     </div>`;
@@ -2461,6 +2522,201 @@ async function doForwardTo(kind, target){
     }
     showToast('Переслано');
   } catch(e) { showToast(e.message || 'Не удалось переслать', true); }
+}
+
+// ── Emoji-палитра ──
+// Используем системный emoji-font: на Apple-устройствах будут реальные iOS emoji,
+// на остальных — системные альтернативы. Никаких 5MB SVG-наборов.
+const EMOJI_DATA = {
+  smiles: { icon: '😀', name: 'Смайлы', items: [
+    {e:'😀',t:'grin happy'},{e:'😃',t:'happy'},{e:'😄',t:'smile happy'},{e:'😁',t:'grin'},{e:'😆',t:'laugh'},
+    {e:'😅',t:'sweat laugh'},{e:'🤣',t:'rofl laugh'},{e:'😂',t:'joy laugh tears'},{e:'🙂',t:'slight smile'},
+    {e:'🙃',t:'upside down'},{e:'😉',t:'wink'},{e:'😊',t:'blush smile'},{e:'😇',t:'angel'},
+    {e:'🥰',t:'love hearts'},{e:'😍',t:'heart eyes love'},{e:'🤩',t:'star eyes wow'},{e:'😘',t:'kiss'},
+    {e:'😗',t:'kiss'},{e:'😚',t:'kiss closed'},{e:'😙',t:'kiss smile'},{e:'🥲',t:'smiling tear'},
+    {e:'😋',t:'yum tasty'},{e:'😛',t:'tongue'},{e:'😜',t:'wink tongue'},{e:'🤪',t:'crazy'},{e:'😝',t:'tongue closed'},
+    {e:'🤑',t:'money'},{e:'🤗',t:'hug'},{e:'🤭',t:'oops'},{e:'🤫',t:'shush'},{e:'🤔',t:'think'},
+    {e:'🤐',t:'zipper mouth'},{e:'🤨',t:'raised brow'},{e:'😐',t:'neutral'},{e:'😑',t:'expressionless'},
+    {e:'😶',t:'no mouth'},{e:'😏',t:'smirk'},{e:'😒',t:'unamused'},{e:'🙄',t:'eye roll'},
+    {e:'😬',t:'grimace'},{e:'🤥',t:'lie'},{e:'😔',t:'pensive sad'},{e:'😪',t:'sleepy'},{e:'🤤',t:'drool'},
+    {e:'😴',t:'sleep'},{e:'😷',t:'mask sick'},{e:'🤒',t:'sick fever'},{e:'🤕',t:'hurt'},{e:'🤢',t:'nausea'},
+    {e:'🤮',t:'vomit'},{e:'🥵',t:'hot'},{e:'🥶',t:'cold'},{e:'😵',t:'dizzy'},{e:'🤯',t:'mind blown'},
+    {e:'🤠',t:'cowboy'},{e:'🥳',t:'party'},{e:'😎',t:'cool sunglasses'},{e:'🤓',t:'nerd'},{e:'🧐',t:'monocle'},
+    {e:'😕',t:'confused'},{e:'😟',t:'worried'},{e:'🙁',t:'frown'},{e:'☹️',t:'frown sad'},
+    {e:'😮',t:'wow open'},{e:'😯',t:'hushed'},{e:'😲',t:'astonished'},{e:'😳',t:'flushed'},
+    {e:'🥺',t:'pleading'},{e:'😦',t:'frown open'},{e:'😧',t:'anguished'},{e:'😨',t:'fearful'},
+    {e:'😰',t:'anxious sweat'},{e:'😥',t:'sad relieved'},{e:'😢',t:'cry tear sad'},{e:'😭',t:'sob cry sad'},
+    {e:'😱',t:'scream'},{e:'😖',t:'confounded'},{e:'😣',t:'persevering'},{e:'😞',t:'disappointed'},
+    {e:'😓',t:'sweat'},{e:'😩',t:'weary'},{e:'😫',t:'tired'},{e:'🥱',t:'yawn'},
+    {e:'😤',t:'huff angry'},{e:'😡',t:'angry red'},{e:'😠',t:'angry'},{e:'🤬',t:'cursing'},
+    {e:'😈',t:'devil purple'},{e:'👿',t:'devil angry'},{e:'💀',t:'skull death'},{e:'☠️',t:'skull'},
+    {e:'💩',t:'poop'},{e:'🤡',t:'clown'},{e:'👹',t:'ogre'},{e:'👺',t:'goblin'},{e:'👻',t:'ghost'},
+    {e:'👽',t:'alien'},{e:'👾',t:'space invader'},{e:'🤖',t:'robot'},
+  ]},
+  gestures: { icon: '👍', name: 'Жесты', items: [
+    {e:'👍',t:'thumbs up like'},{e:'👎',t:'thumbs down dislike'},{e:'👌',t:'ok'},{e:'🤌',t:'pinch'},
+    {e:'🤏',t:'pinch small'},{e:'✌️',t:'victory peace'},{e:'🤞',t:'fingers crossed'},
+    {e:'🤟',t:'love you'},{e:'🤘',t:'rock'},{e:'🤙',t:'call me'},
+    {e:'👈',t:'point left'},{e:'👉',t:'point right'},{e:'👆',t:'point up'},{e:'👇',t:'point down'},
+    {e:'☝️',t:'point up'},{e:'✋',t:'hand'},{e:'🤚',t:'raised back'},{e:'🖐️',t:'hand spread'},
+    {e:'🖖',t:'vulcan'},{e:'👋',t:'wave hi'},{e:'🤝',t:'handshake deal'},{e:'👏',t:'clap applause'},
+    {e:'🙌',t:'raised hands praise'},{e:'👐',t:'open hands'},{e:'🤲',t:'palms up'},{e:'🙏',t:'pray thanks'},
+    {e:'✊',t:'fist'},{e:'👊',t:'punch fist'},{e:'🤛',t:'fist left'},{e:'🤜',t:'fist right'},
+    {e:'💪',t:'muscle strong'},
+  ]},
+  hearts: { icon: '❤️', name: 'Сердца', items: [
+    {e:'❤️',t:'heart red love'},{e:'🧡',t:'heart orange'},{e:'💛',t:'heart yellow'},{e:'💚',t:'heart green'},
+    {e:'💙',t:'heart blue'},{e:'💜',t:'heart purple'},{e:'🖤',t:'heart black'},{e:'🤍',t:'heart white'},
+    {e:'🤎',t:'heart brown'},{e:'❤️‍🔥',t:'heart fire burn'},{e:'❤️‍🩹',t:'heart mend'},
+    {e:'💔',t:'broken heart'},{e:'💕',t:'two hearts'},{e:'💞',t:'revolving hearts'},
+    {e:'💓',t:'beating heart'},{e:'💗',t:'growing heart'},{e:'💖',t:'sparkling heart'},
+    {e:'💘',t:'cupid heart'},{e:'💝',t:'gift heart'},{e:'💟',t:'heart decoration'},
+    {e:'💌',t:'love letter'},{e:'💋',t:'kiss mark'},{e:'💯',t:'hundred'},
+    {e:'💥',t:'boom collision'},{e:'💫',t:'dizzy'},{e:'⭐',t:'star'},{e:'🌟',t:'glowing star'},
+    {e:'✨',t:'sparkles'},{e:'🔥',t:'fire hot'},{e:'💧',t:'drop water'},{e:'💦',t:'sweat drops'},
+  ]},
+  nature: { icon: '🐶', name: 'Природа', items: [
+    {e:'🐶',t:'dog puppy'},{e:'🐱',t:'cat kitten'},{e:'🐭',t:'mouse'},{e:'🐹',t:'hamster'},
+    {e:'🐰',t:'rabbit bunny'},{e:'🦊',t:'fox'},{e:'🐻',t:'bear'},{e:'🐼',t:'panda'},
+    {e:'🐨',t:'koala'},{e:'🐯',t:'tiger'},{e:'🦁',t:'lion'},{e:'🐮',t:'cow'},
+    {e:'🐷',t:'pig'},{e:'🐸',t:'frog'},{e:'🐵',t:'monkey'},{e:'🙈',t:'see no evil'},
+    {e:'🙉',t:'hear no evil'},{e:'🙊',t:'speak no evil'},{e:'🐒',t:'monkey'},{e:'🐔',t:'chicken'},
+    {e:'🐧',t:'penguin'},{e:'🐦',t:'bird'},{e:'🐤',t:'chick'},{e:'🦆',t:'duck'},
+    {e:'🦅',t:'eagle'},{e:'🦉',t:'owl'},{e:'🦇',t:'bat'},{e:'🐺',t:'wolf'},
+    {e:'🐗',t:'boar'},{e:'🐴',t:'horse'},{e:'🦄',t:'unicorn'},{e:'🐝',t:'bee'},
+    {e:'🐛',t:'bug worm'},{e:'🦋',t:'butterfly'},{e:'🐌',t:'snail'},{e:'🐞',t:'lady bug'},
+    {e:'🐢',t:'turtle'},{e:'🐍',t:'snake'},{e:'🦎',t:'lizard'},{e:'🐙',t:'octopus'},
+    {e:'🐠',t:'fish'},{e:'🐳',t:'whale'},{e:'🦈',t:'shark'},{e:'🐊',t:'crocodile'},
+    {e:'🌵',t:'cactus'},{e:'🌲',t:'tree'},{e:'🌴',t:'palm'},{e:'🌱',t:'sprout'},
+    {e:'🌿',t:'herb'},{e:'☘️',t:'clover'},{e:'🍀',t:'four leaf'},{e:'🌾',t:'wheat'},
+    {e:'🌸',t:'cherry blossom'},{e:'🌺',t:'flower'},{e:'🌻',t:'sunflower'},{e:'🌹',t:'rose'},
+    {e:'🌷',t:'tulip'},{e:'🥀',t:'wilted'},{e:'🌼',t:'daisy'},{e:'🍄',t:'mushroom'},
+    {e:'☀️',t:'sun'},{e:'⛅',t:'cloud sun'},{e:'☁️',t:'cloud'},{e:'🌧️',t:'rain'},
+    {e:'⛈️',t:'storm'},{e:'❄️',t:'snowflake'},{e:'☃️',t:'snowman'},{e:'🌈',t:'rainbow'},
+    {e:'🌙',t:'moon'},{e:'🌞',t:'sun face'},{e:'🌍',t:'earth'},{e:'🪐',t:'planet'},
+  ]},
+  food: { icon: '🍕', name: 'Еда', items: [
+    {e:'🍕',t:'pizza'},{e:'🍔',t:'burger'},{e:'🍟',t:'fries'},{e:'🌭',t:'hotdog'},
+    {e:'🌮',t:'taco'},{e:'🌯',t:'burrito'},{e:'🥙',t:'wrap'},{e:'🥗',t:'salad'},
+    {e:'🥘',t:'pan food'},{e:'🍝',t:'pasta'},{e:'🍜',t:'noodle ramen'},{e:'🍲',t:'stew'},
+    {e:'🍛',t:'curry'},{e:'🍣',t:'sushi'},{e:'🍱',t:'bento'},{e:'🍤',t:'shrimp'},
+    {e:'🍙',t:'rice ball'},{e:'🍚',t:'rice'},{e:'🥟',t:'dumpling'},{e:'🥠',t:'fortune cookie'},
+    {e:'🍞',t:'bread'},{e:'🥐',t:'croissant'},{e:'🥨',t:'pretzel'},{e:'🥖',t:'baguette'},
+    {e:'🧀',t:'cheese'},{e:'🥩',t:'steak meat'},{e:'🍗',t:'chicken leg'},{e:'🍖',t:'meat bone'},
+    {e:'🥚',t:'egg'},{e:'🍳',t:'egg fried'},{e:'🥞',t:'pancakes'},{e:'🧇',t:'waffle'},
+    {e:'🥓',t:'bacon'},{e:'🥯',t:'bagel'},{e:'🥪',t:'sandwich'},{e:'🍦',t:'ice cream'},
+    {e:'🍧',t:'shaved ice'},{e:'🍨',t:'sundae'},{e:'🍩',t:'donut'},{e:'🍪',t:'cookie'},
+    {e:'🎂',t:'birthday cake'},{e:'🍰',t:'cake'},{e:'🧁',t:'cupcake'},{e:'🥧',t:'pie'},
+    {e:'🍫',t:'chocolate'},{e:'🍬',t:'candy'},{e:'🍭',t:'lollipop'},{e:'🍿',t:'popcorn'},
+    {e:'🍎',t:'apple red'},{e:'🍐',t:'pear'},{e:'🍊',t:'orange'},{e:'🍋',t:'lemon'},
+    {e:'🍌',t:'banana'},{e:'🍉',t:'watermelon'},{e:'🍇',t:'grape'},{e:'🍓',t:'strawberry'},
+    {e:'🫐',t:'blueberry'},{e:'🍒',t:'cherry'},{e:'🍑',t:'peach'},{e:'🥭',t:'mango'},
+    {e:'🍍',t:'pineapple'},{e:'🥥',t:'coconut'},{e:'🥝',t:'kiwi'},{e:'🍅',t:'tomato'},
+    {e:'🥑',t:'avocado'},{e:'🌶️',t:'pepper hot'},{e:'🥕',t:'carrot'},{e:'🌽',t:'corn'},
+    {e:'☕',t:'coffee'},{e:'🍵',t:'tea'},{e:'🥛',t:'milk'},{e:'🍺',t:'beer'},
+    {e:'🍻',t:'beers'},{e:'🍷',t:'wine'},{e:'🥂',t:'champagne'},{e:'🍸',t:'cocktail'},
+    {e:'🍹',t:'tropical'},{e:'🍾',t:'champagne pop'},{e:'🥃',t:'whiskey'},
+  ]},
+  activity: { icon: '⚽', name: 'Активности', items: [
+    {e:'⚽',t:'soccer ball'},{e:'🏀',t:'basketball'},{e:'🏈',t:'football'},{e:'⚾',t:'baseball'},
+    {e:'🎾',t:'tennis'},{e:'🏐',t:'volleyball'},{e:'🏉',t:'rugby'},{e:'🥏',t:'frisbee'},
+    {e:'🎱',t:'pool 8ball'},{e:'🏓',t:'ping pong'},{e:'🏸',t:'badminton'},{e:'🏒',t:'hockey'},
+    {e:'⛳',t:'golf'},{e:'🏹',t:'archery'},{e:'🎣',t:'fishing'},{e:'🥊',t:'boxing'},
+    {e:'🥋',t:'karate'},{e:'⛸️',t:'skating'},{e:'🎿',t:'ski'},{e:'⛷️',t:'skier'},
+    {e:'🏂',t:'snowboard'},{e:'🏄',t:'surf'},{e:'🚴',t:'cycling'},{e:'🧘',t:'yoga'},
+    {e:'🎮',t:'gamepad gaming'},{e:'🕹️',t:'joystick'},{e:'🎲',t:'dice'},{e:'♟️',t:'chess'},
+    {e:'🎯',t:'target dart'},{e:'🎳',t:'bowling'},{e:'🎤',t:'mic karaoke'},{e:'🎧',t:'headphones'},
+    {e:'🎼',t:'music score'},{e:'🎵',t:'note'},{e:'🎶',t:'notes'},{e:'🎸',t:'guitar'},
+    {e:'🎹',t:'piano'},{e:'🎺',t:'trumpet'},{e:'🥁',t:'drum'},{e:'🎬',t:'clapper film'},
+    {e:'📸',t:'camera photo'},{e:'🎨',t:'art palette'},{e:'🎭',t:'theatre masks'},
+  ]},
+  objects: { icon: '💡', name: 'Объекты', items: [
+    {e:'💡',t:'idea bulb'},{e:'🔦',t:'flashlight'},{e:'🕯️',t:'candle'},{e:'🧯',t:'fire ext'},
+    {e:'💸',t:'money fly'},{e:'💵',t:'dollar'},{e:'💴',t:'yen'},{e:'💶',t:'euro'},
+    {e:'💷',t:'pound'},{e:'💰',t:'money bag'},{e:'💳',t:'card'},{e:'💎',t:'gem diamond'},
+    {e:'⚖️',t:'scales justice'},{e:'🛒',t:'cart'},{e:'🎁',t:'gift'},{e:'🎈',t:'balloon'},
+    {e:'🎉',t:'party tada'},{e:'🎊',t:'confetti'},{e:'🎀',t:'ribbon'},{e:'🪄',t:'magic wand'},
+    {e:'📱',t:'phone mobile'},{e:'💻',t:'laptop'},{e:'⌨️',t:'keyboard'},{e:'🖥️',t:'computer'},
+    {e:'🖨️',t:'printer'},{e:'📷',t:'camera'},{e:'📺',t:'tv'},{e:'📻',t:'radio'},
+    {e:'⏰',t:'alarm clock'},{e:'⏳',t:'hourglass'},{e:'📅',t:'calendar'},{e:'📚',t:'books'},
+    {e:'📖',t:'book open'},{e:'📝',t:'memo writing'},{e:'✏️',t:'pencil'},{e:'🖊️',t:'pen'},
+    {e:'📎',t:'paperclip attach'},{e:'🔒',t:'lock'},{e:'🔓',t:'unlock'},{e:'🔑',t:'key'},
+    {e:'🛡️',t:'shield'},{e:'⚔️',t:'swords'},{e:'🔨',t:'hammer'},{e:'🪛',t:'screwdriver'},
+    {e:'⚙️',t:'gear settings'},{e:'🧰',t:'toolbox'},{e:'🧪',t:'science test'},{e:'💉',t:'syringe'},
+    {e:'💊',t:'pill'},{e:'🩺',t:'stethoscope'},{e:'🚀',t:'rocket'},{e:'🛸',t:'ufo'},
+    {e:'🏆',t:'trophy'},{e:'🥇',t:'gold medal'},{e:'🥈',t:'silver'},{e:'🥉',t:'bronze'},
+    {e:'🏅',t:'medal sport'},{e:'👑',t:'crown'},
+  ]},
+};
+
+let _emojiCurCat = 'smiles';
+let _emojiSearchQuery = '';
+
+function openEmojiSheet() {
+  document.getElementById('emojiSheet').classList.add('open');
+  emojiRenderCats();
+  emojiRenderGrid();
+  setTimeout(() => document.getElementById('emojiSearchInp').focus(), 100);
+}
+
+function closeEmojiSheet() {
+  document.getElementById('emojiSheet').classList.remove('open');
+}
+
+function emojiRenderCats() {
+  const cats = document.getElementById('emojiCats');
+  cats.innerHTML = Object.keys(EMOJI_DATA).map(key => `
+    <button class="emoji-cat-btn ${_emojiCurCat === key && !_emojiSearchQuery ? 'active' : ''}"
+      onclick="emojiSwitchCat('${key}')" title="${EMOJI_DATA[key].name}">${EMOJI_DATA[key].icon}</button>
+  `).join('');
+}
+
+function emojiSwitchCat(key) {
+  _emojiCurCat = key;
+  _emojiSearchQuery = '';
+  document.getElementById('emojiSearchInp').value = '';
+  emojiRenderCats();
+  emojiRenderGrid();
+}
+
+function emojiFilterBySearch(q) {
+  _emojiSearchQuery = (q || '').trim().toLowerCase();
+  emojiRenderGrid();
+  emojiRenderCats();
+}
+
+function emojiRenderGrid() {
+  const grid = document.getElementById('emojiGrid');
+  let items = [];
+  if (_emojiSearchQuery) {
+    for (const cat of Object.values(EMOJI_DATA)) {
+      for (const item of cat.items) {
+        if (item.t.includes(_emojiSearchQuery)) items.push(item);
+      }
+    }
+  } else {
+    items = EMOJI_DATA[_emojiCurCat].items;
+  }
+  if (!items.length) {
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--sub);padding:24px;font-size:13px;">Не нашёл</div>';
+    return;
+  }
+  grid.innerHTML = items.map(it =>
+    `<button class="emoji-btn" onclick="emojiInsert(${JSON.stringify(it.e).replace(/"/g,'&quot;')})">${it.e}</button>`
+  ).join('');
+}
+
+function emojiInsert(emo) {
+  const inp = document.getElementById('sendInput');
+  if (!inp) { closeEmojiSheet(); return; }
+  const start = inp.selectionStart || inp.value.length;
+  const end = inp.selectionEnd || inp.value.length;
+  inp.value = inp.value.slice(0, start) + emo + inp.value.slice(end);
+  const newPos = start + emo.length;
+  inp.focus();
+  inp.setSelectionRange(newPos, newPos);
+  // Триггерим input для авто-роста textarea
+  inp.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 // Bottom sheet attach
@@ -3289,7 +3545,7 @@ function renderGroupChat(){
     <div class="chat-foot">
       <div class="input-wrap">
         <textarea class="send-input" id="sendInput" placeholder="${g.kind==='channel'?'Сообщение в канал':'Сообщение в группу'}" rows="1"></textarea>
-        <button class="foot-btn" title="Эмодзи (скоро)" onclick="showToast('Эмодзи — скоро')"><i class="fa-regular fa-face-smile"></i></button>
+        <button class="foot-btn" title="Эмодзи" onclick="openEmojiSheet()"><i class="fa-regular fa-face-smile"></i></button>
       </div>
       <button class="foot-btn send" id="sendBtn" onclick="onSendBtn()" title="Отправить"><i class="fa-solid fa-paper-plane" id="sendIcon"></i></button>
     </div>` : `
