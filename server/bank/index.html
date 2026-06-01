@@ -760,7 +760,7 @@ function renderCatalog(items){
     else if (it.floor_soul != null) floorHTML = `от ${pricePill(it.floor_soul, 'soul')}`;
     else floorHTML = `от ${pricePill(it.start_price_gost, 'gost')}`;
     return `
-    <div class="cat-card" data-rarity="${it.rarity}" onclick="openCatalogModal('${esc(it.slug)}')" title="${esc(it.description)}">
+    <div class="cat-card" data-rarity="${it.rarity}" onclick="openCatalogModal(${jsArg(it.slug)})" title="${esc(it.description)}">
       <div class="cat-art">${nftArt(it)}</div>
       <div class="cat-name">${esc(it.name)}</div>
       <div class="cat-meta">${rarityIcon(it.rarity)} ${it.listed}/${it.max_supply}</div>
@@ -771,7 +771,7 @@ function renderCatalog(items){
 function renderMarketFilters(items){
   const wrap = document.getElementById('marketFilters');
   wrap.innerHTML = '<button class="mf-chip ' + (_activeMarketSlug === '' ? 'active' : '') + '" data-slug="" onclick="setMarketFilter(\'\')">Все</button>' +
-    items.map(it => `<button class="mf-chip ${_activeMarketSlug === it.slug ? 'active' : ''}" data-slug="${esc(it.slug)}" onclick="setMarketFilter('${esc(it.slug)}')">${esc(it.name)}</button>`).join('');
+    items.map(it => `<button class="mf-chip ${_activeMarketSlug === it.slug ? 'active' : ''}" data-slug="${esc(it.slug)}" onclick="setMarketFilter(${jsArg(it.slug)})">${esc(it.name)}</button>`).join('');
 }
 function setMarketFilter(slug){
   _activeMarketSlug = slug;
@@ -879,7 +879,7 @@ async function openCatalogModal(slug){
       </div>
       <div class="modal-actions">
         <button class="btn ghost" onclick="closeModal('nftModal')">Закрыть</button>
-        <button class="btn primary" onclick="closeModal('nftModal');setMarketFilter('${esc(slug)}');scrollToSection('marketSection');">Купить на маркете</button>
+        <button class="btn primary" onclick="closeModal('nftModal');setMarketFilter(${jsArg(slug)});scrollToSection('marketSection');">Купить на маркете</button>
       </div>`;
     openModal('nftModal');
   } catch(e) { console.error(e); }

@@ -1152,6 +1152,10 @@ let ctxUrl = '';
 // ── Utils ──────────────────────────────────────────────────────────────────────
 
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+// jsAttr: безопасная JS-литерал внутри HTML onclick. esc(JSON.stringify(v)) даёт
+// строку которая корректно работает и в HTML-атрибуте и в JS. Используй вместо
+// `'${esc(s)}'` — там HTML декодит &#39; обратно в ' → XSS.
+function jsAttr(v){return esc(JSON.stringify(v == null ? null : String(v)));}
 
 function highlightText(raw, query) {
   raw = String(raw == null ? '' : raw);
@@ -1417,7 +1421,7 @@ function renderMinisky() {
       <div class="msk-play-overlay"><i class="fa-solid fa-play"></i></div>
       <div class="msk-overlay">
         <div class="msk-info">
-          <div class="author" onclick="event.stopPropagation();openFullProfile('${esc(p.username)}')">
+          <div class="author" onclick="event.stopPropagation();openFullProfile(${jsAttr(p.username)})">
             <div class="av">${ini(p.display_name)}</div>
             <div>
               <div class="name">${esc(p.display_name)}</div>
@@ -2105,7 +2109,7 @@ function renderAlgoSettings() {
       <div class="algo-chips">
         ${topAuthors.length ? topAuthors.map(([u,w]) => `
           <span class="algo-chip">@${esc(u)} <span class="chip-w">${w.toFixed(0)}</span>
-            <button class="chip-x" onclick="algoForget('author','${esc(u)}')" title="Забыть"><i class="fa-solid fa-xmark"></i></button>
+            <button class="chip-x" onclick="algoForget('author',${jsAttr(u)})" title="Забыть"><i class="fa-solid fa-xmark"></i></button>
           </span>`).join('') : '<span class="algo-empty">Пусто — взаимодействуй с постами</span>'}
       </div>
     </div>
@@ -2115,7 +2119,7 @@ function renderAlgoSettings() {
       <div class="algo-chips">
         ${topTags.length ? topTags.map(([t,w]) => `
           <span class="algo-chip">#${esc(t)} <span class="chip-w">${w.toFixed(0)}</span>
-            <button class="chip-x" onclick="algoForget('tag','${esc(t)}')" title="Забыть"><i class="fa-solid fa-xmark"></i></button>
+            <button class="chip-x" onclick="algoForget('tag',${jsAttr(t)})" title="Забыть"><i class="fa-solid fa-xmark"></i></button>
           </span>`).join('') : '<span class="algo-empty">Пусто</span>'}
       </div>
     </div>
@@ -2125,7 +2129,7 @@ function renderAlgoSettings() {
       <div class="algo-chips">
         ${blocked.length ? blocked.map(u => `
           <span class="algo-chip">@${esc(u)}
-            <button class="chip-x" onclick="algoUnblock('${esc(u)}')" title="Вернуть">×</button>
+            <button class="chip-x" onclick="algoUnblock(${jsAttr(u)})" title="Вернуть">×</button>
           </span>`).join('') : '<span class="algo-empty">Никого</span>'}
       </div>
     </div>`;
@@ -2754,7 +2758,7 @@ function mediaHTML(media) {
     const bars = genWave(m.url, 50).map(h => `<div class="audio-bar" style="height:${Math.round(h*100)}%"></div>`).join('');
     html += `<div class="audio-widget media-el" data-media-url="${esc(m.url)}" data-audio-id="${id}" data-audio-url="${esc(m.url)}">
       <div class="audio-top">
-        <button class="audio-play-btn" id="${id}_btn" onclick="event.stopPropagation();toggleAudio('${id}','${esc(m.url)}')"><i class="fa-solid fa-play"></i></button>
+        <button class="audio-play-btn" id="${id}_btn" onclick="event.stopPropagation();toggleAudio(${jsAttr(id)},${jsAttr(m.url)})"><i class="fa-solid fa-play"></i></button>
         <div class="audio-waveform" id="${id}_wf" onclick="event.stopPropagation();seekAudio('${id}',event)">${bars}</div>
       </div>
       <div class="audio-time" id="${id}_time">0:00</div>
@@ -2875,9 +2879,9 @@ function linkifyContent(raw, hq) {
   let html = highlightText(raw, hq);
   // hashtag: лат/кирилл/цифры/_, 1..30. Сначала теги, потом @ — порядок не важен.
   html = html.replace(/(^|[^&\w])#([0-9A-Za-zА-Яа-яЁё_]{1,30})/gu,
-    (m, pre, tag) => `${pre}<a class="hashtag" href="#tag=${encodeURIComponent(tag.toLowerCase())}" onclick="event.preventDefault();openTag('${esc(tag.toLowerCase())}')">#${tag}</a>`);
+    (m, pre, tag) => `${pre}<a class="hashtag" href="#tag=${encodeURIComponent(tag.toLowerCase())}" onclick="event.preventDefault();openTag(${jsAttr(tag.toLowerCase())})">#${tag}</a>`);
   html = html.replace(/(^|[^&\w])@([a-z0-9._]{3,64})/g,
-    (m, pre, u) => `${pre}<a class="mention" href="#u=${encodeURIComponent(u)}" onclick="event.preventDefault();openFullProfile('${esc(u)}')">@${u}</a>`);
+    (m, pre, u) => `${pre}<a class="mention" href="#u=${encodeURIComponent(u)}" onclick="event.preventDefault();openFullProfile(${jsAttr(u)})">@${u}</a>`);
   return html;
 }
 
@@ -3987,7 +3991,7 @@ function renderShareList(items, fromContacts){
     ? '<div style="font-size:11px;color:var(--sub);font-weight:700;letter-spacing:0.6px;text-transform:uppercase;padding:6px 4px 10px;">Контакты</div>'
     : '<div style="font-size:11px;color:var(--sub);font-weight:700;letter-spacing:0.6px;text-transform:uppercase;padding:6px 4px 10px;">Найдено</div>';
   list.innerHTML = label + items.map(u => `
-    <div class="m-user" onclick="shareSendTo('${esc(u.username)}', ${fromContacts ? 'false' : 'true'})" style="position:relative;">
+    <div class="m-user" onclick="shareSendTo(${jsAttr(u.username)}, ${fromContacts ? 'false' : 'true'})" style="position:relative;">
       <div class="av">${ini(u.display_name)}</div>
       <div class="info"><div class="nm">${esc(u.display_name)}</div><div class="un">@${esc(u.username)}</div></div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
@@ -4178,7 +4182,7 @@ function commentHTML(c) {
     <div class="comment-item-row">
       <div class="comment-item-body">
         <div class="comment-author">
-          <a class="mention" href="#u=${encodeURIComponent(c.username)}" onclick="event.preventDefault();closeModal('commentsModal');openFullProfile('${esc(c.username)}')">@${esc(c.username)}</a>
+          <a class="mention" href="#u=${encodeURIComponent(c.username)}" onclick="event.preventDefault();closeModal('commentsModal');openFullProfile(${jsAttr(c.username)})">@${esc(c.username)}</a>
           <span style="color:#334155;font-weight:400">${esc(c.display_name)}</span>
         </div>
         <div class="comment-text">${linkifyContent(c.text)}</div>
@@ -4481,7 +4485,7 @@ async function doSearch(q) {
     if (d.type === 'users') {
       if (!d.results.length) { res.innerHTML = '<div class="empty"><i class="fa-solid fa-user-slash"></i><p>Пользователи не найдены</p></div>'; return; }
       res.innerHTML = d.results.map(u => `
-        <div class="user-card" onclick="openFullProfile('${esc(u.username)}')">
+        <div class="user-card" onclick="openFullProfile(${jsAttr(u.username)})">
           <div class="user-card-av">${ini(u.display_name)}</div>
           <div class="user-card-info">
             <div class="user-card-name">${highlightText(u.display_name, hlQuery)}</div>

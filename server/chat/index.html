@@ -666,6 +666,10 @@ const u8=s=>new TextEncoder().encode(s);
 const b64e=buf=>btoa(String.fromCharCode(...new Uint8Array(buf)));
 const b64d=s=>{const bin=atob(s);const out=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)out[i]=bin.charCodeAt(i);return out;};
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+// jsAttr: безопасная вставка ЛЮБОЙ строки внутрь onclick="foo(...)". JSON.stringify
+// делает её JS-литералом + esc нейтрализует кавычки HTML-атрибута. Используй вместо
+// `'${esc(s)}'` — там esc() даёт &#39; которое HTML декодит обратно в ' → JS-break.
+function jsAttr(v){return esc(JSON.stringify(v == null ? null : String(v)));}
 function ini(n){return n?n[0].toUpperCase():'?';}
 function showToast(m, err=false){const t=document.getElementById('toast');t.textContent=m;t.className='toast'+(err?' err':'');t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400);}
 function timeShort(ts){const d=new Date(ts.includes('Z')||ts.includes('+')?ts:ts+'Z');return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;}
@@ -2016,7 +2020,7 @@ function renderDialogs(filter=''){
     return;
   }
   list.innerHTML = arr.map(d => `
-    <div class="dialog${activePeer && activePeer.username === d.username ? ' active' : ''}" onclick="openChat('${esc(d.username)}','${esc(d.display_name||d.username)}')">
+    <div class="dialog${activePeer && activePeer.username === d.username ? ' active' : ''}" onclick="openChat(${jsAttr(d.username)},${jsAttr(d.display_name||d.username)})">
       <div class="d-av">${ini(d.display_name||d.username)}</div>
       <div class="d-body">
         <div class="d-row1">
@@ -2147,13 +2151,13 @@ function renderChat(){
   main.innerHTML = `
     <div class="chat-head">
       <button class="chat-back" onclick="backToList()"><i class="fa-solid fa-arrow-left"></i></button>
-      <div class="chat-av" onclick="openPeerProfile('${esc(p.username)}')">${ini(p.display_name)}</div>
-      <div class="chat-info" onclick="openPeerProfile('${esc(p.username)}')">
+      <div class="chat-av" onclick="openPeerProfile(${jsAttr(p.username)})">${ini(p.display_name)}</div>
+      <div class="chat-info" onclick="openPeerProfile(${jsAttr(p.username)})">
         <div class="chat-name">${esc(p.display_name)}</div>
         <div class="chat-status" id="chatStatus">@${esc(p.username)}</div>
       </div>
-      <button class="chat-menu" id="chatContactBtn" onclick="toggleContact('${esc(p.username)}')" title="Добавить в контакты"><i class="fa-solid fa-user-plus"></i></button>
-      <button class="chat-menu" onclick="openPeerProfile('${esc(p.username)}')" title="Профиль"><i class="fa-solid fa-user"></i></button>
+      <button class="chat-menu" id="chatContactBtn" onclick="toggleContact(${jsAttr(p.username)})" title="Добавить в контакты"><i class="fa-solid fa-user-plus"></i></button>
+      <button class="chat-menu" onclick="openPeerProfile(${jsAttr(p.username)})" title="Профиль"><i class="fa-solid fa-user"></i></button>
     </div>
     <div class="chat-body" id="chatBody"></div>
     <div id="replyBar"></div>
@@ -2737,7 +2741,7 @@ async function openNewChat(){
     const r = await chat('/contacts');
     if (r && r.length) {
       const html = '<div style="font-size:11px;color:var(--sub);font-weight:600;letter-spacing:0.5px;text-transform:uppercase;padding:4px 8px 8px;">Контакты</div>' +
-        r.map(u => `<div class="m-user" onclick="startChat('${esc(u.username)}','${esc(u.display_name)}')"><div class="av">${ini(u.display_name)}</div><div class="info"><div class="nm">${esc(u.display_name)}</div><div class="un">@${esc(u.username)}</div></div></div>`).join('');
+        r.map(u => `<div class="m-user" onclick="startChat(${jsAttr(u.username)},${jsAttr(u.display_name)})"><div class="av">${ini(u.display_name)}</div><div class="info"><div class="nm">${esc(u.display_name)}</div><div class="un">@${esc(u.username)}</div></div></div>`).join('');
       document.getElementById('newChatResults').innerHTML = html;
     } else {
       document.getElementById('newChatResults').innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px;">Контактов нет.<br>Найдите по @username.</div>';
@@ -2764,7 +2768,7 @@ document.getElementById('newChatSearch').addEventListener('input', e => {
       const res = document.getElementById('newChatResults');
       const list = (d.results || []).filter(u => u.username !== me.username);
       if (!list.length) { res.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px;">Никого не найдено</div>'; return; }
-      res.innerHTML = list.map(u => `<div class="m-user" onclick="startChat('${esc(u.username)}','${esc(u.display_name)}')"><div class="av">${ini(u.display_name)}</div><div class="info"><div class="nm">${esc(u.display_name)}</div><div class="un">@${esc(u.username)}</div></div></div>`).join('');
+      res.innerHTML = list.map(u => `<div class="m-user" onclick="startChat(${jsAttr(u.username)},${jsAttr(u.display_name)})"><div class="av">${ini(u.display_name)}</div><div class="info"><div class="nm">${esc(u.display_name)}</div><div class="un">@${esc(u.username)}</div></div></div>`).join('');
     } catch(e) { document.getElementById('newChatResults').innerHTML='<div style="padding:30px;text-align:center;color:var(--red);font-size:13px;">Ошибка поиска</div>'; }
   }, 250);
 });
@@ -3809,7 +3813,7 @@ renderDialogs = function(filter=''){
   if (dArr.length) {
     if (gArr.length) html += `<div style="font-size:10px;color:var(--muted);font-weight:700;letter-spacing:0.08em;padding:14px 14px 6px;text-transform:uppercase;">Личные</div>`;
     html += dArr.map(d => `
-      <div class="dialog${activePeer && activePeer.username === d.username ? ' active' : ''}" onclick="openChat('${esc(d.username)}','${esc(d.display_name||d.username)}')">
+      <div class="dialog${activePeer && activePeer.username === d.username ? ' active' : ''}" onclick="openChat(${jsAttr(d.username)},${jsAttr(d.display_name||d.username)})">
         <div class="d-av">${ini(d.display_name||d.username)}</div>
         <div class="d-body">
           <div class="d-row1">

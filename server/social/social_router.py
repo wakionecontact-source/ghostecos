@@ -1501,32 +1501,44 @@ def get_feed_candidates(
     """, excl_params + [n_new, offset]).fetchall()
 
     # Топ по реакциям за неделю (минус уже взятые)
+    # ВАЖНО: NOT IN (NULL) → UNKNOWN → возвращает 0 строк. Поэтому при пустом taken
+    # вообще не добавляем NOT IN.
     taken = {r["id"] for r in fresh} | set(excluded)
-    ph2 = ",".join("?" * len(taken)) if taken else "NULL"
+    if taken:
+        not_in_sql_top = f"AND p.id NOT IN ({','.join('?' * len(taken))})"
+        top_params = list(taken) + [n_top]
+    else:
+        not_in_sql_top = ""
+        top_params = [n_top]
     top = c.execute(f"""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
         WHERE p.created_at >= datetime('now', '-7 days')
-          AND p.id NOT IN ({ph2})
+          {not_in_sql_top}
         ORDER BY (SELECT COUNT(*) FROM soc_reactions WHERE post_id=p.id) DESC, p.created_at DESC
         LIMIT ?
-    """, list(taken) + [n_top]).fetchall()
+    """, top_params).fetchall()
 
     # Рандомные (детерминирован по uid и offset чтобы при докачке не повторялись)
     seed = (uid * 9973 + offset * 17 + 1) % 1000003
     taken |= {r["id"] for r in top}
-    ph3 = ",".join("?" * len(taken)) if taken else "NULL"
+    if taken:
+        where_rnd = f"WHERE p.id NOT IN ({','.join('?' * len(taken))})"
+        rnd_params = list(taken) + [n_rnd]
+    else:
+        where_rnd = ""
+        rnd_params = [n_rnd]
     rnd = c.execute(f"""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
-        WHERE p.id NOT IN ({ph3})
+        {where_rnd}
         ORDER BY ((p.id * {seed}) % 1000003)
         LIMIT ?
-    """, list(taken) + [n_rnd]).fetchall()
+    """, rnd_params).fetchall()
 
     all_rows = list(fresh) + list(top) + list(rnd)
     result = _hydrate_posts(c, all_rows, uid)

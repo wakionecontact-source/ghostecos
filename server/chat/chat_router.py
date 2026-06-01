@@ -373,6 +373,8 @@ async def file_upload(
 def file_download(file_id: int, authorization: Optional[str] = Header(None)):
     """Скачать зашифрованный blob. Доступ только sender или receiver."""
     user = auth_member(authorization)
+    # Rate-limit на скачивание: защита от ID-enumeration + DoS большими файлами
+    _rate_limit(f"filedl:{user['id']}", limit=120, window=60)
     c = db()
     row = c.execute(
         "SELECT sender_id, receiver_id, blob, size FROM chat_files WHERE id=?",
@@ -595,12 +597,12 @@ def group_add_member(gid: int, username: str, authorization: Optional[str] = Hea
     )
     c.commit()
     g = c.execute("SELECT name, kind FROM chat_groups WHERE id=?", (gid,)).fetchone()
-    c.close()
-    ws_hub.send_to(peer["id"], "group.added", {"group_id": gid, "name": g["name"], "kind": g["kind"]})
-    # broadcast остальным участникам что состав изменился
-    members_uids = [r["user_id"] for r in db().execute(
+    # Соберём членов до закрытия (раньше открывали 2й коннект и не закрывали → leak fd)
+    members_uids = [r["user_id"] for r in c.execute(
         "SELECT user_id FROM chat_group_members WHERE group_id=?", (gid,)
     ).fetchall()]
+    c.close()
+    ws_hub.send_to(peer["id"], "group.added", {"group_id": gid, "name": g["name"], "kind": g["kind"]})
     for uid in members_uids:
         if uid != peer["id"]:
             ws_hub.send_to(uid, "group.members_changed", {"group_id": gid})
@@ -790,7 +792,16 @@ def group_ack(gid: int, body: GroupAckBody, authorization: Optional[str] = Heade
     if not _is_group_member(c, gid, user["id"]):
         c.close(); raise HTTPException(403, "Не участник группы")
     ph = ",".join("?" * len(ids))
-    # Записать ack-и
+    # ВАЖНО: ack-ать можно только сообщения которые реально в этой группе.
+    # Иначе можно перекрёстно ack-ать чужие сообщения и косвенно ускорять их purge.
+    valid_ids = {r["id"] for r in c.execute(
+        f"SELECT id FROM chat_group_messages WHERE group_id=? AND id IN ({ph})",
+        [gid] + ids,
+    ).fetchall()}
+    ids = [i for i in ids if i in valid_ids]
+    if not ids:
+        c.close(); return {"acked": 0}
+    ph = ",".join("?" * len(ids))
     for mid in ids:
         c.execute(
             "INSERT OR IGNORE INTO chat_group_acks (user_id, msg_id) VALUES (?,?)",
