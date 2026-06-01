@@ -943,6 +943,129 @@ def group_set_visibility(gid: int, body: GroupVisibilityBody, authorization: Opt
     return {"status": "ok", "is_public": bool(new_val)}
 
 
+class GroupJoinRequestBody(BaseModel):
+    pass  # пустое тело — endpoint berёт user из auth, group_id из path
+
+
+@router.post("/group/{gid}/join_request")
+def group_join_request(gid: int, authorization: Optional[str] = Header(None)):
+    """Подать заявку на вступление в приватный канал/группу."""
+    user = auth_member(authorization)
+    # Лимиты: 20 заявок на приват / 100 на паблик в 30 мин — но публичные
+    # каналы можно join без заявки → проверка пускаемся ниже
+    c = db()
+    g = c.execute(
+        "SELECT id, name, kind, is_public, owner_id FROM chat_groups WHERE id=?", (gid,)
+    ).fetchone()
+    if not g:
+        c.close(); raise HTTPException(404, "Не найдено")
+    # Уже участник?
+    if _is_group_member(c, gid, user["id"]):
+        c.close(); raise HTTPException(409, "Вы уже участник")
+    # Публичный канал — добавляем сразу без заявки
+    if g["kind"] == "channel" and g["is_public"]:
+        _rate_limit(f"pjoin:{user['id']}", limit=100, window=1800)
+        c.execute(
+            "INSERT INTO chat_group_members (group_id, user_id) VALUES (?,?)",
+            (gid, user["id"]),
+        )
+        c.commit()
+        # Уведомить админов о новом участнике (минорно)
+        c.close()
+        return {"status": "joined", "auto": True}
+    # Приватная группа / приватный канал — заявка
+    _rate_limit(f"prjoin:{user['id']}", limit=20, window=1800)
+    # Уже есть pending-заявка?
+    existing = c.execute(
+        "SELECT id FROM chat_group_join_requests WHERE group_id=? AND user_id=? AND status='pending'",
+        (gid, user["id"])
+    ).fetchone()
+    if existing:
+        c.close(); raise HTTPException(409, "Заявка уже отправлена")
+    now = int(time.time())
+    c.execute(
+        "INSERT INTO chat_group_join_requests (group_id, user_id, created_at, status) "
+        "VALUES (?,?,?,'pending')",
+        (gid, user["id"], now),
+    )
+    c.commit()
+    # Уведомить владельца + админов
+    admins = c.execute(
+        "SELECT user_id FROM chat_group_members WHERE group_id=? AND (is_admin=1 OR user_id=?)",
+        (gid, g["owner_id"])
+    ).fetchall()
+    c.close()
+    for a in admins:
+        try:
+            ws_hub.send_to(a["user_id"], "group.join_request",
+                          {"group_id": gid, "user_id": user["id"], "username": user["username"]})
+        except Exception: pass
+    return {"status": "pending", "auto": False}
+
+
+@router.get("/group/{gid}/join_requests")
+def group_join_requests_list(gid: int, authorization: Optional[str] = Header(None)):
+    """Список pending-заявок (для админов группы)."""
+    user = auth_member(authorization)
+    c = db()
+    if not _is_group_admin(c, gid, user["id"]):
+        c.close(); raise HTTPException(403, "Только админ группы")
+    rows = c.execute("""
+        SELECT r.id, r.user_id, r.created_at,
+               u.username, u.display_name
+        FROM chat_group_join_requests r
+        JOIN users u ON u.id = r.user_id
+        WHERE r.group_id=? AND r.status='pending'
+        ORDER BY r.created_at ASC
+    """, (gid,)).fetchall()
+    c.close()
+    return [dict(r) for r in rows]
+
+
+@router.post("/group/{gid}/join_requests/{req_id}/decide")
+def group_join_request_decide(gid: int, req_id: int, body: dict, authorization: Optional[str] = Header(None)):
+    """Админ группы принимает или отклоняет заявку."""
+    user = auth_member(authorization)
+    accept = bool(body.get("accept"))
+    c = db()
+    if not _is_group_admin(c, gid, user["id"]):
+        c.close(); raise HTTPException(403, "Только админ группы")
+    req = c.execute(
+        "SELECT id, user_id, group_id, status FROM chat_group_join_requests WHERE id=? AND group_id=?",
+        (req_id, gid)
+    ).fetchone()
+    if not req:
+        c.close(); raise HTTPException(404, "Заявка не найдена")
+    if req["status"] != "pending":
+        c.close(); raise HTTPException(400, "Заявка уже обработана")
+    now = int(time.time())
+    new_status = "accepted" if accept else "rejected"
+    c.execute(
+        "UPDATE chat_group_join_requests SET status=?, reviewed_by=?, reviewed_at=? WHERE id=?",
+        (new_status, user["id"], now, req_id),
+    )
+    if accept:
+        c.execute(
+            "INSERT OR IGNORE INTO chat_group_members (group_id, user_id) VALUES (?,?)",
+            (gid, req["user_id"]),
+        )
+    c.commit()
+    g = c.execute("SELECT name, kind FROM chat_groups WHERE id=?", (gid,)).fetchone()
+    c.close()
+    # Уведомить заявителя
+    try:
+        ws_hub.send_to(req["user_id"], "group.join_decided", {
+            "group_id": gid, "accepted": accept,
+            "name": g["name"] if g else "?", "kind": g["kind"] if g else "?"
+        })
+        if accept:
+            ws_hub.send_to(req["user_id"], "group.added", {
+                "group_id": gid, "name": g["name"] if g else "?", "kind": g["kind"] if g else "?"
+            })
+    except Exception: pass
+    return {"status": "ok", "accepted": accept}
+
+
 @router.get("/group/by_tag/{tag}")
 def group_by_tag(tag: str, authorization: Optional[str] = Header(None)):
     """Найти группу/канал по @тегу. Публичная инфа (любой авторизованный)."""

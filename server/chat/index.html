@@ -3028,17 +3028,61 @@ document.querySelectorAll('.modal-overlay').forEach(el => {
   el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
 });
 let _t=0;
+// Поиск каналов/групп по @тегу — если ввели @xxx и оно начинается на @, то ищем
+async function tryGroupByTag(tag) {
+  try {
+    const g = await chat(`/group/by_tag/${encodeURIComponent(tag.replace(/^@/,''))}`);
+    return g;
+  } catch(_) { return null; }
+}
+
+async function joinGroupByTag(gid) {
+  try {
+    const r = await chat(`/group/${gid}/join_request`, 'POST');
+    if (r.auto) {
+      showToast('Присоединились! Канал появится в списке.');
+      closeModal('newChatModal');
+      await loadGroups();
+    } else {
+      showToast('Заявка отправлена. Жди ответа администратора.');
+      closeModal('newChatModal');
+    }
+  } catch(e) { showToast(e.message || 'Ошибка', true); }
+}
+
 document.getElementById('newChatSearch').addEventListener('input', e => {
   const q = e.target.value.trim();
   clearTimeout(_t);
   if (!q) { document.getElementById('newChatResults').innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px;">Начните вводить имя</div>'; return; }
   _t = setTimeout(async () => {
     try {
-      const d = await soc(`/search?q=@${encodeURIComponent(q)}`);
+      // Параллельно: 1) юзеры через GS-search, 2) канал/группа по точному тегу
+      const cleanTag = q.replace(/^@/, '').toLowerCase();
+      const [searchD, groupG] = await Promise.all([
+        soc(`/search?q=@${encodeURIComponent(q)}`).catch(()=>({results:[]})),
+        /^[a-z0-9_]{3,20}$/.test(cleanTag) ? tryGroupByTag(cleanTag) : Promise.resolve(null),
+      ]);
       const res = document.getElementById('newChatResults');
-      const list = (d.results || []).filter(u => u.username !== me.username);
-      if (!list.length) { res.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px;">Никого не найдено</div>'; return; }
-      res.innerHTML = list.map(u => `<div class="m-user" onclick="startChat(${jsAttr(u.username)},${jsAttr(u.display_name)})"><div class="av">${ini(u.display_name)}</div><div class="info"><div class="nm">${esc(u.display_name)}</div><div class="un">@${esc(u.username)}</div></div></div>`).join('');
+      const list = (searchD.results || []).filter(u => u.username !== me.username);
+      let html = '';
+      // Группа/канал найдена по точному тегу — показываем первой
+      if (groupG) {
+        const inList = groups.some(x => x.id === groupG.id);
+        html += `<div class="m-user" style="border-left:3px solid var(--primary);">
+          <div class="av" style="background:linear-gradient(135deg,var(--primary),var(--primary2));"><i class="fa-solid fa-${groupG.kind==='channel'?'bullhorn':'users'}" style="color:#fff;font-size:14px;"></i></div>
+          <div class="info" style="flex:1;">
+            <div class="nm">${esc(groupG.name)} <span style="color:var(--sub);font-weight:500;font-size:11px;">@${esc(groupG.username)}</span></div>
+            <div class="un">${groupG.kind==='channel'?(groupG.is_public?'Публичный канал':'Приватный канал'):'Группа'} · ${groupG.members_count} участ.${groupG.bio ? ' · '+esc(groupG.bio.slice(0,40)) : ''}</div>
+          </div>
+          ${inList
+            ? `<button onclick="closeModal('newChatModal');openGroupChat(${groupG.id})" style="padding:6px 12px;border-radius:8px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;">Открыть</button>`
+            : `<button onclick="joinGroupByTag(${groupG.id})" style="padding:6px 12px;border-radius:8px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">${groupG.is_public ? 'Войти' : 'Заявка'}</button>`}
+        </div>`;
+      }
+      // Юзеры
+      html += list.map(u => `<div class="m-user" onclick="startChat(${jsAttr(u.username)},${jsAttr(u.display_name)})"><div class="av">${ini(u.display_name)}</div><div class="info"><div class="nm">${esc(u.display_name)}</div><div class="un">@${esc(u.username)}</div></div></div>`).join('');
+      if (!html) { res.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px;">Никого не найдено</div>'; return; }
+      res.innerHTML = html;
     } catch(e) { document.getElementById('newChatResults').innerHTML='<div style="padding:30px;text-align:center;color:var(--red);font-size:13px;">Ошибка поиска</div>'; }
   }, 250);
 });
@@ -3856,9 +3900,12 @@ function openGroupMembers(){
         </div>` : ''}
         ${g.bio ? `<div style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;color:var(--sub);font-style:italic;line-height:1.5;">${esc(g.bio)}</div>` : ''}
         ${iAmAdmin ? `
-        <div style="padding:10px 14px;border-bottom:1px solid var(--border);">
+        <div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:6px;">
           <button onclick="openAddMember()" style="width:100%;padding:11px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:13px;">
             <i class="fa-solid fa-user-plus"></i>&nbsp; Добавить участника
+          </button>
+          <button onclick="openJoinRequests()" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;">
+            <i class="fa-solid fa-user-clock" style="margin-right:6px;color:var(--primary);"></i>Заявки на вступление
           </button>
         </div>` : ''}
         <div style="overflow-y:auto;flex:1;">
@@ -3946,6 +3993,51 @@ async function toggleGroupVisibility(){
     openGroupMembers();
     renderGroupChat();
   } catch(e) { showToast(e.message || 'Ошибка', true); }
+}
+
+async function openJoinRequests() {
+  if (!activeGroup) return;
+  let reqs = [];
+  try { reqs = await chat(`/group/${activeGroup.id}/join_requests`); }
+  catch(e) { return showToast(e.message || 'Ошибка'); }
+  const id = 'jrModal';
+  document.getElementById(id)?.remove();
+  const list = reqs.length ? reqs.map(r => `
+    <div style="padding:10px;background:rgba(0,0,0,0.20);border-radius:8px;margin-bottom:8px;display:flex;align-items:center;gap:8px;">
+      <div class="d-av" style="width:34px;height:34px;font-size:13px;">${ini(r.display_name||r.username)}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;font-size:13px;">${esc(r.display_name||r.username)}</div>
+        <div style="font-size:11px;color:var(--sub);">@${esc(r.username)}</div>
+      </div>
+      <button onclick="decideJoinReq(${r.id}, true)" style="padding:6px 10px;border-radius:8px;border:none;background:#22c55e;color:#fff;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">Принять</button>
+      <button onclick="decideJoinReq(${r.id}, false)" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(244,63,94,0.4);background:transparent;color:var(--red);font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;">Откл</button>
+    </div>`).join('') : '<div style="text-align:center;color:var(--sub);padding:20px;">Заявок нет</div>';
+  const overlay = document.createElement('div');
+  overlay.id = id;
+  overlay.className = 'modal-overlay open';
+  overlay.innerHTML = `<div class="modal-sheet" onclick="event.stopPropagation()">
+    <div class="m-handle"></div>
+    <div class="m-head"><div class="m-title">Заявки на вступление (${reqs.length})</div>
+      <button class="m-close" onclick="document.getElementById('${id}').remove()"><i class="fa-solid fa-xmark"></i></button></div>
+    <div style="padding:14px;max-height:70vh;overflow-y:auto;">${list}</div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
+
+async function decideJoinReq(reqId, accept) {
+  if (!activeGroup) return;
+  try {
+    await chat(`/group/${activeGroup.id}/join_requests/${reqId}/decide`, 'POST', { accept });
+    showToast(accept ? 'Принят' : 'Отклонён');
+    document.getElementById('jrModal')?.remove();
+    setTimeout(() => openJoinRequests(), 200);
+    if (accept) {
+      // обновим список участников
+      const info = await chat(`/group/${activeGroup.id}`);
+      activeGroup.members = info.members;
+    }
+  } catch(e) { showToast(e.message || 'Ошибка'); }
 }
 
 async function openAddMember(){
