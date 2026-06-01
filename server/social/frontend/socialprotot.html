@@ -3937,6 +3937,7 @@ function openPostMenu(postId, anchor, mediaUrl, eventOrEl) {
   if (isOwn) {
     items.push({ icon: 'fa-pen', label: 'Редактировать', onClick: () => openEditPost(postId) });
     items.push({ icon: 'fa-gem', label: 'Минтить как NFT', onClick: () => mintPostAsNft(postId) });
+    items.push({ icon: 'fa-chart-line', label: 'Видимость + overwatch', onClick: () => openPostActivity(postId) });
     items.push({ icon: 'fa-trash-can', label: 'Удалить пост', danger: true, onClick: () => deletePost(postId) });
   }
   buildMenuItems(items);
@@ -4688,6 +4689,75 @@ function owCard(ow) {
         ).join('')}
       </div>`}
   </div>`;
+}
+
+// ── Видимость поста + покупка overwatch ──
+async function openPostActivity(postId) {
+  let data;
+  try { data = await api(`/post/${postId}/activity`); }
+  catch(e) { return showToast(e.message || 'Ошибка'); }
+  const a = data.activity;
+  const level = a >= 700 ? '🔥 Высокая' : a >= 300 ? '✅ Средняя' : a >= 100 ? '⚠️ Низкая' : '🚫 Скрыт';
+  const colour = a >= 700 ? '#22c55e' : a >= 300 ? 'var(--primary)' : a >= 100 ? '#fbbf24' : 'var(--red)';
+  const setSrc = { 'B': 'История юзера', 'overwatch': 'Решение модераторов', 'system': 'Авто-система', 'manual': 'Ручная' }[data.automod_source] || data.automod_source || '—';
+  const histHtml = data.history && data.history.length ? data.history.map(h => `
+    <div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:11px;">
+      <span style="color:var(--muted);width:60px;">${new Date(h.created_at*1000).toLocaleDateString('ru')}</span>
+      <span style="color:${h.delta > 0 ? '#22c55e' : h.delta < 0 ? 'var(--red)' : 'var(--sub)'};font-weight:700;width:50px;">${h.delta > 0 ? '+' : ''}${h.delta}</span>
+      <span style="color:var(--sub);flex:1;">${esc(h.source)}${h.note ? ' · ' + esc(h.note) : ''}</span>
+    </div>
+  `).join('') : '<div style="font-size:11px;color:var(--muted);text-align:center;padding:8px;">История пуста</div>';
+
+  const content = `
+    <div style="font-size:13px;line-height:1.6;">
+      <div style="text-align:center;padding:16px;background:rgba(168,85,247,0.05);border-radius:10px;margin-bottom:12px;">
+        <div style="font-size:32px;font-weight:800;color:${colour};">${a} <span style="font-size:14px;color:var(--sub);font-weight:500;">/ 1000</span></div>
+        <div style="font-size:13px;margin-top:4px;color:${colour};">${level}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px;">Источник: ${setSrc}</div>
+      </div>
+      <div style="font-size:11px;color:var(--sub);line-height:1.5;margin-bottom:10px;">
+        Activity влияет на показ в ленте. Низкая = пост реже виден.
+        Можно купить <b>overwatch</b> — модераторы переоценят пост (±150 за раз).
+      </div>
+      <div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.05em;margin:14px 0 6px;">История изменений</div>
+      <div style="background:rgba(0,0,0,0.20);border-radius:8px;padding:8px 12px;max-height:160px;overflow-y:auto;">${histHtml}</div>
+    </div>
+  `;
+  // Делаем confirm-like модалку через Dialog не получится с богатым UI — используем prompt-стайл inline
+  const id = 'paModal_' + postId;
+  document.getElementById(id)?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = id;
+  overlay.className = 'modal-overlay open';
+  overlay.innerHTML = `
+    <div class="modal-sheet" onclick="event.stopPropagation()">
+      <div class="m-handle"></div>
+      <div class="m-head">
+        <div class="m-title">📊 Активность поста</div>
+        <button class="m-close" onclick="document.getElementById('${id}').remove()"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div style="padding:14px 18px;">${content}</div>
+      <div style="padding:0 18px 18px;">
+        <button onclick="buyOverwatchForPost(${postId})" style="width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:13px;">
+          ⚖️ Купить overwatch — 300 Gost
+        </button>
+        <div style="text-align:center;font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4;">
+          3+ модератора оценят, среднее изменит activity до ±150.<br>Если activity ВЫРОСЛА — следующий overwatch будет дешевле.
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
+
+async function buyOverwatchForPost(postId) {
+  if (!await Dialog.confirm('Купить overwatch за 300 Gost?\n\n3+ модератора проверят пост, среднее их голосов (cap ±150) изменит activity. Решение нельзя отменить.', { title: 'Overwatch', okText: 'Купить' })) return;
+  try {
+    const r = await api(`/post/${postId}/overwatch`, 'POST');
+    Dialog.alert(`✅ Overwatch создан (#${r.request_id}). Списано ${r.price} Gost. Ждём голоса модераторов.`);
+    document.getElementById('paModal_' + postId)?.remove();
+    refreshWallet && refreshWallet();
+  } catch(e) { showToast(e.message || 'Ошибка'); }
 }
 
 async function applyForModerator() {

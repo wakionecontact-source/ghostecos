@@ -1469,17 +1469,34 @@ def get_posts(
     user = auth(authorization)
     uid = user["id"]
     c = db()
+    # ── Алгоритм ранжирования постов ──
+    # activity (0..1000) — главный коэффициент видимости (модерация + автомод)
+    # reactions — социальное доказательство
+    # recency — свежесть (чем старее, тем меньше веса; полураспад ~48ч для top)
+    # views — уже виденные постом юзером уходят ниже (только для top/смешанной сортировки)
     if sort == "top":
-        order = "(SELECT COUNT(*) FROM soc_reactions l WHERE l.post_id=p.id) DESC, p.created_at DESC"
+        # top = реакции × activity × recency_decay
+        order = (
+            "((SELECT COUNT(*) FROM soc_reactions l WHERE l.post_id=p.id) + 1) "
+            "* COALESCE(p.activity, 500) / 500.0 "
+            "* (1.0 / (1.0 + (strftime('%s','now') - strftime('%s', p.created_at)) / 172800.0)) "
+            "DESC, p.created_at DESC"
+        )
     elif sort == "old":
         order = "p.created_at ASC"
     elif sort == "random":
         # Псевдослучайный, но детерминированный для данного seed.
         # Без seed офсеты ломались бы — каждая страница тасовалась бы заново.
+        # Тоже бустится activity (popular content show чаще даже в рандоме)
         s = max(1, int(seed) % 1000003) or 1
-        order = f"((p.id * {s}) % 1000003)"
+        order = f"((p.id * {s}) % 1000003) / (COALESCE(p.activity, 500) / 500.0 + 0.1)"
     else:
-        order = "p.created_at DESC"
+        # new — по дате, но **бустим activity > 700** наверх (буст видимости)
+        # viewed_at не используется (юзер хочет новые в порядке времени)
+        order = (
+            "CASE WHEN COALESCE(p.activity, 500) >= 700 THEN 0 ELSE 1 END, "
+            "p.created_at DESC"
+        )
 
     where = ["p.kind='post'"]  # обычная лента — без минисок
     where.append("COALESCE(p.activity, 500) >= 10")  # ниже 10 = не показываем (модерация)
@@ -1545,63 +1562,106 @@ def get_feed_candidates(
         excl_sql = f"AND p.id NOT IN ({ph})"
         excl_params = excluded
 
-    n_new = max(1, int(limit * 0.4))
-    n_top = max(1, int(limit * 0.3))
-    n_rnd = max(1, limit - n_new - n_top)
+    # Пропорции candidate-pool:
+    # 30% follow — посты от тех на кого подписан (если есть подписки)
+    # 30% fresh — свежие за 24ч с боустом activity
+    # 25% top — топ по weighted score (реакции × activity × recency)
+    # 15% random — discovery
+    n_follow = max(1, int(limit * 0.30))
+    n_new = max(1, int(limit * 0.30))
+    n_top = max(1, int(limit * 0.25))
+    n_rnd = max(1, limit - n_follow - n_new - n_top)
+    # Минимальная activity для feed (< 10 → shadow ban / снято модерацией)
+    MIN_ACTIVITY = 10
 
     c = db()
-    # Свежие за 24ч
+    # 1. От тех, на кого подписан (если есть)
+    follow_taken = []
+    if not excluded:
+        follow_sql_excl = ""
+        follow_params = [uid, MIN_ACTIVITY, n_follow]
+    else:
+        ph_excl = ",".join("?" * len(excluded))
+        follow_sql_excl = f"AND p.id NOT IN ({ph_excl})"
+        follow_params = [uid] + list(excluded) + [MIN_ACTIVITY, n_follow]
+    follow_rows = c.execute(f"""
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
+               u.username, u.display_name,
+               (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
+        FROM soc_posts p
+        JOIN users u ON p.user_id=u.id
+        JOIN soc_follows f ON f.followee_id=p.user_id AND f.follower_id=?
+        WHERE p.kind='post' {follow_sql_excl} AND COALESCE(p.activity,500) >= ?
+          AND p.created_at >= datetime('now', '-7 days')
+        ORDER BY p.created_at DESC
+        LIMIT ?
+    """, follow_params).fetchall()
+
+    # 2. Свежие за 24ч с буст activity (учитываем уже взятые из follow)
+    taken_ids = {r["id"] for r in follow_rows} | set(excluded)
+    if taken_ids:
+        ph_t = ",".join("?" * len(taken_ids))
+        fresh_sql = f"AND p.id NOT IN ({ph_t})"
+        fresh_params = list(taken_ids) + [MIN_ACTIVITY, n_new + offset]
+    else:
+        fresh_sql = ""
+        fresh_params = [MIN_ACTIVITY, n_new + offset]
     fresh = c.execute(f"""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
-        WHERE p.created_at >= datetime('now', '-1 day') {excl_sql}
-        ORDER BY p.created_at DESC
-        LIMIT ? OFFSET ?
-    """, excl_params + [n_new, offset]).fetchall()
+        WHERE p.kind='post' AND p.created_at >= datetime('now', '-1 day')
+          {fresh_sql} AND COALESCE(p.activity,500) >= ?
+        ORDER BY (COALESCE(p.activity,500) / 500.0) DESC, p.created_at DESC
+        LIMIT ?
+    """, fresh_params).fetchall()
+    # offset-эмуляция для fresh (избегаем дубликата с другими страницами)
+    fresh = fresh[offset:offset + n_new] if offset < len(fresh) else []
 
-    # Топ по реакциям за неделю (минус уже взятые)
-    # ВАЖНО: NOT IN (NULL) → UNKNOWN → возвращает 0 строк. Поэтому при пустом taken
-    # вообще не добавляем NOT IN.
-    taken = {r["id"] for r in fresh} | set(excluded)
+    # 3. Топ по weighted score за неделю
+    taken = {r["id"] for r in follow_rows} | {r["id"] for r in fresh} | set(excluded)
     if taken:
         not_in_sql_top = f"AND p.id NOT IN ({','.join('?' * len(taken))})"
-        top_params = list(taken) + [n_top]
+        top_params = list(taken) + [MIN_ACTIVITY, n_top]
     else:
         not_in_sql_top = ""
-        top_params = [n_top]
+        top_params = [MIN_ACTIVITY, n_top]
     top = c.execute(f"""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
-        WHERE p.created_at >= datetime('now', '-7 days')
-          {not_in_sql_top}
-        ORDER BY (SELECT COUNT(*) FROM soc_reactions WHERE post_id=p.id) DESC, p.created_at DESC
+        WHERE p.kind='post' AND p.created_at >= datetime('now', '-7 days')
+          {not_in_sql_top} AND COALESCE(p.activity,500) >= ?
+        ORDER BY (
+          ((SELECT COUNT(*) FROM soc_reactions WHERE post_id=p.id) + 1)
+          * COALESCE(p.activity, 500) / 500.0
+          * (1.0 / (1.0 + (strftime('%s','now') - strftime('%s', p.created_at)) / 172800.0))
+        ) DESC, p.created_at DESC
         LIMIT ?
     """, top_params).fetchall()
 
-    # Рандомные (детерминирован по uid и offset чтобы при докачке не повторялись)
+    # 4. Рандомные (discovery — детерминирован по uid и offset)
     seed = (uid * 9973 + offset * 17 + 1) % 1000003
     taken |= {r["id"] for r in top}
     if taken:
-        where_rnd = f"WHERE p.id NOT IN ({','.join('?' * len(taken))})"
-        rnd_params = list(taken) + [n_rnd]
+        where_rnd = f"WHERE p.kind='post' AND p.id NOT IN ({','.join('?' * len(taken))}) AND COALESCE(p.activity,500) >= ?"
+        rnd_params = list(taken) + [MIN_ACTIVITY, n_rnd]
     else:
-        where_rnd = ""
-        rnd_params = [n_rnd]
+        where_rnd = "WHERE p.kind='post' AND COALESCE(p.activity,500) >= ?"
+        rnd_params = [MIN_ACTIVITY, n_rnd]
     rnd = c.execute(f"""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
         {where_rnd}
-        ORDER BY ((p.id * {seed}) % 1000003)
+        ORDER BY ((p.id * {seed}) % 1000003) / (COALESCE(p.activity, 500) / 500.0 + 0.1)
         LIMIT ?
     """, rnd_params).fetchall()
 
-    all_rows = list(fresh) + list(top) + list(rnd)
+    all_rows = list(follow_rows) + list(fresh) + list(top) + list(rnd)
     result = _hydrate_posts(c, all_rows, uid)
     c.close()
     return result
