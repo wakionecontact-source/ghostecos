@@ -730,6 +730,12 @@ def init():
     except sqlite3.OperationalError:
         pass
 
+    # Колонка для постов-репостов из каналов GC (Фаза 3 каналов)
+    try: c.execute("ALTER TABLE soc_posts ADD COLUMN source_channel_id INTEGER")
+    except sqlite3.OperationalError: pass
+    try: c.execute("CREATE INDEX IF NOT EXISTS idx_posts_source_channel ON soc_posts(source_channel_id) WHERE source_channel_id IS NOT NULL")
+    except sqlite3.OperationalError: pass
+
     # ── Модерация (Фаза 2+3) ──
     try: c.execute("ALTER TABLE users ADD COLUMN is_moderator INTEGER NOT NULL DEFAULT 0")
     except sqlite3.OperationalError: pass
@@ -1450,11 +1456,28 @@ def _hydrate_posts(c, rows: list, uid: int) -> list:
                 "is_quiz": bool(r["is_quiz"]),
                 "correct_idx": r["correct_idx"] if (r["is_quiz"] and mv is not None) else None,
             }
+    # Канал-источники для постов из каналов (один запрос на пачку)
+    channel_map = {}
+    src_ids = list({r["source_channel_id"] for r in rows if "source_channel_id" in r.keys() and r["source_channel_id"]})
+    if src_ids:
+        cph = ",".join("?" * len(src_ids))
+        ch_rows = c.execute(
+            f"SELECT id, name, username, kind FROM chat_groups WHERE id IN ({cph})",
+            src_ids
+        ).fetchall()
+        channel_map = {ch["id"]: dict(ch) for ch in ch_rows}
     out = []
     for r in rows:
         post = fmt_post(dict(r), uid, per_post[r["id"]], r["user_id"] in followed)
         if r["id"] in polls_map:
             post["poll"] = polls_map[r["id"]]
+        # Бейдж канала-источника
+        sci = r["source_channel_id"] if "source_channel_id" in r.keys() else None
+        if sci and channel_map.get(sci):
+            ch = channel_map[sci]
+            post["from_channel"] = {
+                "id": ch["id"], "name": ch["name"], "username": ch["username"],
+            }
         out.append(post)
     return out
 
@@ -1520,7 +1543,7 @@ def get_posts(
 
     params_with_uid = [uid] + params + [offset]
     rows = c.execute(f"""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
                u.username, u.display_name, p.activity,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p
@@ -1585,7 +1608,7 @@ def get_feed_candidates(
         follow_sql_excl = f"AND p.id NOT IN ({ph_excl})"
         follow_params = [uid] + list(excluded) + [MIN_ACTIVITY, n_follow]
     follow_rows = c.execute(f"""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p
@@ -1607,7 +1630,7 @@ def get_feed_candidates(
         fresh_sql = ""
         fresh_params = [MIN_ACTIVITY, n_new + offset]
     fresh = c.execute(f"""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -1628,7 +1651,7 @@ def get_feed_candidates(
         not_in_sql_top = ""
         top_params = [MIN_ACTIVITY, n_top]
     top = c.execute(f"""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -1652,7 +1675,7 @@ def get_feed_candidates(
         where_rnd = "WHERE p.kind='post' AND COALESCE(p.activity,500) >= ?"
         rnd_params = [MIN_ACTIVITY, n_rnd]
     rnd = c.execute(f"""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -1724,7 +1747,7 @@ def get_one_post(post_id: int, authorization: Optional[str] = Header(None)):
     uid = user["id"]
     c = db()
     row = c.execute("""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -1843,7 +1866,7 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
     # Подтянуть только что созданный пост в полном формате и разослать
     c2 = db()
     row = c2.execute("""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
                u.username, u.display_name,
                0 as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id WHERE p.id=?
@@ -1941,7 +1964,7 @@ def edit_post(post_id: int, body: EditPostBody, authorization: Optional[str] = H
     c.commit()
     # Broadcast обновлённого поста
     row = c.execute("""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id WHERE p.id=?
@@ -2009,7 +2032,7 @@ def search(q: str = Query(...), offset: int = Query(0), authorization: Optional[
         return {"type": "users", "results": [dict(r) for r in rows]}
     else:
         rows = c.execute("""
-            SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
+            SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
                    u.username, u.display_name,
                    (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
             FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -2037,7 +2060,7 @@ def get_profile(username: str, offset: int = Query(0), authorization: Optional[s
         "SELECT 1 FROM soc_follows WHERE follower_id=? AND followee_id=?", (uid, u["id"])
     ).fetchone() is not None
     rows = c.execute("""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -2066,7 +2089,7 @@ def get_profile_posts(username: str, offset: int = Query(0), authorization: Opti
         c.close()
         raise HTTPException(404, "User not found")
     rows = c.execute("""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -3183,7 +3206,7 @@ def miniska_feed(
     seed = (uid * 9973 + offset * 17 + 1) % 1000003 if uid else 12345
     c = db()
     rows = c.execute(f"""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id,
                u.username, u.display_name,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id

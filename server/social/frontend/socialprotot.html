@@ -2925,6 +2925,10 @@ function postHTML(p, hq) {
   return `<div class="post-card" data-id="${p.id}">
     ${isNew ? `<div class="new-marker" data-dot="${p.id}">NEW</div>` : ''}
     <button class="post-menu-btn" data-action="menu" data-post="${p.id}" title="Меню"><i class="fa-solid fa-ellipsis"></i></button>
+    ${p.from_channel ? `<div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:rgba(168,85,247,0.10);border:1px solid rgba(168,85,247,0.25);border-radius:8px;margin-bottom:8px;font-size:11px;color:var(--primary);font-weight:600;">
+      <i class="fa-solid fa-bullhorn" style="font-size:10px;"></i>
+      <span>Канал · <b>${esc(p.from_channel.name)}</b>${p.from_channel.username ? ' <span style="color:var(--sub);font-weight:500;">@'+esc(p.from_channel.username)+'</span>' : ''}</span>
+    </div>` : ''}
     <div class="post-header" data-username="${esc(p.username)}">
       <div class="post-av">${ini(p.display_name)}</div>
       <div class="post-info">

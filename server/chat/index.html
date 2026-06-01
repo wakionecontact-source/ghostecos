@@ -2719,6 +2719,68 @@ function emojiInsert(emo) {
   inp.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+// ── Контекстное меню кнопки "Отправить" (Фаза 3 каналов: + публикация в GS) ──
+let _sendLongPressTimer = null;
+function sendLongPressStart(ev) {
+  if (_sendLongPressTimer) clearTimeout(_sendLongPressTimer);
+  _sendLongPressTimer = setTimeout(() => { openSendOptions(); }, 500);
+}
+function sendLongPressEnd() {
+  if (_sendLongPressTimer) { clearTimeout(_sendLongPressTimer); _sendLongPressTimer = null; }
+}
+
+async function openSendOptions() {
+  // Только в активном канале (kind='channel') и у админа имеет смысл показывать "опубликовать в GS"
+  const isChannel = activeGroup && activeGroup.kind === 'channel';
+  const isPublicChannel = isChannel && activeGroup.is_public;
+  const myMember = activeGroup && activeGroup.members && activeGroup.members.find(m => m.id === me.id);
+  const iAmAdmin = myMember && (myMember.is_admin || myMember.is_owner);
+  if (!isPublicChannel || !iAmAdmin) {
+    // Обычный send — нет смысла в опциях
+    return onSendBtn();
+  }
+  const inp = document.getElementById('sendInput');
+  const text = (inp ? inp.value : '').trim();
+  if (!text) { showToast('Напиши сообщение сначала'); return; }
+  const opts = await new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay open';
+    overlay.style.zIndex = '700';
+    overlay.innerHTML = `<div class="modal-sheet" onclick="event.stopPropagation()">
+      <div class="m-handle"></div>
+      <div class="m-head"><div class="m-title">Отправить</div>
+        <button class="m-close" onclick="this.closest('.modal-overlay').remove();window._sendOptResolve&&window._sendOptResolve(null)"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div style="padding:14px 18px;display:flex;flex-direction:column;gap:8px;">
+        <button id="sendOptOnly" style="padding:12px;border-radius:10px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-weight:600;cursor:pointer;font-family:inherit;font-size:13px;text-align:left;">
+          <i class="fa-solid fa-paper-plane" style="margin-right:8px;color:var(--primary);"></i>Только в канал
+        </button>
+        <button id="sendOptBoth" style="padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:13px;text-align:left;">
+          <i class="fa-solid fa-share-nodes" style="margin-right:8px;"></i>В канал + пост в GhostSocial
+        </button>
+        <div style="font-size:11px;color:var(--sub);text-align:center;line-height:1.5;margin-top:4px;">
+          Пост в GS будет доступен публично, с пометкой канала. Комменты и реакции — там же.
+        </div>
+      </div>
+    </div>`;
+    document.body.appendChild(overlay);
+    window._sendOptResolve = resolve;
+    overlay.querySelector('#sendOptOnly').onclick = () => { overlay.remove(); resolve('only'); };
+    overlay.querySelector('#sendOptBoth').onclick = () => { overlay.remove(); resolve('both'); };
+    overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); resolve(null); } });
+  });
+  if (!opts) return;
+  // Отправка в канал (как обычное сообщение)
+  await onSendBtn();
+  // И если both — публикуем в GS
+  if (opts === 'both') {
+    try {
+      await chat(`/group/${activeGroup.id}/publish_to_gs`, 'POST', { text });
+      showToast('Опубликовано в GhostSocial');
+    } catch(e) { showToast('Не удалось опубликовать: ' + (e.message || ''), true); }
+  }
+}
+
 // Bottom sheet attach
 function openAttachSheet(){
   if (activeGroup) {
@@ -3591,7 +3653,7 @@ function renderGroupChat(){
         <textarea class="send-input" id="sendInput" placeholder="${g.kind==='channel'?'Сообщение в канал':'Сообщение в группу'}" rows="1"></textarea>
         <button class="foot-btn" title="Эмодзи" onclick="openEmojiSheet()"><i class="fa-regular fa-face-smile"></i></button>
       </div>
-      <button class="foot-btn send" id="sendBtn" onclick="onSendBtn()" title="Отправить"><i class="fa-solid fa-paper-plane" id="sendIcon"></i></button>
+      <button class="foot-btn send" id="sendBtn" onclick="onSendBtn()" oncontextmenu="event.preventDefault();openSendOptions()" ontouchstart="sendLongPressStart(event)" ontouchend="sendLongPressEnd()" ontouchcancel="sendLongPressEnd()" title="Отправить (зажать — опции)"><i class="fa-solid fa-paper-plane" id="sendIcon"></i></button>
     </div>` : `
     <div style="padding:14px 18px;background:var(--surface);border-top:1px solid var(--border);text-align:center;color:var(--sub);font-size:13px;">
       <i class="fa-solid fa-lock" style="margin-right:6px;opacity:0.6;"></i>В канале писать могут только админы

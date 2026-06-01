@@ -947,6 +947,58 @@ class GroupJoinRequestBody(BaseModel):
     pass  # пустое тело — endpoint berёт user из auth, group_id из path
 
 
+class ChannelPublishBody(BaseModel):
+    text: str  # открытый текст для GS-поста (НЕ зашифрован)
+
+
+@router.post("/group/{gid}/publish_to_gs")
+def group_publish_to_gs(gid: int, body: ChannelPublishBody, authorization: Optional[str] = Header(None)):
+    """Опубликовать сообщение от имени канала как пост в GhostSocial.
+    Только публичные каналы (приватные = E2E, не для общего доступа).
+    Только админ/owner канала. Создаёт обычный пост с source_channel_id."""
+    user = auth_member(authorization)
+    _rate_limit(f"chpub:{user['id']}", limit=60, window=3600)
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Текст обязателен")
+    if len(text) > 1000:
+        raise HTTPException(400, "До 1000 символов")
+    c = db()
+    g = c.execute(
+        "SELECT id, name, kind, is_public, owner_id, username FROM chat_groups WHERE id=?",
+        (gid,)
+    ).fetchone()
+    if not g:
+        c.close(); raise HTTPException(404, "Канал не найден")
+    if g["kind"] != "channel":
+        c.close(); raise HTTPException(400, "Только каналы могут публиковать в GS")
+    if not g["is_public"]:
+        c.close(); raise HTTPException(403, "Только публичные каналы могут публиковать")
+    if not _is_group_admin(c, gid, user["id"]):
+        c.close(); raise HTTPException(403, "Только админ канала")
+    # Создаём пост от имени owner-а канала (он — формально автор поста)
+    # Начальная activity = 500 (стандарт), source_channel_id для UI-бейджа
+    import time as _t
+    now_ts = int(_t.time())
+    c.execute(
+        "INSERT INTO soc_posts (user_id, content, media, activity, activity_set_at, automod_source, source_channel_id) "
+        "VALUES (?,?,?,500,?,?,?)",
+        (g["owner_id"], text, None, now_ts, 'channel_publish', gid),
+    )
+    post_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
+    c.execute(
+        "INSERT INTO soc_activity_log (post_id, old_activity, new_activity, delta, source, actor_id, note, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (post_id, None, 500, 500, 'channel_publish', user["id"],
+         f"channel #{gid} @{g['username'] or g['name']}", now_ts),
+    )
+    c.commit(); c.close()
+    try:
+        ws_hub.broadcast("post.new", {"post_id": post_id, "from_channel": True})
+    except Exception: pass
+    return {"status": "ok", "post_id": post_id}
+
+
 @router.post("/group/{gid}/join_request")
 def group_join_request(gid: int, authorization: Optional[str] = Header(None)):
     """Подать заявку на вступление в приватный канал/группу."""
