@@ -783,12 +783,14 @@ async function decryptFromPeer(peerUsername, cipherB64){
     const r = await chat(`/keys/${encodeURIComponent(peerUsername)}`);
     if (!r.x25519_pub) throw new Error('Нет ключа отправителя');
     pub = r.x25519_pub;
-    // При расшифровке: если ключ поменялся, всё равно пробуем — но молча пиннуем.
-    // Если расшифровка не пройдёт (AES-GCM tag mismatch) — это уже сигнал что что-то не так.
     const existing = await pinnedPubKey(peerUsername);
-    if (!existing) await pinPubKey(peerUsername, pub, true);
-    // Note: не блокируем здесь, потому что сообщение УЖЕ зашифровано тем ключом,
-    // которым нас зашифровали. Если ключ собеседника подменён — расшифровка упадёт.
+    if (existing && existing.pub !== pub) {
+      // Ключ собеседника изменился — НЕ молчим. Просим подтверждения через TOFU-UI.
+      const trusted = await verifyAndPinPub(peerUsername, pub);
+      if (!trusted) throw new Error(`Ключ @${peerUsername} изменился, доверие не подтверждено`);
+    } else if (!existing) {
+      await pinPubKey(peerUsername, pub, true);
+    }
     pubCache.set(peerUsername, pub);
   }
   const theirPub = await importPub(pub);
@@ -3177,14 +3179,19 @@ async function encryptForGroup(members, payload){
 }
 
 async function decryptGroupEnvelope(senderUsername, envelopeB64){
-  // Получаем pub отправителя (с кэшем + TOFU)
+  // Получаем pub отправителя (с кэшем + TOFU как в DM)
   let pub = pubCache.get(senderUsername);
   if (!pub) {
     const r = await chat(`/keys/${encodeURIComponent(senderUsername)}`);
     if (!r.x25519_pub) throw new Error('Нет ключа отправителя');
     pub = r.x25519_pub;
     const existing = await pinnedPubKey(senderUsername);
-    if (!existing) await pinPubKey(senderUsername, pub, true);
+    if (existing && existing.pub !== pub) {
+      const trusted = await verifyAndPinPub(senderUsername, pub);
+      if (!trusted) throw new Error(`Ключ @${senderUsername} в группе изменился, доверие не подтверждено`);
+    } else if (!existing) {
+      await pinPubKey(senderUsername, pub, true);
+    }
     pubCache.set(senderUsername, pub);
   }
   const theirPub = await importPub(pub);

@@ -2068,12 +2068,23 @@ def edit_me(body: EditProfileBody, authorization: Optional[str] = Header(None)):
 
     set_clause = ", ".join(f"{k}=?" for k in updates)
     c.execute(f"UPDATE users SET {set_clause} WHERE id=?", list(updates.values()) + [user["id"]])
+    new_token = None
+    if body.new_password is not None:
+        # Инвалидируем ВСЕ старые токены — украденный токен переставлет работать.
+        # Текущей сессии выдаём свежий токен.
+        c.execute("DELETE FROM soc_tokens WHERE user_id=?", (user["id"],))
+        new_token = secrets.token_hex(32)
+        c.execute("INSERT INTO soc_tokens (user_id, token) VALUES (?,?)", (user["id"], new_token))
     c.commit()
     row = c.execute(
         "SELECT id, username, display_name FROM users WHERE id=?", (user["id"],)
     ).fetchone()
     c.close()
-    return {"status": "ok", "id": row["id"], "username": row["username"], "display_name": row["display_name"]}
+    out = {"status": "ok", "id": row["id"], "username": row["username"], "display_name": row["display_name"]}
+    if new_token:
+        out["token"] = new_token
+        out["password_changed"] = True
+    return out
 
 # ── Likes ──────────────────────────────────────────────────────────────────────
 

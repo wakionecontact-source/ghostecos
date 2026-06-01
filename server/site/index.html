@@ -1158,10 +1158,15 @@
         .then(d => {
           if (!d || !d.exists) return;
           localStorage.setItem('gs_ref', clean);
-          // Покажем баннер "Вас пригласил @user"
+          // Покажем баннер "Вас пригласил @user" — БЕЗ innerHTML (display_name пользователя
+          // может содержать HTML/JS; _val_name на бэке не блокирует <>'"&)
           const banner = document.createElement('div');
           banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:linear-gradient(135deg,#a855f7,#ec4899);color:#fff;padding:10px 16px;text-align:center;font-size:13px;font-weight:600;z-index:1000;box-shadow:0 4px 16px rgba(168,85,247,0.4);';
-          banner.innerHTML = `Вас пригласил <b>${d.display_name || '@' + d.username}</b> · +30 Gost при регистрации`;
+          const prefix = document.createTextNode('Вас пригласил ');
+          const bold = document.createElement('b');
+          bold.textContent = d.display_name || ('@' + d.username);
+          const suffix = document.createTextNode(' · +30 Gost при регистрации');
+          banner.appendChild(prefix); banner.appendChild(bold); banner.appendChild(suffix);
           document.body.appendChild(banner);
           document.body.style.paddingTop = '44px';
         }).catch(() => {});
