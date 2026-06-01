@@ -63,6 +63,7 @@ class VoteBody(BaseModel):
 class EditPostBody(BaseModel):
     text: Optional[str] = None
     media: Optional[List[dict]] = None  # медиа можно только УБРАТЬ (сократить список), не добавить
+    is_nsfw: Optional[bool] = None      # автор может пометить позже; снять можно только если nsfw_set_by IS NULL
 
 class CommentBody(BaseModel):
     text: str
@@ -1963,6 +1964,9 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
     # Награда автору за пост (cap 25/день — антиспам)
     try: award_gost(user["id"], 'post', ref_type='post', ref_id=post_id)
     except Exception: pass
+    # Реактивное восстановление репутации: если прошла неделя с последнего изменения и score < 100
+    try: _restore_reputation_if_due(user["id"])
+    except Exception: pass
     return {"status": "ok", "post_id": post_id}
 
 @router.patch("/post/{post_id}")
@@ -1981,20 +1985,26 @@ def edit_post(post_id: int, body: EditPostBody, authorization: Optional[str] = H
         c.close()
         raise HTTPException(403, "Forbidden")
 
+    # Если правится ТОЛЬКО is_nsfw — окно редактирования не применяется (это безопасный mark).
+    nsfw_only_edit = (
+        body.is_nsfw is not None and body.text is None and body.media is None
+    )
+
     # Окно редактирования: только в течение 30 минут после публикации.
     # Также если уже редактировали — не чаще раз в 30 минут.
     # (раньше проверялось только edited_at; если NULL — можно было править через год)
-    reference_ts = p.get("edited_at") or p.get("created_at")
-    if reference_ts:
-        ok_after = c.execute(
-            "SELECT (strftime('%s','now') - strftime('%s', ?)) >= 1800 as ok", (reference_ts,)
-        ).fetchone()["ok"]
-        if not ok_after:
-            wait = c.execute(
-                "SELECT 1800 - (strftime('%s','now') - strftime('%s', ?)) as s", (reference_ts,)
-            ).fetchone()["s"]
-            c.close()
-            raise HTTPException(429, f"Можно редактировать раз в 30 минут. Подождите ещё {max(1, wait//60)} мин.")
+    if not nsfw_only_edit:
+        reference_ts = p.get("edited_at") or p.get("created_at")
+        if reference_ts:
+            ok_after = c.execute(
+                "SELECT (strftime('%s','now') - strftime('%s', ?)) >= 1800 as ok", (reference_ts,)
+            ).fetchone()["ok"]
+            if not ok_after:
+                wait = c.execute(
+                    "SELECT 1800 - (strftime('%s','now') - strftime('%s', ?)) as s", (reference_ts,)
+                ).fetchone()["s"]
+                c.close()
+                raise HTTPException(429, f"Можно редактировать раз в 30 минут. Подождите ещё {max(1, wait//60)} мин.")
 
     updates = []
     params = []
@@ -2038,11 +2048,30 @@ def edit_post(post_id: int, body: EditPostBody, authorization: Optional[str] = H
         updates.append("media=?")
         params.append(json.dumps(kept, ensure_ascii=False) if kept else None)
 
+    if body.is_nsfw is not None:
+        new_val = 1 if body.is_nsfw else 0
+        cur_val = int(p.get("is_nsfw") or 0)
+        cur_setby = p.get("nsfw_set_by")
+        # Снять nsfw можно только если автор сам пометил (nsfw_set_by=NULL).
+        # Если модератор пометил — автор не может снять.
+        if new_val == 0 and cur_val == 1 and cur_setby is not None:
+            c.close()
+            raise HTTPException(403, "NSFW поставлен модерацией — снять может только модератор")
+        # Не пишем апдейт если значение не меняется
+        if new_val != cur_val:
+            updates.append("is_nsfw=?")
+            params.append(new_val)
+            # При выставлении автором — nsfw_set_by остаётся NULL (значит «автор сам»).
+            # При снятии — тоже NULL.
+            updates.append("nsfw_set_by=NULL")
+
     if not updates:
         c.close()
         raise HTTPException(422, "Нечего менять")
 
-    updates.append("edited_at=datetime('now')")
+    # NSFW-only edit не помечаем как «отредактировано» — это просто метка
+    if not nsfw_only_edit:
+        updates.append("edited_at=datetime('now')")
     params.append(post_id)
     c.execute(f"UPDATE soc_posts SET {', '.join(updates)} WHERE id=?", params)
     c.commit()
@@ -3608,6 +3637,49 @@ def _sum_source_24h(c, user_id: int, source: str) -> int:
         (user_id, source),
     ).fetchone()
     return row["s"] or 0
+
+
+def _restore_reputation_if_due(user_id: int) -> Optional[int]:
+    """Реактивное восстановление репутации: +1 если прошло >=7 дней с последнего изменения.
+    Срабатывает при любом активном действии юзера (создание поста, коммента и т.п.).
+    Если score уже 100 — ничего не делает. Возвращает new_score или None."""
+    c = db()
+    try:
+        row = c.execute(
+            "SELECT reputation_score, reputation_updated_at FROM users WHERE id=?", (user_id,)
+        ).fetchone()
+        if not row:
+            c.close(); return None
+        score = int(row["reputation_score"] if row["reputation_score"] is not None else 100)
+        if score >= 100:
+            c.close(); return None
+        last = int(row["reputation_updated_at"] or 0)
+        now = int(time.time())
+        # Сколько полных недель прошло — столько +1 (но не выше 100)
+        if last <= 0:
+            # никогда не было апдейтов — просто проставим now без бонуса
+            c.execute("UPDATE users SET reputation_updated_at=? WHERE id=?", (now, user_id))
+            c.commit(); c.close(); return score
+        weeks = max(0, (now - last) // (7 * 86400))
+        if weeks <= 0:
+            c.close(); return score
+        bonus = min(weeks, 100 - score)
+        new_score = score + bonus
+        c.execute(
+            "UPDATE users SET reputation_score=?, reputation_updated_at=? WHERE id=?",
+            (new_score, now, user_id),
+        )
+        c.execute(
+            "INSERT INTO soc_reputation_log (user_id, delta, old_score, new_score, reason, actor_id, post_id, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (user_id, bonus, score, new_score, 'restore_weekly', None, None, now),
+        )
+        c.commit(); c.close()
+        return new_score
+    except Exception:
+        try: c.close()
+        except Exception: pass
+        return None
 
 
 def award_gost(

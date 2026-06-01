@@ -246,6 +246,30 @@ def health():
 # ── Архивирование страны (вызывается из социалки при удалении аккаунта) ──
 _NATION_INTERNAL_TOKEN = os.getenv("NATION_INTERNAL_TOKEN")
 
+@app.post("/api/nation/cleanup_archived")
+def cleanup_archived(days: int = Query(180), x_internal_token: Optional[str] = Header(None)):
+    """Удаляет архивированные страны старше N дней (по умолчанию 180).
+    Защищён внутренним токеном. Можно дергать из cron.
+    """
+    if not _NATION_INTERNAL_TOKEN or x_internal_token != _NATION_INTERNAL_TOKEN:
+        raise HTTPException(403, "Forbidden")
+    if days < 1 or days > 3650:
+        raise HTTPException(400, "days must be 1..3650")
+    cutoff = int(time.time()) - days * 86400
+    con = _db()
+    rows = con.execute(
+        "SELECT owner FROM country WHERE archived=1 AND COALESCE(archived_at,0) < ?",
+        (cutoff,),
+    ).fetchall()
+    deleted = [r["owner"] for r in rows]
+    if deleted:
+        ph = ",".join("?" * len(deleted))
+        con.execute(f"DELETE FROM country WHERE owner IN ({ph})", deleted)
+        con.commit()
+    con.close()
+    return {"ok": True, "deleted": len(deleted), "cutoff_ts": cutoff}
+
+
 @app.post("/api/nation/archive/{username}")
 def archive_country(username: str, x_internal_token: Optional[str] = Header(None)):
     """Архивирует страну юзера (постройки остаются на карте, но без владельца).
