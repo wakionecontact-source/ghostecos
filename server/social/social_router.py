@@ -1642,9 +1642,7 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
     posts_cnt = c.execute(
         "SELECT COUNT(*) as n FROM soc_posts WHERE user_id=?", (user["id"],)
     ).fetchone()["n"]
-    is_banned = c.execute(
-        "SELECT 1 FROM users WHERE id=? AND COALESCE(blocked,0)=1", (user["id"],)
-    ).fetchone()
+    is_banned = False  # колонки бан-флага сейчас нет в users; добавим позже
     # Дни с регистрации (created_at — ISO TIMESTAMP, простая оценка)
     try:
         import datetime as _dt

@@ -2279,14 +2279,15 @@ function renderMessages(){
   loadMsgPreviews();
 }
 
-// Галочки статуса (TG-style):
-// отправлено (ждём подтверждения от ресивера) → ⏱ таймер
-// доставлено (receiver получил)              → ✓ одна
-// прочитано (receiver открыл)                → ✓✓ синие
+// Статусы доставки:
+// pending (ещё не отправлено серверу)            → ⏱ таймер (рендер выше, не здесь)
+// сохранено на сервере (ждём receiver онлайн)    → 💾 дискета
+// доставлено (receiver получил)                  → ✓ одна
+// прочитано (receiver открыл чат)                → ✓✓ синие
 function renderTicks(m) {
   if (m.read) return '<i class="fa-solid fa-check-double" style="color:#22d3ee;"></i>';
   if (m.delivered) return '<i class="fa-solid fa-check"></i>';
-  return '<i class="fa-regular fa-clock" style="opacity:0.7;"></i>';
+  return '<i class="fa-solid fa-floppy-disk" style="opacity:0.75;"></i>';
 }
 
 // Чипы реакций под bubble
