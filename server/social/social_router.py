@@ -2145,6 +2145,10 @@ def get_me(authorization: Optional[str] = Header(None)):
         }
     c = db()
     stats = get_user_stats(c, user["id"])
+    # Flags: is_admin (owner экосистемы), is_moderator (роль)
+    flags_row = c.execute(
+        "SELECT is_admin, is_moderator FROM users WHERE id=?", (user["id"],)
+    ).fetchone()
     c.close()
     return {
         "id": user["id"],
@@ -2152,6 +2156,8 @@ def get_me(authorization: Optional[str] = Header(None)):
         "username": user["username"],
         "display_name": user["display_name"],
         "is_guest": False,
+        "is_admin": _is_admin_user({**user, "is_admin": (flags_row["is_admin"] if flags_row else 0)}),
+        "is_moderator": bool(flags_row and flags_row["is_moderator"]),
         **stats,
     }
 
@@ -2587,8 +2593,8 @@ def post_activity(post_id: int, authorization: Optional[str] = Header(None)):
     ).fetchone()
     if not p:
         c.close(); raise HTTPException(404, "Не найден")
-    if p["user_id"] != user["id"]:
-        c.close(); raise HTTPException(403, "Только автор")
+    if p["user_id"] != user["id"] and not _is_admin_user(user):
+        c.close(); raise HTTPException(403, "Только автор или admin")
     history = c.execute(
         "SELECT old_activity, new_activity, delta, source, note, created_at "
         "FROM soc_activity_log WHERE post_id=? ORDER BY id DESC LIMIT 20",
@@ -2664,17 +2670,21 @@ def mod_apply(authorization: Optional[str] = Header(None)):
             "UPDATE soc_wallets SET gost = gost - ?, updated_at = CURRENT_TIMESTAMP WHERE user_id=?",
             (MOD_APPLY_PRICE_GOST, user["id"]),
         )
-        # Quality score для сортировки: больше постов + дольше зареган + 0 жалоб = выше
+        # Quality score 0-100: чем активнее аккаунт, тем выше.
+        # Пустой/новый акк = 0 (раньше был +50 базовый — убрал, бесполезно).
         posts_cnt = c.execute(
             "SELECT COUNT(*) as n FROM soc_posts WHERE user_id=?", (user["id"],)
+        ).fetchone()["n"]
+        comments_cnt = c.execute(
+            "SELECT COUNT(*) as n FROM soc_comments WHERE user_id=?", (user["id"],)
         ).fetchone()["n"]
         days_reg_row = c.execute(
             "SELECT (julianday('now') - julianday(created_at)) as days FROM users WHERE id=?",
             (user["id"],)
         ).fetchone()
         days_reg = int(days_reg_row["days"] or 0)
-        # quality = min(100, max(0, posts*0.5 + days_reg*0.3 + 50))
-        quality = max(0, min(100, int(posts_cnt * 0.5 + days_reg * 0.3 + 50)))
+        # Формула: posts*0.5 (max 50) + days*0.5 (max 50) + comments*0.1 (max 10) = 0..110, capped 100
+        quality = max(0, min(100, int(posts_cnt * 0.5 + days_reg * 0.5 + comments_cnt * 0.1)))
         c.execute(
             "INSERT INTO soc_moderator_applications (user_id, created_at, quality_score) VALUES (?,?,?)",
             (user["id"], int(time.time()), quality),
@@ -2760,7 +2770,9 @@ def post_overwatch_buy(post_id: int, authorization: Optional[str] = Header(None)
     p = c.execute("SELECT user_id, activity FROM soc_posts WHERE id=?", (post_id,)).fetchone()
     if not p:
         c.close(); raise HTTPException(404, "Пост не найден")
-    if p["user_id"] != user["id"]:
+    # Owner может делать overwatch на любые посты (модерация чужого контента)
+    is_admin = _is_admin_user(user)
+    if p["user_id"] != user["id"] and not is_admin:
         c.close(); raise HTTPException(403, "Можно купить только для своего поста")
     # Открытый overwatch уже есть?
     open_req = c.execute(

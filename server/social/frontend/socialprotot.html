@@ -3939,6 +3939,9 @@ function openPostMenu(postId, anchor, mediaUrl, eventOrEl) {
     items.push({ icon: 'fa-gem', label: 'Минтить как NFT', onClick: () => mintPostAsNft(postId) });
     items.push({ icon: 'fa-chart-line', label: 'Видимость + overwatch', onClick: () => openPostActivity(postId) });
     items.push({ icon: 'fa-trash-can', label: 'Удалить пост', danger: true, onClick: () => deletePost(postId) });
+  } else if (me && me.is_admin) {
+    // Admin может смотреть activity и заказывать overwatch на любые посты
+    items.push({ icon: 'fa-chart-line', label: '👑 Видимость + overwatch', onClick: () => openPostActivity(postId) });
   }
   buildMenuItems(items);
   // позиционирование — около anchor, или по event
@@ -4645,8 +4648,9 @@ async function loadModerationScreen() {
 function modAppCard(a) {
   const isPending = a.status === 'pending';
   const ago = Math.round((Date.now()/1000 - a.created_at) / 3600);
+  const userArg = jsAttr(a.username);
   return `<div style="padding:12px;background:rgba(0,0,0,0.20);border-radius:10px;margin-bottom:8px;border-left:3px solid ${isPending ? 'var(--primary)' : a.status==='accepted' ? '#22c55e' : 'var(--red)'};">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer;" onclick="openFullProfile(${userArg})" title="Открыть профиль">
       <div style="width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:700;">${(a.display_name||a.username||'?')[0].toUpperCase()}</div>
       <div style="flex:1;">
         <div style="font-weight:600;font-size:13px;">${esc(a.display_name||a.username)}</div>
