@@ -2930,6 +2930,233 @@ def _is_admin_user(user) -> bool:
     return bool(owner) and user.get("username", "").lower() == owner
 
 
+@router.get("/wrapped/{username}")
+def wrapped_data(username: str):
+    """Публичная Wrapped-страница юзера. Не требует авторизации — shareable URL."""
+    uname = (username or "").strip().lower().lstrip("@")
+    if not uname:
+        raise HTTPException(400, "Empty username")
+    c = db()
+    u = c.execute(
+        "SELECT id, username, display_name, created_at, reputation_score FROM users WHERE username=?",
+        (uname,),
+    ).fetchone()
+    if not u:
+        c.close(); raise HTTPException(404, "User not found")
+    uid = u["id"]
+
+    def _one(sql, params=()):
+        r = c.execute(sql, params).fetchone()
+        return (r[0] if r else 0) or 0
+
+    posts = _one("SELECT COUNT(*) FROM soc_posts WHERE user_id=? AND kind='post'", (uid,))
+    miniska = _one("SELECT COUNT(*) FROM soc_posts WHERE user_id=? AND kind='miniska'", (uid,))
+    comments = _one("SELECT COUNT(*) FROM soc_comments WHERE user_id=?", (uid,))
+    reactions_given = _one("SELECT COUNT(*) FROM soc_reactions WHERE user_id=?", (uid,))
+    reactions_received = _one(
+        "SELECT COUNT(*) FROM soc_reactions r JOIN soc_posts p ON r.post_id=p.id WHERE p.user_id=?", (uid,)
+    )
+    followers = _one("SELECT COUNT(*) FROM soc_follows WHERE followee_id=?", (uid,))
+    following = _one("SELECT COUNT(*) FROM soc_follows WHERE follower_id=?", (uid,))
+
+    # ТОП-3 эмодзи которые юзер ставит чаще всего
+    top_react_rows = c.execute(
+        "SELECT emoji, COUNT(*) as cnt FROM soc_reactions WHERE user_id=? GROUP BY emoji ORDER BY cnt DESC LIMIT 3",
+        (uid,),
+    ).fetchall()
+    top_reactions = [{"emoji": r["emoji"], "count": r["cnt"]} for r in top_react_rows]
+
+    # ТОП-1 пост (самый залайканный)
+    top_post_row = c.execute(
+        "SELECT p.id, p.content, (SELECT COUNT(*) FROM soc_reactions WHERE post_id=p.id) as cnt "
+        "FROM soc_posts p WHERE p.user_id=? AND p.kind='post' ORDER BY cnt DESC, p.created_at DESC LIMIT 1",
+        (uid,),
+    ).fetchone()
+    top_post = None
+    if top_post_row and top_post_row["cnt"]:
+        top_post = {
+            "id": top_post_row["id"],
+            "preview": (top_post_row["content"] or "")[:140],
+            "reactions": top_post_row["cnt"],
+        }
+
+    # Кошелёк: всего заработано Gost (по wallet_tx если есть) + текущий баланс
+    try:
+        gost_earned = _one(
+            "SELECT COALESCE(SUM(amount), 0) FROM soc_wallet_tx WHERE user_id=? AND amount > 0", (uid,)
+        )
+    except Exception:
+        gost_earned = 0
+    try:
+        wallet = c.execute("SELECT gost, soul, prem FROM soc_wallets WHERE user_id=?", (uid,)).fetchone()
+        bal = {"gost": int(wallet["gost"] if wallet else 0), "soul": int(wallet["soul"] if wallet else 0), "prem": int(wallet["prem"] if wallet else 0)}
+    except Exception:
+        bal = {"gost": 0, "soul": 0, "prem": 0}
+
+    # NFT в коллекции
+    try:
+        nft_count = _one("SELECT COUNT(*) FROM soc_nfts WHERE owner_id=?", (uid,))
+    except Exception:
+        nft_count = 0
+
+    # Ранг по активности (всего активных юзеров и место текущего)
+    rank_total = _one("SELECT COUNT(*) FROM users WHERE id IN (SELECT DISTINCT user_id FROM soc_posts)")
+    try:
+        my_posts = posts + miniska
+        rank = _one(
+            "SELECT COUNT(*) + 1 FROM (SELECT user_id, COUNT(*) as cnt FROM soc_posts GROUP BY user_id) "
+            "WHERE cnt > ?", (my_posts,)
+        )
+    except Exception:
+        rank = 0
+
+    # Дата регистрации → дней в системе
+    days_in = 0
+    try:
+        import datetime as _dt
+        reg = _dt.datetime.fromisoformat((u["created_at"] or "").replace("Z", ""))
+        days_in = max(0, (_dt.datetime.now() - reg).days)
+    except Exception:
+        pass
+
+    c.close()
+    return {
+        "username": u["username"],
+        "display_name": u["display_name"],
+        "days_in": days_in,
+        "reputation": int(u["reputation_score"] or 100),
+        "posts": posts, "miniska": miniska, "comments": comments,
+        "reactions_given": reactions_given, "reactions_received": reactions_received,
+        "followers": followers, "following": following,
+        "top_reactions": top_reactions,
+        "top_post": top_post,
+        "gost_earned_total": gost_earned,
+        "balance": bal,
+        "nft_count": nft_count,
+        "activity_rank": rank,
+        "activity_rank_total": rank_total,
+    }
+
+
+@router.get("/admin/stats")
+def admin_stats(authorization: Optional[str] = Header(None)):
+    """Базовые метрики для админа: пользователи, активность, контент, экономика, модерация."""
+    user = auth_member(authorization)
+    if not _is_admin_user(user):
+        raise HTTPException(403, "Только для администратора")
+    c = db()
+    now = int(time.time())
+    d1 = now - 86400
+    d7 = now - 86400 * 7
+    d30 = now - 86400 * 30
+
+    def _one(sql, params=()):
+        r = c.execute(sql, params).fetchone()
+        return (r[0] if r else 0) or 0
+
+    # USERS
+    total_users = _one("SELECT COUNT(*) FROM users")
+    reg_24h = _one("SELECT COUNT(*) FROM users WHERE strftime('%s', created_at) > ?", (str(d1),))
+    reg_7d = _one("SELECT COUNT(*) FROM users WHERE strftime('%s', created_at) > ?", (str(d7),))
+    reg_30d = _one("SELECT COUNT(*) FROM users WHERE strftime('%s', created_at) > ?", (str(d30),))
+    moderators = _one("SELECT COUNT(*) FROM users WHERE is_moderator=1")
+    age_confirmed = _one("SELECT COUNT(*) FROM users WHERE confirmed_18_at IS NOT NULL")
+
+    # ACTIVITY (DAU/WAU/MAU по таблице просмотров постов — наиболее активный сигнал)
+    try:
+        dau = _one("SELECT COUNT(DISTINCT user_id) FROM soc_post_views WHERE viewed_at > ?", (d1,))
+        wau = _one("SELECT COUNT(DISTINCT user_id) FROM soc_post_views WHERE viewed_at > ?", (d7,))
+        mau = _one("SELECT COUNT(DISTINCT user_id) FROM soc_post_views WHERE viewed_at > ?", (d30,))
+    except Exception:
+        dau = wau = mau = 0
+
+    # CONTENT
+    posts_total = _one("SELECT COUNT(*) FROM soc_posts WHERE kind='post'")
+    posts_24h = _one("SELECT COUNT(*) FROM soc_posts WHERE kind='post' AND strftime('%s', created_at) > ?", (str(d1),))
+    posts_7d = _one("SELECT COUNT(*) FROM soc_posts WHERE kind='post' AND strftime('%s', created_at) > ?", (str(d7),))
+    miniska_total = _one("SELECT COUNT(*) FROM soc_posts WHERE kind='miniska'")
+    miniska_24h = _one("SELECT COUNT(*) FROM soc_posts WHERE kind='miniska' AND strftime('%s', created_at) > ?", (str(d1),))
+    nsfw_total = _one("SELECT COUNT(*) FROM soc_posts WHERE is_nsfw=1")
+    nsfw_by_admin = _one("SELECT COUNT(*) FROM soc_posts WHERE is_nsfw=1 AND nsfw_set_by IS NOT NULL")
+    comments_total = _one("SELECT COUNT(*) FROM soc_comments")
+    comments_24h = _one("SELECT COUNT(*) FROM soc_comments WHERE strftime('%s', created_at) > ?", (str(d1),))
+    reactions_total = _one("SELECT COUNT(*) FROM soc_reactions")
+
+    # CHAT
+    try:
+        dm_24h = _one("SELECT COUNT(*) FROM chat_dm WHERE created_at > ?", (d1,))
+        groups_total = _one("SELECT COUNT(*) FROM chat_groups")
+        groups_public = _one("SELECT COUNT(*) FROM chat_groups WHERE is_public=1")
+        group_msg_24h = _one("SELECT COUNT(*) FROM chat_group_messages WHERE created_at > ?", (d1,))
+    except Exception:
+        dm_24h = groups_total = groups_public = group_msg_24h = 0
+
+    # ECONOMY
+    try:
+        wallet_users = _one("SELECT COUNT(*) FROM soc_wallets WHERE gost > 0 OR soul > 0 OR prem > 0")
+        gost_total = _one("SELECT COALESCE(SUM(gost), 0) FROM soc_wallets")
+        soul_total = _one("SELECT COALESCE(SUM(soul), 0) FROM soc_wallets")
+        nft_owned = _one("SELECT COUNT(*) FROM soc_nfts")
+        nft_listed = _one("SELECT COUNT(*) FROM soc_nft_listings")
+    except Exception:
+        wallet_users = gost_total = soul_total = nft_owned = nft_listed = 0
+
+    # MODERATION
+    try:
+        mod_apps_pending = _one("SELECT COUNT(*) FROM soc_moderator_applications WHERE status='pending'")
+        overwatch_open = _one("SELECT COUNT(*) FROM soc_overwatch_requests WHERE status='open'")
+        rep_low = _one("SELECT COUNT(*) FROM users WHERE reputation_score < 30")
+        rep_mid = _one("SELECT COUNT(*) FROM users WHERE reputation_score >= 30 AND reputation_score < 70")
+        rep_good = _one("SELECT COUNT(*) FROM users WHERE reputation_score >= 70")
+    except Exception:
+        mod_apps_pending = overwatch_open = rep_low = rep_mid = rep_good = 0
+
+    # FOLLOWS
+    follows_total = _one("SELECT COUNT(*) FROM soc_follows")
+
+    # REFERRAL
+    refs_total = _one("SELECT COUNT(*) FROM users WHERE referrer_id IS NOT NULL")
+
+    c.close()
+    return {
+        "generated_at": now,
+        "users": {
+            "total": total_users,
+            "new_24h": reg_24h, "new_7d": reg_7d, "new_30d": reg_30d,
+            "moderators": moderators,
+            "age_confirmed_18plus": age_confirmed,
+            "referred": refs_total,
+        },
+        "activity": {"dau": dau, "wau": wau, "mau": mau},
+        "content": {
+            "posts_total": posts_total, "posts_24h": posts_24h, "posts_7d": posts_7d,
+            "miniska_total": miniska_total, "miniska_24h": miniska_24h,
+            "nsfw_total": nsfw_total, "nsfw_set_by_admin": nsfw_by_admin,
+            "comments_total": comments_total, "comments_24h": comments_24h,
+            "reactions_total": reactions_total,
+        },
+        "chat": {
+            "dm_24h": dm_24h,
+            "groups_total": groups_total, "groups_public": groups_public,
+            "group_messages_24h": group_msg_24h,
+        },
+        "economy": {
+            "wallet_users_non_zero": wallet_users,
+            "gost_in_circulation": gost_total,
+            "soul_in_circulation": soul_total,
+            "nft_minted": nft_owned, "nft_listed": nft_listed,
+        },
+        "moderation": {
+            "applications_pending": mod_apps_pending,
+            "overwatch_open": overwatch_open,
+            "reputation_low_under_30": rep_low,
+            "reputation_mid_30_70": rep_mid,
+            "reputation_good_70_plus": rep_good,
+        },
+        "social_graph": {"follows_total": follows_total},
+    }
+
+
 @router.post("/mod/apply")
 def mod_apply(authorization: Optional[str] = Header(None)):
     """Подать заявку на роль модератора. Стоит 200 Gost. У одного юзера может

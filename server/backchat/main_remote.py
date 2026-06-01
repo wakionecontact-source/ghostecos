@@ -243,6 +243,14 @@ async def terms():
         return FileResponse(p)
     return {"error": "not found"}
 
+@app.get("/wrapped", include_in_schema=False)
+@app.get("/wrapped/{username}", include_in_schema=False)
+async def wrapped(username: str = ""):
+    p = os.path.join(_SITE_DIR, "wrapped.html")
+    if os.path.exists(p):
+        return FileResponse(p)
+    return {"error": "not found"}
+
 @app.get("/api/download/latest", include_in_schema=False)
 async def download_latest():
     apks = sorted(

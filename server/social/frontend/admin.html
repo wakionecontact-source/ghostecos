@@ -257,21 +257,45 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel' + t.dataset.panel[0].toUpperCase() + t.dataset.panel.slice(1)));
 });
 
+function _stat(l, v, sub) {
+  return `<div class="stat"><div class="l">${l}</div><div class="v">${v}</div>${sub ? `<div class="l" style="margin-top:4px;font-size:10px;">${sub}</div>` : ''}</div>`;
+}
+
 async function loadOverview() {
   try {
-    const [mods, apps, ow] = await Promise.all([
-      api('/mod/list'), api('/mod/applications'), api('/mod/overwatch_queue').catch(()=>[]),
-    ]);
-    const pending = apps.filter(a => a.status === 'pending').length;
-    const accepted = apps.filter(a => a.status === 'accepted').length;
-    const rejected = apps.filter(a => a.status === 'rejected').length;
+    const s = await api('/admin/stats');
+    const u = s.users || {}, a = s.activity || {}, ct = s.content || {}, ch = s.chat || {},
+          ec = s.economy || {}, mo = s.moderation || {}, sg = s.social_graph || {};
+    const fmt = n => (n || 0).toLocaleString('ru-RU');
     document.getElementById('statsGrid').innerHTML = `
-      <div class="stat"><div class="l">Модераторов</div><div class="v">${mods.length}</div></div>
-      <div class="stat"><div class="l">Pending заявок</div><div class="v">${pending}</div></div>
-      <div class="stat"><div class="l">Принято заявок</div><div class="v">${accepted}</div></div>
-      <div class="stat"><div class="l">Отклонено</div><div class="v">${rejected}</div></div>
-      <div class="stat"><div class="l">Open overwatch</div><div class="v">${ow.length}</div></div>
-      <div class="stat"><div class="l">Ты</div><div class="v" style="font-size:14px;">@${esc(me.username)}</div></div>
+      <div class="stat" style="grid-column:span 2;background:rgba(168,85,247,0.08);"><div class="l">DAU / WAU / MAU</div><div class="v">${fmt(a.dau)} <span style="font-size:14px;color:var(--sub)">/ ${fmt(a.wau)} / ${fmt(a.mau)}</span></div></div>
+      ${_stat('Всего юзеров', fmt(u.total), `+${u.new_24h} за 24ч · +${u.new_7d} за 7д`)}
+      ${_stat('Регистрации за 30д', fmt(u.new_30d), `всего ${u.referred} по рефералке`)}
+      ${_stat('Подтвердили 18+', fmt(u.age_confirmed_18plus))}
+      ${_stat('Модераторов', fmt(u.moderators))}
+
+      ${_stat('Постов всего', fmt(ct.posts_total), `+${ct.posts_24h} за 24ч · +${ct.posts_7d} за 7д`)}
+      ${_stat('Миниски', fmt(ct.miniska_total), `+${ct.miniska_24h} за 24ч`)}
+      ${_stat('NSFW-постов', fmt(ct.nsfw_total), `${ct.nsfw_set_by_admin} от модерации`)}
+      ${_stat('Комментариев', fmt(ct.comments_total), `+${ct.comments_24h} за 24ч`)}
+      ${_stat('Реакций', fmt(ct.reactions_total))}
+
+      ${_stat('DM-сообщений за 24ч', fmt(ch.dm_24h))}
+      ${_stat('Групп / каналов', fmt(ch.groups_total), `${ch.groups_public} публичных`)}
+      ${_stat('Сообщений в группах 24ч', fmt(ch.group_messages_24h))}
+
+      ${_stat('Кошельков с балансом', fmt(ec.wallet_users_non_zero))}
+      ${_stat('Gost в обороте', fmt(ec.gost_in_circulation))}
+      ${_stat('Soul в обороте', fmt(ec.soul_in_circulation))}
+      ${_stat('NFT отчеканено', fmt(ec.nft_minted), `${ec.nft_listed} в продаже`)}
+
+      ${_stat('Заявки в модераторы', fmt(mo.applications_pending), 'pending')}
+      ${_stat('Overwatch в работе', fmt(mo.overwatch_open))}
+      ${_stat('Репутация ≥70 (хорошая)', fmt(mo.reputation_good_70_plus))}
+      ${_stat('Репутация 30-70', fmt(mo.reputation_mid_30_70))}
+      ${_stat('Репутация <30 (низкая)', fmt(mo.reputation_low_under_30))}
+
+      ${_stat('Подписок всего', fmt(sg.follows_total))}
     `;
   } catch(e) { document.getElementById('statsGrid').innerHTML = '<div class="empty">Ошибка: ' + esc(e.message||'') + '</div>'; }
 }
