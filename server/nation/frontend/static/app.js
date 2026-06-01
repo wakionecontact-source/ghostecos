@@ -1265,12 +1265,16 @@ function mpSyncSave() {
 }
 async function mpClaim() {
   if (!isMP() || !ssoToken() || !state.border || state.border.length < 3) return;
+  // Защита от двойного claim (быстрый повторный finishDraw)
+  if (mp._claiming) return;
+  mp._claiming = true;
   try {
     const r = await mpApi('/claim', { method: 'POST', body: JSON.stringify({ name: state.name || 'Моя страна', color: state.color, border: state.border }) });
     const d = await r.json().catch(() => ({}));
     if (r.ok) { mp.balance = d.balance; mp.country = mp.country || {}; updateBalanceUI(); flash('Территория застолблена' + (d.cost ? ' · −' + Math.round(d.cost) + ' gost' : '')); mpLoadWorld(); mpSyncSave(); }
     else { flash(d.detail || 'Не удалось застолбить', true); }
   } catch (e) { flash('Сервер недоступен', true); }
+  finally { mp._claiming = false; }
 }
 async function mpLoadWorld() {
   if (!isMP() || !map || !mp.worldLayer) return;

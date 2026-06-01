@@ -1,8 +1,10 @@
 // Mesh-сеть на canvas: точки с линиями, разбегаются от курсора.
 // Вставляет <canvas id="mesh-bg"> в body и сам его рисует.
 (function () {
-  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    return; // уважаем настройки пользователя
+  // Уважаем prefers-reduced-motion — реактивно (если юзер включит позже, тоже остановимся)
+  const mqReduce = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+  if (mqReduce && mqReduce.matches) {
+    return;
   }
   const canvas = document.createElement("canvas");
   canvas.id = "mesh-bg";

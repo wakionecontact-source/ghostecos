@@ -142,22 +142,28 @@
         title: opts.title || '',
         message: message,
       });
+      // Once-guard — resolve может вызваться только раз (защита от двойного клика)
+      let done = false;
+      const finish = (v) => { if (done) return; done = true; close(overlay); resolve(v); };
+
       const cancel = document.createElement('button');
       cancel.className = 'ge-dlg-btn cancel';
       cancel.textContent = opts.cancelText || 'Отмена';
-      cancel.onclick = () => { close(overlay); resolve(false); };
+      cancel.onclick = () => finish(false);
       actions.appendChild(cancel);
 
       const ok = document.createElement('button');
       ok.className = 'ge-dlg-btn ' + (opts.danger ? 'danger' : 'ok');
       ok.textContent = opts.okText || (opts.danger ? 'Удалить' : 'ОК');
-      ok.onclick = () => { close(overlay); resolve(true); };
+      ok.onclick = () => finish(true);
       actions.appendChild(ok);
 
-      overlay.addEventListener('keydown', e => {
-        if (e.key === 'Escape') { close(overlay); resolve(false); }
-        else if (e.key === 'Enter') { close(overlay); resolve(true); }
-      });
+      // keydown слушаем на document (overlay без tabindex не получит keyup)
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); finish(false); document.removeEventListener('keydown', onKey); }
+        else if (e.key === 'Enter') { e.preventDefault(); finish(true); document.removeEventListener('keydown', onKey); }
+      };
+      document.addEventListener('keydown', onKey);
       setTimeout(() => ok.focus(), 100);
     });
   }
