@@ -552,7 +552,7 @@ button,input,textarea{font-family:inherit;}
 <div class="modal-overlay" id="forceTagModal" style="z-index:600;">
   <div class="modal-sheet" style="max-width:420px;">
     <div class="m-head">
-      <div class="m-title">⚠️ Нужен @тег для канала</div>
+      <div class="m-title">Нужен @тег для канала</div>
     </div>
     <div style="padding:16px 18px;display:flex;flex-direction:column;gap:14px;">
       <div style="font-size:13px;line-height:1.55;color:var(--sub);">
@@ -1011,7 +1011,7 @@ async function verifyAndPinPub(username, pub){
     `  • Собеседник зашёл с нового устройства / сменил пароль (нормально)\n` +
     `  • Кто-то подменяет ключ на сервере (опасно — ваши сообщения могут читать)\n\n` +
     `Доверять новому ключу?`,
-    { title: '⚠️ Изменился ключ', okText: 'Доверять', danger: true }
+    { title: 'Изменился ключ', okText: 'Доверять', danger: true }
   );
   if (ok) {
     await pinPubKey(username, pub, true);
@@ -1411,7 +1411,7 @@ async function ingestIncoming(m){
     const added = await idbAddMessage(stored);
     if (!added) return false;
     let d = dialogs.find(x => x.username === peerUsername);
-    const preview = isVoice ? '🎤 Голосовое сообщение' : ('📎 ' + stored.file_payload.file_name);
+    const preview = isVoice ? 'Голосовое' : ('Файл: ' + stored.file_payload.file_name);
     if (!d) {
       d = { username: peerUsername, display_name: peerName || peerUsername, last_text: preview, last_at: m.created_at, last_from_me: isMine, unread: 0 };
       dialogs.unshift(d);
@@ -1802,7 +1802,7 @@ async function sendVoiceBlob(blob, duration){
     await idbAddMessage(optimistic);
     let d = dialogs.find(x => x.username === activePeer.username);
     if (!d) { d = {username: activePeer.username, display_name: activePeer.display_name||activePeer.username, unread:0}; dialogs.unshift(d); }
-    d.last_text = '🎤 Голосовое сообщение';
+    d.last_text = 'Голосовое';
     d.last_at = r.created_at; d.last_from_me = true;
     dialogs = [d, ...dialogs.filter(x => x.username !== activePeer.username)];
     await idbPutDialog(d);

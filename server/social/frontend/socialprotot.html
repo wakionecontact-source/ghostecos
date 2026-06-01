@@ -778,7 +778,7 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
   <div class="screen" id="screenModeration">
     <div style="max-width:760px;margin:0 auto;padding:14px 12px 80px;">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-        <h2 style="font-size:22px;font-weight:700;flex:1;">🛡 Модерация</h2>
+        <h2 style="font-size:22px;font-weight:700;flex:1;">Модерация</h2>
         <span id="modBadge" style="font-size:11px;padding:4px 10px;border-radius:8px;background:rgba(168,85,247,0.15);color:var(--primary);font-weight:600;"></span>
       </div>
       <div id="modContent" style="display:flex;flex-direction:column;gap:14px;">
@@ -3941,7 +3941,7 @@ function openPostMenu(postId, anchor, mediaUrl, eventOrEl) {
     items.push({ icon: 'fa-trash-can', label: 'Удалить пост', danger: true, onClick: () => deletePost(postId) });
   } else if (me && me.is_admin) {
     // Admin может смотреть activity и заказывать overwatch на любые посты
-    items.push({ icon: 'fa-chart-line', label: '👑 Видимость + overwatch', onClick: () => openPostActivity(postId) });
+    items.push({ icon: 'fa-chart-line', label: 'Видимость (админ)', onClick: () => openPostActivity(postId) });
   }
   buildMenuItems(items);
   // позиционирование — около anchor, или по event
@@ -4586,7 +4586,7 @@ async function loadModerationScreen() {
   try { me_mod = await api('/mod/me'); }
   catch(e) { root.innerHTML = `<div style="color:var(--red);padding:20px;">Ошибка: ${esc(e.message||'')}</div>`; return; }
 
-  badge.textContent = me_mod.is_admin ? '👑 Owner' : (me_mod.is_moderator ? '🛡 Модератор' : 'Юзер');
+  badge.textContent = me_mod.is_admin ? 'Owner' : (me_mod.is_moderator ? 'Модератор' : 'Юзер');
 
   let html = '';
 
@@ -4594,7 +4594,7 @@ async function loadModerationScreen() {
   html += `<div style="padding:14px;background:rgba(168,85,247,0.05);border:1px solid rgba(168,85,247,0.20);border-radius:14px;">
     <div style="font-size:13px;color:var(--sub);margin-bottom:8px;">Твой статус</div>
     <div style="font-size:15px;font-weight:600;">
-      ${me_mod.is_admin ? '👑 Owner экосистемы' : me_mod.is_moderator ? '🛡 Модератор' : '👤 Обычный юзер'}
+      ${me_mod.is_admin ? 'Owner экосистемы' : me_mod.is_moderator ? 'Модератор' : 'Обычный юзер'}
     </div>
     ${me_mod.is_moderator ? `
       <div style="margin-top:8px;font-size:12px;color:var(--sub);">
@@ -4614,7 +4614,7 @@ async function loadModerationScreen() {
         Модераторы проверяют посты на overwatch и получают Gost за голоса.
       </div>
       <button onclick="applyForModerator()" style="width:100%;padding:11px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:13px;">
-        📝 Подать заявку (200 Gost)
+        Подать заявку (200 Gost)
       </button>
     </div>`;
   }
@@ -4624,7 +4624,7 @@ async function loadModerationScreen() {
     let apps = [];
     try { apps = await api('/mod/applications'); } catch(_) {}
     html += `<div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:14px;">
-      <div style="font-weight:600;margin-bottom:10px;">📋 Заявки в модераторы (${apps.filter(a=>a.status==='pending').length} pending)</div>
+      <div style="font-weight:600;margin-bottom:10px;">Заявки в модераторы (${apps.filter(a=>a.status==='pending').length} pending)</div>
       ${apps.length ? apps.map(a => modAppCard(a)).join('') : '<div style="color:var(--sub);font-size:13px;text-align:center;padding:14px;">Заявок нет</div>'}
     </div>`;
   }
@@ -4634,7 +4634,7 @@ async function loadModerationScreen() {
     let queue = [];
     try { queue = await api('/mod/overwatch_queue'); } catch(_) {}
     html += `<div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:14px;">
-      <div style="font-weight:600;margin-bottom:10px;">⚖️ Очередь overwatch (${queue.length})</div>
+      <div style="font-weight:600;margin-bottom:10px;">Очередь overwatch (${queue.length})</div>
       <div style="font-size:11px;color:var(--sub);margin-bottom:12px;line-height:1.5;">
         Только контент. Автор скрыт. Жалоба за раскрытие личности — штраф 1000 Gost.
       </div>
@@ -4666,9 +4666,9 @@ function modAppCard(a) {
       Gost: <b style="color:var(--text);">${a.gost_balance ?? 0}</b>
     </div>
     ${isPending ? `<div style="display:flex;gap:6px;">
-      <button onclick="modDecide(${a.id}, true)" style="flex:1;padding:8px;border-radius:8px;border:none;background:#22c55e;color:#fff;font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;">✅ Принять</button>
-      <button onclick="modDecide(${a.id}, false)" style="flex:1;padding:8px;border-radius:8px;border:1px solid rgba(244,63,94,0.4);background:transparent;color:var(--red);font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;">❌ Отклонить</button>
-    </div>` : `<div style="font-size:11px;color:var(--sub);font-style:italic;">${a.status === 'accepted' ? '✅ Принят' : '❌ Отклонён'}</div>`}
+      <button onclick="modDecide(${a.id}, true)" style="flex:1;padding:8px;border-radius:8px;border:none;background:#22c55e;color:#fff;font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;">Принять</button>
+      <button onclick="modDecide(${a.id}, false)" style="flex:1;padding:8px;border-radius:8px;border:1px solid rgba(244,63,94,0.4);background:transparent;color:var(--red);font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;">Отклонить</button>
+    </div>` : `<div style="font-size:11px;color:var(--sub);font-style:italic;">${a.status === 'accepted' ? 'Принят' : 'Отклонён'}</div>`}
   </div>`;
 }
 
@@ -4701,7 +4701,7 @@ async function openPostActivity(postId) {
   try { data = await api(`/post/${postId}/activity`); }
   catch(e) { return showToast(e.message || 'Ошибка'); }
   const a = data.activity;
-  const level = a >= 700 ? '🔥 Высокая' : a >= 300 ? '✅ Средняя' : a >= 100 ? '⚠️ Низкая' : '🚫 Скрыт';
+  const level = a >= 700 ? 'Высокая' : a >= 300 ? 'Средняя' : a >= 100 ? 'Низкая' : 'Скрыт';
   const colour = a >= 700 ? '#22c55e' : a >= 300 ? 'var(--primary)' : a >= 100 ? '#fbbf24' : 'var(--red)';
   const setSrc = { 'B': 'История юзера', 'overwatch': 'Решение модераторов', 'system': 'Авто-система', 'manual': 'Ручная' }[data.automod_source] || data.automod_source || '—';
   const histHtml = data.history && data.history.length ? data.history.map(h => `
@@ -4737,13 +4737,13 @@ async function openPostActivity(postId) {
     <div class="modal-sheet" onclick="event.stopPropagation()">
       <div class="m-handle"></div>
       <div class="m-head">
-        <div class="m-title">📊 Активность поста</div>
+        <div class="m-title">Активность поста</div>
         <button class="m-close" onclick="document.getElementById('${id}').remove()"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <div style="padding:14px 18px;">${content}</div>
       <div style="padding:0 18px 18px;">
         <button onclick="buyOverwatchForPost(${postId})" style="width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:13px;">
-          ⚖️ Купить overwatch — 300 Gost
+          Купить overwatch — 300 Gost
         </button>
         <div style="text-align:center;font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4;">
           3+ модератора оценят, среднее изменит activity до ±150.<br>Если activity ВЫРОСЛА — следующий overwatch будет дешевле.
@@ -4758,7 +4758,7 @@ async function buyOverwatchForPost(postId) {
   if (!await Dialog.confirm('Купить overwatch за 300 Gost?\n\n3+ модератора проверят пост, среднее их голосов (cap ±150) изменит activity. Решение нельзя отменить.', { title: 'Overwatch', okText: 'Купить' })) return;
   try {
     const r = await api(`/post/${postId}/overwatch`, 'POST');
-    Dialog.alert(`✅ Overwatch создан (#${r.request_id}). Списано ${r.price} Gost. Ждём голоса модераторов.`);
+    Dialog.alert(`Overwatch создан (#${r.request_id}). Списано ${r.price} Gost. Ждём голоса модераторов.`);
     document.getElementById('paModal_' + postId)?.remove();
     refreshWallet && refreshWallet();
   } catch(e) { showToast(e.message || 'Ошибка'); }
