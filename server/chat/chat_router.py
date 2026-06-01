@@ -346,11 +346,22 @@ async def file_upload(
     Возвращает file_id, который sender передаёт receiver-у в сообщении (с ключом)."""
     user = auth_member(authorization)
     _rate_limit(f"fileup:{user['id']}", limit=20, window=3600)
-    data = await blob.read()
-    if not data:
+    # Стримим чанками — иначе 100MB×10 параллельных uploads = 1GB RAM spike
+    chunks = []
+    total = 0
+    CHUNK = 64 * 1024
+    while True:
+        chunk = await blob.read(CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_FILE_SIZE:
+            raise HTTPException(413, f"Слишком большой. Максимум {MAX_FILE_SIZE // 1024 // 1024}MB")
+        chunks.append(chunk)
+    if not total:
         raise HTTPException(400, "Пустой файл")
-    if len(data) > MAX_FILE_SIZE:
-        raise HTTPException(413, f"Слишком большой. Максимум {MAX_FILE_SIZE // 1024 // 1024}MB")
+    data = b"".join(chunks)
+    del chunks
     c = db()
     to_user = _get_user_by_username(c, to_username)
     if not to_user:

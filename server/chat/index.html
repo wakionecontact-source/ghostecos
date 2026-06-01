@@ -2138,6 +2138,12 @@ async function toggleContact(username){
 
 function backToList(){
   document.getElementById('appGrid').classList.remove('in-chat');
+  // Освобождаем blob URL-ы (createObjectURL) — иначе плавно тратим RAM на больших файлах
+  try {
+    for (const m of activeMessages) {
+      if (m && m._imgUrl) { URL.revokeObjectURL(m._imgUrl); m._imgUrl = null; }
+    }
+  } catch(_) {}
   activePeer = null; activeGroup = null; activeMessages = [];
   // Сбросим chatMain на пустой экран
   const main = document.getElementById('chatMain');

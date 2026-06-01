@@ -970,7 +970,16 @@ async function openMyNftModal(nftId){
   } catch(e) { console.error(e); }
 }
 
+// Глобальный in-flight guard для финансовых операций — защита от двойных кликов
+const _inFlight = new Set();
+async function withLock(key, fn) {
+  if (_inFlight.has(key)) { showToast('Уже выполняется...', true); return; }
+  _inFlight.add(key);
+  try { return await fn(); } finally { _inFlight.delete(key); }
+}
+
 async function buyListing(nftId){
+  return withLock('buy:'+nftId, async () => {
   try {
     const r = await api(`/nft/buy/${nftId}`, 'POST');
     const cur = r.currency || 'soul';
@@ -979,6 +988,7 @@ async function buyListing(nftId){
     closeModal('nftModal');
     await Promise.all([loadWallet(), loadMyNfts(), loadMarket(), loadCatalog()]);
   } catch(e) { showToast(e.message || 'Ошибка покупки', true); }
+  });
 }
 
 async function listMyNft(nftId){

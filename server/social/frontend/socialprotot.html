@@ -1335,11 +1335,13 @@ function isGuest() { return me && me.is_guest === true; }
 
 // SSO cookie — общий для GhostEcos (используется шопом и главной)
 function setSsoCookie(t) {
-  // SameSite=Lax + Secure обязательны на https. max-age=год.
-  document.cookie = `gs_token=${encodeURIComponent(t)}; path=/; max-age=31536000; SameSite=Lax; Secure`;
+  // SameSite=Lax + Secure (только на https — иначе браузер дропает cookie молча).
+  const secure = location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = `gs_token=${encodeURIComponent(t)}; path=/; max-age=31536000; SameSite=Lax${secure}`;
 }
 function clearSsoCookie() {
-  document.cookie = `gs_token=; path=/; max-age=0; SameSite=Lax; Secure`;
+  const secure = location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = `gs_token=; path=/; max-age=0; SameSite=Lax${secure}`;
 }
 
 function startPolling() {
@@ -3140,7 +3142,15 @@ function observeDots() {
         const id = +e.target.dataset.dot;
         if (!seenIds.has(id)) {
           seenIds.add(id);
-          localStorage.setItem('gs_seen', JSON.stringify([...seenIds]));
+          // FIFO cap: после 2000 элементов localStorage начинает квакать (5MB quota).
+          // Сбрасываем самые старые.
+          const MAX_SEEN = 2000;
+          if (seenIds.size > MAX_SEEN) {
+            const arr = [...seenIds];
+            seenIds = new Set(arr.slice(arr.length - MAX_SEEN));
+          }
+          try { localStorage.setItem('gs_seen', JSON.stringify([...seenIds])); }
+          catch(_) { /* quota — игнорим */ }
           e.target.style.opacity = '0';
           setTimeout(() => e.target.remove(), 400);
         }
