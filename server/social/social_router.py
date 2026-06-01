@@ -2958,6 +2958,70 @@ def mod_overwatch_vote(request_id: int, body: OverwatchVoteBody, authorization: 
     }
 
 
+@router.post("/mod/promote/{username}")
+def mod_promote(username: str, authorization: Optional[str] = Header(None)):
+    """Admin напрямую назначает юзера модератором (без заявки)."""
+    user = auth_member(authorization)
+    if not _is_admin_user(user):
+        raise HTTPException(403, "Только для администратора")
+    uname = username.strip().lower().lstrip("@")
+    if not uname:
+        raise HTTPException(400, "Пустой username")
+    c = db()
+    target = c.execute("SELECT id, username, is_moderator FROM users WHERE username=?", (uname,)).fetchone()
+    if not target:
+        c.close(); raise HTTPException(404, "Юзер не найден")
+    if target["is_moderator"]:
+        c.close(); raise HTTPException(409, "Уже модератор")
+    now = int(time.time())
+    c.execute(
+        "UPDATE users SET is_moderator=1, moderator_since=?, moderator_rating=100, moderator_reprimands=0 WHERE id=?",
+        (now, target["id"]),
+    )
+    c.commit(); c.close()
+    try: ws_hub.send_to(target["id"], "mod.promoted", {"by": user["username"]})
+    except Exception: pass
+    return {"status": "ok", "user_id": target["id"], "username": target["username"]}
+
+
+@router.post("/mod/demote/{username}")
+def mod_demote(username: str, authorization: Optional[str] = Header(None)):
+    """Admin снимает роль модератора."""
+    user = auth_member(authorization)
+    if not _is_admin_user(user):
+        raise HTTPException(403, "Только для администратора")
+    uname = username.strip().lower().lstrip("@")
+    if not uname:
+        raise HTTPException(400, "Пустой username")
+    c = db()
+    target = c.execute("SELECT id, username, is_moderator FROM users WHERE username=?", (uname,)).fetchone()
+    if not target:
+        c.close(); raise HTTPException(404, "Юзер не найден")
+    if not target["is_moderator"]:
+        c.close(); raise HTTPException(409, "Не модератор")
+    c.execute("UPDATE users SET is_moderator=0 WHERE id=?", (target["id"],))
+    c.commit(); c.close()
+    try: ws_hub.send_to(target["id"], "mod.demoted", {"by": user["username"]})
+    except Exception: pass
+    return {"status": "ok", "user_id": target["id"], "username": target["username"]}
+
+
+@router.get("/mod/list")
+def mod_list(authorization: Optional[str] = Header(None)):
+    """Список всех модераторов (для admin)."""
+    user = auth_member(authorization)
+    if not _is_admin_user(user):
+        raise HTTPException(403, "Только для администратора")
+    c = db()
+    rows = c.execute("""
+        SELECT id, username, display_name, moderator_rating, moderator_reprimands, moderator_since
+        FROM users WHERE is_moderator=1
+        ORDER BY moderator_since DESC NULLS LAST
+    """).fetchall()
+    c.close()
+    return [dict(r) for r in rows]
+
+
 @router.get("/mod/me")
 def mod_me(authorization: Optional[str] = Header(None)):
     """Инфа о моей роли модератора + статистика."""

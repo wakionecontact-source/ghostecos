@@ -4619,8 +4619,32 @@ async function loadModerationScreen() {
     </div>`;
   }
 
-  // Admin view: applications list
+  // Admin view: search + current mods + applications
   if (me_mod.is_admin) {
+    // Поиск и прямое назначение
+    html += `<div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:14px;">
+      <div style="font-weight:600;margin-bottom:10px;">Назначить модератором напрямую</div>
+      <div style="display:flex;gap:6px;margin-bottom:8px;">
+        <input id="modSearchInp" placeholder="@username или имя"
+          style="flex:1;padding:10px 12px;border-radius:8px;border:1px solid var(--border-strong);background:rgba(0,0,0,0.25);color:var(--text);font-family:inherit;font-size:13px;"
+          oninput="modSearchUsers(this.value)">
+      </div>
+      <div id="modSearchResults" style="display:flex;flex-direction:column;gap:6px;"></div>
+    </div>`;
+
+    // Текущие модераторы (для снятия)
+    let mods = [];
+    try { mods = await api('/mod/list'); } catch(_) {}
+    if (mods.length) {
+      html += `<div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:14px;">
+        <div style="font-weight:600;margin-bottom:10px;">Текущие модераторы (${mods.length})</div>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          ${mods.map(m => modListCard(m)).join('')}
+        </div>
+      </div>`;
+    }
+
+    // Заявки
     let apps = [];
     try { apps = await api('/mod/applications'); } catch(_) {}
     html += `<div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:14px;">
@@ -4761,6 +4785,68 @@ async function buyOverwatchForPost(postId) {
     Dialog.alert(`Overwatch создан (#${r.request_id}). Списано ${r.price} Gost. Ждём голоса модераторов.`);
     document.getElementById('paModal_' + postId)?.remove();
     refreshWallet && refreshWallet();
+  } catch(e) { showToast(e.message || 'Ошибка'); }
+}
+
+// ── Admin: поиск юзеров и прямое назначение ──
+let _modSearchTimer = 0;
+function modSearchUsers(q) {
+  clearTimeout(_modSearchTimer);
+  const box = document.getElementById('modSearchResults');
+  if (!box) return;
+  q = (q || '').trim();
+  if (!q) { box.innerHTML = ''; return; }
+  _modSearchTimer = setTimeout(async () => {
+    try {
+      const path = q.startsWith('@') ? `/search?q=${encodeURIComponent(q)}` : `/search?q=@${encodeURIComponent(q)}`;
+      const d = await api(path);
+      const users = (d.results || d.users || []).slice(0, 10);
+      if (!users.length) { box.innerHTML = '<div style="color:var(--sub);font-size:12px;padding:8px;">Ничего не найдено</div>'; return; }
+      box.innerHTML = users.map(u => modSearchUserCard(u)).join('');
+    } catch(e) { box.innerHTML = `<div style="color:var(--red);font-size:12px;padding:8px;">${esc(e.message||'Ошибка')}</div>`; }
+  }, 250);
+}
+
+function modSearchUserCard(u) {
+  const userArg = jsAttr(u.username);
+  return `<div style="display:flex;align-items:center;gap:8px;padding:8px;background:rgba(0,0,0,0.20);border-radius:8px;">
+    <div style="width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:700;flex-shrink:0;">${(u.display_name||u.username||'?')[0].toUpperCase()}</div>
+    <div style="flex:1;min-width:0;cursor:pointer;" onclick="openFullProfile(${userArg})">
+      <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(u.display_name||u.username)}</div>
+      <div style="font-size:11px;color:var(--sub);">@${esc(u.username)}</div>
+    </div>
+    <button onclick="modPromoteDirect(${userArg})" style="padding:6px 10px;border-radius:8px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:600;cursor:pointer;font-family:inherit;font-size:11px;">Сделать мод</button>
+  </div>`;
+}
+
+function modListCard(m) {
+  const userArg = jsAttr(m.username);
+  const since = m.moderator_since ? new Date(m.moderator_since*1000).toLocaleDateString('ru') : '—';
+  return `<div style="display:flex;align-items:center;gap:8px;padding:8px;background:rgba(0,0,0,0.20);border-radius:8px;">
+    <div style="width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:700;flex-shrink:0;">${(m.display_name||m.username||'?')[0].toUpperCase()}</div>
+    <div style="flex:1;min-width:0;cursor:pointer;" onclick="openFullProfile(${userArg})">
+      <div style="font-weight:600;font-size:13px;">${esc(m.display_name||m.username)}</div>
+      <div style="font-size:11px;color:var(--sub);">@${esc(m.username)} · с ${since} · рейтинг ${m.moderator_rating}/100${m.moderator_reprimands ? ' · выгов ' + m.moderator_reprimands + '/3' : ''}</div>
+    </div>
+    <button onclick="modDemote(${userArg})" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(244,63,94,0.4);background:transparent;color:var(--red);font-weight:600;cursor:pointer;font-family:inherit;font-size:11px;">Снять</button>
+  </div>`;
+}
+
+async function modPromoteDirect(username) {
+  if (!await Dialog.confirm(`Сделать @${username} модератором без заявки?`, { title: 'Назначение', okText: 'Назначить' })) return;
+  try {
+    await api(`/mod/promote/${encodeURIComponent(username)}`, 'POST');
+    showToast(`@${username} теперь модератор`);
+    loadModerationScreen();
+  } catch(e) { showToast(e.message || 'Ошибка'); }
+}
+
+async function modDemote(username) {
+  if (!await Dialog.confirm(`Снять @${username} с роли модератора?`, { title: 'Снятие', okText: 'Снять', danger: true })) return;
+  try {
+    await api(`/mod/demote/${encodeURIComponent(username)}`, 'POST');
+    showToast(`@${username} больше не модератор`);
+    loadModerationScreen();
   } catch(e) { showToast(e.message || 'Ошибка'); }
 }
 
