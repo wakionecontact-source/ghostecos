@@ -774,6 +774,19 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
     </div>
   </div>
 
+  <!-- Экран модерации (заявки + overwatch queue для модераторов; админ-панель для owner) -->
+  <div class="screen" id="screenModeration">
+    <div style="max-width:760px;margin:0 auto;padding:14px 12px 80px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+        <h2 style="font-size:22px;font-weight:700;flex:1;">🛡 Модерация</h2>
+        <span id="modBadge" style="font-size:11px;padding:4px 10px;border-radius:8px;background:rgba(168,85,247,0.15);color:var(--primary);font-weight:600;"></span>
+      </div>
+      <div id="modContent" style="display:flex;flex-direction:column;gap:14px;">
+        <div style="text-align:center;color:var(--sub);padding:30px;">Загрузка...</div>
+      </div>
+    </div>
+  </div>
+
   <div class="screen" id="screenProfile">
     <div class="profile-card">
       <div class="prof-av" id="profAv">?</div>
@@ -794,6 +807,9 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
         <i class="fa-solid fa-comments"></i> Открыть GhostChat
         <span class="notif-badge" id="profChatBadge" style="position:static;margin-left:6px;"></span>
       </a>
+      <button class="prof-action-btn" onclick="switchScreen('screenModeration')" style="width:100%;margin-top:8px;justify-content:center;">
+        <i class="fa-solid fa-shield"></i> Модерация
+      </button>
       <button class="prof-action-btn" id="profInstallBtn" onclick="openInstall()" style="width:100%;margin-top:8px;justify-content:center;display:none;">
         <i class="fa-solid fa-mobile-screen"></i> Установить как приложение
       </button>
@@ -2410,6 +2426,7 @@ function switchScreen(screenId) {
   if (screenId === 'screenNotif') loadNotifications();
   if (screenId === 'screenWallet') loadWallet();
   if (screenId === 'screenMinisky') loadMinisky(); else stopMinisky();
+  if (screenId === 'screenModeration') loadModerationScreen();
   if (screenId === 'screenFeed') startNewCheck(); else stopNewCheck();
   window.scrollTo({top: 0});
 }
@@ -4553,6 +4570,157 @@ async function updateCounts() {
 }
 
 init();
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MODERATION SCREEN
+// ══════════════════════════════════════════════════════════════════════════════
+async function loadModerationScreen() {
+  const root = document.getElementById('modContent');
+  const badge = document.getElementById('modBadge');
+  root.innerHTML = '<div style="text-align:center;color:var(--sub);padding:30px;">Загрузка...</div>';
+  let me_mod;
+  try { me_mod = await api('/mod/me'); }
+  catch(e) { root.innerHTML = `<div style="color:var(--red);padding:20px;">Ошибка: ${esc(e.message||'')}</div>`; return; }
+
+  badge.textContent = me_mod.is_admin ? '👑 Owner' : (me_mod.is_moderator ? '🛡 Модератор' : 'Юзер');
+
+  let html = '';
+
+  // Status card
+  html += `<div style="padding:14px;background:rgba(168,85,247,0.05);border:1px solid rgba(168,85,247,0.20);border-radius:14px;">
+    <div style="font-size:13px;color:var(--sub);margin-bottom:8px;">Твой статус</div>
+    <div style="font-size:15px;font-weight:600;">
+      ${me_mod.is_admin ? '👑 Owner экосистемы' : me_mod.is_moderator ? '🛡 Модератор' : '👤 Обычный юзер'}
+    </div>
+    ${me_mod.is_moderator ? `
+      <div style="margin-top:8px;font-size:12px;color:var(--sub);">
+        Рейтинг: <b style="color:var(--text);">${me_mod.rating}</b> ·
+        Выговоров: <b style="color:var(--text);">${me_mod.reprimands}/3</b> ·
+        Проверок: <b style="color:var(--text);">${me_mod.votes_count}</b>
+      </div>
+    ` : ''}
+  </div>`;
+
+  // For non-moderators: button to apply
+  if (!me_mod.is_moderator && !me_mod.is_admin) {
+    html += `<div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:14px;">
+      <div style="font-weight:600;margin-bottom:8px;">Стать модератором</div>
+      <div style="font-size:12px;color:var(--sub);line-height:1.5;margin-bottom:12px;">
+        Подача заявки стоит <b>200 Gost</b>. Заявку рассматривает владелец экосистемы.
+        Модераторы проверяют посты на overwatch и получают Gost за голоса.
+      </div>
+      <button onclick="applyForModerator()" style="width:100%;padding:11px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:13px;">
+        📝 Подать заявку (200 Gost)
+      </button>
+    </div>`;
+  }
+
+  // Admin view: applications list
+  if (me_mod.is_admin) {
+    let apps = [];
+    try { apps = await api('/mod/applications'); } catch(_) {}
+    html += `<div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:14px;">
+      <div style="font-weight:600;margin-bottom:10px;">📋 Заявки в модераторы (${apps.filter(a=>a.status==='pending').length} pending)</div>
+      ${apps.length ? apps.map(a => modAppCard(a)).join('') : '<div style="color:var(--sub);font-size:13px;text-align:center;padding:14px;">Заявок нет</div>'}
+    </div>`;
+  }
+
+  // Moderator view: overwatch queue
+  if (me_mod.is_moderator || me_mod.is_admin) {
+    let queue = [];
+    try { queue = await api('/mod/overwatch_queue'); } catch(_) {}
+    html += `<div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:14px;">
+      <div style="font-weight:600;margin-bottom:10px;">⚖️ Очередь overwatch (${queue.length})</div>
+      <div style="font-size:11px;color:var(--sub);margin-bottom:12px;line-height:1.5;">
+        Только контент. Автор скрыт. Жалоба за раскрытие личности — штраф 1000 Gost.
+      </div>
+      ${queue.length ? queue.map(ow => owCard(ow)).join('') : '<div style="color:var(--sub);font-size:13px;text-align:center;padding:14px;">Постов на проверку нет</div>'}
+    </div>`;
+  }
+
+  root.innerHTML = html;
+}
+
+function modAppCard(a) {
+  const isPending = a.status === 'pending';
+  const ago = Math.round((Date.now()/1000 - a.created_at) / 3600);
+  return `<div style="padding:12px;background:rgba(0,0,0,0.20);border-radius:10px;margin-bottom:8px;border-left:3px solid ${isPending ? 'var(--primary)' : a.status==='accepted' ? '#22c55e' : 'var(--red)'};">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+      <div style="width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:700;">${(a.display_name||a.username||'?')[0].toUpperCase()}</div>
+      <div style="flex:1;">
+        <div style="font-weight:600;font-size:13px;">${esc(a.display_name||a.username)}</div>
+        <div style="font-size:11px;color:var(--sub);">@${esc(a.username)} · ${ago}ч назад</div>
+      </div>
+      <div style="font-size:11px;padding:3px 8px;border-radius:6px;background:rgba(255,255,255,0.05);color:var(--text);font-weight:700;">
+        ${a.quality_score}/100
+      </div>
+    </div>
+    <div style="font-size:11px;color:var(--sub);margin-bottom:8px;">
+      Постов: <b style="color:var(--text);">${a.posts_count}</b> ·
+      Комментов: <b style="color:var(--text);">${a.comments_count}</b> ·
+      Gost: <b style="color:var(--text);">${a.gost_balance ?? 0}</b>
+    </div>
+    ${isPending ? `<div style="display:flex;gap:6px;">
+      <button onclick="modDecide(${a.id}, true)" style="flex:1;padding:8px;border-radius:8px;border:none;background:#22c55e;color:#fff;font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;">✅ Принять</button>
+      <button onclick="modDecide(${a.id}, false)" style="flex:1;padding:8px;border-radius:8px;border:1px solid rgba(244,63,94,0.4);background:transparent;color:var(--red);font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;">❌ Отклонить</button>
+    </div>` : `<div style="font-size:11px;color:var(--sub);font-style:italic;">${a.status === 'accepted' ? '✅ Принят' : '❌ Отклонён'}</div>`}
+  </div>`;
+}
+
+function owCard(ow) {
+  const myVote = ow.my_vote;
+  const voted = myVote != null;
+  return `<div style="padding:12px;background:rgba(0,0,0,0.20);border-radius:10px;margin-bottom:8px;border-left:3px solid var(--primary);">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:11px;color:var(--sub);">
+      <span>activity: <b style="color:var(--text);">${ow.current_activity}/1000</b></span>
+      <span>·</span>
+      <span>${ow.kind === 'manual' ? '💵 Платный' : '⚡ Системный'}</span>
+    </div>
+    <div style="background:rgba(0,0,0,0.30);padding:10px;border-radius:8px;font-size:13px;line-height:1.55;margin-bottom:10px;">
+      ${esc(ow.content || '(пусто)')}
+    </div>
+    ${voted ? `<div style="font-size:12px;color:var(--sub);">Ты проголосовал: <b>${myVote > 0 ? '+' : ''}${myVote}</b></div>`
+      : `<div style="display:flex;gap:4px;flex-wrap:wrap;">
+        ${[-150, -50, 0, 50, 150].map(d =>
+          `<button onclick="owVote(${ow.request_id}, ${d})" style="flex:1;padding:8px;border-radius:8px;border:1px solid ${d < 0 ? 'rgba(244,63,94,0.4)' : d > 0 ? 'rgba(34,197,94,0.4)' : 'var(--border-strong)'};background:transparent;color:${d < 0 ? 'var(--red)' : d > 0 ? '#22c55e' : 'var(--text)'};font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;min-width:50px;">
+            ${d > 0 ? '+' : ''}${d}
+          </button>`
+        ).join('')}
+      </div>`}
+  </div>`;
+}
+
+async function applyForModerator() {
+  if (!await Dialog.confirm('Подать заявку в модераторы за 200 Gost?\n\n200 Gost спишутся даже если заявку отклонят (это защита от спама).', { title: 'Заявка', okText: 'Подать' })) return;
+  try {
+    const r = await api('/mod/apply', 'POST');
+    Dialog.alert(`Заявка отправлена! Quality score: ${r.quality_score}/100. Жди ответа от админа.`);
+    loadModerationScreen();
+  } catch(e) { showToast(e.message || 'Ошибка'); }
+}
+
+async function modDecide(appId, accept) {
+  const verb = accept ? 'принять' : 'отклонить';
+  if (!await Dialog.confirm(`${accept ? 'Дать роль модератора?' : 'Отклонить заявку?'}`, { title: `${verb}`, okText: 'Подтвердить' })) return;
+  try {
+    await api(`/mod/applications/${appId}/decide`, 'POST', { accept });
+    showToast(accept ? 'Принято' : 'Отклонено');
+    loadModerationScreen();
+  } catch(e) { showToast(e.message || 'Ошибка'); }
+}
+
+async function owVote(reqId, delta) {
+  if (!await Dialog.confirm(`Голос: ${delta > 0 ? '+' : ''}${delta} activity?\n\nИзменение нельзя отозвать.`, { title: 'Подтвердить голос', okText: 'Голосовать' })) return;
+  try {
+    const r = await api(`/mod/overwatch/${reqId}/vote`, 'POST', { delta });
+    if (r.closed) {
+      Dialog.alert(`Overwatch закрыт. Итог: ${r.delta_so_far > 0 ? '+' : ''}${r.delta_so_far} activity. Голосов: ${r.votes_count}.`);
+    } else {
+      showToast(`Голос засчитан (${r.votes_count}/3)`);
+    }
+    loadModerationScreen();
+  } catch(e) { showToast(e.message || 'Ошибка'); }
+}
 </script>
 </body>
 </html>

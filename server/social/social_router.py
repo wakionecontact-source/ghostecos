@@ -730,6 +730,67 @@ def init():
     except sqlite3.OperationalError:
         pass
 
+    # ── Модерация (Фаза 2+3) ──
+    try: c.execute("ALTER TABLE users ADD COLUMN is_moderator INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError: pass
+    try: c.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")  # owner экосистемы
+    except sqlite3.OperationalError: pass
+    try: c.execute("ALTER TABLE users ADD COLUMN moderator_rating INTEGER NOT NULL DEFAULT 100")  # 0-100 (>=80 — хорошо)
+    except sqlite3.OperationalError: pass
+    try: c.execute("ALTER TABLE users ADD COLUMN moderator_reprimands INTEGER NOT NULL DEFAULT 0")  # 0..3, 4й=снятие
+    except sqlite3.OperationalError: pass
+    try: c.execute("ALTER TABLE users ADD COLUMN moderator_since INTEGER")  # когда дали роль
+    except sqlite3.OperationalError: pass
+    # Заявки на роль модератора
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS soc_moderator_applications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',  -- pending | accepted | rejected
+                reviewed_by INTEGER,
+                reviewed_at INTEGER,
+                quality_score INTEGER NOT NULL DEFAULT 50,  -- для сортировки (50=средний, 100=топ)
+                UNIQUE(user_id, status)  -- одна pending-заявка на юзера; можно делать новую если предыдущая закрыта
+            )
+        """)
+    except sqlite3.OperationalError: pass
+    try: c.execute("CREATE INDEX IF NOT EXISTS idx_modapp_status ON soc_moderator_applications(status, quality_score DESC)")
+    except sqlite3.OperationalError: pass
+    # Overwatch — ремодерация постов модераторами
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS soc_overwatch_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id INTEGER NOT NULL,
+                author_id INTEGER NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'manual',  -- manual | system_viral | system_reports
+                price_gost INTEGER NOT NULL DEFAULT 300,
+                created_at INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open',  -- open | resolved | cancelled
+                resolved_at INTEGER,
+                delta_applied INTEGER,                -- итоговый сдвиг activity (±150 cap)
+                votes_count INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+    except sqlite3.OperationalError: pass
+    try: c.execute("CREATE INDEX IF NOT EXISTS idx_ow_status ON soc_overwatch_requests(status, created_at DESC)")
+    except sqlite3.OperationalError: pass
+    # Голоса модераторов в overwatch
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS soc_overwatch_votes (
+                request_id INTEGER NOT NULL,
+                moderator_id INTEGER NOT NULL,
+                delta INTEGER NOT NULL,        -- -150, -50, 0, +50, +150
+                comment TEXT,                  -- опционально, причина
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (request_id, moderator_id)
+            )
+        """)
+    except sqlite3.OperationalError: pass
+
     # ── Система активности и модерации (Фаза 0+1) ──
     # activity 0..1000: 0 = тень, 100 = низкий, 500 = середина (default), 1000 = max
     try: c.execute("ALTER TABLE soc_posts ADD COLUMN activity INTEGER NOT NULL DEFAULT 500")
@@ -2480,6 +2541,375 @@ def post_activity(post_id: int, authorization: Optional[str] = Header(None)):
         "automod_source": p["automod_source"],
         "scale": {"min": 0, "low": 100, "mid": 500, "max": 1000},
         "history": [dict(h) for h in history],
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# МОДЕРАЦИЯ (Фаза 2+3)
+# - Юзеры подают заявки на роль модератора за 200 Gost
+# - Owner (юзер с is_admin=1) принимает/отклоняет
+# - Авторы могут купить overwatch для своего поста (300 Gost базово,
+#   динамическая цена потом)
+# - Модераторы голосуют сдвигом ±50/±150, среднее → применяется к activity
+# - Цена голосов ограничена ±150 за один overwatch
+# ══════════════════════════════════════════════════════════════════════════════
+
+MOD_APPLY_PRICE_GOST = 200
+OVERWATCH_BASE_PRICE_GOST = 300
+OVERWATCH_MAX_STEP = 150           # ±150 максимум за один overwatch
+OVERWATCH_MOD_SHARE_PCT = 15       # 15% оплаты идёт модераторам, 85% сжигается
+OVERWATCH_PER_MOD_BASE = 10        # базовая оплата модератору за голос
+
+
+def _is_admin_user(user) -> bool:
+    """Owner экосистемы — единственный юзер с is_admin=1 или username из env."""
+    if user.get("is_admin"):
+        return True
+    owner = os.getenv("GE_OWNER_USERNAME", "").strip().lower()
+    return bool(owner) and user.get("username", "").lower() == owner
+
+
+@router.post("/mod/apply")
+def mod_apply(authorization: Optional[str] = Header(None)):
+    """Подать заявку на роль модератора. Стоит 200 Gost. У одного юзера может
+    быть только одна pending-заявка."""
+    user = auth_member(authorization)
+    _rate_limit(f"modapply:{user['id']}", limit=3, window=86400)  # 3 заявки в сутки
+    c = db()
+    # Уже модератор?
+    u = c.execute("SELECT is_moderator FROM users WHERE id=?", (user["id"],)).fetchone()
+    if u and u["is_moderator"]:
+        c.close(); raise HTTPException(400, "Вы уже модератор")
+    # Есть pending-заявка?
+    existing = c.execute(
+        "SELECT 1 FROM soc_moderator_applications WHERE user_id=? AND status='pending'",
+        (user["id"],)
+    ).fetchone()
+    if existing:
+        c.close(); raise HTTPException(409, "У вас уже есть заявка на рассмотрении")
+    # Списываем Gost
+    bal = get_balance(user["id"])["gost"]
+    if bal < MOD_APPLY_PRICE_GOST:
+        c.close(); raise HTTPException(400, f"Нужно {MOD_APPLY_PRICE_GOST} Gost (у вас {bal})")
+    # Atomically: spend + insert
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        # Spend gost через wallet_tx
+        c.execute(
+            "INSERT INTO soc_wallet_tx (user_id, currency, delta, source, actor_id, ref_type, ref_id) "
+            "VALUES (?, 'gost', ?, 'mod_apply', 0, 'apply', 0)",
+            (user["id"], -MOD_APPLY_PRICE_GOST),
+        )
+        c.execute(
+            "UPDATE soc_wallets SET gost = gost - ?, updated_at = CURRENT_TIMESTAMP WHERE user_id=?",
+            (MOD_APPLY_PRICE_GOST, user["id"]),
+        )
+        # Quality score для сортировки: больше постов + дольше зареган + 0 жалоб = выше
+        posts_cnt = c.execute(
+            "SELECT COUNT(*) as n FROM soc_posts WHERE user_id=?", (user["id"],)
+        ).fetchone()["n"]
+        days_reg_row = c.execute(
+            "SELECT (julianday('now') - julianday(created_at)) as days FROM users WHERE id=?",
+            (user["id"],)
+        ).fetchone()
+        days_reg = int(days_reg_row["days"] or 0)
+        # quality = min(100, max(0, posts*0.5 + days_reg*0.3 + 50))
+        quality = max(0, min(100, int(posts_cnt * 0.5 + days_reg * 0.3 + 50)))
+        c.execute(
+            "INSERT INTO soc_moderator_applications (user_id, created_at, quality_score) VALUES (?,?,?)",
+            (user["id"], int(time.time()), quality),
+        )
+        c.execute("COMMIT")
+    except Exception:
+        try: c.execute("ROLLBACK")
+        except: pass
+        c.close(); raise
+    c.close()
+    return {"status": "ok", "quality_score": quality}
+
+
+@router.get("/mod/applications")
+def mod_applications_list(authorization: Optional[str] = Header(None)):
+    """Список заявок (для admin/owner). Сортирован: pending по quality DESC,
+    потом обработанные по дате."""
+    user = auth_member(authorization)
+    if not _is_admin_user(user):
+        raise HTTPException(403, "Только для администратора")
+    c = db()
+    rows = c.execute("""
+        SELECT a.id, a.user_id, a.created_at, a.status, a.quality_score, a.reviewed_at,
+               u.username, u.display_name,
+               (SELECT COUNT(*) FROM soc_posts WHERE user_id=a.user_id) as posts_count,
+               (SELECT COUNT(*) FROM soc_comments WHERE user_id=a.user_id) as comments_count,
+               (SELECT gost FROM soc_wallets WHERE user_id=a.user_id) as gost_balance
+        FROM soc_moderator_applications a
+        JOIN users u ON u.id = a.user_id
+        ORDER BY
+          CASE a.status WHEN 'pending' THEN 0 ELSE 1 END,
+          a.quality_score DESC,
+          a.created_at DESC
+        LIMIT 200
+    """).fetchall()
+    c.close()
+    return [dict(r) for r in rows]
+
+
+@router.post("/mod/applications/{app_id}/decide")
+def mod_application_decide(app_id: int, body: dict, authorization: Optional[str] = Header(None)):
+    """Принять или отклонить заявку. accept=True → дать роль модератора."""
+    user = auth_member(authorization)
+    if not _is_admin_user(user):
+        raise HTTPException(403, "Только для администратора")
+    accept = bool(body.get("accept"))
+    c = db()
+    app_row = c.execute(
+        "SELECT id, user_id, status FROM soc_moderator_applications WHERE id=?", (app_id,)
+    ).fetchone()
+    if not app_row:
+        c.close(); raise HTTPException(404, "Заявка не найдена")
+    if app_row["status"] != "pending":
+        c.close(); raise HTTPException(400, "Заявка уже обработана")
+    now = int(time.time())
+    new_status = "accepted" if accept else "rejected"
+    c.execute(
+        "UPDATE soc_moderator_applications SET status=?, reviewed_by=?, reviewed_at=? WHERE id=?",
+        (new_status, user["id"], now, app_id),
+    )
+    if accept:
+        c.execute(
+            "UPDATE users SET is_moderator=1, moderator_since=?, moderator_rating=100, moderator_reprimands=0 WHERE id=?",
+            (now, app_row["user_id"]),
+        )
+    c.commit()
+    c.close()
+    # Уведомить заявителя
+    try:
+        ws_hub.send_to(app_row["user_id"], "mod.application_decided",
+                       {"accepted": accept, "application_id": app_id})
+    except Exception: pass
+    return {"status": "ok", "accepted": accept}
+
+
+@router.post("/post/{post_id}/overwatch")
+def post_overwatch_buy(post_id: int, authorization: Optional[str] = Header(None)):
+    """Купить ремодерацию своего поста за 300 Gost. Создаётся overwatch_request,
+    модераторы смогут голосовать."""
+    user = auth_member(authorization)
+    _rate_limit(f"ow:{user['id']}", limit=5, window=86400)
+    c = db()
+    p = c.execute("SELECT user_id, activity FROM soc_posts WHERE id=?", (post_id,)).fetchone()
+    if not p:
+        c.close(); raise HTTPException(404, "Пост не найден")
+    if p["user_id"] != user["id"]:
+        c.close(); raise HTTPException(403, "Можно купить только для своего поста")
+    # Открытый overwatch уже есть?
+    open_req = c.execute(
+        "SELECT id FROM soc_overwatch_requests WHERE post_id=? AND status='open'", (post_id,)
+    ).fetchone()
+    if open_req:
+        c.close(); raise HTTPException(409, "Для этого поста уже идёт overwatch")
+    bal = get_balance(user["id"])["gost"]
+    if bal < OVERWATCH_BASE_PRICE_GOST:
+        c.close(); raise HTTPException(400, f"Нужно {OVERWATCH_BASE_PRICE_GOST} Gost (у вас {bal})")
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        c.execute(
+            "INSERT INTO soc_wallet_tx (user_id, currency, delta, source, actor_id, ref_type, ref_id) "
+            "VALUES (?, 'gost', ?, 'overwatch', 0, 'post', ?)",
+            (user["id"], -OVERWATCH_BASE_PRICE_GOST, post_id),
+        )
+        c.execute(
+            "UPDATE soc_wallets SET gost = gost - ?, updated_at = CURRENT_TIMESTAMP WHERE user_id=?",
+            (OVERWATCH_BASE_PRICE_GOST, user["id"]),
+        )
+        c.execute(
+            "INSERT INTO soc_overwatch_requests (post_id, author_id, kind, price_gost, created_at) "
+            "VALUES (?,?,?,?,?)",
+            (post_id, user["id"], "manual", OVERWATCH_BASE_PRICE_GOST, int(time.time())),
+        )
+        req_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
+        c.execute("COMMIT")
+    except Exception:
+        try: c.execute("ROLLBACK")
+        except: pass
+        c.close(); raise
+    # Уведомим модераторов о новом overwatch (через WS)
+    mods = c.execute("SELECT id FROM users WHERE is_moderator=1").fetchall()
+    for m in mods:
+        try: ws_hub.send_to(m["id"], "overwatch.new", {"request_id": req_id, "post_id": post_id})
+        except: pass
+    c.close()
+    return {"status": "ok", "request_id": req_id, "price": OVERWATCH_BASE_PRICE_GOST}
+
+
+@router.get("/mod/overwatch_queue")
+def mod_overwatch_queue(authorization: Optional[str] = Header(None)):
+    """Список открытых overwatch — для модераторов. Видят ТОЛЬКО контент,
+    без автора/реакций/комментов (защита анонимности)."""
+    user = auth_member(authorization)
+    c = db()
+    u = c.execute("SELECT is_moderator FROM users WHERE id=?", (user["id"],)).fetchone()
+    if not u or not u["is_moderator"]:
+        c.close(); raise HTTPException(403, "Только для модераторов")
+    rows = c.execute("""
+        SELECT r.id as request_id, r.post_id, r.created_at, r.kind,
+               p.content, p.activity, p.media,
+               (SELECT delta FROM soc_overwatch_votes WHERE request_id=r.id AND moderator_id=?) as my_vote
+        FROM soc_overwatch_requests r
+        JOIN soc_posts p ON p.id = r.post_id
+        WHERE r.status='open'
+        ORDER BY r.created_at ASC
+        LIMIT 50
+    """, (user["id"],)).fetchall()
+    c.close()
+    out = []
+    for r in rows:
+        out.append({
+            "request_id": r["request_id"],
+            "post_id": r["post_id"],
+            "content": r["content"],
+            "current_activity": r["activity"],
+            "media": json.loads(r["media"]) if r["media"] else None,
+            "kind": r["kind"],
+            "created_at": r["created_at"],
+            "my_vote": r["my_vote"],
+            # НЕ ВКЛЮЧАЕМ: author, username, реакции, комменты
+        })
+    return out
+
+
+class OverwatchVoteBody(BaseModel):
+    delta: int   # -150, -50, 0, +50, +150
+    comment: Optional[str] = None
+
+
+@router.post("/mod/overwatch/{request_id}/vote")
+def mod_overwatch_vote(request_id: int, body: OverwatchVoteBody, authorization: Optional[str] = Header(None)):
+    """Модератор голосует сдвигом activity. Когда наберётся ≥3 голосов —
+    автоматически применяется среднее (capped ±150) и overwatch закрывается."""
+    user = auth_member(authorization)
+    c = db()
+    u = c.execute("SELECT is_moderator, moderator_rating FROM users WHERE id=?", (user["id"],)).fetchone()
+    if not u or not u["is_moderator"]:
+        c.close(); raise HTTPException(403, "Только для модераторов")
+    if body.delta not in (-150, -50, 0, 50, 150):
+        c.close(); raise HTTPException(400, "delta: -150 / -50 / 0 / 50 / 150")
+    req = c.execute(
+        "SELECT id, post_id, author_id, price_gost, status FROM soc_overwatch_requests WHERE id=?",
+        (request_id,)
+    ).fetchone()
+    if not req:
+        c.close(); raise HTTPException(404, "Запрос не найден")
+    if req["status"] != "open":
+        c.close(); raise HTTPException(400, "Запрос уже закрыт")
+    if req["author_id"] == user["id"]:
+        c.close(); raise HTTPException(403, "Нельзя голосовать на своём посте")
+    now = int(time.time())
+    # Записать голос (PRIMARY KEY — один голос на модератора в request)
+    try:
+        c.execute(
+            "INSERT INTO soc_overwatch_votes (request_id, moderator_id, delta, comment, created_at) "
+            "VALUES (?,?,?,?,?)",
+            (request_id, user["id"], body.delta, (body.comment or "")[:200], now),
+        )
+    except sqlite3.IntegrityError:
+        c.close(); raise HTTPException(409, "Вы уже проголосовали")
+    # Подсчёт голосов
+    votes = c.execute(
+        "SELECT delta FROM soc_overwatch_votes WHERE request_id=?", (request_id,)
+    ).fetchall()
+    vote_count = len(votes)
+    avg_delta = sum(v["delta"] for v in votes) / vote_count
+    # Cap ±150
+    delta_applied = max(-OVERWATCH_MAX_STEP, min(OVERWATCH_MAX_STEP, int(round(avg_delta))))
+    c.execute(
+        "UPDATE soc_overwatch_requests SET votes_count=? WHERE id=?",
+        (vote_count, request_id),
+    )
+    closed = False
+    if vote_count >= 3:
+        # Применяем результат
+        p = c.execute("SELECT activity FROM soc_posts WHERE id=?", (req["post_id"],)).fetchone()
+        old_act = p["activity"] if p else 500
+        new_act = max(0, min(1000, old_act + delta_applied))
+        c.execute(
+            "UPDATE soc_posts SET activity=?, activity_set_at=? WHERE id=?",
+            (new_act, now, req["post_id"]),
+        )
+        c.execute(
+            "INSERT INTO soc_activity_log (post_id, old_activity, new_activity, delta, source, actor_id, note, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (req["post_id"], old_act, new_act, delta_applied, "overwatch", None,
+             f"avg={avg_delta:.1f}, votes={vote_count}", now),
+        )
+        # Распределяем награды модераторам: OVERWATCH_PER_MOD_BASE × rating_multiplier
+        for v_mod in c.execute(
+            "SELECT v.moderator_id, u.moderator_rating FROM soc_overwatch_votes v "
+            "JOIN users u ON u.id = v.moderator_id WHERE v.request_id=?",
+            (request_id,)
+        ).fetchall():
+            mult = max(0.5, min(1.5, v_mod["moderator_rating"] / 100))
+            reward = int(OVERWATCH_PER_MOD_BASE * mult)
+            c.execute(
+                "INSERT INTO soc_wallet_tx (user_id, currency, delta, source, actor_id, ref_type, ref_id) "
+                "VALUES (?, 'gost', ?, 'overwatch_reward', 0, 'overwatch', ?)",
+                (v_mod["moderator_id"], reward, request_id),
+            )
+            c.execute(
+                "INSERT OR IGNORE INTO soc_wallets (user_id) VALUES (?)", (v_mod["moderator_id"],)
+            )
+            c.execute(
+                "UPDATE soc_wallets SET gost = gost + ?, updated_at = CURRENT_TIMESTAMP WHERE user_id=?",
+                (reward, v_mod["moderator_id"]),
+            )
+        # Закрыть overwatch
+        c.execute(
+            "UPDATE soc_overwatch_requests SET status='resolved', resolved_at=?, delta_applied=? WHERE id=?",
+            (now, delta_applied, request_id),
+        )
+        closed = True
+        # Уведомить автора
+        try:
+            ws_hub.send_to(req["author_id"], "overwatch.resolved", {
+                "request_id": request_id, "post_id": req["post_id"],
+                "old_activity": old_act, "new_activity": new_act,
+                "delta": delta_applied, "votes": vote_count,
+            })
+        except Exception: pass
+    c.commit()
+    c.close()
+    return {
+        "status": "ok",
+        "votes_count": vote_count,
+        "closed": closed,
+        "delta_so_far": delta_applied if closed else None,
+    }
+
+
+@router.get("/mod/me")
+def mod_me(authorization: Optional[str] = Header(None)):
+    """Инфа о моей роли модератора + статистика."""
+    user = auth_member(authorization)
+    c = db()
+    u = c.execute(
+        "SELECT is_moderator, is_admin, moderator_rating, moderator_reprimands, moderator_since "
+        "FROM users WHERE id=?",
+        (user["id"],)
+    ).fetchone()
+    votes_cnt = 0
+    if u and u["is_moderator"]:
+        votes_cnt = c.execute(
+            "SELECT COUNT(*) as n FROM soc_overwatch_votes WHERE moderator_id=?",
+            (user["id"],)
+        ).fetchone()["n"]
+    c.close()
+    return {
+        "is_moderator": bool(u and u["is_moderator"]),
+        "is_admin": _is_admin_user({**user, "is_admin": u["is_admin"] if u else 0}),
+        "rating": u["moderator_rating"] if u else None,
+        "reprimands": u["moderator_reprimands"] if u else None,
+        "since": u["moderator_since"] if u else None,
+        "votes_count": votes_cnt,
     }
 
 
