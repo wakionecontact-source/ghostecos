@@ -2337,12 +2337,36 @@ function applyLeftBtn(){
 // UI — chat
 // ════════════════════════════════════════════════════════════════════
 async function openChat(username, display_name){
+  // Чистим blob-URL'ы и Audio-объекты от ПРЕДЫДУЩЕГО чата — иначе при долгой
+  // сессии открытий 10+ чатов RAM растёт неограниченно. Та же логика как в
+  // backToList() — повторяем здесь чтобы покрыть переход chat→chat без возврата
+  // в список.
+  try {
+    for (const m of activeMessages) {
+      if (m && m._imgUrl) { URL.revokeObjectURL(m._imgUrl); m._imgUrl = null; }
+    }
+    if (typeof _voiceAudios !== 'undefined' && _voiceAudios.forEach) {
+      _voiceAudios.forEach(entry => {
+        try { entry && entry.audio && entry.audio.pause(); } catch(_){}
+        if (entry && entry.url) URL.revokeObjectURL(entry.url);
+      });
+      _voiceAudios.clear();
+    }
+  } catch(_) {}
   activePeer = { username, display_name: display_name || username };
+  activeGroup = null;
   _peerTyping = false; _peerOnline = false;
   clearTimeout(_peerTypingTimer);
   document.getElementById('appGrid').classList.add('in-chat');
   activeMessages = await idbGetMessages(username);
-  activeMessages.sort((a,b) => (a.created_at || '').localeCompare(b.created_at || ''));
+  // ВАЖНО: created_at может быть ISO-строкой (legacy chat_dm) или unix-int
+  // (sealed/новые). localeCompare работает только на строках → роняет openChat
+  // с TypeError, и чат не открывается. Сортируем через .getTime().
+  activeMessages.sort((a,b) => {
+    const av = a.created_at ? new Date(typeof a.created_at === 'number' ? a.created_at * 1000 : a.created_at).getTime() : 0;
+    const bv = b.created_at ? new Date(typeof b.created_at === 'number' ? b.created_at * 1000 : b.created_at).getTime() : 0;
+    return av - bv;
+  });
   renderChat();
   updateChatStatusBar();
   const d = dialogs.find(x => x.username === username);
@@ -3429,8 +3453,8 @@ function connectWS(){
         }, 10000);
       }catch(e){ _killStaleWs('send err'); }
     }, 25000);
-    // После reconnect — подтянем накопленные сообщения
-    fetchPending().catch(() => {});
+    // После reconnect — подтянем накопленные сообщения с retry на flaky-сети
+    _fetchPendingWithRetry();
     loadGroups().catch(() => {});
   };
   ws.onmessage = async e => {
@@ -3478,12 +3502,26 @@ function _doWakeup(){
   // WS живой — догоним вручную с троттлингом
   if (now - _lastPendingAt > 10_000) {
     _lastPendingAt = now;
-    fetchPending().catch(() => {});
+    _fetchPendingWithRetry();
   }
   if (now - _lastGroupsAt > 60_000) {
     _lastGroupsAt = now;
     loadGroups().catch(() => {});
   }
+}
+
+// fetchPending с одним retry через 5 сек при network glitch. Без этого
+// flaky-соединение проглатывает сообщения молча: catch(() => {}) не имеет
+// retry, юзер их не видит до следующего wake.
+function _fetchPendingWithRetry(){
+  fetchPending().catch(err => {
+    console.warn('[wake] fetchPending failed, retrying in 5s:', err && err.message);
+    setTimeout(() => {
+      fetchPending().catch(err2 => {
+        console.error('[wake] fetchPending retry also failed:', err2 && err2.message);
+      });
+    }, 5000);
+  });
 }
 
 // Спрашивает сервер какие из моих !delivered сообщений уже доставлены.
@@ -3917,12 +3955,30 @@ async function openGroupChat(gid, name, kind){
   if (typeof gid === 'string') gid = parseInt(gid, 10);
   try {
     const info = await chat(`/group/${gid}`);
+    // Cleanup blob/voice URL'ов от предыдущего чата (см. openChat)
+    try {
+      for (const m of activeMessages) {
+        if (m && m._imgUrl) { URL.revokeObjectURL(m._imgUrl); m._imgUrl = null; }
+      }
+      if (typeof _voiceAudios !== 'undefined' && _voiceAudios.forEach) {
+        _voiceAudios.forEach(entry => {
+          try { entry && entry.audio && entry.audio.pause(); } catch(_){}
+          if (entry && entry.url) URL.revokeObjectURL(entry.url);
+        });
+        _voiceAudios.clear();
+      }
+    } catch(_) {}
     activePeer = null;
     activeGroup = info;
     document.getElementById('appGrid').classList.add('in-chat');
     // Загрузить историю из IDB
     activeMessages = (await idbGetMessages(_grpKey(gid))) || [];
-    activeMessages.sort((a,b) => (a.created_at || '').localeCompare(b.created_at || ''));
+    // created_at может быть ISO-string или unix-int — сортируем через .getTime()
+    activeMessages.sort((a,b) => {
+      const av = a.created_at ? new Date(typeof a.created_at === 'number' ? a.created_at * 1000 : a.created_at).getTime() : 0;
+      const bv = b.created_at ? new Date(typeof b.created_at === 'number' ? b.created_at * 1000 : b.created_at).getTime() : 0;
+      return av - bv;
+    });
     // Сначала отрисуем шапку + body
     renderGroupChat();
     // Сбросим unread для группы (если был)
