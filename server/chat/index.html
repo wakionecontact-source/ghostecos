@@ -758,10 +758,18 @@ function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').repl
 function jsAttr(v){return esc(JSON.stringify(v == null ? null : String(v)));}
 function ini(n){return n?n[0].toUpperCase():'?';}
 function showToast(m, err=false){const t=document.getElementById('toast');t.textContent=m;t.className='toast'+(err?' err':'');t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400);}
-function timeShort(ts){const d=new Date(ts.includes('Z')||ts.includes('+')?ts:ts+'Z');return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;}
-function dateKey(ts){const d=new Date(ts.includes('Z')||ts.includes('+')?ts:ts+'Z');return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;}
-function dateLong(ts){const d=new Date(ts.includes('Z')||ts.includes('+')?ts:ts+'Z');const t=new Date();t.setHours(0,0,0,0);const x=new Date(d);x.setHours(0,0,0,0);const dd=Math.floor((t-x)/86400000);if(dd===0)return'сегодня';if(dd===1)return'вчера';const mn=['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];return `${d.getDate()} ${mn[d.getMonth()]}${d.getFullYear()!==t.getFullYear()?' '+d.getFullYear():''}`;}
-function timeOrDate(ts){const d=new Date(ts.includes('Z')||ts.includes('+')?ts:ts+'Z');const n=new Date();if(d.toDateString()===n.toDateString())return timeShort(ts);const days=['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];const diff=(n-d)/86400000;if(diff<7)return days[d.getDay()];return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}`;}
+// Парсит ts → Date. Поддерживает строку '2026-...' (legacy chat_dm) и unix int (sealed).
+function _toDate(ts){
+  if (typeof ts === 'number') return new Date(ts * 1000);  // unix секунды (sealed)
+  if (typeof ts === 'string') {
+    return new Date(ts.includes('Z')||ts.includes('+')?ts:ts+'Z');
+  }
+  return new Date();
+}
+function timeShort(ts){const d=_toDate(ts);return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;}
+function dateKey(ts){const d=_toDate(ts);return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;}
+function dateLong(ts){const d=_toDate(ts);const t=new Date();t.setHours(0,0,0,0);const x=new Date(d);x.setHours(0,0,0,0);const dd=Math.floor((t-x)/86400000);if(dd===0)return'сегодня';if(dd===1)return'вчера';const mn=['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];return `${d.getDate()} ${mn[d.getMonth()]}${d.getFullYear()!==t.getFullYear()?' '+d.getFullYear():''}`;}
+function timeOrDate(ts){const d=_toDate(ts);const n=new Date();if(d.toDateString()===n.toDateString())return timeShort(ts);const days=['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];const diff=(n-d)/86400000;if(diff<7)return days[d.getDay()];return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}`;}
 
 function setSsoCookie(t){if(!t||t.startsWith('guest_'))return;document.cookie=`gs_token=${encodeURIComponent(t)}; path=/; max-age=31536000; SameSite=Lax; Secure`;}
 function clearSsoCookie(){document.cookie='gs_token=; path=/; max-age=0; SameSite=Lax; Secure';}
