@@ -892,6 +892,16 @@ def init():
     except sqlite3.OperationalError: pass
     try: c.execute("ALTER TABLE users ADD COLUMN daily_status_set_at INTEGER")
     except sqlite3.OperationalError: pass
+    # mood: optional emoji-key (joy|sad|fire|love|tired|chill|angry|surprised)
+    try: c.execute("ALTER TABLE users ADD COLUMN daily_status_mood TEXT")
+    except sqlite3.OperationalError: pass
+    # Eternal status (за Soul, без TTL)
+    try: c.execute("ALTER TABLE users ADD COLUMN eternal_status_text TEXT")
+    except sqlite3.OperationalError: pass
+    try: c.execute("ALTER TABLE users ADD COLUMN eternal_status_mood TEXT")
+    except sqlite3.OperationalError: pass
+    try: c.execute("ALTER TABLE users ADD COLUMN eternal_status_purchased_at INTEGER")
+    except sqlite3.OperationalError: pass
 
     # ── Жалобы на посты (для автомодерации) ──
     try:
@@ -2218,7 +2228,17 @@ def get_profile(username: str, offset: int = Query(0), authorization: Optional[s
     posts = _hydrate_posts(c, rows, uid)
     c.close()
     rep_score = int(u.get("reputation_score") if u.get("reputation_score") is not None else 100)
-    status_text = u.get("daily_status_text") if _status_active(u.get("daily_status_set_at")) else None
+    # Eternal статус приоритетнее дневного
+    if u.get("eternal_status_text"):
+        status_text = u.get("eternal_status_text")
+        status_mood = u.get("eternal_status_mood")
+        status_eternal = True
+    elif _status_active(u.get("daily_status_set_at")):
+        status_text = u.get("daily_status_text")
+        status_mood = u.get("daily_status_mood")
+        status_eternal = False
+    else:
+        status_text = None; status_mood = None; status_eternal = False
     return {
         "user_id": u["id"],
         "username": u["username"],
@@ -2229,6 +2249,8 @@ def get_profile(username: str, offset: int = Query(0), authorization: Optional[s
         # Метка: репутация ниже 30 = «плохая», от 70 = «хорошая» (для UI)
         "reputation_band": "low" if rep_score < 30 else ("mid" if rep_score < 70 else "good"),
         "daily_status": status_text,
+        "daily_status_mood": status_mood,
+        "daily_status_eternal": status_eternal,
         **stats,
         "posts": posts,
     }
@@ -3547,6 +3569,61 @@ def unreport_post(post_id: int, authorization: Optional[str] = Header(None)):
     return {"status": "ok"}
 
 
+_INCOMING_REPORTS_PRICE_PREM = 10
+
+
+@router.post("/me/reports/incoming")
+def me_reports_incoming(authorization: Optional[str] = Header(None)):
+    """Premium-фича: список юзеров кто жаловался на твои посты.
+    Стоит 10 Prem за запрос. Списывается атомарно."""
+    user = auth_member(authorization)
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        w = c.execute("SELECT prem FROM soc_wallets WHERE user_id=?", (user["id"],)).fetchone()
+        prem = int(w["prem"] if w else 0)
+        if prem < _INCOMING_REPORTS_PRICE_PREM:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(402, f"Нужно {_INCOMING_REPORTS_PRICE_PREM} Prem, у вас {prem}")
+        c.execute(
+            "UPDATE soc_wallets SET prem = prem - ?, updated_at = CURRENT_TIMESTAMP WHERE user_id=?",
+            (_INCOMING_REPORTS_PRICE_PREM, user["id"]),
+        )
+        c.execute(
+            "INSERT INTO soc_wallet_tx (user_id, currency, delta, source, actor_id, ref_type, ref_id) "
+            "VALUES (?, 'prem', ?, 'incoming_reports_check', 0, '', 0)",
+            (user["id"], -_INCOMING_REPORTS_PRICE_PREM),
+        )
+        c.execute("COMMIT")
+    except HTTPException: raise
+    except Exception as e:
+        try: c.execute("ROLLBACK")
+        except: pass
+        c.close(); raise HTTPException(500, f"Ошибка: {e}")
+    # Достаём список жалоб на МОИ посты
+    rows = c.execute("""
+        SELECT r.reporter_id, r.reason, r.created_at,
+               r.post_id, u.username, u.display_name,
+               (SELECT content FROM soc_posts WHERE id=r.post_id) as post_preview
+        FROM soc_reports r
+        JOIN users u ON r.reporter_id = u.id
+        WHERE r.post_id IN (SELECT id FROM soc_posts WHERE user_id=?)
+        ORDER BY r.created_at DESC
+        LIMIT 100
+    """, (user["id"],)).fetchall()
+    c.close()
+    out = []
+    for r in rows:
+        prev = (r["post_preview"] or "")[:60]
+        out.append({
+            "reporter_id": r["reporter_id"], "username": r["username"],
+            "display_name": r["display_name"], "reason": r["reason"],
+            "post_id": r["post_id"], "post_preview": prev,
+            "created_at": r["created_at"],
+        })
+    return {"spent_prem": _INCOMING_REPORTS_PRICE_PREM, "reports": out}
+
+
 @router.get("/post/{post_id}/reports/count")
 def reports_count(post_id: int, authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
@@ -3572,6 +3649,8 @@ def reports_count(post_id: int, authorization: Optional[str] = Header(None)):
 # ── Ежедневный статус (сбрасывается через 24ч, обязателен при заходе) ──
 
 _STATUS_TTL = 86400  # 24 часа
+_ALLOWED_MOODS = {"joy", "sad", "fire", "love", "tired", "chill", "angry", "surprised"}
+_ETERNAL_STATUS_PRICE_SOUL = 100
 
 
 def _status_active(set_at) -> bool:
@@ -3580,8 +3659,36 @@ def _status_active(set_at) -> bool:
     return (int(time.time()) - int(set_at)) < _STATUS_TTL
 
 
+def _resolve_status(row):
+    """Возвращает {text, mood, set_at, eternal} с приоритетом eternal."""
+    if not row:
+        return None
+    eternal_text = row["eternal_status_text"] if "eternal_status_text" in row.keys() else None
+    if eternal_text:
+        return {
+            "text": eternal_text,
+            "mood": row["eternal_status_mood"] if "eternal_status_mood" in row.keys() else None,
+            "set_at": int(row["eternal_status_purchased_at"] or 0) if "eternal_status_purchased_at" in row.keys() else None,
+            "eternal": True,
+        }
+    if _status_active(row["daily_status_set_at"] if "daily_status_set_at" in row.keys() else None):
+        return {
+            "text": row["daily_status_text"],
+            "mood": row["daily_status_mood"] if "daily_status_mood" in row.keys() else None,
+            "set_at": int(row["daily_status_set_at"]),
+            "eternal": False,
+        }
+    return None
+
+
 class StatusSetBody(BaseModel):
     text: str
+    mood: Optional[str] = None
+
+
+class EternalStatusBody(BaseModel):
+    text: str
+    mood: Optional[str] = None
 
 
 @router.get("/status/my")
@@ -3590,19 +3697,20 @@ def status_my(authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
     c = db()
     row = c.execute(
-        "SELECT daily_status_text, daily_status_set_at FROM users WHERE id=?",
+        "SELECT daily_status_text, daily_status_set_at, daily_status_mood, "
+        "eternal_status_text, eternal_status_mood, eternal_status_purchased_at "
+        "FROM users WHERE id=?",
         (user["id"],),
     ).fetchone()
     c.close()
-    if row and _status_active(row["daily_status_set_at"]):
-        set_at = int(row["daily_status_set_at"])
+    st = _resolve_status(row)
+    if st:
         return {
-            "text": row["daily_status_text"],
-            "set_at": set_at,
-            "expires_at": set_at + _STATUS_TTL,
+            **st,
+            "expires_at": (st["set_at"] + _STATUS_TTL) if not st["eternal"] and st["set_at"] else None,
             "must_set": False,
         }
-    return {"text": None, "set_at": None, "expires_at": None, "must_set": True}
+    return {"text": None, "mood": None, "set_at": None, "expires_at": None, "must_set": True, "eternal": False}
 
 
 @router.post("/status/set")
@@ -3615,14 +3723,104 @@ def status_set(body: StatusSetBody, authorization: Optional[str] = Header(None))
         raise HTTPException(400, "Статус не может быть пустым")
     if len(text) > 140:
         raise HTTPException(400, "Статус максимум 140 символов")
+    mood = (body.mood or "").strip().lower() or None
+    if mood and mood not in _ALLOWED_MOODS:
+        raise HTTPException(400, f"Неизвестное mood. Допустимые: {', '.join(sorted(_ALLOWED_MOODS))}")
     now = int(time.time())
     c = db()
     c.execute(
-        "UPDATE users SET daily_status_text=?, daily_status_set_at=? WHERE id=?",
-        (text, now, user["id"]),
+        "UPDATE users SET daily_status_text=?, daily_status_set_at=?, daily_status_mood=? WHERE id=?",
+        (text, now, mood, user["id"]),
     )
     c.commit(); c.close()
-    return {"status": "ok", "text": text, "set_at": now, "expires_at": now + _STATUS_TTL}
+    return {"status": "ok", "text": text, "mood": mood, "set_at": now, "expires_at": now + _STATUS_TTL}
+
+
+@router.post("/status/eternal")
+def status_eternal(body: EternalStatusBody, authorization: Optional[str] = Header(None)):
+    """Eternal-статус за 100 Soul — без 24ч-TTL. Списывает Soul атомарно."""
+    user = auth_member(authorization)
+    text = (body.text or "").strip().replace("\n", " ").replace("\r", " ")
+    if not text:
+        raise HTTPException(400, "Статус не может быть пустым")
+    if len(text) > 140:
+        raise HTTPException(400, "Статус максимум 140 символов")
+    mood = (body.mood or "").strip().lower() or None
+    if mood and mood not in _ALLOWED_MOODS:
+        raise HTTPException(400, f"Неизвестное mood")
+    now = int(time.time())
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        w = c.execute("SELECT soul FROM soc_wallets WHERE user_id=?", (user["id"],)).fetchone()
+        soul = int(w["soul"] if w else 0)
+        if soul < _ETERNAL_STATUS_PRICE_SOUL:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(402, f"Нужно {_ETERNAL_STATUS_PRICE_SOUL} Soul, у вас {soul}")
+        c.execute(
+            "UPDATE soc_wallets SET soul = soul - ?, updated_at = CURRENT_TIMESTAMP WHERE user_id=?",
+            (_ETERNAL_STATUS_PRICE_SOUL, user["id"]),
+        )
+        c.execute(
+            "INSERT INTO soc_wallet_tx (user_id, currency, delta, source, actor_id, ref_type, ref_id) "
+            "VALUES (?, 'soul', ?, 'eternal_status', 0, '', 0)",
+            (user["id"], -_ETERNAL_STATUS_PRICE_SOUL),
+        )
+        c.execute(
+            "UPDATE users SET eternal_status_text=?, eternal_status_mood=?, eternal_status_purchased_at=? WHERE id=?",
+            (text, mood, now, user["id"]),
+        )
+        c.execute("COMMIT")
+    except HTTPException: raise
+    except Exception as e:
+        try: c.execute("ROLLBACK")
+        except: pass
+        c.close()
+        raise HTTPException(500, f"Ошибка: {e}")
+    c.close()
+    return {"status": "ok", "text": text, "mood": mood, "eternal": True, "spent_soul": _ETERNAL_STATUS_PRICE_SOUL}
+
+
+@router.delete("/status/eternal")
+def status_eternal_delete(authorization: Optional[str] = Header(None)):
+    """Снять eternal-статус (Soul не возвращается). После этого юзер снова должен ставить дневной."""
+    user = auth_member(authorization)
+    c = db()
+    c.execute(
+        "UPDATE users SET eternal_status_text=NULL, eternal_status_mood=NULL, eternal_status_purchased_at=NULL WHERE id=?",
+        (user["id"],),
+    )
+    c.commit(); c.close()
+    return {"status": "ok"}
+
+
+@router.get("/status/feed")
+def status_feed(authorization: Optional[str] = Header(None)):
+    """Лента актуальных статусов юзеров на которых я подписан + я."""
+    user = auth_member(authorization)
+    uid = user["id"]
+    c = db()
+    rows = c.execute("""
+        SELECT u.id, u.username, u.display_name,
+               u.daily_status_text, u.daily_status_set_at, u.daily_status_mood,
+               u.eternal_status_text, u.eternal_status_mood, u.eternal_status_purchased_at
+        FROM users u
+        WHERE u.id = ? OR u.id IN (SELECT followee_id FROM soc_follows WHERE follower_id=?)
+    """, (uid, uid)).fetchall()
+    c.close()
+    out = []
+    for r in rows:
+        st = _resolve_status(r)
+        if not st:
+            continue
+        out.append({
+            "user_id": r["id"], "username": r["username"], "display_name": r["display_name"],
+            "is_me": r["id"] == uid,
+            **st,
+        })
+    # Сортировка: сначала свежие, потом eternal
+    out.sort(key=lambda x: (x.get("set_at") or 0), reverse=True)
+    return out
 
 
 @router.get("/status/{username}")
@@ -3633,15 +3831,18 @@ def status_of(username: str):
         raise HTTPException(400, "Empty username")
     c = db()
     row = c.execute(
-        "SELECT daily_status_text, daily_status_set_at FROM users WHERE username=?",
+        "SELECT daily_status_text, daily_status_set_at, daily_status_mood, "
+        "eternal_status_text, eternal_status_mood, eternal_status_purchased_at "
+        "FROM users WHERE username=?",
         (uname,),
     ).fetchone()
     c.close()
     if not row:
         raise HTTPException(404, "User not found")
-    if _status_active(row["daily_status_set_at"]):
-        return {"text": row["daily_status_text"], "set_at": int(row["daily_status_set_at"])}
-    return {"text": None, "set_at": None}
+    st = _resolve_status(row)
+    if st:
+        return st
+    return {"text": None, "mood": None, "set_at": None, "eternal": False}
 
 
 @router.get("/admin/stats")
@@ -3964,8 +4165,21 @@ def mod_overwatch_queue(authorization: Optional[str] = Header(None)):
         LIMIT 50
     """, (user["id"],)).fetchall()
     c.close()
+    # Feature 1: для каждого overwatch — разбивка жалоб по причинам
     out = []
     for r in rows:
+        pid = r["post_id"]
+        try:
+            rep_rows = db().execute(
+                "SELECT reason, COUNT(*) as n FROM soc_reports WHERE post_id=? GROUP BY reason ORDER BY n DESC",
+                (pid,),
+            ).fetchall()
+            reports_breakdown = {
+                "total": sum(x["n"] for x in rep_rows),
+                "by_reason": [{"reason": x["reason"], "count": x["n"]} for x in rep_rows],
+            }
+        except Exception:
+            reports_breakdown = {"total": 0, "by_reason": []}
         out.append({
             "request_id": r["request_id"],
             "post_id": r["post_id"],
@@ -3975,6 +4189,7 @@ def mod_overwatch_queue(authorization: Optional[str] = Header(None)):
             "kind": r["kind"],
             "created_at": r["created_at"],
             "my_vote": r["my_vote"],
+            "reports_breakdown": reports_breakdown,
             # НЕ ВКЛЮЧАЕМ: author, username, реакции, комменты
         })
     return out
@@ -4070,6 +4285,29 @@ def mod_overwatch_vote(request_id: int, body: OverwatchVoteBody, authorization: 
             (now, delta_applied, request_id),
         )
         closed = True
+        # Feature 4: если жалобы подтверждены (delta_applied < 0) — наградить репортёров
+        rewarded_reporters = []
+        if delta_applied < 0:
+            REPORT_CONFIRMED_REWARD = 5
+            reporter_rows = c.execute(
+                "SELECT DISTINCT reporter_id FROM soc_reports WHERE post_id=? "
+                "AND created_at > ?",
+                (req["post_id"], now - 86400 * 7),  # репорты за последнюю неделю
+            ).fetchall()
+            for rr in reporter_rows:
+                rid = rr["reporter_id"]
+                try:
+                    c.execute(
+                        "INSERT INTO soc_wallet_tx (user_id, currency, delta, source, actor_id, ref_type, ref_id) "
+                        "VALUES (?, 'gost', ?, 'report_confirmed', 0, 'post', ?)",
+                        (rid, REPORT_CONFIRMED_REWARD, req["post_id"]),
+                    )
+                    c.execute(
+                        "UPDATE soc_wallets SET gost = gost + ?, updated_at = CURRENT_TIMESTAMP WHERE user_id=?",
+                        (REPORT_CONFIRMED_REWARD, rid),
+                    )
+                    rewarded_reporters.append(rid)
+                except Exception: pass
         # Уведомить автора
         try:
             ws_hub.send_to(req["author_id"], "overwatch.resolved", {
@@ -4078,6 +4316,14 @@ def mod_overwatch_vote(request_id: int, body: OverwatchVoteBody, authorization: 
                 "delta": delta_applied, "votes": vote_count,
             })
         except Exception: pass
+        # Уведомить репортёров о награде
+        for rid in rewarded_reporters:
+            try:
+                ws_hub.send_to(rid, "report.rewarded", {
+                    "post_id": req["post_id"], "gost": 5,
+                    "message": "Спасибо, жалоба подтверждена модераторами",
+                })
+            except Exception: pass
     c.commit()
     c.close()
     return {
