@@ -3383,6 +3383,17 @@ function startChat(username, display_name){closeModal('newChatModal');openChat(u
 // Защита от reconnect-бомбы: если сервер закрыл с policy violation (1008)
 // или auth-fail — НЕ продолжаем стучать.
 let _wsAuthFail = false;
+let _lastWsRecvAt = 0;        // время последнего любого сообщения от сервера
+let _pingSentAt = 0;          // время последнего ping (для timeout pong)
+let _pongTimeoutTimer = null; // таймер ожидания pong
+
+function _killStaleWs(reason) {
+  console.warn('[ws] stale, reconnecting:', reason);
+  clearInterval(pingTimer); clearTimeout(_pongTimeoutTimer);
+  try { ws && ws.close(); } catch(_){}
+  // ws.onclose сам триггернёт reconnect
+}
+
 function connectWS(){
   if (_wsAuthFail) return;
   if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
@@ -3391,21 +3402,30 @@ function connectWS(){
   try { ws = new WebSocket(u); } catch(e) { setTimeout(connectWS, wsReconnect); wsReconnect = Math.min(wsReconnect*2, 30000); return; }
   ws.onopen = () => {
     wsReconnect = 1000;
+    _lastWsRecvAt = Date.now();
     clearInterval(pingTimer);
-    pingTimer = setInterval(() => { try{ws.send('ping');}catch(e){} }, 25000);
-    // После reconnect — подтянем накопленные сообщения (DM + groups). Без этого
-    // если WS отвалился в фоне, accumulated pending придёт только при следующем
-    // полном reload страницы.
+    pingTimer = setInterval(() => {
+      try{
+        ws.send('ping');
+        _pingSentAt = Date.now();
+        // Ждём pong 10 сек. Если за это время _lastWsRecvAt не обновился позже _pingSentAt — мёртв.
+        clearTimeout(_pongTimeoutTimer);
+        _pongTimeoutTimer = setTimeout(() => {
+          if (_lastWsRecvAt < _pingSentAt) _killStaleWs('pong timeout');
+        }, 10000);
+      }catch(e){ _killStaleWs('send err'); }
+    }, 25000);
+    // После reconnect — подтянем накопленные сообщения
     fetchPending().catch(() => {});
     loadGroups().catch(() => {});
   };
   ws.onmessage = async e => {
+    _lastWsRecvAt = Date.now();  // любое сообщение = ws живой
     if (e.data === 'pong') return;
     try { const m = JSON.parse(e.data); await handleWs(m); } catch(_){}
   };
   ws.onclose = (ev) => {
-    clearInterval(pingTimer);
-    // 1008 policy violation = сервер сказал «нет» (cap/auth) — больше не дёргаемся
+    clearInterval(pingTimer); clearTimeout(_pongTimeoutTimer);
     if (ev && (ev.code === 1008 || ev.code === 4401 || ev.code === 4403)) {
       _wsAuthFail = true; return;
     }
@@ -3431,13 +3451,17 @@ function _onWakeup(){
 function _doWakeup(){
   _wakeupTimer = null;
   if (!token || _wsAuthFail) return;
-  // WS — если закрыт, переподключаемся (onopen догонит pending без нашего вмешательства)
-  if (!ws || ws.readyState === 2 || ws.readyState === 3) {
+  const now = Date.now();
+  // WS — если закрыт ИЛИ давно молчит (>40 сек) — реконнект.
+  // Браузер мог заморозить таймеры в фоне → ping не отправлялся → сервер закрыл,
+  // но onclose мог не сработать. _lastWsRecvAt — самый надёжный признак жизни.
+  const wsAlive = ws && ws.readyState === 1 && (now - _lastWsRecvAt < 40_000);
+  if (!wsAlive) {
+    _killStaleWs('wake check');
     connectWS();
-    return;  // connectWS сам триггернёт fetchPending через onopen
+    return;
   }
   // WS живой — догоним вручную с троттлингом
-  const now = Date.now();
   if (now - _lastPendingAt > 10_000) {
     _lastPendingAt = now;
     fetchPending().catch(() => {});
