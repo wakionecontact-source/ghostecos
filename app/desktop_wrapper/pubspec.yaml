@@ -1,0 +1,49 @@
+name: ghostecos_desktop
+description: GhostEcos — приватный мессенджер с экосистемой (desktop).
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  # WebView для Windows (использует WebView2 — встроен в Windows 11)
+  webview_windows: ^0.4.0
+  # System tray (иконка в области уведомлений)
+  system_tray: ^2.0.3
+  # Управление окном (свернуть в tray, recover, размер, заголовок)
+  window_manager: ^0.4.3
+  # Native push-уведомления (Windows Toast / macOS Notification / Linux libnotify)
+  flutter_local_notifications: ^17.2.4
+  # Автозапуск с системой
+  launch_at_startup: ^0.5.1
+  # Info о приложении (версия, имя пакета)
+  package_info_plus: ^8.1.0
+  # URL launcher для внешних ссылок (не из webview)
+  url_launcher: ^6.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  # MSIX installer для Windows Store / standalone install
+  msix: ^3.16.7
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icon.ico
+    - assets/icon.png
+
+# MSIX (Windows installer) конфиг
+msix_config:
+  display_name: GhostEcos
+  publisher_display_name: GhostEcos
+  identity_name: online.ghost_chat.GhostEcos
+  msix_version: 0.1.0.0
+  logo_path: assets/icon.png
+  capabilities: internetClient, microphone
+  publisher: CN=GhostEcos
