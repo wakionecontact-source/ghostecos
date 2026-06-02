@@ -1073,8 +1073,11 @@ let _idb = null;
 function openIDB(){
   if (_idb) return Promise.resolve(_idb);
   return new Promise((res, rej) => {
-    // v3: добавлен стор peerkeys для TOFU-пиннинга публичных ключей собеседников
-    const req = indexedDB.open('ghostchat-' + (me && me.username || 'anon'), 3);
+    // v3: peerkeys для TOFU-пиннинга
+    // v4: filecache — хранит зашифрованные blob'ы файлов/голосовых локально,
+    //     чтобы при refresh страницы повторно открывать без запроса к серверу
+    //     (сервер удаляет blob после ack от receiver, и второе открытие = 404)
+    const req = indexedDB.open('ghostchat-' + (me && me.username || 'anon'), 4);
     // Timeout 8 секунд — если что-то блокирует апгрейд (другая вкладка с v2),
     // лучше показать ошибку чем вечный спиннер.
     const tid = setTimeout(() => {
@@ -1097,6 +1100,13 @@ function openIDB(){
       if (!db.objectStoreNames.contains('peerkeys')) {
         // {username, pub, first_seen, accepted}
         db.createObjectStore('peerkeys', { keyPath: 'username' });
+      }
+      if (!db.objectStoreNames.contains('filecache')) {
+        // {file_id (string), bytes (ArrayBuffer, encrypted), mime, cached_at}
+        // Хранит ЗАшифрованный blob — мы не доверяем IDB plaintext, к тому же
+        // ключ файла остаётся в file_payload сообщения (тоже зашифрован)
+        const s = db.createObjectStore('filecache', { keyPath: 'file_id' });
+        s.createIndex('cached_at', 'cached_at', { unique: false });
       }
     };
     req.onblocked = () => {
@@ -1223,6 +1233,63 @@ async function idbGetMessages(peer){
     cur.onsuccess = e => { const c = e.target.result; if (c) { out.push(c.value); c.continue(); } else res(out); };
   });
 }
+// ─── filecache: encrypted blob'ы файлов/голосовых, кэшируем после первого
+//     успешного скачивания. Сервер удаляет файл после ack от receiver →
+//     второе открытие падало с 404. Теперь IDB-cache, server-fallback.
+async function idbCacheFile(file_id, bytes, mime){
+  try {
+    const db = await openIDB();
+    if (!db.objectStoreNames.contains('filecache')) return;
+    const tx = db.transaction('filecache', 'readwrite');
+    await idbReq(tx, t => t.objectStore('filecache').put({
+      file_id: String(file_id),
+      bytes,                // ArrayBuffer (зашифрован, ключ в file_payload)
+      mime: mime || 'application/octet-stream',
+      cached_at: Date.now(),
+    }));
+  } catch(e) {
+    console.warn('[filecache] put failed', e && e.message);
+  }
+}
+
+async function idbGetCachedFile(file_id){
+  try {
+    const db = await openIDB();
+    if (!db.objectStoreNames.contains('filecache')) return null;
+    const tx = db.transaction('filecache', 'readonly');
+    return await new Promise(res => {
+      const req = tx.objectStore('filecache').get(String(file_id));
+      req.onsuccess = () => res(req.result || null);
+      req.onerror = () => res(null);
+    });
+  } catch(_) { return null; }
+}
+
+// Универсальный «cache-first, server-fallback» загрузчик зашифрованного blob'а.
+// Возвращает ArrayBuffer или null если файла нет нигде.
+// После успешного скачивания с сервера сохраняет в IDB ДО ack — чтобы повторное
+// открытие после refresh уже не зависело от наличия файла на сервере.
+async function fetchEncryptedFile(file_id, mime){
+  const cached = await idbGetCachedFile(file_id);
+  if (cached && cached.bytes) {
+    return cached.bytes;
+  }
+  try {
+    const r = await fetch(CHAT_API + `/file/${file_id}`, {
+      headers: {'Authorization': 'Bearer ' + token}
+    });
+    if (!r.ok) return null;
+    const ct = await r.arrayBuffer();
+    // Сохраняем в IDB ДО возврата — даже если caller сразу же сделает /file/ack
+    // и сервер удалит, у нас локально уже всё есть.
+    await idbCacheFile(file_id, ct, mime);
+    return ct;
+  } catch(e) {
+    console.warn('[fetchEncryptedFile] failed', file_id, e && e.message);
+    return null;
+  }
+}
+
 async function idbPutDialog(d){
   const db = await openIDB();
   const tx = db.transaction('dialogs', 'readwrite');
@@ -1766,6 +1833,9 @@ async function pickAndSendFile(input){
       throw new Error(msg);
     }
     const { file_id } = await upRes.json();
+    // Кэшируем encrypted blob у sender'а — чтобы после refresh переоткрыть
+    // картинку/файл без зависимости от того, удалил ли сервер blob после ack.
+    await idbCacheFile(file_id, ct, f.type || 'application/octet-stream');
     // 6. Отправляем сообщение с metadata + ключом
     const payload = {
       type: 'file', file_id, file_name: f.name, mime: f.type || 'application/octet-stream',
@@ -1796,15 +1866,14 @@ async function pickAndSendFile(input){
 // Скачать и расшифровать файл по сообщению
 async function downloadFile(sid){
   const m = activeMessages.find(x => String(x.sid) === String(sid));
-  if (!m || !m.file_payload) return;
-  const p = m.file_payload;
+  const p = m && (m.file_payload || m.file);
+  if (!p) return;
   try {
     showToast('Скачиваю...');
-    const r = await fetch(CHAT_API + `/file/${p.file_id}`, {
-      headers: {'Authorization': 'Bearer ' + token},
-    });
-    if (!r.ok) { showToast('Файл недоступен (возможно удалён)', true); return; }
-    const ct = await r.arrayBuffer();
+    // cache-first: после refresh файла на сервере уже нет (мы ack-нули) →
+    // берём из локального IDB filecache.
+    const ct = await fetchEncryptedFile(p.file_id, p.mime);
+    if (!ct) { showToast('Файл удалён с сервера и нет локального кэша', true); return; }
     const key = await crypto.subtle.importKey('raw', b64d(p.key), {name:'AES-GCM'}, false, ['decrypt']);
     const iv = b64d(p.iv);
     const plain = await crypto.subtle.decrypt({name:'AES-GCM', iv}, key, ct);
@@ -1865,15 +1934,15 @@ function _mvKeyHandler(e){ if (e.key === 'Escape') closeMediaViewer(); }
 // Превью картинки inline — скачиваем + decrypt + показываем в bubble
 async function loadImgPreview(sid){
   const m = activeMessages.find(x => String(x.sid) === String(sid));
-  if (!m || !m.file_payload || m._imgLoaded) return;
-  const p = m.file_payload;
+  if (!m || m._imgLoaded) return;
+  const p = m.file_payload || m.file;
+  if (!p) return;
   const isImg = p.mime && p.mime.startsWith('image/');
   const isVideo = p.mime && p.mime.startsWith('video/');
   if (!isImg && !isVideo) return;
   try {
-    const r = await fetch(CHAT_API + `/file/${p.file_id}`, {headers:{'Authorization':'Bearer '+token}});
-    if (!r.ok) { console.warn('[media preview] fetch failed', r.status); return; }
-    const ct = await r.arrayBuffer();
+    const ct = await fetchEncryptedFile(p.file_id, p.mime);
+    if (!ct) { console.warn('[media preview] not available'); return; }
     const key = await crypto.subtle.importKey('raw', b64d(p.key), {name:'AES-GCM'}, false, ['decrypt']);
     const plain = await crypto.subtle.decrypt({name:'AES-GCM', iv: b64d(p.iv)}, key, ct);
     const blob = new Blob([plain], {type: p.mime});
@@ -2014,6 +2083,10 @@ async function sendVoiceBlob(blob, duration){
     });
     if (!upRes.ok) throw new Error((await upRes.text()) || 'upload failed');
     const {file_id} = await upRes.json();
+    // Кэшируем encrypted blob у sender'а тоже — чтобы после refresh страницы
+    // мог переслушать своё голосовое (на сервере его уже могло не быть после
+    // receiver-ack). ct — тот же зашифрованный ArrayBuffer что мы аплодили.
+    await idbCacheFile(file_id, ct, mime);
     const payload = {
       type:'voice', file_id, file_name:'voice', mime, size: blob.size,
       duration, key: b64e(keyRaw), iv: b64e(iv),
@@ -2058,9 +2131,10 @@ async function toggleVoicePlay(sid){
     return;
   }
   try {
-    const r = await fetch(CHAT_API + `/file/${p.file_id}`, {headers:{'Authorization':'Bearer '+token}});
-    if (!r.ok) { showToast('Голос недоступен', true); return; }
-    const ct = await r.arrayBuffer();
+    // cache-first: пробуем IDB filecache, иначе сервер (и кэшируем оттуда).
+    // Без этого после refresh страницы /file/ack уже был сделан → сервер вернёт 404.
+    const ct = await fetchEncryptedFile(p.file_id, p.mime);
+    if (!ct) { showToast('Голос удалён с сервера и нет локального кэша', true); return; }
     const k = await crypto.subtle.importKey('raw', b64d(p.key), {name:'AES-GCM'}, false, ['decrypt']);
     const plain = await crypto.subtle.decrypt({name:'AES-GCM', iv: b64d(p.iv)}, k, ct);
     const blob = new Blob([plain], {type: p.mime || 'audio/webm'});
