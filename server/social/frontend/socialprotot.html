@@ -295,13 +295,17 @@ body.guest-mode .prof-action-btn[onclick*="openAlgoSettings"]{display:none;}
 .repost-mosaic{padding:14px;}
 .mosaic-header{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:var(--primary);margin-bottom:10px;}
 .mosaic-grid{display:grid;gap:3px;border-radius:12px;overflow:hidden;}
-.mosaic-cell{aspect-ratio:1;background:rgba(15,23,42,0.85);border:1px solid rgba(255,255,255,0.05);position:relative;overflow:hidden;cursor:pointer;text-decoration:none;display:flex;flex-direction:column;justify-content:space-between;padding:8px;transition:transform 0.15s,border-color 0.15s;}
+.mosaic-cell{height:100px;background:rgba(15,23,42,0.85);border:1px solid rgba(255,255,255,0.05);position:relative;overflow:hidden;cursor:pointer;text-decoration:none;display:flex;flex-direction:column;justify-content:space-between;padding:8px;transition:transform 0.15s,border-color 0.15s;background-size:cover;background-position:center;}
 .mosaic-cell:hover{transform:scale(1.03);border-color:rgba(168,85,247,0.4);z-index:2;}
+.mosaic-cell.nsfw{background:linear-gradient(135deg,rgba(248,113,113,0.18),rgba(124,58,237,0.10));border-color:rgba(248,113,113,0.30);}
 .mosaic-text{font-size:11px;line-height:1.3;color:var(--text);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;}
-.mosaic-author{font-size:10px;color:var(--sub);font-weight:600;align-self:flex-end;background:rgba(0,0,0,0.4);padding:1px 5px;border-radius:6px;}
-.mosaic-nsfw{position:absolute;top:4px;left:4px;background:rgba(248,113,113,0.85);color:#fff;font-size:9px;font-weight:800;padding:1px 5px;border-radius:6px;letter-spacing:0.5px;}
+.mosaic-author{font-size:10px;color:var(--sub);font-weight:600;align-self:flex-end;background:rgba(0,0,0,0.55);padding:2px 6px;border-radius:6px;backdrop-filter:blur(4px);}
+.mosaic-nsfw{position:absolute;top:6px;left:6px;background:rgba(248,113,113,0.85);color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:6px;letter-spacing:0.5px;}
 .mosaic-cell.mosaic-more{background:linear-gradient(135deg,rgba(168,85,247,0.20),rgba(124,58,237,0.10));color:var(--primary);font-size:18px;font-weight:800;align-items:center;justify-content:center;text-align:center;line-height:1.2;text-decoration:none;}
 .mosaic-cell.mosaic-more small{font-size:10px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:0.5px;}
+/* На крупных сетках (3x3+) ячейки меньше */
+.mosaic-grid[style*="repeat(3"] .mosaic-cell,
+.mosaic-grid[style*="repeat(4"] .mosaic-cell{height:90px;font-size:10px;}
 
 /* ── Значок «репост» на карточке ── */
 .repost-mark{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--primary);background:rgba(168,85,247,0.10);border:1px solid rgba(168,85,247,0.25);padding:3px 10px;border-radius:99px;margin-bottom:8px;}
@@ -2401,11 +2405,25 @@ async function init() {
   handleHashRoute();
 }
 
-// ── Hash routing (#p=123, #tag=foo, #u=username, #screenXxx) ──────────────────
+// ── Hash routing (#p=123, #tag=foo, #u=username, #screenXxx) + query (?p=, ?u=, ?msk=)
 function handleHashRoute() {
   const h = location.hash || '';
+  const q = new URLSearchParams(location.search);
   let handled = false;
-  if (h.startsWith('#p=')) {
+  // Query-параметры (приходят из serv-redirect-ов /p/{id} → /social/?p=ID)
+  const qp = q.get('p'), qu = q.get('u'), qmsk = q.get('msk');
+  if (qp && !isNaN(parseInt(qp, 10))) {
+    openSinglePost(parseInt(qp, 10));
+    handled = true;
+  } else if (qu) {
+    openFullProfile(qu);
+    handled = true;
+  } else if (qmsk) {
+    // Миниска — переключаем на /screenMinisky и подсвечиваем
+    if (typeof openMiniska === 'function') openMiniska(parseInt(qmsk, 10));
+    else switchScreen('screenMinisky');
+    handled = true;
+  } else if (h.startsWith('#p=')) {
     const id = parseInt(h.slice(3), 10);
     if (id) { openSinglePost(id); handled = true; }
   } else if (h.startsWith('#tag=')) {
@@ -2422,9 +2440,9 @@ function handleHashRoute() {
       handled = true;
     }
   }
-  // Чистим хеш из адресной строки, чтобы остался /social
+  // Чистим хеш и query из адресной строки, чтобы остался /social
   if (handled) {
-    history.replaceState(null, '', location.pathname + location.search);
+    history.replaceState(null, '', location.pathname);
   }
 }
 
@@ -4427,11 +4445,13 @@ function renderRepostMosaic(reposts, profileUsername) {
     const isPic = mediaUrl && /\.(jpe?g|png|webp|gif)$/i.test(mediaUrl);
     const isNsfw = !!p.is_nsfw;
     const previewBg = (isPic && !isNsfw)
-      ? `background-image:url('${mediaUrl}');background-size:cover;background-position:center;`
+      ? `background-image:url('${mediaUrl}');`
       : '';
     const previewText = (!isPic && p.content) ? esc(p.content).slice(0, 60) : '';
     const label = isNsfw ? '<div class="mosaic-nsfw">18+</div>' : '';
-    return `<a class="mosaic-cell" href="/p/${p.id}" data-post-id="${p.id}" title="@${esc(p.username)}: ${esc((p.content||'').slice(0,80))}" style="${previewBg}">
+    const klass = 'mosaic-cell' + (isNsfw ? ' nsfw' : '');
+    // Используем /social/#p=ID — хеш-роутинг внутри SPA быстрее чем серверный /p/{id}→redirect
+    return `<a class="${klass}" href="/social/#p=${p.id}" data-post-id="${p.id}" title="@${esc(p.username)}: ${esc((p.content||'').slice(0,80))}" style="${previewBg}">
       ${label}
       ${previewText ? `<div class="mosaic-text">${previewText}</div>` : ''}
       <div class="mosaic-author">@${esc(p.username)}</div>
