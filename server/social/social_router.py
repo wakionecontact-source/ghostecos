@@ -903,6 +903,23 @@ def init():
     try: c.execute("ALTER TABLE users ADD COLUMN eternal_status_purchased_at INTEGER")
     except sqlite3.OperationalError: pass
 
+    # ── Sealed Sender (DM без sender_id в БД) ──
+    # Sender виден ТОЛЬКО внутри зашифрованного envelope ciphertext.
+    # Сервер хранит только receiver_id + ciphertext.
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS chat_dm_sealed (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                receiver_id INTEGER NOT NULL,
+                ciphertext TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (receiver_id) REFERENCES users(id)
+            )
+        """)
+    except sqlite3.OperationalError: pass
+    try: c.execute("CREATE INDEX IF NOT EXISTS idx_dm_sealed_recv ON chat_dm_sealed(receiver_id, id DESC)")
+    except sqlite3.OperationalError: pass
+
     # ── Репосты (TikTok-style) ──
     try:
         c.execute("""

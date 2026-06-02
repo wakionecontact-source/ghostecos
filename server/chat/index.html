@@ -842,6 +842,59 @@ function parsePayload(raw){
   return {type:'msg', text: raw};
 }
 
+// ── Sealed Sender ────────────────────────────────────────────────────────────
+// Sender генерит одноразовую ECDH-пару на каждое сообщение. Public
+// прикладывается к envelope в открытом виде, но НЕ идентифицирует sender'а.
+// Внутри AES-GCM ciphertext — настоящий from_username и payload.
+// Receiver расшифровывает СВОИМ приватным ключом + ephemeral_pub из envelope,
+// не зная заранее кто sender. Внутри расшифрованного envelope — кто.
+//
+// Envelope формат (binary): ephemeral_pub(65) || iv(12) || aes_gcm_ciphertext
+//
+// ⚠️ v1 без подписи: receiver не может верифицировать что from_username не
+// подделан. В будущем — Ed25519-sign(envelope) с persistent identity.
+
+async function encryptSealed(receiverUsername, payload) {
+  let pub = pubCache.get(receiverUsername);
+  if (!pub) {
+    const r = await chat(`/keys/${encodeURIComponent(receiverUsername)}`);
+    if (!r.x25519_pub) throw new Error('У получателя ещё нет E2E-ключей');
+    pub = r.x25519_pub;
+    const trusted = await verifyAndPinPub(receiverUsername, pub);
+    if (!trusted) throw new Error('Отправка отменена: ключ собеседника не принят');
+    pubCache.set(receiverUsername, pub);
+  }
+  const receiverPub = await importPub(pub);
+  // Одноразовая ECDH-пара (P-256)
+  const eph = await crypto.subtle.generateKey(ECDH_ALGO, true, ['deriveBits']);
+  const ephPubRaw = new Uint8Array(await crypto.subtle.exportKey('raw', eph.publicKey));
+  // Shared = ECDH(eph_priv, receiver_pub) → 32 bytes
+  const shared = await crypto.subtle.deriveBits({name:'ECDH', public: receiverPub}, eph.privateKey, 256);
+  const aesKey = await crypto.subtle.importKey('raw', shared, {name:'AES-GCM'}, false, ['encrypt']);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const envBody = { ...payload, from_username: me.username, ts: Math.floor(Date.now()/1000) };
+  const pt = new TextEncoder().encode(JSON.stringify(envBody));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM', iv}, aesKey, pt));
+  const out = new Uint8Array(ephPubRaw.length + iv.length + ct.length);
+  out.set(ephPubRaw, 0);
+  out.set(iv, ephPubRaw.length);
+  out.set(ct, ephPubRaw.length + iv.length);
+  return b64e(out);
+}
+
+async function decryptSealed(cipherB64) {
+  const env = new Uint8Array(b64d(cipherB64));
+  if (env.length < 65 + 12 + 16) throw new Error('sealed envelope too short');
+  const ephPubRaw = env.slice(0, 65);
+  const iv = env.slice(65, 65 + 12);
+  const ct = env.slice(65 + 12);
+  const ephPub = await crypto.subtle.importKey('raw', ephPubRaw, ECDH_ALGO, false, []);
+  const shared = await crypto.subtle.deriveBits({name:'ECDH', public: ephPub}, myPriv, 256);
+  const aesKey = await crypto.subtle.importKey('raw', shared, {name:'AES-GCM'}, false, ['decrypt']);
+  const pt = new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM', iv}, aesKey, ct));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+
 async function decryptFromPeer(peerUsername, cipherB64){
   let pub = pubCache.get(peerUsername);
   if (!pub) {
@@ -1367,35 +1420,100 @@ function closeInstall(remember){
 }
 
 async function fetchPending(){
+  // Legacy DM (sender_id виден серверу) + Sealed DM (без sender_id)
   try{
     const d = await chat('/pending');
+    if (d.messages && d.messages.length) {
+      const ackIds = [];
+      for (const m of d.messages) {
+        const ok = await ingestIncoming(m);
+        if (ok) ackIds.push(m.id);
+      }
+      if (ackIds.length) {
+        try { await chat('/ack', 'POST', { ids: ackIds }); } catch(_) {}
+      }
+    }
+  }catch(e){ /* offline */ }
+  await fetchPendingSealed();
+}
+
+async function fetchPendingSealed(){
+  try{
+    const d = await chat('/pending_sealed');
     if (!d.messages || !d.messages.length) return;
     const ackIds = [];
     for (const m of d.messages) {
-      const ok = await ingestIncoming(m);
+      const ok = await ingestSealed(m);
       if (ok) ackIds.push(m.id);
     }
     if (ackIds.length) {
-      try { await chat('/ack', 'POST', { ids: ackIds }); } catch(_) {}
+      try { await chat('/ack_sealed', 'POST', { ids: ackIds }); } catch(_) {}
     }
   }catch(e){ /* offline */ }
+}
+
+// Расшифровываем sealed envelope, восстанавливаем from_username из payload,
+// дальше идём через тот же ingestIncoming — все downstream-функции уже работают.
+async function ingestSealed(m){
+  // m: {id, ciphertext, created_at}
+  let env;
+  try { env = await decryptSealed(m.ciphertext); }
+  catch(e) { console.warn('[sealed decrypt failed]', e); return false; }
+  if (!env || !env.from_username) return false;
+  // Sealed delivered / read — операционные сообщения. target_sid это _payloadSid
+  // отправителя (тот что был внутри envelope при первой отправке).
+  if (env.type === 'delivered' && env.target_sid != null) {
+    const tgt = activeMessages.find(x => String(x._payloadSid) === String(env.target_sid));
+    if (tgt) { tgt.delivered = true; renderMessages(); idbUpdateMessage(tgt.sid, { delivered: true }).catch(()=>{}); }
+    return true;
+  }
+  if (env.type === 'read' && env.target_sid != null) {
+    const tgt = activeMessages.find(x => String(x._payloadSid) === String(env.target_sid));
+    if (tgt) { tgt.delivered = true; tgt.read = true; renderMessages(); idbUpdateMessage(tgt.sid, { delivered: true, read: true }).catch(()=>{}); }
+    return true;
+  }
+  // Обычное text/edit/delete — переиспользуем legacy-pipeline через ingestIncoming
+  // Подделываем формат: text внутри envelope.text, ciphertext не нужен (уже decrypted)
+  const ok = await ingestIncoming({
+    id: m.id,
+    from_username: env.from_username,
+    from_display_name: env.from_username,  // имя можно подтянуть через /prof позже
+    to_username: me.username,
+    ciphertext: '',  // не используется — мы передаём _decrypted
+    created_at: m.created_at,
+    _decrypted: env,  // подсказка для ingestIncoming чтобы не повторно decrypt-ить
+  });
+  // После приёма — отправим sender'у sealed-delivered (если в envelope есть sid).
+  // Sender НЕ знает что сервер не передаёт sender_id, ему нужен сигнал из канала.
+  if (ok && env.sid != null && env.from_username && env.from_username !== me.username) {
+    try {
+      const reply = await encryptSealed(env.from_username, { type: 'delivered', target_sid: env.sid });
+      await chat('/send_sealed', 'POST', { to_username: env.from_username, ciphertext: reply });
+    } catch(e) { console.warn('[sealed delivered failed]', e); }
+  }
+  return ok;
 }
 
 // ════════════════════════════════════════════════════════════════════
 // INCOMING / OUTGOING
 // ════════════════════════════════════════════════════════════════════
 async function ingestIncoming(m){
-  // m: {id, from_username, from_display_name, to_username, ciphertext, created_at}
+  // m: {id, from_username, from_display_name, to_username, ciphertext, created_at, _decrypted?}
   const isMine = m.from_username === me.username;
   const peerUsername = isMine ? m.to_username : m.from_username;
   const peerName = isMine ? null : m.from_display_name;
-  let raw = '';
-  try {
-    raw = await decryptFromPeer(peerUsername, m.ciphertext);
-  } catch(e) {
-    raw = '[не удалось расшифровать]';
+  let payload;
+  if (m._decrypted) {
+    payload = m._decrypted;  // sealed уже расшифровано в ingestSealed
+  } else {
+    let raw = '';
+    try {
+      raw = await decryptFromPeer(peerUsername, m.ciphertext);
+    } catch(e) {
+      raw = '[не удалось расшифровать]';
+    }
+    payload = parsePayload(raw);
   }
-  const payload = parsePayload(raw);
 
   // ── Операционные сообщения: edit / delete — применяем к существующему по sid ──
   if (payload.type === 'edit' && payload.target_sid != null) {
@@ -1987,14 +2105,18 @@ async function sendMessage(){
       payload.reply_to = currentReply.sid;
       payload.reply_preview = optimistic.reply_preview;
     }
-    const ct = await encryptForPeer(activePeer.username, payload);
-    const r = await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: ct });
+    // Sealed Sender: sender_id больше не виден серверу.
+    // sid внутри envelope нужен чтобы receiver мог потом отправить delivered/read
+    // обратно (encryptSealed({type:'delivered', target_sid: env.sid}, my_username))
+    payload.sid = optimistic.localId || ('s' + Date.now() + Math.random().toString(36).slice(2,6));
+    optimistic._payloadSid = payload.sid;
+    const ct = await encryptSealed(activePeer.username, payload);
+    const r = await chat('/send_sealed', 'POST', { to_username: activePeer.username, ciphertext: ct });
     optimistic.sid = r.id;
     optimistic.created_at = r.created_at;
     optimistic.pending = false;
-    // Если получатель онлайн в момент отправки — он почти точно сейчас сделает /ack
-    // (chat.new доставлен через WS); ставим delivered=true оптимистично, WS-event
-    // chat.delivered подтвердит/перезапишет позже если надо.
+    // Если получатель онлайн в момент отправки — он почти точно сделает /ack_sealed
+    // и пришлёт нам sealed-delivered. Оптимистично ставим delivered.
     if (r.recipient_online) optimistic.delivered = true;
     await idbAddMessage(optimistic);
     let d = dialogs.find(x => x.username === activePeer.username);
@@ -3239,6 +3361,17 @@ window.addEventListener('online', _onWakeup);  // вернулся интерн�
 
 async function handleWs(m){
   const t = m.type, d = m.data || {};
+  if (t === 'chat.sealed_new') {
+    // sealed: только {id, ciphertext, created_at}, без from_username
+    const ok = await ingestSealed(d);
+    if (ok) {
+      try { await chat('/ack_sealed', 'POST', { ids: [d.id] }); } catch(_) {}
+      // delivered обратно отправителю — внутри ingestSealed уже из envelope знаем sender
+      // но передаём не туда (env уже потерян). Делаем в ingestSealed после возврата env.
+      // (см. ingestSealed — там обрабатывается)
+    }
+    return;
+  }
   if (t === 'chat.new' || t === 'chat.echo') {
     const ok = await ingestIncoming(d);
     if (ok && t === 'chat.new') {

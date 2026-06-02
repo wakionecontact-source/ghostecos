@@ -198,6 +198,105 @@ def delivery_status(body: DeliveryStatusBody, authorization: Optional[str] = Hea
 class AckBody(BaseModel):
     ids: list
 
+# ─── Sealed Sender (DM без sender_id в БД) ──────────────────────────────────
+
+class SendSealedBody(BaseModel):
+    to_username: str
+    ciphertext: str  # envelope: encrypt(receiver_pub, {type, from_username, text, sid, ts, ...})
+
+
+@router.post("/send_sealed")
+def send_sealed(body: SendSealedBody, authorization: Optional[str] = Header(None)):
+    """Sealed-sender: только receiver виден серверу. От кого — внутри ciphertext.
+    Сервер не пишет sender_id в БД и не передаёт его в WS."""
+    user = auth_member(authorization)
+    # Rate-limit пока работает per-sender (token известен из Authorization).
+    # Полный sealed (без identity у сервера) требует blind tokens — отдельная фаза.
+    _rate_limit(f"sealsend:{user['id']}", limit=120, window=60)
+    if not _is_b64(body.ciphertext) or len(body.ciphertext) > 16000:
+        raise HTTPException(400, "ciphertext: некорректный формат")
+    c = db()
+    to_user = _get_user_by_username(c, body.to_username)
+    if not to_user:
+        c.close()
+        raise HTTPException(404, "Получатель не найден")
+    if to_user["id"] == user["id"]:
+        c.close()
+        raise HTTPException(400, "Нельзя отправить сообщение себе")
+    if not to_user["x25519_pub"]:
+        c.close()
+        raise HTTPException(400, "У получателя ещё нет E2E-ключей")
+    now = int(time.time())
+    c.execute(
+        "INSERT INTO chat_dm_sealed (receiver_id, ciphertext, created_at) VALUES (?,?,?)",
+        (to_user["id"], body.ciphertext, now),
+    )
+    msg_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
+    c.commit()
+    # Real-time доставка ТОЛЬКО receiver-у. Sender идентификатор НЕ передаётся.
+    sent = False
+    for _ws in list(ws_hub._by_uid.get(to_user["id"], ())):
+        sent = True
+        break
+    ws_hub.send_to(to_user["id"], "chat.sealed_new", {
+        "id": msg_id,
+        "ciphertext": body.ciphertext,
+        "created_at": now,
+    })
+    c.close()
+    return {
+        "status": "ok",
+        "id": msg_id,
+        "created_at": now,
+        "recipient_online": bool(sent),
+    }
+
+
+@router.get("/pending_sealed")
+def pending_sealed(authorization: Optional[str] = Header(None)):
+    """Все накопленные мне sealed-сообщения. Клиент сам сделает /ack_sealed."""
+    user = auth_member(authorization)
+    c = db()
+    rows = c.execute(
+        "SELECT id, ciphertext, created_at FROM chat_dm_sealed WHERE receiver_id=? ORDER BY id ASC LIMIT 500",
+        (user["id"],),
+    ).fetchall()
+    c.close()
+    return {
+        "messages": [
+            {"id": r["id"], "ciphertext": r["ciphertext"], "created_at": r["created_at"]}
+            for r in rows
+        ]
+    }
+
+
+class AckSealedBody(BaseModel):
+    ids: list
+
+
+@router.post("/ack_sealed")
+def ack_sealed(body: AckSealedBody, authorization: Optional[str] = Header(None)):
+    """Receiver подтвердил приём — сервер удаляет. БЕЗ WS sender'у
+    (мы не знаем кто sender). Receiver сам шлёт sender'у уведомление
+    'delivered' через POST /send_sealed с envelope {type:'delivered', msg_sid}."""
+    user = auth_member(authorization)
+    if not body.ids or not isinstance(body.ids, list):
+        return {"deleted": 0}
+    ids = [int(x) for x in body.ids if isinstance(x, (int, str)) and str(x).isdigit()][:500]
+    if not ids:
+        return {"deleted": 0}
+    c = db()
+    ph = ",".join("?" * len(ids))
+    c.execute(
+        f"DELETE FROM chat_dm_sealed WHERE receiver_id=? AND id IN ({ph})",
+        [user["id"]] + ids,
+    )
+    deleted = c.total_changes
+    c.commit()
+    c.close()
+    return {"deleted": deleted}
+
+
 @router.post("/ack")
 def ack_messages(body: AckBody, authorization: Optional[str] = Header(None)):
     """Клиент подтверждает что получил и сохранил сообщения локально.
