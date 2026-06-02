@@ -4968,9 +4968,18 @@ async function openFullProfile(username) {
     window._profPosts = d.posts;
     _fpState.offset = d.posts.length;
     if (d.posts.length < 15) _fpState.hasMore = false;
-    document.getElementById('fpList').innerHTML = d.posts.length
-      ? d.posts.map(p => postHTML(p)).join('') + '<div id="fpLoader" style="text-align:center;padding:16px;display:none"><div class="spinner spinner-sm" style="margin:0 auto"></div></div>'
-      : '<div class="empty"><i class="fa-regular fa-newspaper"></i><p>Постов пока нет</p></div>';
+    // Используем feed_combined чтобы показать мозаики репостов
+    try {
+      const items = await api(`/user/${d.username}/feed_combined?limit=60`);
+      window._profPosts = items.filter(x => x.kind === 'self');
+      document.getElementById('fpList').innerHTML = items.length
+        ? renderProfileFeed(items, d.username) + '<div id="fpLoader" style="text-align:center;padding:16px;display:none"><div class="spinner spinner-sm" style="margin:0 auto"></div></div>'
+        : '<div class="empty"><i class="fa-regular fa-newspaper"></i><p>Постов пока нет</p></div>';
+    } catch(e2) {
+      document.getElementById('fpList').innerHTML = d.posts.length
+        ? d.posts.map(p => postHTML(p)).join('') + '<div id="fpLoader" style="text-align:center;padding:16px;display:none"><div class="spinner spinner-sm" style="margin:0 auto"></div></div>'
+        : '<div class="empty"><i class="fa-regular fa-newspaper"></i><p>Постов пока нет</p></div>';
+    }
     attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
   } catch(e) {
     document.getElementById('fpList').innerHTML = '<div class="empty"><i class="fa-solid fa-triangle-exclamation"></i><p>Ошибка загрузки</p></div>';
@@ -5094,7 +5103,17 @@ async function loadMyProfile() {
     document.getElementById('sFollowing').textContent = d.following_count;
     document.getElementById('sReceived').textContent = d.likes_received;
     window._profPosts = d.posts;  // чтобы findPost нашёл их при клике на реакцию/коммент
-    document.getElementById('profList').innerHTML = d.posts.length ? d.posts.map(p => postHTML(p)).join('') : '<div class="empty"><i class="fa-regular fa-newspaper"></i><p>Постов пока нет</p></div>';
+    // Используем feed_combined чтобы показать мозаики репостов в вкладке «Посты»
+    try {
+      const items = await api(`/user/${me.username}/feed_combined?limit=60`);
+      window._profPosts = items.filter(x => x.kind === 'self');  // для findPost
+      document.getElementById('profList').innerHTML = items.length
+        ? renderProfileFeed(items, me.username)
+        : '<div class="empty"><i class="fa-regular fa-newspaper"></i><p>Постов пока нет</p></div>';
+    } catch(e2) {
+      // fallback на старый /prof
+      document.getElementById('profList').innerHTML = d.posts.length ? d.posts.map(p => postHTML(p)).join('') : '<div class="empty"><i class="fa-regular fa-newspaper"></i><p>Постов пока нет</p></div>';
+    }
     attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
   } catch(e) {}
 }
