@@ -1567,6 +1567,28 @@ def _hydrate_posts(c, rows: list, uid: int) -> list:
             [uid] + author_ids
         ).fetchall()
         followed = {r["followee_id"] for r in f_rows}
+    # Views count (одним запросом по всем постам в пачке)
+    views_map = {pid: 0 for pid in ids}
+    try:
+        v_count_rows = c.execute(
+            f"SELECT post_id, COUNT(*) as n FROM soc_post_views WHERE post_id IN ({placeholders}) GROUP BY post_id",
+            ids,
+        ).fetchall()
+        for r in v_count_rows:
+            views_map[r["post_id"]] = r["n"]
+    except Exception:
+        pass
+    # Reposts count
+    reposts_map = {pid: 0 for pid in ids}
+    try:
+        r_count_rows = c.execute(
+            f"SELECT post_id, COUNT(*) as n FROM soc_reposts WHERE post_id IN ({placeholders}) GROUP BY post_id",
+            ids,
+        ).fetchall()
+        for r in r_count_rows:
+            reposts_map[r["post_id"]] = r["n"]
+    except Exception:
+        pass
     # Опросы (одним запросом для всех постов в пачке)
     polls_map = {}
     p_rows = c.execute(
@@ -1619,6 +1641,8 @@ def _hydrate_posts(c, rows: list, uid: int) -> list:
         post = fmt_post(dict(r), uid, per_post[r["id"]], r["user_id"] in followed)
         if r["id"] in polls_map:
             post["poll"] = polls_map[r["id"]]
+        post["views_count"] = views_map.get(r["id"], 0)
+        post["reposts_count"] = reposts_map.get(r["id"], 0)
         # Бейдж канала-источника
         sci = r["source_channel_id"] if "source_channel_id" in r.keys() else None
         if sci and channel_map.get(sci):

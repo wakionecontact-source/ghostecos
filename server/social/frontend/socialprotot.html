@@ -317,6 +317,11 @@ body.guest-mode .prof-action-btn[onclick*="openAlgoSettings"]{display:none;}
 .mosaic-grid[style*="repeat(3"] .mosaic-cell,
 .mosaic-grid[style*="repeat(4"] .mosaic-cell{height:90px;font-size:10px;}
 
+/* ── Мини-стат бар поста (просмотры, репосты) ── */
+.post-stats{display:flex;gap:14px;font-size:11px;color:var(--sub);padding:0 4px 8px;border-top:1px solid var(--border);padding-top:8px;margin-top:4px;}
+.post-stats span{display:inline-flex;align-items:center;gap:4px;font-weight:500;}
+.post-stats i{font-size:10px;opacity:0.7;}
+
 /* ── Значок «репост» на карточке ── */
 .repost-mark{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--primary);background:rgba(168,85,247,0.10);border:1px solid rgba(168,85,247,0.25);padding:3px 10px;border-radius:99px;margin-bottom:8px;}
 
@@ -3174,6 +3179,10 @@ function postHTML(p, hq) {
     ${pollHTML(p)}
     ${mediaHTML(p.media)}
     </div>
+    <div class="post-stats">
+      <span title="Просмотров"><i class="fa-regular fa-eye"></i> ${formatCount(p.views_count || 0)}</span>
+      ${(p.reposts_count || 0) > 0 ? `<span title="Репостов"><i class="fa-solid fa-retweet"></i> ${formatCount(p.reposts_count)}</span>` : ''}
+    </div>
     <div class="post-footer">
       <div class="react-trigger" data-post="${p.id}">
         <button class="act-btn${your ? ' liked' : ''}" data-post="${p.id}" data-action="react-toggle">
@@ -5133,6 +5142,14 @@ function shareForeignProfile() {
   const un = _fpState && _fpState.username;
   if (!un) return;
   _shareUrl(buildUserUrl(un), `@${un}`, `Профиль @${un} в GhostEcos`);
+}
+
+// 1500 → 1.5K, 1_200_000 → 1.2M (компактно для UI-счётчиков)
+function formatCount(n) {
+  n = +n || 0;
+  if (n < 1000) return String(n);
+  if (n < 1000000) return (n / 1000).toFixed(n < 10000 ? 1 : 0).replace(/\.0$/, '') + 'K';
+  return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
 }
 
 function renderDailyStatus(elId, text) {
