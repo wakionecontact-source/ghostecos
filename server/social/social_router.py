@@ -893,6 +893,22 @@ def init():
     try: c.execute("ALTER TABLE users ADD COLUMN daily_status_set_at INTEGER")
     except sqlite3.OperationalError: pass
 
+    # ── Жалобы на посты (для автомодерации) ──
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS soc_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id INTEGER NOT NULL,
+                reporter_id INTEGER NOT NULL,
+                reason TEXT NOT NULL,  -- spam | nsfw_unmarked | illegal | harassment | other
+                created_at INTEGER NOT NULL,
+                UNIQUE(post_id, reporter_id)
+            )
+        """)
+    except sqlite3.OperationalError: pass
+    try: c.execute("CREATE INDEX IF NOT EXISTS idx_reports_post ON soc_reports(post_id, created_at DESC)")
+    except sqlite3.OperationalError: pass
+
     # ── Cooldown освобождения username (30 дней после удаления) ──
     try:
         c.execute("""
@@ -2603,6 +2619,13 @@ def react(post_id: int, body: ReactBody, authorization: Optional[str] = Header(N
         try: award_gost(owner_id, 'react', actor_id=user["id"], ref_type='post', ref_id=post_id)
         except Exception: pass
 
+    # Триггер автомодерации виральных постов (отдельным коннектом — без блокировки)
+    try:
+        c2 = db()
+        _check_and_create_overwatch_viral(c2, post_id)
+        c2.commit(); c2.close()
+    except Exception: pass
+
     return result
 
 # ── Comments ───────────────────────────────────────────────────────────────────
@@ -3261,6 +3284,166 @@ def wrapped_data(username: str):
     }
 
 
+# ── Жалобы на посты + автомодерация ──
+
+_REPORT_REASONS = {"spam", "nsfw_unmarked", "illegal", "harassment", "other"}
+_REPORTS_THRESHOLD_1H = 5
+_REPORTS_THRESHOLD_24H = 10
+_VIRAL_REACTIONS_30MIN = 30
+
+
+class ReportBody(BaseModel):
+    reason: str
+
+
+def _check_and_create_overwatch_reports(c, post_id: int):
+    """Если по посту накопилось >=5 жалоб за 1ч или >=10 за 24ч и нет
+    открытого system_reports-overwatch — создаёт его автоматически."""
+    now = int(time.time())
+    cnt_1h = c.execute(
+        "SELECT COUNT(*) FROM soc_reports WHERE post_id=? AND created_at > ?",
+        (post_id, now - 3600),
+    ).fetchone()[0] or 0
+    cnt_24h = c.execute(
+        "SELECT COUNT(*) FROM soc_reports WHERE post_id=? AND created_at > ?",
+        (post_id, now - 86400),
+    ).fetchone()[0] or 0
+    if cnt_1h < _REPORTS_THRESHOLD_1H and cnt_24h < _REPORTS_THRESHOLD_24H:
+        return
+    # Уже есть открытый
+    already = c.execute(
+        "SELECT id FROM soc_overwatch_requests "
+        "WHERE post_id=? AND kind='system_reports' AND status='open'",
+        (post_id,),
+    ).fetchone()
+    if already:
+        return
+    # Найти автора поста
+    p = c.execute("SELECT user_id FROM soc_posts WHERE id=?", (post_id,)).fetchone()
+    if not p:
+        return
+    c.execute(
+        "INSERT INTO soc_overwatch_requests (post_id, author_id, kind, price_gost, created_at, status) "
+        "VALUES (?, ?, 'system_reports', 0, ?, 'open')",
+        (post_id, p["user_id"], now),
+    )
+    # Notification всем модераторам
+    try:
+        mods = c.execute("SELECT id FROM users WHERE is_moderator=1").fetchall()
+        for m in mods:
+            ws_hub.send_to(m["id"], "mod.auto_overwatch", {
+                "post_id": post_id, "kind": "system_reports",
+                "reports_1h": cnt_1h, "reports_24h": cnt_24h,
+            })
+    except Exception:
+        pass
+
+
+def _check_and_create_overwatch_viral(c, post_id: int):
+    """Если за последние 30 минут пост получил 30+ реакций и нет открытого
+    system_viral за последние 24 часа — создаёт автоматический overwatch."""
+    now = int(time.time())
+    # Реакции за 30 мин — у нас в soc_reactions нет created_at, поэтому
+    # ориентируемся на activity. Если activity ≥ 800 (буст) — потенциально вирусный.
+    try:
+        activity = c.execute("SELECT activity FROM soc_posts WHERE id=?", (post_id,)).fetchone()
+        activity_val = int(activity["activity"]) if activity else 500
+    except Exception:
+        return
+    if activity_val < 800:
+        return
+    reactions = c.execute("SELECT COUNT(*) FROM soc_reactions WHERE post_id=?", (post_id,)).fetchone()[0] or 0
+    if reactions < _VIRAL_REACTIONS_30MIN:
+        return
+    # Был ли уже виралный overwatch за последние 24 часа
+    recent = c.execute(
+        "SELECT id FROM soc_overwatch_requests "
+        "WHERE post_id=? AND kind='system_viral' AND created_at > ?",
+        (post_id, now - 86400),
+    ).fetchone()
+    if recent:
+        return
+    p = c.execute("SELECT user_id FROM soc_posts WHERE id=?", (post_id,)).fetchone()
+    if not p:
+        return
+    c.execute(
+        "INSERT INTO soc_overwatch_requests (post_id, author_id, kind, price_gost, created_at, status) "
+        "VALUES (?, ?, 'system_viral', 0, ?, 'open')",
+        (post_id, p["user_id"], now),
+    )
+    try:
+        mods = c.execute("SELECT id FROM users WHERE is_moderator=1").fetchall()
+        for m in mods:
+            ws_hub.send_to(m["id"], "mod.auto_overwatch", {
+                "post_id": post_id, "kind": "system_viral", "reactions": reactions,
+            })
+    except Exception:
+        pass
+
+
+@router.post("/post/{post_id}/report")
+def report_post(post_id: int, body: ReportBody, authorization: Optional[str] = Header(None)):
+    user = auth_member(authorization)
+    _rate_limit(f"report:{user['id']}", limit=30, window=3600)
+    reason = (body.reason or "").strip().lower()
+    if reason not in _REPORT_REASONS:
+        raise HTTPException(400, f"reason должен быть одним из: {', '.join(sorted(_REPORT_REASONS))}")
+    c = db()
+    # Пост существует?
+    p = c.execute("SELECT id, user_id FROM soc_posts WHERE id=?", (post_id,)).fetchone()
+    if not p:
+        c.close(); raise HTTPException(404, "Post not found")
+    if p["user_id"] == user["id"]:
+        c.close(); raise HTTPException(403, "Нельзя жаловаться на свой пост")
+    now = int(time.time())
+    try:
+        c.execute(
+            "INSERT INTO soc_reports (post_id, reporter_id, reason, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (post_id, user["id"], reason, now),
+        )
+    except sqlite3.IntegrityError:
+        c.close(); raise HTTPException(409, "Вы уже жаловались на этот пост")
+    # Триггер автомодерации
+    _check_and_create_overwatch_reports(c, post_id)
+    c.commit(); c.close()
+    return {"status": "ok"}
+
+
+@router.delete("/post/{post_id}/report")
+def unreport_post(post_id: int, authorization: Optional[str] = Header(None)):
+    user = auth_member(authorization)
+    c = db()
+    c.execute(
+        "DELETE FROM soc_reports WHERE post_id=? AND reporter_id=?",
+        (post_id, user["id"]),
+    )
+    c.commit(); c.close()
+    return {"status": "ok"}
+
+
+@router.get("/post/{post_id}/reports/count")
+def reports_count(post_id: int, authorization: Optional[str] = Header(None)):
+    user = auth_member(authorization)
+    me_row = db().execute("SELECT is_admin, is_moderator FROM users WHERE id=?", (user["id"],)).fetchone()
+    is_mod_or_admin = bool(me_row and (me_row["is_moderator"] or me_row["is_admin"])) or _is_admin_user(user)
+    if not is_mod_or_admin:
+        raise HTTPException(403, "Только для модераторов")
+    c = db()
+    now = int(time.time())
+    cnt_total = c.execute("SELECT COUNT(*) FROM soc_reports WHERE post_id=?", (post_id,)).fetchone()[0] or 0
+    cnt_24h = c.execute("SELECT COUNT(*) FROM soc_reports WHERE post_id=? AND created_at > ?", (post_id, now - 86400)).fetchone()[0] or 0
+    rows = c.execute(
+        "SELECT reason, COUNT(*) as n FROM soc_reports WHERE post_id=? GROUP BY reason ORDER BY n DESC",
+        (post_id,),
+    ).fetchall()
+    c.close()
+    return {
+        "total": cnt_total, "last_24h": cnt_24h,
+        "by_reason": [{"reason": r["reason"], "count": r["n"]} for r in rows],
+    }
+
+
 # ── Ежедневный статус (сбрасывается через 24ч, обязателен при заходе) ──
 
 _STATUS_TTL = 86400  # 24 часа
@@ -3640,8 +3823,10 @@ def mod_overwatch_queue(authorization: Optional[str] = Header(None)):
     без автора/реакций/комментов (защита анонимности)."""
     user = auth_member(authorization)
     c = db()
-    u = c.execute("SELECT is_moderator FROM users WHERE id=?", (user["id"],)).fetchone()
-    if not u or not u["is_moderator"]:
+    u = c.execute("SELECT is_moderator, is_admin FROM users WHERE id=?", (user["id"],)).fetchone()
+    is_admin = _is_admin_user({**user, "is_admin": (u["is_admin"] if u else 0)})
+    is_mod = bool(u and u["is_moderator"])
+    if not (is_mod or is_admin):
         c.close(); raise HTTPException(403, "Только для модераторов")
     rows = c.execute("""
         SELECT r.id as request_id, r.post_id, r.created_at, r.kind,

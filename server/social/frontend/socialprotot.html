@@ -4098,6 +4098,7 @@ function openPostMenu(postId, anchor, mediaUrl, eventOrEl) {
     if (p && p.username) {
       items.push({ icon: 'fa-user-slash', label: `Скрыть @${p.username}`, onClick: () => blockAuthor(p.username) });
     }
+    items.push({ icon: 'fa-flag', label: 'Пожаловаться', danger: true, onClick: () => openReportSheet(postId) });
   }
   if (isOwn) {
     items.push({ icon: 'fa-pen', label: 'Редактировать', onClick: () => openEditPost(postId) });
@@ -4260,6 +4261,58 @@ async function sharePost(postId) {
     catch(e) { /* отмена пользователем — игнор */ }
   }
   copyPostLink(postId);
+}
+
+// ── «Пожаловаться» ──────────────────────────────────────────────────────────
+const REPORT_REASONS = [
+  { key: 'spam',          icon: 'fa-bullhorn',          label: 'Спам или реклама' },
+  { key: 'nsfw_unmarked', icon: 'fa-eye-slash',         label: '18+ без блюра' },
+  { key: 'illegal',       icon: 'fa-triangle-exclamation', label: 'Незаконный контент' },
+  { key: 'harassment',    icon: 'fa-hand-fist',         label: 'Травля или угрозы' },
+  { key: 'other',         icon: 'fa-circle-question',   label: 'Другое' },
+];
+function openReportSheet(postId) {
+  if (isGuest()) { guestBlock(); return; }
+  if (document.getElementById('reportSheet')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'reportSheet';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.55);backdrop-filter:blur(8px);display:flex;align-items:flex-end;justify-content:center;';
+  const opts = REPORT_REASONS.map(r => `
+    <button data-reason="${r.key}" style="display:flex;align-items:center;gap:14px;width:100%;padding:14px 16px;background:transparent;border:none;border-radius:12px;color:var(--text);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;text-align:left;transition:background 0.15s;">
+      <i class="fa-solid ${r.icon}" style="color:#f87171;width:18px;text-align:center;"></i>
+      ${esc(r.label)}
+    </button>
+  `).join('');
+  overlay.innerHTML = `
+    <div style="background:#0f172a;border-top-left-radius:18px;border-top-right-radius:18px;width:100%;max-width:520px;padding:14px 14px calc(20px + env(safe-area-inset-bottom));border-top:1px solid rgba(255,255,255,0.08);">
+      <div style="width:40px;height:4px;background:rgba(255,255,255,0.2);border-radius:99px;margin:0 auto 10px;"></div>
+      <h3 style="font-size:14px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--sub);margin:8px 4px 8px;">Причина жалобы</h3>
+      <div id="reportOpts" style="display:flex;flex-direction:column;gap:2px;"></div>
+      <button id="reportCancel" style="display:block;width:100%;margin-top:10px;padding:12px;background:rgba(255,255,255,0.05);border:none;border-radius:12px;color:var(--sub);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;">Отмена</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('reportOpts').innerHTML = opts;
+  document.getElementById('reportOpts').querySelectorAll('button[data-reason]').forEach(b => {
+    b.addEventListener('mouseenter', () => b.style.background = 'rgba(168,85,247,0.08)');
+    b.addEventListener('mouseleave', () => b.style.background = 'transparent');
+    b.addEventListener('click', async () => {
+      const reason = b.dataset.reason;
+      overlay.remove();
+      try {
+        await api(`/post/${postId}/report`, 'POST', { reason });
+        showToast('Жалоба отправлена. Модераторы посмотрят.');
+      } catch(e) {
+        if (e.message && e.message.includes('уже жаловались')) {
+          showToast('Вы уже жаловались на этот пост');
+        } else {
+          showToast(e.message || 'Ошибка');
+        }
+      }
+    });
+  });
+  document.getElementById('reportCancel').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
 }
 
 // ── «Не интересно» и «Скрыть автора» ──────────────────────────────────────────
