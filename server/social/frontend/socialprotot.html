@@ -303,8 +303,12 @@ body.guest-mode .prof-action-btn[onclick*="openAlgoSettings"]{display:none;}
 .mosaic-nsfw{position:absolute;top:6px;left:6px;background:rgba(248,113,113,0.85);color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:6px;letter-spacing:0.5px;}
 .mosaic-cell.mosaic-more{background:linear-gradient(135deg,rgba(168,85,247,0.20),rgba(124,58,237,0.10));color:var(--primary);font-size:18px;font-weight:800;align-items:center;justify-content:center;text-align:center;line-height:1.2;text-decoration:none;}
 .mosaic-cell.mosaic-more small{font-size:10px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:0.5px;}
-.mosaic-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;pointer-events:none;}
-.mosaic-video-icon{position:absolute;top:6px;right:6px;width:24px;height:24px;border-radius:50%;background:rgba(0,0,0,0.6);color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;z-index:1;}
+.mosaic-img,.mosaic-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;pointer-events:none;}
+.mosaic-img.failed,.mosaic-video.failed{display:none;}
+.mosaic-cell.has-media{background:linear-gradient(135deg,rgba(15,23,42,0.95),rgba(30,41,59,0.9));}
+.mosaic-cell.has-media::before{content:"\f1c5";font-family:"Font Awesome 6 Free";font-weight:900;position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(168,85,247,0.25);font-size:36px;pointer-events:none;z-index:-1;}
+.mosaic-video-icon{position:absolute;top:6px;right:6px;width:24px;height:24px;border-radius:50%;background:rgba(0,0,0,0.6);color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;z-index:1;pointer-events:none;}
+.mosaic-nsfw-center{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(248,113,113,0.55);font-size:38px;pointer-events:none;}
 .mosaic-cell.has-media .mosaic-author{position:relative;z-index:2;}
 .mosaic-cell.has-media .mosaic-text{position:relative;z-index:2;}
 .mosaic-cell.has-media .mosaic-nsfw{z-index:2;}
@@ -4452,24 +4456,29 @@ function renderRepostMosaic(reposts, profileUsername) {
     const isPic = mediaType === 'image' || /\.(jpe?g|png|webp|gif)$/i.test(mediaUrl);
     const isVideo = mediaType === 'video' || /\.(mp4|webm|mov)$/i.test(mediaUrl);
     const isNsfw = !!p.is_nsfw;
-    // Image → background-image, video → <video> первый кадр
-    let mediaLayer = '';
-    let previewBg = '';
-    if (mediaUrl && !isNsfw) {
-      if (isPic) {
-        previewBg = `background-image:url('${mediaUrl}');`;
-      } else if (isVideo) {
-        mediaLayer = `<video class="mosaic-video" src="${mediaUrl}#t=0.1" muted preload="metadata" playsinline></video><div class="mosaic-video-icon"><i class="fa-solid fa-play"></i></div>`;
-      }
+
+    if (isNsfw) {
+      // NSFW — отдельный layout: большая иконка по центру, бейдж, автор, без текста
+      return `<a class="mosaic-cell nsfw" href="/social/#p=${p.id}" data-post-id="${p.id}" title="@${esc(p.username)}">
+        <div class="mosaic-nsfw">18+</div>
+        <div class="mosaic-nsfw-center"><i class="fa-solid fa-eye-slash"></i></div>
+        <div class="mosaic-author">@${esc(p.username)}</div>
+      </a>`;
     }
-    const hasMedia = !!(mediaUrl && !isNsfw);
-    const previewText = (!hasMedia && p.content) ? esc(p.content).slice(0, 60) : '';
-    const label = isNsfw ? '<div class="mosaic-nsfw">18+</div>' : '';
-    const klass = 'mosaic-cell' + (isNsfw ? ' nsfw' : '') + (hasMedia ? ' has-media' : '');
-    // Используем /social/#p=ID — хеш-роутинг внутри SPA быстрее чем серверный /p/{id}→redirect
-    return `<a class="${klass}" href="/social/#p=${p.id}" data-post-id="${p.id}" title="@${esc(p.username)}: ${esc((p.content||'').slice(0,80))}" style="${previewBg}">
+
+    // Не-NSFW: используем img/video с onerror-fallback (если файл потерян — серое)
+    let mediaLayer = '';
+    if (mediaUrl && isPic) {
+      mediaLayer = `<img class="mosaic-img" src="${mediaUrl}" alt="" onerror="this.classList.add('failed')" loading="lazy">`;
+    } else if (mediaUrl && isVideo) {
+      mediaLayer = `<video class="mosaic-video" src="${mediaUrl}#t=0.1" muted preload="metadata" playsinline onerror="this.classList.add('failed')"></video><div class="mosaic-video-icon"><i class="fa-solid fa-play"></i></div>`;
+    }
+    const hasMedia = !!mediaUrl;
+    // Текст показываем только если медиа нет ВООБЩЕ. Если медиа есть — оно само превью.
+    const previewText = !hasMedia && p.content ? esc(p.content).slice(0, 60) : '';
+    const klass = 'mosaic-cell' + (hasMedia ? ' has-media' : '');
+    return `<a class="${klass}" href="/social/#p=${p.id}" data-post-id="${p.id}" title="@${esc(p.username)}: ${esc((p.content||'').slice(0,80))}">
       ${mediaLayer}
-      ${label}
       ${previewText ? `<div class="mosaic-text">${previewText}</div>` : ''}
       <div class="mosaic-author">@${esc(p.username)}</div>
     </a>`;
