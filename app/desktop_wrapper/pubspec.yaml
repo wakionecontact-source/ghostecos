@@ -10,20 +10,16 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
-  # WebView для Windows (использует WebView2 — встроен в Windows 11)
   webview_windows: ^0.4.0
-  # System tray (иконка в области уведомлений)
   system_tray: ^2.0.3
-  # Управление окном (свернуть в tray, recover, размер, заголовок)
   window_manager: ^0.4.3
-  # Native push-уведомления (Windows Toast / macOS Notification / Linux libnotify)
   flutter_local_notifications: ^17.2.4
-  # Автозапуск с системой
   launch_at_startup: ^0.5.1
-  # Info о приложении (версия, имя пакета)
   package_info_plus: ^8.1.0
-  # URL launcher для внешних ссылок (не из webview)
   url_launcher: ^6.3.1
+  # Native auth + persistence
+  http: ^1.2.2
+  shared_preferences: ^2.3.3
 
 dev_dependencies:
   flutter_test:
