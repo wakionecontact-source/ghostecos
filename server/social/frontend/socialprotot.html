@@ -305,6 +305,7 @@ body.guest-mode .prof-action-btn[onclick*="openAlgoSettings"]{display:none;}
 .mosaic-cell.mosaic-more small{font-size:10px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:0.5px;}
 .mosaic-img,.mosaic-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;pointer-events:none;}
 .mosaic-img.failed,.mosaic-video.failed{display:none;}
+.mosaic-blur{filter:blur(22px);transform:scale(1.1);}  /* +scale чтоб не было видно белых краёв */
 .mosaic-cell.has-media{background:linear-gradient(135deg,rgba(15,23,42,0.95),rgba(30,41,59,0.9));}
 .mosaic-cell.has-media::before{content:"\f1c5";font-family:"Font Awesome 6 Free";font-weight:900;position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(168,85,247,0.25);font-size:36px;pointer-events:none;z-index:-1;}
 .mosaic-video-icon{position:absolute;top:6px;right:6px;width:24px;height:24px;border-radius:50%;background:rgba(0,0,0,0.6);color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;z-index:1;pointer-events:none;}
@@ -4458,8 +4459,16 @@ function renderRepostMosaic(reposts, profileUsername) {
     const isNsfw = !!p.is_nsfw;
 
     if (isNsfw) {
-      // NSFW — отдельный layout: большая иконка по центру, бейдж, автор, без текста
-      return `<a class="mosaic-cell nsfw" href="/social/#p=${p.id}" data-post-id="${p.id}" title="@${esc(p.username)}">
+      // NSFW — превью под сильным блюром (если медиа есть) + бейдж + иконка глаза
+      let nsfwMedia = '';
+      if (mediaUrl && isPic) {
+        nsfwMedia = `<img class="mosaic-img mosaic-blur" src="${mediaUrl}" alt="" onerror="this.classList.add('failed')" loading="lazy">`;
+      } else if (mediaUrl && isVideo) {
+        nsfwMedia = `<video class="mosaic-video mosaic-blur" src="${mediaUrl}#t=0.1" muted preload="metadata" playsinline onerror="this.classList.add('failed')"></video>`;
+      }
+      const hasNsfwMedia = !!(mediaUrl && (isPic || isVideo));
+      return `<a class="mosaic-cell nsfw${hasNsfwMedia ? ' has-media' : ''}" href="/social/#p=${p.id}" data-post-id="${p.id}" title="@${esc(p.username)}">
+        ${nsfwMedia}
         <div class="mosaic-nsfw">18+</div>
         <div class="mosaic-nsfw-center"><i class="fa-solid fa-eye-slash"></i></div>
         <div class="mosaic-author">@${esc(p.username)}</div>
