@@ -1352,7 +1352,13 @@ async function onReady(){
   await openIDB();
   console.log('[onReady] loading dialogs');
   dialogs = (await idbGetDialogs()) || [];
-  dialogs.sort((a,b) => (b.last_at || '').localeCompare(a.last_at || ''));
+  // last_at может быть строкой (legacy ISO) или числом (unix-int от sealed) —
+  // сравниваем через Date.getTime() чтобы не падать с .localeCompare
+  dialogs.sort((a,b) => {
+    const av = a.last_at ? new Date(typeof a.last_at === 'number' ? a.last_at * 1000 : a.last_at).getTime() : 0;
+    const bv = b.last_at ? new Date(typeof b.last_at === 'number' ? b.last_at * 1000 : b.last_at).getTime() : 0;
+    return bv - av;  // DESC: новые сверху
+  });
   renderDialogs();
   // Groups + WS + pending — параллельно в фоне, не блокируем UI открытие
   console.log('[onReady] connectWS');
