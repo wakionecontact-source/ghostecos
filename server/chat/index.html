@@ -2044,14 +2044,19 @@ async function sendVoiceBlob(blob, duration){
 const _voiceAudios = new Map(); // sid -> {audio, url}
 async function toggleVoicePlay(sid){
   const m = activeMessages.find(x => String(x.sid) === String(sid));
-  if (!m || !m.file_payload) return;
+  const p = m && (m.file_payload || m.file);
+  if (!p) { console.warn('[voice] no payload for sid', sid); return; }
+  if (!p.file_id || !p.key || !p.iv) {
+    console.warn('[voice] payload incomplete', p);
+    showToast('Голосовое не готово (ещё отправляется)', true);
+    return;
+  }
   const cached = _voiceAudios.get(String(sid));
   if (cached) {
     if (cached.audio.paused) cached.audio.play();
     else cached.audio.pause();
     return;
   }
-  const p = m.file_payload;
   try {
     const r = await fetch(CHAT_API + `/file/${p.file_id}`, {headers:{'Authorization':'Bearer '+token}});
     if (!r.ok) { showToast('Голос недоступен', true); return; }
@@ -2548,7 +2553,7 @@ function renderMessages(){
     }
     html += `<div class="msg ${m.from_me?'mine':'theirs'} ${cls}" data-sid="${esc(m.sid)}">
       <div style="display:flex;flex-direction:column;max-width:100%;">
-        <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,${jsAttr(m.sid)})" ontouchstart="msgLongPressStart(event,${jsAttr(m.sid)})" ontouchend="msgLongPressEnd()" ontouchcancel="msgLongPressEnd()" ontouchmove="msgLongPressMove(event)">${m.forwarded_from?`<div style="font-size:11px;color:var(--primary);font-weight:600;margin-bottom:3px;"><i class="fa-solid fa-share" style="margin-right:4px;font-size:10px;"></i>Переслано от @${esc(m.forwarded_from)}</div>`:''}${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
+        <div class="msg-bubble" onclick="msgBubbleClick(event,${jsAttr(m.sid)})" oncontextmenu="event.preventDefault();openMsgMenu(event,${jsAttr(m.sid)})" ontouchstart="msgTouchStart(event,${jsAttr(m.sid)})" ontouchend="msgTouchEnd()" ontouchcancel="msgTouchEnd()" ontouchmove="msgTouchMove(event)">${m.forwarded_from?`<div style="font-size:11px;color:var(--primary);font-weight:600;margin-bottom:3px;"><i class="fa-solid fa-share" style="margin-right:4px;font-size:10px;"></i>Переслано от @${esc(m.forwarded_from)}</div>`:''}${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
         ${renderReactions(m)}
         ${m.deleted ? '' : previewPlaceholder(m)}
       </div>
@@ -2593,12 +2598,24 @@ function scrollToMsg(sid){
     setTimeout(() => bubble.style.boxShadow = '', 1200); }
 }
 
-// ─── Long-press для меню + swipe-вправо для reply (TG-style) ───
-let _longPressTimer = null;
-let _swipeState = null;  // {sid, msgEl, bubbleEl, startX, startY, currentDx, isHoriz, sid}
+// ─── Тап = меню. Свайп вправо = reply. Скролл = ничего. ───
+// Открытие меню по простому клику/тапу (без 500ms задержки). Чтобы клики
+// внутри bubble на интерактивных элементах (voice/img/file/links/reactions)
+// не открывали меню — фильтр по target.closest. Свайп подавляет click.
+let _swipeState = null;
+let _swipeSuppressClick = false;
 
-function msgLongPressStart(ev, sid){
-  // Запоминаем стартовую позицию для свайпа
+function msgBubbleClick(ev, sid){
+  if (_swipeSuppressClick) return;
+  // Не открываем меню если кликнули на интерактивный элемент внутри bubble
+  if (ev.target.closest('button, a, img, video, audio, input, .msg-quote, .msg-react-chip, .voice-play, .voice-bar, .msg-file, .msg-img, .msg-video, .msg-img-placeholder')) return;
+  // Не открываем меню если идёт выделение текста (пользователь копирует)
+  const sel = window.getSelection();
+  if (sel && sel.toString().length > 0) return;
+  openMsgMenu(ev, sid);
+}
+
+function msgTouchStart(ev, sid){
   const t = (ev.touches && ev.touches[0]) || ev;
   const msgEl = ev.currentTarget.closest('.msg');
   const bubbleEl = msgEl && msgEl.querySelector('.msg-bubble');
@@ -2609,35 +2626,26 @@ function msgLongPressStart(ev, sid){
       currentDx: 0, isHoriz: null,
     };
   }
-  if (_longPressTimer) clearTimeout(_longPressTimer);
-  _longPressTimer = setTimeout(() => {
-    // long-press → меню (только если не свайпали)
-    if (_swipeState && _swipeState.isHoriz) return;
-    openMsgMenu(ev, sid);
-  }, 500);
 }
 
-function msgLongPressMove(ev){
+function msgTouchMove(ev){
   if (!_swipeState) return;
   const t = (ev.touches && ev.touches[0]) || ev;
   const dx = t.clientX - _swipeState.startX;
   const dy = t.clientY - _swipeState.startY;
-  // Определяем направление при первом значимом движении
   if (_swipeState.isHoriz === null) {
     if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
     _swipeState.isHoriz = Math.abs(dx) > Math.abs(dy);
     if (!_swipeState.isHoriz) {
-      // Вертикальный скролл — отменяем long-press, не свайп
-      msgLongPressEnd();
+      // Вертикальный — это скролл, выходим
+      _swipeState = null;
       return;
     }
-    // Горизонтальный — отменяем long-press, начинаем свайп
-    if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
     _swipeState.msgEl.classList.add('swiping');
     _ensureSwipeIcon(_swipeState.msgEl);
   }
   if (!_swipeState.isHoriz) return;
-  // Свайп только вправо для reply (тз — TG)
+  // Свайп только вправо для reply
   const useDx = Math.max(0, dx) * 0.45;
   const capped = Math.min(useDx, 80);
   _swipeState.currentDx = capped;
@@ -2646,24 +2654,24 @@ function msgLongPressMove(ev){
   if (icon) icon.style.opacity = Math.min(1, capped / 50);
 }
 
-function msgLongPressEnd(){
-  if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
-  if (_swipeState) {
-    const triggered = _swipeState.currentDx >= 45;
-    _swipeState.msgEl.classList.remove('swiping');
-    _swipeState.msgEl.classList.add('swipe-release');
-    _swipeState.bubbleEl.style.transform = '';
-    const icon = _swipeState.msgEl.querySelector('.msg-swipe-icon');
-    if (icon) icon.style.opacity = '0';
-    const sid = _swipeState.sid;
-    const msgEl = _swipeState.msgEl;
-    setTimeout(() => msgEl.classList.remove('swipe-release'), 220);
-    _swipeState = null;
-    if (triggered) {
-      // Триггерим reply
-      const m = activeMessages.find(x => String(x.sid) === String(sid));
-      if (m && !m.deleted && typeof startReply === 'function') startReply(m);
-    }
+function msgTouchEnd(){
+  if (!_swipeState) return;
+  const state = _swipeState;
+  _swipeState = null;
+  if (!state.isHoriz) return; // Простой тап — меню откроет onclick → msgBubbleClick
+  // Был свайп — обрабатываем и подавляем click
+  const triggered = state.currentDx >= 45;
+  state.msgEl.classList.remove('swiping');
+  state.msgEl.classList.add('swipe-release');
+  state.bubbleEl.style.transform = '';
+  const icon = state.msgEl.querySelector('.msg-swipe-icon');
+  if (icon) icon.style.opacity = '0';
+  setTimeout(() => state.msgEl.classList.remove('swipe-release'), 220);
+  _swipeSuppressClick = true;
+  setTimeout(() => { _swipeSuppressClick = false; }, 350);
+  if (triggered) {
+    const m = activeMessages.find(x => String(x.sid) === String(state.sid));
+    if (m && !m.deleted && typeof startReply === 'function') startReply(m);
   }
 }
 
@@ -4029,7 +4037,7 @@ function renderGroupMessages(){
       ${avatarSlot}
       <div style="display:flex;flex-direction:column;max-width:100%;">
         ${senderName}
-        <div class="msg-bubble" oncontextmenu="event.preventDefault();openMsgMenu(event,${jsAttr(m.sid)})" ontouchstart="msgLongPressStart(event,${jsAttr(m.sid)})" ontouchend="msgLongPressEnd()" ontouchcancel="msgLongPressEnd()" ontouchmove="msgLongPressMove(event)">${m.forwarded_from?`<div style="font-size:11px;color:var(--primary);font-weight:600;margin-bottom:3px;"><i class="fa-solid fa-share" style="margin-right:4px;font-size:10px;"></i>Переслано от @${esc(m.forwarded_from)}</div>`:''}${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
+        <div class="msg-bubble" onclick="msgBubbleClick(event,${jsAttr(m.sid)})" oncontextmenu="event.preventDefault();openMsgMenu(event,${jsAttr(m.sid)})" ontouchstart="msgTouchStart(event,${jsAttr(m.sid)})" ontouchend="msgTouchEnd()" ontouchcancel="msgTouchEnd()" ontouchmove="msgTouchMove(event)">${m.forwarded_from?`<div style="font-size:11px;color:var(--primary);font-weight:600;margin-bottom:3px;"><i class="fa-solid fa-share" style="margin-right:4px;font-size:10px;"></i>Переслано от @${esc(m.forwarded_from)}</div>`:''}${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
         ${renderReactions(m)}
       </div>
     </div>`;
