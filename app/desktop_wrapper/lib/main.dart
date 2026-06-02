@@ -15,20 +15,23 @@ import 'screens/main_shell.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await windowManager.ensureInitialized();
-  await windowManager.waitUntilReadyToShow(
-    const WindowOptions(
-      size: Size(1200, 780),
-      minimumSize: Size(720, 520),
-      backgroundColor: GE.bg,
-      titleBarStyle: TitleBarStyle.normal,
-      title: GE.appName,
-    ),
-    () async {
-      await windowManager.show();
-      await windowManager.focus();
-    },
-  );
+  // Desktop-only init (window manager — нет смысла на мобильных)
+  if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+    await windowManager.ensureInitialized();
+    await windowManager.waitUntilReadyToShow(
+      const WindowOptions(
+        size: Size(1200, 780),
+        minimumSize: Size(720, 520),
+        backgroundColor: GE.bg,
+        titleBarStyle: TitleBarStyle.normal,
+        title: GE.appName,
+      ),
+      () async {
+        await windowManager.show();
+        await windowManager.focus();
+      },
+    );
+  }
   runApp(const GhostEcosApp());
 }
 
@@ -58,14 +61,18 @@ class _RouterState extends State<_Router> with WindowListener {
   final SystemTray _tray = SystemTray();
   bool _trayReady = false;
   bool _minimizeToTray = true;
+  bool get _isDesktop =>
+      Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
   @override
   void initState() {
     super.initState();
-    windowManager.addListener(this);
+    if (_isDesktop) {
+      windowManager.addListener(this);
+      _initTray();
+      _initAutostart();
+    }
     _initStage();
-    _initTray();
-    _initAutostart();
   }
 
   Future<void> _initStage() async {
@@ -134,6 +141,7 @@ class _RouterState extends State<_Router> with WindowListener {
 
   @override
   void onWindowClose() async {
+    if (!_isDesktop) return;
     if (_minimizeToTray && _trayReady) {
       await windowManager.hide();
     } else {
@@ -143,7 +151,7 @@ class _RouterState extends State<_Router> with WindowListener {
 
   @override
   void dispose() {
-    windowManager.removeListener(this);
+    if (_isDesktop) windowManager.removeListener(this);
     super.dispose();
   }
 

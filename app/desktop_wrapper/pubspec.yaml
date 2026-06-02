@@ -11,6 +11,8 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.8
   webview_windows: ^0.4.0
+  webview_flutter: ^4.10.0
+  webview_flutter_android: ^4.1.0
   system_tray: ^2.0.3
   window_manager: ^0.4.3
   flutter_local_notifications: ^17.2.4

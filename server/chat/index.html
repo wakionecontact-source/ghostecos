@@ -3037,8 +3037,9 @@ function openMsgMenu(ev, sid){
   const menu = document.createElement('div');
   menu.style.cssText = 'background:rgba(15,23,42,0.96);backdrop-filter:blur(10px);border:1px solid var(--border-strong);border-radius:12px;padding:6px;box-shadow:0 12px 32px rgba(0,0,0,0.45);min-width:170px;';
   const items = [{icon:'fa-reply', label:'Ответить', cb:() => startReply(m)}];
-  // Forward — для любого не-удалённого текстового сообщения
+  // Копировать — для любого не-удалённого сообщения с текстом
   if (!m.deleted && (m.text || '').trim()) {
+    items.push({icon:'fa-copy', label:'Копировать', cb:() => copyMsgText(m)});
     items.push({icon:'fa-share', label:'Переслать', cb:() => openForwardSheet(sid)});
   }
   if (m.from_me) {
@@ -3062,6 +3063,39 @@ function openMsgMenu(ev, sid){
   setTimeout(() => document.addEventListener('click', closeMsgMenu, {once:true}), 50);
 }
 function closeMsgMenu(){ const m = document.getElementById('msgMenu'); if (m) m.remove(); }
+
+// Копировать текст сообщения в буфер.
+async function copyMsgText(m) {
+  const txt = (m && m.text || '').toString();
+  if (!txt) return;
+  try {
+    await navigator.clipboard.writeText(txt);
+    showToast('Скопировано');
+  } catch(e) {
+    // Fallback для не-https / старых браузеров
+    const ta = document.createElement('textarea');
+    ta.value = txt; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); showToast('Скопировано'); }
+    catch(_) { showToast('Не удалось скопировать', true); }
+    finally { document.body.removeChild(ta); }
+  }
+}
+
+// Закрываем msg-menu при скролле списка сообщений (один раз навешиваем на window/document)
+(function _wireMenuCloseOnScroll(){
+  if (window._msgMenuScrollWired) return;
+  window._msgMenuScrollWired = true;
+  // capture: true чтобы ловить скролл любого scrollable-предка
+  document.addEventListener('scroll', () => {
+    if (document.getElementById('msgMenu')) closeMsgMenu();
+  }, { capture: true, passive: true });
+  // Также на wheel/touchmove внутри активного чата
+  ['wheel', 'touchmove'].forEach(ev => {
+    document.addEventListener(ev, () => {
+      if (document.getElementById('msgMenu')) closeMsgMenu();
+    }, { passive: true });
+  });
+})();
 
 function _getMyReaction(m) {
   if (!m || !m.reactions) return null;
