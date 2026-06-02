@@ -3076,20 +3076,19 @@ async function copyMsgText(m) {
   }
 }
 
-// Закрываем msg-menu при скролле списка сообщений (один раз навешиваем на window/document)
+// Закрываем msg-menu при скролле — используем требовательную проверку (не блокируем мобильный скролл)
 (function _wireMenuCloseOnScroll(){
   if (window._msgMenuScrollWired) return;
   window._msgMenuScrollWired = true;
-  // capture: true чтобы ловить скролл любого scrollable-предка
-  document.addEventListener('scroll', () => {
-    if (document.getElementById('msgMenu')) closeMsgMenu();
+  // Слушаем scroll конкретно на body-чата (через delegation)
+  // Не используем capture:true — это ломает плавный скролл на мобильных
+  document.addEventListener('scroll', (e) => {
+    if (!document.getElementById('msgMenu')) return;
+    // Закрываем только если scroll НЕ внутри самого меню (а это вряд ли)
+    const t = e.target;
+    if (t && t.closest && t.closest('#msgMenu')) return;
+    closeMsgMenu();
   }, { capture: true, passive: true });
-  // Также на wheel/touchmove внутри активного чата
-  ['wheel', 'touchmove'].forEach(ev => {
-    document.addEventListener(ev, () => {
-      if (document.getElementById('msgMenu')) closeMsgMenu();
-    }, { passive: true });
-  });
 })();
 
 function _getMyReaction(m) {
@@ -3433,8 +3432,7 @@ function _onWakeup(){
     fetchPending().catch(() => {});
     loadGroups().catch(() => {});
   }
-  // Догоняем статус доставки своих сообщений (если chat.delivered был потерян пока offline)
-  syncDeliveryStatus().catch(() => {});
+  // syncDeliveryStatus отключён — был для sealed, sealed откатан
 }
 
 // Спрашивает сервер какие из моих !delivered сообщений уже доставлены.
@@ -3467,17 +3465,8 @@ window.addEventListener('online', _onWakeup);  // вернулся интерн�
 
 async function handleWs(m){
   const t = m.type, d = m.data || {};
-  if (t === 'chat.sealed_new') {
-    // sealed: только {id, ciphertext, created_at}, без from_username
-    const ok = await ingestSealed(d);
-    if (ok) {
-      try { await chat('/ack_sealed', 'POST', { ids: [d.id] }); } catch(_) {}
-      // delivered обратно отправителю — внутри ingestSealed уже из envelope знаем sender
-      // но передаём не туда (env уже потерян). Делаем в ingestSealed после возврата env.
-      // (см. ingestSealed — там обрабатывается)
-    }
-    return;
-  }
+  // chat.sealed_new — sealed sender отключён, игнорируем
+  if (t === 'chat.sealed_new') return;
   if (t === 'chat.new' || t === 'chat.echo') {
     const ok = await ingestIncoming(d);
     if (ok && t === 'chat.new') {
