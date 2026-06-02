@@ -100,7 +100,12 @@ async function load(){
   const username = (location.pathname.split('/').filter(Boolean).pop() || '').trim();
   if (!username || username === 'wrapped'){ renderErr('Не указан пользователь', 'Открой /wrapped/<username>'); return; }
   try {
-    const r = await fetch('/api/soc/wrapped/' + encodeURIComponent(username));
+    // Опциональная авторизация — токен из localStorage/cookie если есть.
+    // Сервер вернёт финансы и предпочтения только если токен принадлежит запрашиваемому юзеру (is_owner=true).
+    const headers = {};
+    const tok = localStorage.getItem('gs_token') || (document.cookie.match(/(?:^|;\s*)gs_token=([^;]+)/) || [])[1];
+    if (tok) headers['Authorization'] = 'Bearer ' + tok;
+    const r = await fetch('/api/soc/wrapped/' + encodeURIComponent(username), {headers});
     if (!r.ok){ renderErr('Пользователь не найден', '@' + username + ' не существует или удалён'); return; }
     const d = await r.json();
     render(d);
@@ -118,18 +123,22 @@ function render(d){
   const repBand = d.reputation < 30 ? 'low' : (d.reputation < 70 ? 'mid' : 'good');
   const repColor = repBand === 'good' ? 'var(--green)' : (repBand === 'low' ? 'var(--red)' : 'var(--primary)');
   const totalPosts = (d.posts || 0) + (d.miniska || 0);
-  const topReactsHTML = (d.top_reactions || []).slice(0,3).map(r => `
+  // Приватные секции — только для владельца аккаунта (is_owner=true)
+  const isOwner = !!d.is_owner;
+  const topReactsHTML = isOwner ? ((d.top_reactions || []).slice(0,3).map(r => `
     <div class="react-box">
       ${emojiUrl(r.emoji) ? `<img class="em" src="${emojiUrl(r.emoji)}" alt="${esc(r.emoji)}" style="width:32px;height:32px;">` : `<div class="em">·</div>`}
       <div class="cnt">${fmt(r.count)}×</div>
       <div class="lbl" style="font-size:10px;color:var(--sub);margin-top:4px;">${esc(emojiName(r.emoji))}</div>
-    </div>`).join('') || '<div class="lbl" style="text-align:center;padding:20px;color:var(--sub);">пока никаких реакций</div>';
-  const topPostHTML = d.top_post ? `
+    </div>`).join('') || '<div class="lbl" style="text-align:center;padding:20px;color:var(--sub);">пока никаких реакций</div>') : '';
+  const topPostHTML = (isOwner && d.top_post) ? `
     <div class="top-post">
       <div class="label"><i class="fa-solid fa-trophy" style="margin-right:4px;"></i> Любимый пост подписчиков</div>
       <div class="text">${esc(d.top_post.preview)}${d.top_post.preview.length >= 140 ? '...' : ''}</div>
       <div class="meta"><i class="fa-regular fa-heart"></i> ${fmt(d.top_post.reactions)} реакций</div>
     </div>` : '';
+  // Защита от undefined balance (для не-owner balance отсутствует)
+  const bal = d.balance || {gost:0, soul:0, prem:0};
 
   document.getElementById('content').innerHTML = `
     <div id="card">
@@ -144,13 +153,13 @@ function render(d){
           <div class="lbl">Постов и минисок</div>
         </div>
         <div class="stat"><div class="val">${fmt(d.comments)}</div><div class="lbl">комментариев</div></div>
-        <div class="stat"><div class="val">${fmt(d.reactions_given)}</div><div class="lbl">реакций поставил</div></div>
+        ${isOwner ? `<div class="stat"><div class="val">${fmt(d.reactions_given)}</div><div class="lbl">реакций поставил</div></div>` : ''}
         <div class="stat"><div class="val">${fmt(d.reactions_received)}</div><div class="lbl">реакций получил</div></div>
         <div class="stat"><div class="val">${fmt(d.followers)}</div><div class="lbl">подписчиков</div></div>
       </div>
 
-      <div class="section-title">Твои топ-3 реакции</div>
-      <div class="top-react-row">${topReactsHTML}</div>
+      ${isOwner ? `<div class="section-title">Твои топ-3 реакции</div>
+      <div class="top-react-row">${topReactsHTML}</div>` : ''}
 
       ${topPostHTML}
 
@@ -166,13 +175,15 @@ function render(d){
         <div class="rep-bar-track"><div class="rep-bar-fill" style="width:${d.reputation}%;background:${repColor};"></div></div>
       </div>
 
-      <div class="section-title">Экономика</div>
+      ${isOwner ? `<div class="section-title">Экономика</div>
       <div class="stat-grid">
         <div class="stat"><div class="val">${fmt(d.gost_earned_total)}</div><div class="lbl">Gost заработано</div></div>
         <div class="stat"><div class="val">${fmt(d.nft_count)}</div><div class="lbl">NFT в коллекции</div></div>
-        <div class="stat"><div class="val">${fmt(d.balance.soul)}</div><div class="lbl">Soul баланс</div></div>
-        <div class="stat"><div class="val">${fmt(d.balance.prem)}</div><div class="lbl">Prem баланс</div></div>
-      </div>
+        <div class="stat"><div class="val">${fmt(bal.soul)}</div><div class="lbl">Soul баланс</div></div>
+        <div class="stat"><div class="val">${fmt(bal.prem)}</div><div class="lbl">Prem баланс</div></div>
+      </div>` : `<div class="footer-note" style="margin-top:20px;color:var(--sub);font-size:11px;">
+        <i class="fa-solid fa-lock"></i> финансовые данные и предпочтения видны только владельцу аккаунта
+      </div>`}
     </div>
 
     <div class="actions">

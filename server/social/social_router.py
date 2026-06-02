@@ -304,9 +304,9 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
     await websocket.accept()
     await ws_hub.register(uid, websocket)
     await websocket.send_json({"type": "hello", "data": {"uid": uid}})
-    # Сообщить другим подключённым что я онлайн
-    if uid > 0 and username:
-        ws_hub.broadcast("presence", {"username": username, "online": True})
+    # NB: убран broadcast presence — раньше все онлайн юзеры узнавали о входе/выходе
+    # любого другого юзера. Это утечка социального графа. Теперь интересующиеся
+    # должны спросить через presence.ask по конкретному username.
     try:
         while True:
             # Тайм-аут на receive: если клиент молчит больше 90с — отвал.
@@ -333,8 +333,18 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     continue
                 c = db()
                 peer = c.execute("SELECT id FROM users WHERE username=?", (to_user,)).fetchone()
-                c.close()
+                # Анти-спам/анти-стейк: typing разрешён только если peer в контактах юзера
+                # (т.е. они уже добавили друг друга / есть DM-история). Без этого
+                # любой залогиненый юзер может слать жертве «X печатает» в любой момент.
+                allowed = False
                 if peer:
+                    in_contacts = c.execute(
+                        "SELECT 1 FROM chat_contacts WHERE owner_id=? AND contact_id=?",
+                        (peer["id"], uid),
+                    ).fetchone()
+                    allowed = bool(in_contacts)
+                c.close()
+                if peer and allowed:
                     ws_hub.send_to(peer["id"], "chat.typing", {
                         "from_username": username,
                         "is_typing": bool(data.get("is_typing", True)),
@@ -355,9 +365,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
         pass
     finally:
         await ws_hub.unregister(uid, websocket)
-        # Если последнее соединение для юзера закрылось — broadcast offline
-        if uid > 0 and username and uid not in ws_hub._by_uid:
-            ws_hub.broadcast("presence", {"username": username, "online": False})
+        # NB: убран broadcast presence offline — см. комментарий выше.
 
 
 def init():
@@ -3384,11 +3392,22 @@ def og_nft_png(nft_id: int):
 
 
 @router.get("/wrapped/{username}")
-def wrapped_data(username: str):
-    """Публичная Wrapped-страница юзера. Не требует авторизации — shareable URL."""
+def wrapped_data(username: str, authorization: Optional[str] = Header(None)):
+    """Wrapped-страница юзера. Shareable URL — не требует авторизации, НО:
+    финансовые данные (wallet balance, NFT count, gost_earned, reactions_given,
+    top_post.preview) видны только владельцу аккаунта. Чтоб посторонний не мог
+    через перебор узнать сколько у кого денег и кому ставили лайки."""
     uname = (username or "").strip().lower().lstrip("@")
     if not uname:
         raise HTTPException(400, "Empty username")
+    # Опциональная авторизация — не падать если токена нет
+    me_id = 0
+    if authorization:
+        try:
+            me = auth(authorization)
+            me_id = me["id"]
+        except Exception:
+            me_id = 0
     c = db()
     u = c.execute(
         "SELECT id, username, display_name, created_at, reputation_score FROM users WHERE username=?",
@@ -3397,6 +3416,7 @@ def wrapped_data(username: str):
     if not u:
         c.close(); raise HTTPException(404, "User not found")
     uid = u["id"]
+    is_owner = (me_id == uid)
 
     def _one(sql, params=()):
         r = c.execute(sql, params).fetchone()
@@ -3473,22 +3493,30 @@ def wrapped_data(username: str):
         pass
 
     c.close()
-    return {
+    # Базовый набор — публичный (показывает что юзер активен, без финансов и приватных предпочтений)
+    out = {
         "username": u["username"],
         "display_name": u["display_name"],
         "days_in": days_in,
         "reputation": int(u["reputation_score"] or 100),
         "posts": posts, "miniska": miniska, "comments": comments,
-        "reactions_given": reactions_given, "reactions_received": reactions_received,
+        "reactions_received": reactions_received,
         "followers": followers, "following": following,
-        "top_reactions": top_reactions,
-        "top_post": top_post,
-        "gost_earned_total": gost_earned,
-        "balance": bal,
-        "nft_count": nft_count,
         "activity_rank": rank,
         "activity_rank_total": rank_total,
+        "is_owner": is_owner,
     }
+    # Приватные данные — только для самого владельца
+    if is_owner:
+        out.update({
+            "reactions_given": reactions_given,    # кому ставил лайки — приватно
+            "top_reactions": top_reactions,        # какие эмодзи чаще ставит — приватно
+            "top_post": top_post,                  # превью поста как highlight — приватно
+            "gost_earned_total": gost_earned,      # сколько заработал — финансы
+            "balance": bal,                        # текущий баланс — финансы
+            "nft_count": nft_count,                # NFT в коллекции — финансы
+        })
+    return out
 
 
 # ── Репосты (TikTok-style) ──
