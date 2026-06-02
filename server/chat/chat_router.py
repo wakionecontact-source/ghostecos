@@ -168,6 +168,33 @@ def send_message(body: SendBody, authorization: Optional[str] = Header(None)):
         "recipient_online": bool(sent),
     }
 
+class DeliveryStatusBody(BaseModel):
+    ids: list
+
+
+@router.post("/delivery_status")
+def delivery_status(body: DeliveryStatusBody, authorization: Optional[str] = Header(None)):
+    """Sender узнаёт статус своих !delivered сообщений после возвращения онлайн.
+    Возвращает {id: 'pending'|'delivered'}. Если сообщения нет в chat_dm
+    (sender_id=ME) — значит receiver сделал /ack и сервер удалил → delivered.
+    """
+    user = auth_member(authorization)
+    if not body.ids or not isinstance(body.ids, list):
+        return {}
+    ids = [int(x) for x in body.ids if isinstance(x, (int, str)) and str(x).isdigit()][:500]
+    if not ids:
+        return {}
+    c = db()
+    ph = ",".join("?" * len(ids))
+    rows = c.execute(
+        f"SELECT id FROM chat_dm WHERE sender_id=? AND id IN ({ph})",
+        [user["id"]] + ids,
+    ).fetchall()
+    c.close()
+    still_pending = {r["id"] for r in rows}
+    return {str(i): ("pending" if i in still_pending else "delivered") for i in ids}
+
+
 class AckBody(BaseModel):
     ids: list
 

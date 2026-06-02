@@ -3205,6 +3205,31 @@ function _onWakeup(){
     fetchPending().catch(() => {});
     loadGroups().catch(() => {});
   }
+  // Догоняем статус доставки своих сообщений (если chat.delivered был потерян пока offline)
+  syncDeliveryStatus().catch(() => {});
+}
+
+// Спрашивает сервер какие из моих !delivered сообщений уже доставлены.
+// Sender может пропустить WS chat.delivered если был offline в момент receiver/ack.
+async function syncDeliveryStatus(){
+  try {
+    // Берём свои сообщения (from_me=true, !delivered, есть sid) — максимум 200 свежих
+    const pending = (activeMessages || []).filter(m => m.from_me && !m.delivered && m.sid).slice(-200);
+    if (!pending.length) return;
+    const ids = pending.map(m => +m.sid).filter(Boolean);
+    if (!ids.length) return;
+    const r = await chat('/delivery_status', 'POST', { ids });
+    let changed = false;
+    for (const m of pending) {
+      const s = r[String(m.sid)];
+      if (s === 'delivered' && !m.delivered) {
+        m.delivered = true;
+        idbUpdateMessage(m.sid, { delivered: true }).catch(()=>{});
+        changed = true;
+      }
+    }
+    if (changed && typeof renderMessages === 'function') renderMessages();
+  } catch(_) {}
 }
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') _onWakeup();
