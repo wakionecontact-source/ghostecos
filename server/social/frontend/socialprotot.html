@@ -274,6 +274,30 @@ body.guest-mode .prof-action-btn[onclick*="openAlgoSettings"]{display:none;}
 .rep-badge.rep-mid{background:rgba(168,85,247,0.12);border:1px solid rgba(168,85,247,0.35);color:var(--primary);}
 .rep-badge.rep-low{background:rgba(248,113,113,0.12);border:1px solid rgba(248,113,113,0.4);color:#f87171;}
 
+/* ── Вкладки в профиле ── */
+.prof-tabs{display:flex;gap:0;margin:14px 0 8px;border-bottom:1px solid var(--border);}
+.prof-tab{flex:1;background:none;border:none;border-bottom:2px solid transparent;color:var(--sub);font-size:14px;font-weight:600;padding:12px 8px;cursor:pointer;font-family:inherit;transition:color 0.2s,border-color 0.2s;}
+.prof-tab.active{color:var(--primary);border-bottom-color:var(--primary);}
+.prof-tab:hover:not(.active){color:var(--text);}
+
+/* ── Share Sheet ── */
+.share-contact{flex-shrink:0;background:none;border:none;cursor:pointer;font-family:inherit;display:flex;flex-direction:column;align-items:center;gap:6px;padding:4px;border-radius:12px;transition:background 0.15s;}
+.share-contact-av{width:54px;height:54px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:18px;border:2px solid transparent;transition:border-color 0.2s,transform 0.15s;}
+.share-contact-name{font-size:11px;color:var(--sub);max-width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.share-contact.selected .share-contact-av{border-color:var(--primary);transform:scale(0.92);}
+.share-contact.selected .share-contact-name{color:var(--primary);font-weight:700;}
+.share-ext{flex:1;min-width:calc(50% - 4px);padding:10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.10);border-radius:12px;color:var(--text);font-size:13px;font-weight:600;text-decoration:none;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;font-family:inherit;}
+.share-ext i{font-size:16px;}
+.share-ext:hover{background:rgba(168,85,247,0.10);}
+#repostBtn.reposted{background:rgba(74,222,128,0.10)!important;border-color:rgba(74,222,128,0.30)!important;color:#4ade80!important;}
+
+/* ── Значок «репост» на карточке ── */
+.repost-mark{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--primary);background:rgba(168,85,247,0.10);border:1px solid rgba(168,85,247,0.25);padding:3px 10px;border-radius:99px;margin-bottom:8px;}
+
+/* ── Пилюля «X контактов репостнули» ── */
+.repost-pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(74,222,128,0.10);border:1px solid rgba(74,222,128,0.25);color:#4ade80;border-radius:99px;font-size:11px;font-weight:600;margin-left:8px;cursor:default;}
+.repost-pill-av{width:18px;height:18px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:10px;}
+
 /* ── Daily status (под аватаром в профиле) ── */
 .daily-status{margin:8px auto 4px;padding:8px 14px;border-radius:12px;background:rgba(168,85,247,0.08);border:1px solid rgba(168,85,247,0.20);color:var(--text);font-size:13px;line-height:1.4;font-style:italic;max-width:360px;text-align:center;}
 .daily-status::before{content:'"';color:var(--primary);font-weight:800;margin-right:4px;}
@@ -840,6 +864,10 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
         <i class="fa-solid fa-mobile-screen"></i> Установить как приложение
       </button>
     </div>
+    <div class="prof-tabs">
+      <button class="prof-tab active" data-tab="posts" onclick="switchProfTab('prof', 'posts')">Посты</button>
+      <button class="prof-tab" data-tab="reposts" onclick="switchProfTab('prof', 'reposts')">Репосты</button>
+    </div>
     <div id="profList"></div>
   </div>
 
@@ -885,6 +913,10 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
           <i class="fa-solid fa-chart-pie"></i> Wrapped
         </a>
       </div>
+    </div>
+    <div class="prof-tabs">
+      <button class="prof-tab active" data-tab="posts" onclick="switchProfTab('fp', 'posts')">Посты</button>
+      <button class="prof-tab" data-tab="reposts" onclick="switchProfTab('fp', 'reposts')">Репосты</button>
     </div>
     <div id="fpList"></div>
   </div>
@@ -1305,6 +1337,8 @@ function showApp() {
     api('/wallet').then(w => updateGostPill(w.balance.gost || 0)).catch(() => {});
     // Ежедневный статус — если просрочен/не поставлен → форсим модал
     checkDailyStatus();
+    // Кэш моих репостов (для кнопки «репост» в share-sheet)
+    api('/me/reposts/ids').then(ids => { window._myReposts = new Set(ids || []); }).catch(() => {});
   }
 }
 
@@ -3069,7 +3103,10 @@ function postHTML(p, hq) {
          <span class="nsfw-overlay-cta">Показать</span>
        </div>`
     : '';
-  return `<div class="post-card${isNsfw ? ' nsfw' : ''}" data-id="${p.id}" style="${isNsfw ? 'position:relative;' : ''}">
+  const isRepost = !!p.is_repost;
+  const repostLabel = isRepost ? `<div class="repost-mark"><i class="fa-solid fa-retweet"></i> репост</div>` : '';
+  return `<div class="post-card${isNsfw ? ' nsfw' : ''}${isRepost ? ' repost' : ''}" data-id="${p.id}" style="${isNsfw ? 'position:relative;' : ''}">
+    ${repostLabel}
     ${isNew ? `<div class="new-marker" data-dot="${p.id}">NEW</div>` : ''}
     <button class="post-menu-btn" data-action="menu" data-post="${p.id}" title="Меню"><i class="fa-solid fa-ellipsis"></i></button>
     ${p.from_channel ? `<div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:rgba(168,85,247,0.10);border:1px solid rgba(168,85,247,0.25);border-radius:8px;margin-bottom:8px;font-size:11px;color:var(--primary);font-weight:600;">
@@ -3103,9 +3140,13 @@ function postHTML(p, hq) {
         </button>
       </div>
       <div class="reactions-row" data-post="${p.id}" data-action="reactions-row">${reactionsHTML(p)}</div>
+      <span class="repost-pill" data-post="${p.id}" data-action="repost-pill" style="display:none;"></span>
       <button class="act-btn" data-post="${p.id}" data-action="comment" style="margin-left:auto">
         <i class="fa-regular fa-comment"></i>
         <span class="cc">${p.comments_count}</span>
+      </button>
+      <button class="act-btn" data-post="${p.id}" data-action="share">
+        <i class="fa-solid fa-share"></i>
       </button>
     </div>
   </div>`;
@@ -3163,6 +3204,17 @@ function attachEvents() {
       const card = ov.closest('.post-card');
       if (card) card.classList.add('revealed');
     });
+  });
+  // Share sheet
+  document.querySelectorAll('[data-action="share"]').forEach(btn => {
+    if (btn._b) return; btn._b = 1;
+    btn.addEventListener('click', e => { e.stopPropagation(); openShareSheet(+btn.dataset.post); });
+  });
+  // Repost pill: загрузка контактов кто репостнул
+  document.querySelectorAll('[data-action="repost-pill"]').forEach(el => {
+    if (el._b) return; el._b = 1;
+    const pid = +el.dataset.post;
+    loadRepostPill(pid, el);
   });
   // Post menu (3 dots)
   document.querySelectorAll('[data-action="menu"]').forEach(btn => {
@@ -4262,6 +4314,257 @@ async function sharePost(postId) {
     catch(e) { /* отмена пользователем — игнор */ }
   }
   copyPostLink(postId);
+}
+
+// ── Профиль: вкладки «Посты» / «Репосты» ─────────────────────────────────────
+// scope: 'prof' (свой) или 'fp' (чужой)
+async function switchProfTab(scope, tab) {
+  const root = scope === 'prof' ? document.getElementById('screenProfile') : document.getElementById('screenFullProfile');
+  if (!root) return;
+  root.querySelectorAll('.prof-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  const listId = scope === 'prof' ? 'profList' : 'fpList';
+  const list = document.getElementById(listId);
+  if (!list) return;
+  const uname = scope === 'prof' ? (me && me.username) : (_fpState && _fpState.username);
+  if (!uname) return;
+  if (tab === 'posts') {
+    // Перерисуем то что уже было загружено (cached)
+    if (scope === 'prof' && window._profPosts) {
+      list.innerHTML = window._profPosts.length
+        ? window._profPosts.map(p => postHTML(p)).join('')
+        : '<div class="empty"><i class="fa-regular fa-newspaper"></i><p>Постов пока нет</p></div>';
+      attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
+    } else if (scope === 'fp' && window._profPosts) {
+      list.innerHTML = window._profPosts.length
+        ? window._profPosts.map(p => postHTML(p)).join('')
+        : '<div class="empty"><i class="fa-regular fa-newspaper"></i><p>Постов пока нет</p></div>';
+      attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
+    }
+  } else if (tab === 'reposts') {
+    list.innerHTML = skeletonPosts(2);
+    try {
+      const reposts = await api(`/user/${uname}/reposts?offset=0&limit=30`);
+      if (!reposts || !reposts.length) {
+        list.innerHTML = '<div class="empty"><i class="fa-solid fa-retweet"></i><p>Репостов пока нет</p></div>';
+        return;
+      }
+      list.innerHTML = reposts.map(p => postHTML(p)).join('');
+      attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
+    } catch(e) {
+      list.innerHTML = '<div class="empty"><i class="fa-solid fa-triangle-exclamation"></i><p>Ошибка загрузки</p></div>';
+    }
+  }
+}
+
+// ── Репосты + Share Sheet (TikTok-style) ─────────────────────────────────────
+
+// Пилюля «кто из подписок репостнул» — ротация аватарок каждые 5 сек
+const _repostPillTimers = {};
+async function loadRepostPill(postId, el) {
+  if (isGuest()) return;
+  try {
+    const items = await api(`/post/${postId}/reposters/contacts`);
+    if (!items || items.length === 0) { el.style.display = 'none'; return; }
+    el.style.display = 'inline-flex';
+    let idx = 0;
+    const render = () => {
+      const u = items[idx % items.length];
+      el.innerHTML = `<span class="repost-pill-av">${ini(u.display_name || u.username)}</span> <span>@${esc(u.username)} репостнул${items.length > 1 ? ` (+${items.length - 1})` : ''}</span>`;
+      el.title = items.map(x => '@' + x.username).join(', ');
+      idx++;
+    };
+    render();
+    if (_repostPillTimers[postId]) clearInterval(_repostPillTimers[postId]);
+    if (items.length > 1) {
+      _repostPillTimers[postId] = setInterval(render, 5000);
+    }
+  } catch(e) { el.style.display = 'none'; }
+}
+
+// Bottom-sheet «Поделиться»
+async function openShareSheet(postId) {
+  if (document.getElementById('shareSheet')) return;
+  const url = buildPostUrl(postId);
+  const overlay = document.createElement('div');
+  overlay.id = 'shareSheet';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,0.55);backdrop-filter:blur(8px);display:flex;align-items:flex-end;justify-content:center;';
+  overlay.innerHTML = `
+    <div style="background:#0f172a;border-top-left-radius:18px;border-top-right-radius:18px;width:100%;max-width:520px;padding:14px 14px calc(20px + env(safe-area-inset-bottom));border-top:1px solid rgba(255,255,255,0.08);max-height:80vh;overflow-y:auto;">
+      <div style="width:40px;height:4px;background:rgba(255,255,255,0.2);border-radius:99px;margin:0 auto 14px;"></div>
+      ${isGuest() ? '<div style="padding:18px;text-align:center;color:var(--sub);">Войдите чтобы делиться</div>' : `
+        <input id="shareSearch" placeholder="Найти пользователя..." style="width:100%;padding:10px 14px;background:rgba(15,23,42,0.6);border:1px solid rgba(255,255,255,0.08);border-radius:12px;color:var(--text);font-size:14px;font-family:inherit;outline:none;margin-bottom:12px;">
+        <div id="shareContacts" style="display:flex;gap:10px;overflow-x:auto;padding:4px 0 12px;-webkit-overflow-scrolling:touch;"></div>
+        <button id="shareSendBtn" style="display:none;width:100%;padding:12px;background:linear-gradient(135deg,var(--primary),var(--primary2));border:none;border-radius:12px;color:#fff;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:14px;">Отправить (0)</button>
+      `}
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        <button id="repostBtn" style="flex:1;padding:14px;background:rgba(168,85,247,0.10);border:1px solid rgba(168,85,247,0.30);border-radius:12px;color:var(--primary);font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px;${isGuest() ? 'opacity:0.5;pointer-events:none;' : ''}">
+          <i class="fa-solid fa-retweet"></i> <span id="repostBtnLabel">Репостнуть</span>
+        </button>
+        <button onclick="copyPostLink(${postId})" style="flex:1;padding:14px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:12px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px;">
+          <i class="fa-solid fa-link"></i> Ссылка
+        </button>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <a href="https://t.me/share/url?url=${encodeURIComponent(url)}" target="_blank" rel="noopener" class="share-ext"><i class="fa-brands fa-telegram"></i> Telegram</a>
+        <a href="https://wa.me/?text=${encodeURIComponent(url)}" target="_blank" rel="noopener" class="share-ext"><i class="fa-brands fa-whatsapp"></i> WhatsApp</a>
+        <a href="https://twitter.com/intent/tweet?url=${encodeURIComponent(url)}" target="_blank" rel="noopener" class="share-ext"><i class="fa-brands fa-twitter"></i> Twitter</a>
+        <button onclick="_copyForDiscord('${url}')" class="share-ext"><i class="fa-brands fa-discord"></i> Discord</button>
+      </div>
+      <button id="shareCancel" style="display:block;width:100%;margin-top:14px;padding:12px;background:rgba(255,255,255,0.05);border:none;border-radius:12px;color:var(--sub);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;">Закрыть</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  if (!isGuest()) {
+    // Загружаем контакты (мои подписки + кому я писал в чате)
+    await _loadShareContacts(postId);
+    // Поиск
+    document.getElementById('shareSearch').addEventListener('input', e => _filterShareContacts(e.target.value));
+  }
+
+  // Кнопка репоста — состояние (репостнут уже или нет)
+  await _refreshRepostBtn(postId);
+  document.getElementById('repostBtn').addEventListener('click', () => _toggleRepost(postId));
+
+  document.getElementById('shareCancel').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
+
+function _copyForDiscord(url) {
+  navigator.clipboard.writeText(url).then(() => showToast('Ссылка скопирована — вставьте в Discord'));
+}
+
+const _shareSelected = new Set();
+let _shareAllContacts = [];
+
+async function _loadShareContacts(postId) {
+  const box = document.getElementById('shareContacts');
+  if (!box) return;
+  try {
+    // Используем мои подписки как контакт-лист (без отдельного API)
+    const d = await api(`/prof/${me.username}`);
+    const followingList = await api(`/follows/of/${me.username}/following`).catch(() => []);
+    _shareAllContacts = Array.isArray(followingList) ? followingList : [];
+    _shareSelected.clear();
+    _renderShareContacts(_shareAllContacts);
+  } catch(e) {
+    box.innerHTML = '<div style="color:var(--sub);font-size:13px;padding:10px;">Нет контактов. Подпишитесь на кого-то.</div>';
+  }
+}
+
+async function _filterShareContacts(q) {
+  q = (q || '').trim().toLowerCase();
+  if (!q) {
+    _renderShareContacts(_shareAllContacts);
+    return;
+  }
+  // Локальная фильтрация + если ничего не найдено — поиск через /search
+  const local = _shareAllContacts.filter(u =>
+    (u.username || '').toLowerCase().includes(q) ||
+    (u.display_name || '').toLowerCase().includes(q)
+  );
+  if (local.length > 0) { _renderShareContacts(local); return; }
+  // Глобальный поиск
+  try {
+    const r = await api(`/search?q=${encodeURIComponent(q)}&type=users`);
+    _renderShareContacts(r.users || []);
+  } catch(e) { _renderShareContacts([]); }
+}
+
+function _renderShareContacts(list) {
+  const box = document.getElementById('shareContacts');
+  if (!box) return;
+  if (!list.length) {
+    box.innerHTML = '<div style="color:var(--sub);font-size:13px;padding:10px;">Никого не найдено</div>';
+    return;
+  }
+  box.innerHTML = list.map(u => {
+    const sel = _shareSelected.has(u.username) ? 'selected' : '';
+    return `<button class="share-contact ${sel}" data-user="${esc(u.username)}">
+      <div class="share-contact-av">${ini(u.display_name || u.username)}</div>
+      <div class="share-contact-name">@${esc(u.username)}</div>
+    </button>`;
+  }).join('');
+  box.querySelectorAll('.share-contact').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const u = btn.dataset.user;
+      if (_shareSelected.has(u)) _shareSelected.delete(u);
+      else _shareSelected.add(u);
+      btn.classList.toggle('selected');
+      _updateSendBtn();
+    });
+  });
+  _updateSendBtn();
+}
+
+function _updateSendBtn() {
+  const btn = document.getElementById('shareSendBtn');
+  if (!btn) return;
+  if (_shareSelected.size === 0) { btn.style.display = 'none'; return; }
+  btn.style.display = 'block';
+  btn.textContent = `Отправить (${_shareSelected.size})`;
+  btn.onclick = () => _sendShareToContacts();
+}
+
+function _sendShareToContacts() {
+  // Получаем post_id из текущего sheet
+  const card = document.getElementById('shareSheet');
+  if (!card) return;
+  const url = buildPostUrl(_currentShareId());
+  // Открываем чат с pre-fill для каждого контакта (по очереди — но новой вкладкой)
+  const users = Array.from(_shareSelected);
+  // Если один — переход в текущей вкладке. Если несколько — открываем новые вкладки
+  if (users.length === 1) {
+    const u = users[0];
+    location.href = `/chat/?to=${encodeURIComponent(u)}&prefill=${encodeURIComponent(url)}`;
+    return;
+  }
+  // Для множественной — копируем ссылку и переход в первого контакта
+  navigator.clipboard.writeText(url).then(() => {
+    showToast('Ссылка скопирована. Вставь в чаты вручную');
+  }).catch(() => {});
+  // Открываем чат с первым (юзер сам вставит ссылку остальным)
+  setTimeout(() => {
+    location.href = `/chat/?to=${encodeURIComponent(users[0])}&prefill=${encodeURIComponent(url)}`;
+  }, 800);
+}
+
+function _currentShareId() {
+  // Из контекста — берём data-post из repostBtn (он есть)
+  const btn = document.getElementById('repostBtn');
+  if (!btn) return 0;
+  return +(btn.dataset.post || _lastShareId || 0);
+}
+
+let _lastShareId = 0;
+async function _refreshRepostBtn(postId) {
+  _lastShareId = postId;
+  const btn = document.getElementById('repostBtn');
+  if (!btn) return;
+  btn.dataset.post = postId;
+  // Узнаём — репостил ли я уже? Берём из cached _myReposts (если есть) или из /reposters
+  const isReposted = (window._myReposts || new Set()).has(postId);
+  document.getElementById('repostBtnLabel').textContent = isReposted ? 'Отменить репост' : 'Репостнуть';
+  btn.classList.toggle('reposted', isReposted);
+}
+
+window._myReposts = window._myReposts || new Set();
+
+async function _toggleRepost(postId) {
+  if (isGuest()) { guestBlock(); return; }
+  const isReposted = window._myReposts.has(postId);
+  try {
+    if (isReposted) {
+      await api(`/post/${postId}/repost`, 'DELETE');
+      window._myReposts.delete(postId);
+      showToast('Репост отменён');
+    } else {
+      await api(`/post/${postId}/repost`, 'POST');
+      window._myReposts.add(postId);
+      showToast('Репостнул в свой профиль');
+    }
+    _refreshRepostBtn(postId);
+  } catch(e) { showToast(e.message || 'Ошибка'); }
 }
 
 // ── «Сохранить картинкой» — использует серверную OG-PNG ───────────────────────

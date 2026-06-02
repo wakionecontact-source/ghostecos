@@ -903,6 +903,25 @@ def init():
     try: c.execute("ALTER TABLE users ADD COLUMN eternal_status_purchased_at INTEGER")
     except sqlite3.OperationalError: pass
 
+    # ── Репосты (TikTok-style) ──
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS soc_reposts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                UNIQUE(post_id, user_id),
+                FOREIGN KEY (post_id) REFERENCES soc_posts(id),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+    except sqlite3.OperationalError: pass
+    try: c.execute("CREATE INDEX IF NOT EXISTS idx_reposts_user ON soc_reposts(user_id, created_at DESC)")
+    except sqlite3.OperationalError: pass
+    try: c.execute("CREATE INDEX IF NOT EXISTS idx_reposts_post ON soc_reposts(post_id, created_at DESC)")
+    except sqlite3.OperationalError: pass
+
     # ── Жалобы на посты (для автомодерации) ──
     try:
         c.execute("""
@@ -3429,6 +3448,132 @@ def wrapped_data(username: str):
         "activity_rank": rank,
         "activity_rank_total": rank_total,
     }
+
+
+# ── Репосты (TikTok-style) ──
+
+@router.get("/me/reposts/ids")
+def my_reposts_ids(authorization: Optional[str] = Header(None)):
+    """Список post_id которые я уже репостил — для UI-кэша на фронте."""
+    user = auth_member(authorization)
+    c = db()
+    rows = c.execute("SELECT post_id FROM soc_reposts WHERE user_id=?", (user["id"],)).fetchall()
+    c.close()
+    return [r["post_id"] for r in rows]
+
+
+@router.post("/post/{post_id}/repost")
+def repost_post(post_id: int, authorization: Optional[str] = Header(None)):
+    """Репостнуть пост в свой профиль. Не идёт в общую ленту/подписки.
+    Идемпотентно: повторный вызов возвращает existing=True."""
+    user = auth_member(authorization)
+    _rate_limit(f"repost:{user['id']}", limit=60, window=3600)
+    c = db()
+    p = c.execute("SELECT id, user_id, kind FROM soc_posts WHERE id=?", (post_id,)).fetchone()
+    if not p:
+        c.close(); raise HTTPException(404, "Post not found")
+    if p["user_id"] == user["id"]:
+        c.close(); raise HTTPException(400, "Свой пост репостить нельзя")
+    if (p["kind"] or "post") == "miniska":
+        c.close(); raise HTTPException(400, "Миниски не репостятся")
+    now = int(time.time())
+    try:
+        c.execute(
+            "INSERT INTO soc_reposts (post_id, user_id, created_at) VALUES (?, ?, ?)",
+            (post_id, user["id"], now),
+        )
+        c.commit(); c.close()
+        # Уведомление автору поста
+        try:
+            ws_hub.send_to(p["user_id"], "post.reposted", {
+                "post_id": post_id, "by_user_id": user["id"], "by_username": user["username"],
+            })
+        except Exception: pass
+        return {"status": "ok", "existing": False, "created_at": now}
+    except sqlite3.IntegrityError:
+        c.close()
+        return {"status": "ok", "existing": True}
+
+
+@router.delete("/post/{post_id}/repost")
+def unrepost_post(post_id: int, authorization: Optional[str] = Header(None)):
+    """Снять свой репост."""
+    user = auth_member(authorization)
+    c = db()
+    c.execute(
+        "DELETE FROM soc_reposts WHERE post_id=? AND user_id=?",
+        (post_id, user["id"]),
+    )
+    c.commit(); c.close()
+    return {"status": "ok"}
+
+
+@router.get("/post/{post_id}/reposters")
+def post_reposters(post_id: int, limit: int = Query(20)):
+    """Все юзеры кто репостнул пост (публично). Лимит 20 по умолчанию."""
+    c = db()
+    rows = c.execute("""
+        SELECT u.id, u.username, u.display_name, r.created_at
+        FROM soc_reposts r JOIN users u ON r.user_id=u.id
+        WHERE r.post_id=? ORDER BY r.created_at DESC LIMIT ?
+    """, (post_id, max(1, min(100, limit)))).fetchall()
+    total = c.execute("SELECT COUNT(*) FROM soc_reposts WHERE post_id=?", (post_id,)).fetchone()[0] or 0
+    c.close()
+    return {
+        "total": total,
+        "items": [{"user_id": r["id"], "username": r["username"],
+                   "display_name": r["display_name"], "created_at": r["created_at"]} for r in rows],
+    }
+
+
+@router.get("/post/{post_id}/reposters/contacts")
+def post_reposters_contacts(post_id: int, authorization: Optional[str] = Header(None)):
+    """Только мои подписки кто репостнул этот пост — для пилюли."""
+    user = auth_member(authorization)
+    c = db()
+    rows = c.execute("""
+        SELECT u.id, u.username, u.display_name, r.created_at
+        FROM soc_reposts r JOIN users u ON r.user_id=u.id
+        WHERE r.post_id=? AND r.user_id IN (
+            SELECT followee_id FROM soc_follows WHERE follower_id=?
+        )
+        ORDER BY r.created_at DESC LIMIT 10
+    """, (post_id, user["id"])).fetchall()
+    c.close()
+    return [{"user_id": r["id"], "username": r["username"],
+             "display_name": r["display_name"], "created_at": r["created_at"]} for r in rows]
+
+
+@router.get("/user/{username}/reposts")
+def user_reposts(username: str, offset: int = Query(0), limit: int = Query(20), authorization: Optional[str] = Header(None)):
+    """Все репосты юзера (для вкладки «Репосты» в профиле + полной страницы)."""
+    uid_caller = auth(authorization)["id"]
+    uname = (username or "").strip().lower().lstrip("@")
+    if not uname:
+        raise HTTPException(400, "Empty username")
+    c = db()
+    u = c.execute("SELECT id FROM users WHERE username=?", (uname,)).fetchone()
+    if not u:
+        c.close(); raise HTTPException(404, "User not found")
+    rows = c.execute("""
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+               u2.username, u2.display_name,
+               (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count,
+               r.created_at as reposted_at
+        FROM soc_reposts r
+        JOIN soc_posts p ON r.post_id=p.id
+        JOIN users u2 ON p.user_id=u2.id
+        WHERE r.user_id=?
+        ORDER BY r.created_at DESC
+        LIMIT ? OFFSET ?
+    """, (u["id"], max(1, min(50, limit)), max(0, offset))).fetchall()
+    out = _hydrate_posts(c, rows, uid_caller)
+    # Добавляем метку «репост»
+    for i, row in enumerate(rows):
+        out[i]["reposted_at"] = row["reposted_at"]
+        out[i]["is_repost"] = True
+    c.close()
+    return out
 
 
 # ── Жалобы на посты + автомодерация ──
