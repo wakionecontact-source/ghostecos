@@ -179,6 +179,8 @@ def delivery_status(body: DeliveryStatusBody, authorization: Optional[str] = Hea
     (sender_id=ME) — значит receiver сделал /ack и сервер удалил → delivered.
     """
     user = auth_member(authorization)
+    # Анти-polling DoS: клиент дёргает это после wake/reconnect, не постоянно.
+    _rate_limit(f"delivstat:{user['id']}", limit=60, window=60)
     if not body.ids or not isinstance(body.ids, list):
         return {}
     ids = [int(x) for x in body.ids if isinstance(x, (int, str)) and str(x).isdigit()][:500]
@@ -210,7 +212,7 @@ def send_sealed(body: SendSealedBody, authorization: Optional[str] = Header(None
     """Sealed-sender: только receiver виден серверу. От кого — внутри ciphertext.
     Сервер не пишет sender_id в БД и не передаёт его в WS."""
     user = auth_member(authorization)
-    # Rate-limit пока работает per-sender (token известен из Authorization).
+    # Rate-limit per-sender (token известен из Authorization).
     # Полный sealed (без identity у сервера) требует blind tokens — отдельная фаза.
     _rate_limit(f"sealsend:{user['id']}", limit=120, window=60)
     if not _is_b64(body.ciphertext) or len(body.ciphertext) > 16000:
@@ -226,6 +228,13 @@ def send_sealed(body: SendSealedBody, authorization: Optional[str] = Header(None
     if not to_user["x25519_pub"]:
         c.close()
         raise HTTPException(400, "У получателя ещё нет E2E-ключей")
+    # Анти-targeted-spam: per-pair лимит. Сам отправитель скрыт от сервера за
+    # счёт sealed, но сервер всё равно видит (sender_token, recipient_id) пару
+    # и должен не давать одному юзеру заливать одного получателя. 30 sealed за
+    # 5 минут от одной пары — достаточно для любого живого диалога, но кладёт
+    # на лопатки любой автоматизированный спам. В жёстком sealed (с blind
+    # token-ами) это перестанет работать — там нужны будут групповые лимиты.
+    _rate_limit(f"sealpair:{user['id']}:{to_user['id']}", limit=30, window=300)
     now = int(time.time())
     c.execute(
         "INSERT INTO chat_dm_sealed (receiver_id, ciphertext, created_at) VALUES (?,?,?)",
@@ -256,6 +265,10 @@ def send_sealed(body: SendSealedBody, authorization: Optional[str] = Header(None
 def pending_sealed(authorization: Optional[str] = Header(None)):
     """Все накопленные мне sealed-сообщения. Клиент сам сделает /ack_sealed."""
     user = auth_member(authorization)
+    # Анти-DoS: legit клиент дёргает /pending_sealed только при reconnect или wake.
+    # 30 запросов в минуту — это уже подозрительный polling, серверу будет тяжело
+    # с тысячами параллельных вкладок.
+    _rate_limit(f"pendsealed:{user['id']}", limit=30, window=60)
     c = db()
     rows = c.execute(
         "SELECT id, ciphertext, created_at FROM chat_dm_sealed WHERE receiver_id=? ORDER BY id ASC LIMIT 500",
@@ -435,6 +448,8 @@ def get_pending(authorization: Optional[str] = Header(None)):
     """Все накопленные мне сообщения (НЕ удаляет — клиент сам подтвердит через /ack).
     Используется при login/reconnect когда мог пропустить что-то."""
     user = auth_member(authorization)
+    # Анти-DoS: legit-клиент дёргает /pending только при login/reconnect/wake.
+    _rate_limit(f"pendlegacy:{user['id']}", limit=30, window=60)
     c = db()
     rows = c.execute("""
         SELECT m.id, m.sender_id, m.text as ciphertext, m.created_at,
@@ -882,6 +897,7 @@ def group_pending(gid: int, authorization: Optional[str] = Header(None)):
     """Сообщения в группе, которые я ещё не ack-ал."""
     import json as _json
     user = auth_member(authorization)
+    _rate_limit(f"grouppend:{user['id']}:{gid}", limit=20, window=60)
     c = db()
     if not _is_group_member(c, gid, user["id"]):
         c.close(); raise HTTPException(403, "Не участник группы")
