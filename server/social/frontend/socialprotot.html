@@ -2452,11 +2452,12 @@ async function openSinglePost(postId) {
       card = document.querySelector(`.post-card[data-id="${postId}"]`);
     }
     if (card) {
-      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      flashHighlight(card);
+      // Небольшая задержка чтоб DOM устаканился после рендера
+      setTimeout(() => {
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        flashHighlight(card);
+      }, 80);
     }
-    // Через секунду открыть комментарии
-    setTimeout(() => openComments(postId), 900);
   } catch(e) {
     showToast('Пост не найден');
   }
@@ -4370,19 +4371,30 @@ async function switchProfTab(scope, tab) {
 
 // Группируем подряд репосты в мозаики, между ними — свои посты
 function renderProfileFeed(items, profileUsername) {
+  if (!Array.isArray(items)) {
+    console.warn('[renderProfileFeed] items не массив:', items);
+    return '';
+  }
   const out = [];
   let buf = [];
   const flushMosaic = () => {
     if (!buf.length) return;
-    out.push(renderRepostMosaic(buf, profileUsername));
+    try {
+      out.push(renderRepostMosaic(buf, profileUsername));
+    } catch(e) {
+      console.error('[renderRepostMosaic] упало, fallback на плоский список', e, buf);
+      // Fallback — каждый репост как отдельная карточка
+      buf.forEach(r => { try { out.push(postHTML(r)); } catch(e2) {} });
+    }
     buf = [];
   };
   for (const it of items) {
+    if (!it) continue;
     if (it.kind === 'repost') {
       buf.push(it);
     } else {
       flushMosaic();
-      out.push(postHTML(it));
+      try { out.push(postHTML(it)); } catch(e) { console.error('[postHTML]', e, it); }
     }
   }
   flushMosaic();

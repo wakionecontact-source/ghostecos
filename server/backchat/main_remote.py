@@ -356,12 +356,12 @@ async def og_post_page(post_id: int):
   <meta property="og:type" content="article">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image" content="{base}/api/soc/og/post/{post_id}.png">
-  <meta http-equiv="refresh" content="0;url=/social/?p={post_id}">
-  <link rel="canonical" href="{base}/social/?p={post_id}">
+  <meta http-equiv="refresh" content="0;url=/social/#p={post_id}">
+  <link rel="canonical" href="{base}/social/#p={post_id}">
 </head>
 <body style="background:#020617;color:#94a3b8;font-family:sans-serif;text-align:center;padding:80px 20px;">
   <p>Открываю пост в GhostSocial...</p>
-  <p><a href="/social/?p={post_id}" style="color:#a855f7;">Перейти вручную</a></p>
+  <p><a href="/social/#p={post_id}" style="color:#a855f7;">Перейти вручную</a></p>
 </body>
 </html>"""
     return HTMLResponse(content=html)
@@ -486,12 +486,12 @@ async def og_user_page(username: str):
   <meta property="og:type" content="profile">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image" content="{base}/api/soc/og/user/{uname}.png">
-  <meta http-equiv="refresh" content="0;url=/social/?u={uname}">
-  <link rel="canonical" href="{base}/social/?u={uname}">
+  <meta http-equiv="refresh" content="0;url=/social/#u={uname}">
+  <link rel="canonical" href="{base}/social/#u={uname}">
 </head>
 <body style="background:#020617;color:#94a3b8;font-family:sans-serif;text-align:center;padding:80px 20px;">
   <p>Открываю профиль...</p>
-  <p><a href="/social/?u={uname}" style="color:#a855f7;">Перейти вручную</a></p>
+  <p><a href="/social/#u={uname}" style="color:#a855f7;">Перейти вручную</a></p>
 </body>
 </html>"""
     return HTMLResponse(content=html)
