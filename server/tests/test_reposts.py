@@ -100,6 +100,31 @@ def test_my_reposts_ids(client, reg_user):
     assert pid in r.json()
 
 
+def test_feed_combined_mixes_posts_and_reposts(client, reg_user):
+    """Unified-лента возвращает свои посты + репосты в хронологии с пометкой kind."""
+    me_user = reg_user(username="combined_me")
+    a = reg_user(username="combined_a")
+    # Я пишу пост 1
+    pid1 = _make_post(client, me_user, "my-post-1")
+    # Я репощу два чужих
+    p_a1 = _make_post(client, a, "from-a-1")
+    p_a2 = _make_post(client, a, "from-a-2")
+    client.post(f"/api/soc/post/{p_a1}/repost", headers={"Authorization": f"Bearer {me_user['token']}"})
+    client.post(f"/api/soc/post/{p_a2}/repost", headers={"Authorization": f"Bearer {me_user['token']}"})
+    # Я пишу пост 2
+    pid2 = _make_post(client, me_user, "my-post-2")
+    # Лента: my-post-2, repost a2, repost a1, my-post-1
+    r = client.get(f"/api/soc/user/{me_user['username']}/feed_combined",
+                   headers={"Authorization": f"Bearer {me_user['token']}"})
+    assert r.status_code == 200
+    items = r.json()
+    assert len(items) == 4
+    # Проверяем что kind правильно расставлен
+    kinds = [it["kind"] for it in items]
+    assert kinds.count("self") == 2
+    assert kinds.count("repost") == 2
+
+
 def test_user_reposts_returns_reposted_posts(client, reg_user):
     a = reg_user(username="rep_author8")
     b = reg_user(username="rep_me8")

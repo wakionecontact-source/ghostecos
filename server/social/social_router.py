@@ -3544,6 +3544,55 @@ def post_reposters_contacts(post_id: int, authorization: Optional[str] = Header(
              "display_name": r["display_name"], "created_at": r["created_at"]} for r in rows]
 
 
+@router.get("/user/{username}/feed_combined")
+def user_feed_combined(username: str, offset: int = Query(0), limit: int = Query(40), authorization: Optional[str] = Header(None)):
+    """Объединённая лента юзера: свои посты + репосты в хронологии.
+    Используется на вкладке «Посты» в профиле для построения мозаик репостов.
+    Возвращает items с полем kind: 'self' или 'repost'."""
+    uid_caller = auth(authorization)["id"]
+    uname = (username or "").strip().lower().lstrip("@")
+    c = db()
+    u = c.execute("SELECT id FROM users WHERE username=?", (uname,)).fetchone()
+    if not u:
+        c.close(); raise HTTPException(404, "User not found")
+    target_uid = u["id"]
+    # Объединяем свои посты и репосты через UNION с пометкой kind
+    # Свои посты: created_at — timestamp
+    # Репосты: r.created_at
+    rows = c.execute("""
+        SELECT 'self' as kind, p.id, strftime('%s', p.created_at) as ts,
+               p.content, p.media, p.is_nsfw, p.nsfw_set_by, p.user_id, p.created_at, p.edited_at, p.source_channel_id,
+               u.username, u.display_name,
+               (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count,
+               NULL as repost_ts
+        FROM soc_posts p JOIN users u ON p.user_id=u.id
+        WHERE p.user_id=? AND p.kind='post'
+        UNION ALL
+        SELECT 'repost' as kind, p.id, CAST(r.created_at AS TEXT) as ts,
+               p.content, p.media, p.is_nsfw, p.nsfw_set_by, p.user_id, p.created_at, p.edited_at, p.source_channel_id,
+               u.username, u.display_name,
+               (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count,
+               r.created_at as repost_ts
+        FROM soc_reposts r
+        JOIN soc_posts p ON r.post_id=p.id
+        JOIN users u ON p.user_id=u.id
+        WHERE r.user_id=?
+        ORDER BY ts DESC
+        LIMIT ? OFFSET ?
+    """, (target_uid, target_uid, max(1, min(80, limit)), max(0, offset))).fetchall()
+    # Hydrate (реакции, опросы, follow)
+    posts = _hydrate_posts(c, rows, uid_caller)
+    c.close()
+    out = []
+    for i, r in enumerate(rows):
+        item = {**posts[i], "kind": r["kind"]}
+        if r["kind"] == "repost":
+            item["repost_ts"] = r["repost_ts"]
+            item["is_repost"] = True
+        out.append(item)
+    return out
+
+
 @router.get("/user/{username}/reposts")
 def user_reposts(username: str, offset: int = Query(0), limit: int = Query(20), authorization: Optional[str] = Header(None)):
     """Все репосты юзера (для вкладки «Репосты» в профиле + полной страницы)."""
