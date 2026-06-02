@@ -273,6 +273,11 @@ body.guest-mode .prof-action-btn[onclick*="openAlgoSettings"]{display:none;}
 .rep-badge.rep-good{background:rgba(74,222,128,0.12);border:1px solid rgba(74,222,128,0.35);color:#4ade80;}
 .rep-badge.rep-mid{background:rgba(168,85,247,0.12);border:1px solid rgba(168,85,247,0.35);color:var(--primary);}
 .rep-badge.rep-low{background:rgba(248,113,113,0.12);border:1px solid rgba(248,113,113,0.4);color:#f87171;}
+
+/* ── Daily status (под аватаром в профиле) ── */
+.daily-status{margin:8px auto 4px;padding:8px 14px;border-radius:12px;background:rgba(168,85,247,0.08);border:1px solid rgba(168,85,247,0.20);color:var(--text);font-size:13px;line-height:1.4;font-style:italic;max-width:360px;text-align:center;}
+.daily-status::before{content:'"';color:var(--primary);font-weight:800;margin-right:4px;}
+.daily-status::after{content:'"';color:var(--primary);font-weight:800;margin-left:4px;}
 .media-grid{display:grid;gap:3px;border-radius:12px;overflow:hidden;}
 .media-grid.g1{grid-template-columns:1fr;}
 .media-grid.g2{grid-template-columns:1fr 1fr;}
@@ -810,6 +815,7 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
       <div class="prof-av" id="profAv">?</div>
       <div class="prof-name" id="profName">—</div>
       <div class="prof-username" id="profUser">—</div>
+      <div id="profStatus" class="daily-status" style="display:none;"></div>
       <div id="profReputation" class="rep-badge" style="display:none;"></div>
       <div class="stats-row">
         <div class="stat-box"><div class="stat-val" id="sPosts">0</div><div class="stat-lbl">постов</div></div>
@@ -855,6 +861,7 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
       <div class="prof-av" id="fpAv">?</div>
       <div class="prof-name" id="fpName">—</div>
       <div class="prof-username" id="fpUser">—</div>
+      <div id="fpStatus" class="daily-status" style="display:none;"></div>
       <div id="fpReputation" class="rep-badge" style="display:none;"></div>
       <div class="stats-row">
         <div class="stat-box"><div class="stat-val" id="fpPosts">0</div><div class="stat-lbl">постов</div></div>
@@ -1296,7 +1303,60 @@ function showApp() {
   // Тихо подтянуть баланс при старте — чтобы в pill сразу был актуал, а не «0»
   if (!isGuest()) {
     api('/wallet').then(w => updateGostPill(w.balance.gost || 0)).catch(() => {});
+    // Ежедневный статус — если просрочен/не поставлен → форсим модал
+    checkDailyStatus();
   }
+}
+
+// ── Ежедневный статус (обязательный) ─────────────────────────────────────────
+async function checkDailyStatus() {
+  try {
+    const s = await api('/status/my');
+    if (s && s.must_set) openStatusModal();
+  } catch(e) { /* при ошибке не блокируем — следующий заход проверит */ }
+}
+
+function openStatusModal() {
+  // Если уже открыт — не дублируем
+  if (document.getElementById('dailyStatusModal')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'dailyStatusModal';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(2,6,23,0.85);backdrop-filter:blur(20px);display:flex;align-items:center;justify-content:center;padding:20px;';
+  overlay.innerHTML = `
+    <div style="background:rgba(15,23,42,0.95);border:1px solid rgba(168,85,247,0.30);border-radius:18px;padding:24px;max-width:420px;width:100%;">
+      <div style="font-size:11px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--primary);margin-bottom:6px;">Ежедневный статус</div>
+      <h2 style="font-size:22px;font-weight:800;margin-bottom:8px;color:var(--text);">Что у тебя сейчас?</h2>
+      <p style="font-size:13px;color:var(--sub);line-height:1.6;margin-bottom:16px;">Одна строка, как день. Видна всем в твоём профиле. Сбрасывается через 24 часа — придётся поставить новую.</p>
+      <textarea id="dailyStatusInput" placeholder="например: пилю репосты для GhostSocial" maxlength="140" rows="2" style="width:100%;padding:12px;background:rgba(15,23,42,0.6);border:1px solid rgba(255,255,255,0.08);border-radius:12px;color:var(--text);font-size:14px;font-family:inherit;resize:none;outline:none;line-height:1.5;"></textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;margin-bottom:14px;">
+        <span id="dailyStatusCount" style="font-size:11px;color:var(--sub);">0 / 140</span>
+        <span id="dailyStatusErr" style="font-size:11px;color:#f87171;"></span>
+      </div>
+      <button id="dailyStatusBtn" class="auth-btn" style="width:100%;" disabled>Опубликовать</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  const ta = document.getElementById('dailyStatusInput');
+  const cnt = document.getElementById('dailyStatusCount');
+  const btn = document.getElementById('dailyStatusBtn');
+  ta.focus();
+  ta.addEventListener('input', () => {
+    const v = ta.value.trim();
+    cnt.textContent = `${ta.value.length} / 140`;
+    btn.disabled = v.length === 0;
+  });
+  btn.addEventListener('click', async () => {
+    const v = ta.value.trim();
+    if (!v) return;
+    btn.disabled = true; btn.textContent = '...';
+    try {
+      await api('/status/set', 'POST', { text: v });
+      overlay.remove();
+    } catch(e) {
+      document.getElementById('dailyStatusErr').textContent = e.message || 'Ошибка';
+      btn.disabled = false; btn.textContent = 'Опубликовать';
+    }
+  });
 }
 
 function switchTab(tab) {
@@ -4427,6 +4487,7 @@ async function openFullProfile(username) {
     document.getElementById('fpAv').textContent = ini(d.display_name);
     document.getElementById('fpName').textContent = d.display_name;
     document.getElementById('fpUser').textContent = '@' + d.username;
+    renderDailyStatus('fpStatus', d.daily_status);
     renderReputation('fpReputation', d.reputation_score, d.reputation_band);
     const wb = document.getElementById('fpWrappedBtn');
     if (wb) wb.href = buildWrappedUrl(d.username);
@@ -4539,6 +4600,14 @@ function shareForeignProfile() {
   _shareUrl(buildUserUrl(un), `@${un}`, `Профиль @${un} в GhostEcos`);
 }
 
+function renderDailyStatus(elId, text) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (!text || !text.trim()) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.textContent = text;
+}
+
 function renderReputation(elId, score, band) {
   const el = document.getElementById(elId);
   if (!el) return;
@@ -4559,6 +4628,7 @@ async function loadMyProfile() {
     document.getElementById('profAv').textContent = ini(d.display_name);
     document.getElementById('profName').textContent = d.display_name;
     document.getElementById('profUser').textContent = '@' + d.username;
+    renderDailyStatus('profStatus', d.daily_status);
     renderReputation('profReputation', d.reputation_score, d.reputation_band);
     document.getElementById('sPosts').textContent = d.posts_count;
     document.getElementById('sFollowers').textContent = d.followers_count;

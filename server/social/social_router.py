@@ -887,6 +887,12 @@ def init():
     try: c.execute("ALTER TABLE users ADD COLUMN confirmed_18_at INTEGER")
     except sqlite3.OperationalError: pass
 
+    # ── Ежедневный статус (сбрасывается через 24ч, ставится обязательно) ──
+    try: c.execute("ALTER TABLE users ADD COLUMN daily_status_text TEXT")
+    except sqlite3.OperationalError: pass
+    try: c.execute("ALTER TABLE users ADD COLUMN daily_status_set_at INTEGER")
+    except sqlite3.OperationalError: pass
+
     # ── Cooldown освобождения username (30 дней после удаления) ──
     try:
         c.execute("""
@@ -2196,6 +2202,7 @@ def get_profile(username: str, offset: int = Query(0), authorization: Optional[s
     posts = _hydrate_posts(c, rows, uid)
     c.close()
     rep_score = int(u.get("reputation_score") if u.get("reputation_score") is not None else 100)
+    status_text = u.get("daily_status_text") if _status_active(u.get("daily_status_set_at")) else None
     return {
         "user_id": u["id"],
         "username": u["username"],
@@ -2205,6 +2212,7 @@ def get_profile(username: str, offset: int = Query(0), authorization: Optional[s
         "reputation_score": rep_score,
         # Метка: репутация ниже 30 = «плохая», от 70 = «хорошая» (для UI)
         "reputation_band": "low" if rep_score < 30 else ("mid" if rep_score < 70 else "good"),
+        "daily_status": status_text,
         **stats,
         "posts": posts,
     }
@@ -3251,6 +3259,81 @@ def wrapped_data(username: str):
         "activity_rank": rank,
         "activity_rank_total": rank_total,
     }
+
+
+# ── Ежедневный статус (сбрасывается через 24ч, обязателен при заходе) ──
+
+_STATUS_TTL = 86400  # 24 часа
+
+
+def _status_active(set_at) -> bool:
+    if not set_at:
+        return False
+    return (int(time.time()) - int(set_at)) < _STATUS_TTL
+
+
+class StatusSetBody(BaseModel):
+    text: str
+
+
+@router.get("/status/my")
+def status_my(authorization: Optional[str] = Header(None)):
+    """Текущий статус юзера (если ещё не просрочен). Если нет — must_set=true."""
+    user = auth_member(authorization)
+    c = db()
+    row = c.execute(
+        "SELECT daily_status_text, daily_status_set_at FROM users WHERE id=?",
+        (user["id"],),
+    ).fetchone()
+    c.close()
+    if row and _status_active(row["daily_status_set_at"]):
+        set_at = int(row["daily_status_set_at"])
+        return {
+            "text": row["daily_status_text"],
+            "set_at": set_at,
+            "expires_at": set_at + _STATUS_TTL,
+            "must_set": False,
+        }
+    return {"text": None, "set_at": None, "expires_at": None, "must_set": True}
+
+
+@router.post("/status/set")
+def status_set(body: StatusSetBody, authorization: Optional[str] = Header(None)):
+    """Ставит дневной статус. 1..140 символов, без переносов строк."""
+    user = auth_member(authorization)
+    _rate_limit(f"status:{user['id']}", limit=20, window=86400)
+    text = (body.text or "").strip().replace("\n", " ").replace("\r", " ")
+    if not text:
+        raise HTTPException(400, "Статус не может быть пустым")
+    if len(text) > 140:
+        raise HTTPException(400, "Статус максимум 140 символов")
+    now = int(time.time())
+    c = db()
+    c.execute(
+        "UPDATE users SET daily_status_text=?, daily_status_set_at=? WHERE id=?",
+        (text, now, user["id"]),
+    )
+    c.commit(); c.close()
+    return {"status": "ok", "text": text, "set_at": now, "expires_at": now + _STATUS_TTL}
+
+
+@router.get("/status/{username}")
+def status_of(username: str):
+    """Публичный статус юзера. Если просрочен — null."""
+    uname = (username or "").strip().lower().lstrip("@")
+    if not uname:
+        raise HTTPException(400, "Empty username")
+    c = db()
+    row = c.execute(
+        "SELECT daily_status_text, daily_status_set_at FROM users WHERE username=?",
+        (uname,),
+    ).fetchone()
+    c.close()
+    if not row:
+        raise HTTPException(404, "User not found")
+    if _status_active(row["daily_status_set_at"]):
+        return {"text": row["daily_status_text"], "set_at": int(row["daily_status_set_at"])}
+    return {"text": None, "set_at": None}
 
 
 @router.get("/admin/stats")
