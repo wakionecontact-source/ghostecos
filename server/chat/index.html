@@ -2511,7 +2511,7 @@ function renderMessages(){
       const isImg = fp.mime && fp.mime.startsWith('image/');
       const isVideo = fp.mime && fp.mime.startsWith('video/');
       const isVoice = !!fp.voice || (fp.mime && fp.mime.startsWith('audio/'));
-      const sidArg = JSON.stringify(String(m.sid));
+      const sidArg = JSON.stringify(String(m.sid)).replace(/"/g, '&quot;');
       if (isVoice) {
         const dur = fmtVoiceTime(fp.duration || 0);
         bubbleBody = `<div class="msg-voice">
@@ -2534,7 +2534,7 @@ function renderMessages(){
         const name = esc(fp.file_name || fp.name || 'file');
         const size = fmtSize(fp.size || 0);
         const icon = fileIcon(fp.file_name || fp.name || '');
-        const sidArg = JSON.stringify(String(m.sid));
+        const sidArg = JSON.stringify(String(m.sid)).replace(/"/g, '&quot;');
         bubbleBody = `<div class="msg-file" onclick="downloadFile(${sidArg})">
           <div class="msg-file-icon"><i class="fa-solid ${icon}"></i></div>
           <div class="msg-file-info">
@@ -2574,7 +2574,7 @@ function renderReactions(m) {
   if (!m.reactions || m.deleted) return '';
   const entries = Object.entries(m.reactions).filter(([_, users]) => users && users.length);
   if (!entries.length) return '';
-  const sidArg = JSON.stringify(String(m.sid));
+  const sidArg = JSON.stringify(String(m.sid)).replace(/"/g, '&quot;');
   return '<div class="msg-reactions">' + entries.map(([emo, users]) => {
     const mine = (users || []).includes(me.username);
     const cnt = (users || []).length;
