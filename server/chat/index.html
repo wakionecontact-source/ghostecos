@@ -3418,17 +3418,34 @@ function connectWS(){
 // При возврате на вкладку (browser suspended → wake) проверяем WS и догоняем
 // pending. Без этого juзер видел "залипшие" сообщения — пришедшие пока tab
 // был в фоне DM-ы не подтягивались до полного перезаhrузки страницы.
+// Дебаунс: focus + visibilitychange срабатывают вместе → не делаем 2 запроса.
+// Троттлинг: loadGroups/fetchPending не чаще раза в N секунд.
+let _wakeupTimer = null;
+let _lastPendingAt = 0;
+let _lastGroupsAt = 0;
 function _onWakeup(){
   if (!token || _wsAuthFail) return;
-  // Если WS закрыт / закрывается — переподключаемся (onopen догонит pending)
+  if (_wakeupTimer) clearTimeout(_wakeupTimer);
+  _wakeupTimer = setTimeout(_doWakeup, 300);  // дебаунс
+}
+function _doWakeup(){
+  _wakeupTimer = null;
+  if (!token || _wsAuthFail) return;
+  // WS — если закрыт, переподключаемся (onopen догонит pending без нашего вмешательства)
   if (!ws || ws.readyState === 2 || ws.readyState === 3) {
     connectWS();
-  } else if (ws.readyState === 1) {
-    // WS живой, но мы могли пропустить события пока в фоне — догоним вручную
+    return;  // connectWS сам триггернёт fetchPending через onopen
+  }
+  // WS живой — догоним вручную с троттлингом
+  const now = Date.now();
+  if (now - _lastPendingAt > 10_000) {
+    _lastPendingAt = now;
     fetchPending().catch(() => {});
+  }
+  if (now - _lastGroupsAt > 60_000) {
+    _lastGroupsAt = now;
     loadGroups().catch(() => {});
   }
-  // syncDeliveryStatus отключён — был для sealed, sealed откатан
 }
 
 // Спрашивает сервер какие из моих !delivered сообщений уже доставлены.
