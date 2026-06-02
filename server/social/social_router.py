@@ -3176,6 +3176,131 @@ def og_wrapped_png(username: str):
     return _og_response(png)
 
 
+@router.get("/og/group/{group_id}.png")
+def og_group_png(group_id: int):
+    cached = _og_cached(f"g_{group_id}")
+    if cached:
+        with open(cached, "rb") as f:
+            return _og_response(f.read())
+    c = db()
+    g = c.execute(
+        "SELECT id, name, kind, username, bio FROM chat_groups WHERE id=?", (group_id,)
+    ).fetchone()
+    if not g:
+        c.close(); raise HTTPException(404, "Group not found")
+    members = c.execute("SELECT COUNT(*) FROM chat_group_members WHERE group_id=?", (group_id,)).fetchone()[0] or 0
+    c.close()
+    kind_label = "Канал" if g["kind"] == "channel" else "Группа"
+    handle = f"@{g['username']}" if g["username"] else ""
+    title = g["name"] or kind_label
+    sub_parts = [f"{kind_label} · {members} участ."]
+    if handle: sub_parts.insert(0, handle)
+    if g["bio"]: sub_parts.append(g["bio"][:80])
+    sub = " · ".join(sub_parts)
+    png = _og_render(title=title, subtitle=sub,
+                     footer=f"ghostecos.duckdns.org/g/{group_id}", accent=kind_label.upper())
+    _og_save(f"g_{group_id}", png)
+    return _og_response(png)
+
+
+@router.get("/og/channel/{username}.png")
+def og_channel_png(username: str):
+    uname = (username or "").strip().lower().lstrip("@")
+    if not uname:
+        raise HTTPException(400, "Empty username")
+    cached = _og_cached(f"ch_{uname}")
+    if cached:
+        with open(cached, "rb") as f:
+            return _og_response(f.read())
+    c = db()
+    g = c.execute(
+        "SELECT id, name, kind, username, bio FROM chat_groups WHERE username=?", (uname,)
+    ).fetchone()
+    if not g:
+        c.close(); raise HTTPException(404, "Channel not found")
+    members = c.execute("SELECT COUNT(*) FROM chat_group_members WHERE group_id=?", (g["id"],)).fetchone()[0] or 0
+    c.close()
+    title = g["name"] or f"@{uname}"
+    sub_parts = [f"@{uname}", f"{members} подписч."]
+    if g["bio"]: sub_parts.append(g["bio"][:80])
+    sub = " · ".join(sub_parts)
+    accent = "КАНАЛ" if g["kind"] == "channel" else "ГРУППА"
+    png = _og_render(title=title, subtitle=sub,
+                     footer=f"ghostecos.duckdns.org/c/{uname}", accent=accent)
+    _og_save(f"ch_{uname}", png)
+    return _og_response(png)
+
+
+@router.get("/og/miniska/{post_id}.png")
+def og_miniska_png(post_id: int):
+    cached = _og_cached(f"m_{post_id}")
+    if cached:
+        with open(cached, "rb") as f:
+            return _og_response(f.read())
+    c = db()
+    row = c.execute(
+        "SELECT p.content, p.is_nsfw, u.username, u.display_name "
+        "FROM soc_posts p JOIN users u ON p.user_id=u.id "
+        "WHERE p.id=? AND p.kind='miniska'",
+        (post_id,),
+    ).fetchone()
+    if not row:
+        c.close(); raise HTTPException(404, "Miniska not found")
+    reactions = c.execute("SELECT COUNT(*) FROM soc_reactions WHERE post_id=?", (post_id,)).fetchone()[0] or 0
+    c.close()
+    is_nsfw = bool(row["is_nsfw"])
+    if is_nsfw:
+        title = "Миниска 18+"
+        sub = f"От {row['display_name']} (@{row['username']}) · откройте чтобы посмотреть"
+        accent = "18+"
+    else:
+        content = (row["content"] or "").strip() or "Миниска"
+        title = content[:80] + ("..." if len(content) > 80 else "")
+        sub = f"{row['display_name']} (@{row['username']}) · {reactions} реакций · видео 48 ч"
+        accent = "МИНИСКА"
+    png = _og_render(title=title, subtitle=sub,
+                     footer=f"ghostecos.duckdns.org/m/{post_id}", accent=accent)
+    _og_save(f"m_{post_id}", png)
+    return _og_response(png)
+
+
+@router.get("/og/nft/{nft_id}.png")
+def og_nft_png(nft_id: int):
+    cached = _og_cached(f"nft_{nft_id}")
+    if cached:
+        with open(cached, "rb") as f:
+            return _og_response(f.read())
+    c = db()
+    row = c.execute(
+        "SELECT n.id, n.serial, n.owner_id, cat.name, cat.rarity, "
+        "u.username as owner_username, u.display_name as owner_display "
+        "FROM soc_nfts n "
+        "JOIN soc_nft_catalog cat ON n.catalog_id=cat.id "
+        "JOIN users u ON n.owner_id=u.id "
+        "WHERE n.id=?",
+        (nft_id,),
+    ).fetchone()
+    if not row:
+        c.close(); raise HTTPException(404, "NFT not found")
+    # Текущая цена в активном листинге (если есть)
+    list_row = c.execute(
+        "SELECT price, currency FROM soc_nft_listings WHERE nft_id=? ORDER BY id DESC LIMIT 1",
+        (nft_id,),
+    ).fetchone()
+    c.close()
+    title = f"{row['name']} #{row['serial']}"
+    sub_parts = [f"редкость: {row['rarity']}", f"владелец: @{row['owner_username']}"]
+    if list_row:
+        cur = (list_row["currency"] or "gost").upper()
+        sub_parts.append(f"в продаже за {list_row['price']} {cur}")
+    sub = " · ".join(sub_parts)
+    accent = row["rarity"].upper()
+    png = _og_render(title=title, subtitle=sub,
+                     footer=f"ghostecos.duckdns.org/nft/{nft_id}", accent=accent)
+    _og_save(f"nft_{nft_id}", png)
+    return _og_response(png)
+
+
 @router.get("/wrapped/{username}")
 def wrapped_data(username: str):
     """Публичная Wrapped-страница юзера. Не требует авторизации — shareable URL."""

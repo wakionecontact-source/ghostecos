@@ -367,6 +367,91 @@ async def og_post_page(post_id: int):
     return HTMLResponse(content=html)
 
 
+def _og_redirect_page(title: str, desc: str, og_image: str, og_url: str,
+                      redirect_url: str, og_type: str = "website") -> "HTMLResponse":
+    """Минимальная HTML-страница с OG-meta + JS-редирект в приложение."""
+    from fastapi.responses import HTMLResponse
+    html = f"""<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>{_esc_attr(title)}</title>
+  <meta name="description" content="{_esc_attr(desc)}">
+  <meta property="og:title" content="{_esc_attr(title)}">
+  <meta property="og:description" content="{_esc_attr(desc)}">
+  <meta property="og:image" content="{_esc_attr(og_image)}">
+  <meta property="og:url" content="{_esc_attr(og_url)}">
+  <meta property="og:type" content="{og_type}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="{_esc_attr(og_image)}">
+  <meta http-equiv="refresh" content="0;url={_esc_attr(redirect_url)}">
+  <link rel="canonical" href="{_esc_attr(og_url)}">
+</head>
+<body style="background:#020617;color:#94a3b8;font-family:sans-serif;text-align:center;padding:80px 20px;">
+  <p>Открываю...</p>
+  <p><a href="{_esc_attr(redirect_url)}" style="color:#a855f7;">Перейти вручную</a></p>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+@app.get("/g/{group_id}", include_in_schema=False)
+async def og_group_page(group_id: int):
+    """Публичная shareable страница для группы/канала по id."""
+    import urllib.request, json as _json
+    base = "https://ghostecos.duckdns.org"
+    title, desc = f"Группа в GhostChat", "Открыть"
+    redirect = f"/chat/?group={group_id}"
+    try:
+        # Берём из социалки (там есть chat_groups таблица)
+        r = urllib.request.urlopen(f"http://127.0.0.1:8005/api/soc/og/group/{group_id}.png", timeout=3)
+        r.read()  # прогреем кэш PNG
+        # title не вытащить из PNG; обращаемся к public-эндпоинту если есть, иначе общий title
+    except Exception:
+        pass
+    return _og_redirect_page(
+        title=title, desc=desc,
+        og_image=f"{base}/api/soc/og/group/{group_id}.png",
+        og_url=f"{base}/g/{group_id}",
+        redirect_url=redirect,
+    )
+
+
+@app.get("/c/{username}", include_in_schema=False)
+async def og_channel_page(username: str):
+    uname = (username or "").strip().lower().lstrip("@")
+    base = "https://ghostecos.duckdns.org"
+    return _og_redirect_page(
+        title=f"@{uname} — канал в GhostChat", desc="Открыть канал",
+        og_image=f"{base}/api/soc/og/channel/{uname}.png",
+        og_url=f"{base}/c/{uname}",
+        redirect_url=f"/chat/?channel={uname}",
+    )
+
+
+@app.get("/m/{post_id}", include_in_schema=False)
+async def og_miniska_page(post_id: int):
+    base = "https://ghostecos.duckdns.org"
+    return _og_redirect_page(
+        title=f"Миниска в GhostSocial", desc="Короткое видео · 48 ч",
+        og_image=f"{base}/api/soc/og/miniska/{post_id}.png",
+        og_url=f"{base}/m/{post_id}",
+        redirect_url=f"/social/?msk={post_id}",
+        og_type="video.other",
+    )
+
+
+@app.get("/nft/{nft_id}", include_in_schema=False)
+async def og_nft_page(nft_id: int):
+    base = "https://ghostecos.duckdns.org"
+    return _og_redirect_page(
+        title=f"NFT #{nft_id} в GhostBank", desc="Цифровой объект в коллекции",
+        og_image=f"{base}/api/soc/og/nft/{nft_id}.png",
+        og_url=f"{base}/nft/{nft_id}",
+        redirect_url=f"/bank/?nft={nft_id}",
+    )
+
+
 @app.get("/u/{username}", include_in_schema=False)
 async def og_user_page(username: str):
     """Публичная shareable страница для профиля — HTML с OG + редирект в /social."""

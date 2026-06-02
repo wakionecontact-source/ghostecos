@@ -4090,6 +4090,7 @@ function openPostMenu(postId, anchor, mediaUrl, eventOrEl) {
   }
   items.push({ icon: 'fa-link', label: 'Скопировать ссылку', onClick: () => copyPostLink(postId) });
   items.push({ icon: 'fa-share-nodes', label: 'Поделиться', onClick: () => sharePost(postId) });
+  items.push({ icon: 'fa-image', label: 'Сохранить картинкой', onClick: () => savePostAsImage(postId) });
   if (!isGuest()) {
     items.push({ icon: 'fa-comment', label: 'Отправить в GhostChat', onClick: () => sharePostToChat(postId) });
   }
@@ -4261,6 +4262,28 @@ async function sharePost(postId) {
     catch(e) { /* отмена пользователем — игнор */ }
   }
   copyPostLink(postId);
+}
+
+// ── «Сохранить картинкой» — использует серверную OG-PNG ───────────────────────
+async function savePostAsImage(postId) {
+  const url = `/api/soc/og/post/${postId}.png`;
+  // Пробуем скачать в blob и сохранить через <a download>
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const blob = await r.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = `ghostecos-post-${postId}.png`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(blobUrl); }, 100);
+    showToast('Картинка сохранена');
+  } catch(e) {
+    // Fallback — открыть в новой вкладке
+    window.open(url, '_blank');
+  }
 }
 
 // ── «Пожаловаться» ──────────────────────────────────────────────────────────
