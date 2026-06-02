@@ -756,33 +756,16 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
 
   <div class="screen" id="screenCreate">
     <div class="create-card">
-      <!-- Тумблер «миниска» -->
-      <label class="msk-toggle" id="msktoggleLabel">
-        <span class="msk-toggle-info">
-          <i class="fa-solid fa-video"></i>
-          <div>
-            <div class="msk-toggle-title">Сделать миниской</div>
-            <div class="msk-toggle-sub">Короткое вертикальное видео · хранится 48 ч</div>
-          </div>
-        </span>
-        <span class="msk-switch"><input type="checkbox" id="miniskaToggle" onchange="onMiniskaToggle(this.checked)"><span class="msk-switch-slider"></span></span>
-      </label>
+      <!-- Mode-indicator: видна только когда включён NSFW или миниска -->
+      <div id="composerModeIndicator" style="display:none;font-size:11px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;padding:6px 10px;border-radius:8px;margin-bottom:10px;"></div>
+
+      <!-- Скрытые тумблеры (логика их использует) -->
+      <input type="checkbox" id="miniskaToggle" style="display:none;" onchange="onMiniskaToggle(this.checked); refreshComposerMode();">
+      <input type="checkbox" id="nsfwToggle" style="display:none;" onchange="refreshComposerMode();">
 
       <textarea id="postText" placeholder="Что на уме?" maxlength="1000"></textarea>
       <div id="mediaPreviewList"></div>
       <div id="pollEditor"></div>
-
-      <!-- 18+ (NSFW) переключатель: блюр в ленте, обязательно для эротики/гуро/шок-контента -->
-      <label class="msk-toggle" style="border-color:rgba(248,113,113,0.25);background:rgba(248,113,113,0.04);">
-        <span class="msk-toggle-info">
-          <i class="fa-solid fa-eye-slash" style="color:#f87171;"></i>
-          <div>
-            <div class="msk-toggle-title">Пометить 18+ (NSFW)</div>
-            <div class="msk-toggle-sub">Контент будет с блюром в ленте · обязательно для эротики/гуро/шок-контента</div>
-          </div>
-        </span>
-        <span class="msk-switch"><input type="checkbox" id="nsfwToggle"><span class="msk-switch-slider"></span></span>
-      </label>
 
       <!-- Хэштеги для миниски (минимум 3, до 10) -->
       <div id="miniskaTagsBlock" style="display:none;">
@@ -800,6 +783,8 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
         <div class="create-left">
           <button class="attach-btn" id="attachBtn" title="Прикрепить файл"><i class="fa-solid fa-paperclip"></i></button>
           <button class="attach-btn" id="pollBtn" title="Добавить опрос"><i class="fa-solid fa-chart-simple"></i></button>
+          <button class="attach-btn" id="nsfwBtn" title="Пометить 18+ (NSFW)" onclick="toggleNsfw()"><i class="fa-solid fa-eye-slash"></i></button>
+          <button class="attach-btn" id="miniskaBtn" title="Сделать миниской (видео 48ч)" onclick="toggleMiniska()"><i class="fa-solid fa-video"></i></button>
           <span class="char-count" id="charCount">0 / 1000</span>
         </div>
         <button class="pub-btn" id="pubBtn" disabled>Опубликовать</button>
@@ -834,6 +819,7 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
       </div>
       <div class="prof-actions">
         <button class="prof-action-btn" onclick="openEditProfile()"><i class="fa-solid fa-pen"></i> Изменить</button>
+        <button class="prof-action-btn" onclick="shareMyProfile()"><i class="fa-solid fa-share-nodes"></i> Поделиться</button>
         <button class="prof-action-btn" onclick="openAlgoSettings()"><i class="fa-solid fa-wand-magic-sparkles"></i> Алгоритм</button>
         <button class="prof-action-btn danger" onclick="doLogout()"><i class="fa-solid fa-right-from-bracket"></i> Выйти</button>
       </div>
@@ -882,6 +868,14 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
       <div id="fpMessageWrap" style="display:none;width:100%;margin-top:8px">
         <a id="fpMessageBtn" href="#" class="follow-btn" style="width:100%;text-decoration:none;background:rgba(168,85,247,0.1);color:var(--primary);border:1px solid rgba(168,85,247,0.3);display:flex;align-items:center;justify-content:center;gap:8px;">
           <i class="fa-solid fa-comment"></i> Написать
+        </a>
+      </div>
+      <div style="width:100%;margin-top:8px;display:flex;gap:8px;">
+        <button class="follow-btn" onclick="shareForeignProfile()" style="flex:1;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);color:var(--text);display:flex;align-items:center;justify-content:center;gap:6px;">
+          <i class="fa-solid fa-share-nodes"></i> Поделиться
+        </button>
+        <a class="follow-btn" id="fpWrappedBtn" target="_blank" rel="noopener" style="flex:1;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);color:var(--text);display:flex;align-items:center;justify-content:center;gap:6px;text-decoration:none;">
+          <i class="fa-solid fa-chart-pie"></i> Wrapped
         </a>
       </div>
     </div>
@@ -1650,6 +1644,50 @@ function onMiniskaToggle(on) {
   }
   if (on) renderMiniskaTags();
   updatePubBtn();
+}
+
+// Маленькие кнопки-иконки переключают скрытые чекбоксы
+function toggleNsfw() {
+  const cb = document.getElementById('nsfwToggle');
+  cb.checked = !cb.checked;
+  cb.dispatchEvent(new Event('change'));
+  refreshComposerMode();
+}
+function toggleMiniska() {
+  const cb = document.getElementById('miniskaToggle');
+  cb.checked = !cb.checked;
+  onMiniskaToggle(cb.checked);
+  refreshComposerMode();
+}
+// Подсвечивает активные иконки и показывает индикатор сверху
+function refreshComposerMode() {
+  const nsfw = document.getElementById('nsfwToggle').checked;
+  const msk  = document.getElementById('miniskaToggle').checked;
+  const nsfwBtn = document.getElementById('nsfwBtn');
+  const mskBtn  = document.getElementById('miniskaBtn');
+  if (nsfwBtn) nsfwBtn.classList.toggle('attached', nsfw);
+  if (mskBtn)  mskBtn.classList.toggle('attached', msk);
+  // Цвет NSFW-иконки красный когда активна
+  if (nsfwBtn) nsfwBtn.style.color = nsfw ? '#f87171' : '';
+  // Индикатор сверху
+  const ind = document.getElementById('composerModeIndicator');
+  if (!ind) return;
+  const parts = [];
+  if (msk)  parts.push(`<i class="fa-solid fa-video"></i> миниска · 48 ч`);
+  if (nsfw) parts.push(`<i class="fa-solid fa-eye-slash"></i> 18+ NSFW (с блюром)`);
+  if (!parts.length) { ind.style.display = 'none'; return; }
+  ind.style.display = 'flex';
+  ind.style.alignItems = 'center';
+  ind.style.gap = '14px';
+  ind.style.flexWrap = 'wrap';
+  // Цвет фона: красный если NSFW, фиолетовый если только миниска
+  const color = nsfw ? '#f87171' : 'var(--primary)';
+  const bg = nsfw ? 'rgba(248,113,113,0.10)' : 'rgba(168,85,247,0.10)';
+  const border = nsfw ? 'rgba(248,113,113,0.30)' : 'rgba(168,85,247,0.30)';
+  ind.style.color = color;
+  ind.style.background = bg;
+  ind.style.border = '1px solid ' + border;
+  ind.innerHTML = parts.join(' · ');
 }
 
 function _miniskaTags() {
@@ -4036,7 +4074,18 @@ function downloadFile(url) {
 // ── Sharing ─────────────────────────────────────────────────────────────────────
 
 function buildPostUrl(postId) {
-  return location.origin + '/social#p=' + postId;
+  // Каноничный URL с OG-превью. /p/{id} серверно отдаёт og:* meta и
+  // редиректит на /social/?p={id} для открытия в приложении.
+  return location.origin + '/p/' + postId;
+}
+
+function buildUserUrl(username) {
+  // Каноничный URL с OG-превью для профиля.
+  return location.origin + '/u/' + encodeURIComponent(username);
+}
+
+function buildWrappedUrl(username) {
+  return location.origin + '/wrapped/' + encodeURIComponent(username);
 }
 
 async function copyPostLink(postId) {
@@ -4379,6 +4428,8 @@ async function openFullProfile(username) {
     document.getElementById('fpName').textContent = d.display_name;
     document.getElementById('fpUser').textContent = '@' + d.username;
     renderReputation('fpReputation', d.reputation_score, d.reputation_band);
+    const wb = document.getElementById('fpWrappedBtn');
+    if (wb) wb.href = buildWrappedUrl(d.username);
     document.getElementById('fpPosts').textContent = d.posts_count;
     document.getElementById('fpFollowers').textContent = d.followers_count;
     document.getElementById('fpFollowing').textContent = d.following_count;
@@ -4459,6 +4510,33 @@ function renderFollowBtn(btnId, username, following) {
     } catch(e) { showToast('Ошибка'); }
     btn.disabled = false;
   };
+}
+
+// ── Шеринг профиля ────────────────────────────────────────────────────────────
+async function _shareUrl(url, title, text) {
+  if (navigator.share) {
+    try { await navigator.share({ url, title, text }); return; }
+    catch(e) { /* отмена пользователем — игнор */ }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast('Ссылка скопирована');
+  } catch(e) {
+    const ta = document.createElement('textarea');
+    ta.value = url; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); showToast('Ссылка скопирована'); }
+    catch(e2) { showToast(url); }
+    finally { document.body.removeChild(ta); }
+  }
+}
+function shareMyProfile() {
+  if (!me) return;
+  _shareUrl(buildUserUrl(me.username), `@${me.username}`, `Профиль ${me.display_name || me.username} в GhostEcos`);
+}
+function shareForeignProfile() {
+  const un = _fpState && _fpState.username;
+  if (!un) return;
+  _shareUrl(buildUserUrl(un), `@${un}`, `Профиль @${un} в GhostEcos`);
 }
 
 function renderReputation(elId, score, band) {
