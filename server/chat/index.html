@@ -1354,12 +1354,12 @@ async function onReady(){
   dialogs = (await idbGetDialogs()) || [];
   dialogs.sort((a,b) => (b.last_at || '').localeCompare(a.last_at || ''));
   renderDialogs();
-  console.log('[onReady] loading groups');
-  try { await loadGroups(); } catch(e) { console.warn('[onReady] groups err', e); }
+  // Groups + WS + pending — параллельно в фоне, не блокируем UI открытие
   console.log('[onReady] connectWS');
   connectWS();
-  console.log('[onReady] fetchPending');
-  fetchPending();
+  console.log('[onReady] loadGroups + fetchPending in background');
+  loadGroups().catch(e => console.warn('[onReady] groups err', e));
+  fetchPending().catch(e => console.warn('[onReady] pending err', e));
   // Бейдж непрочитанных GhostSocial-уведомлений
   startGSBadgePolling();
   // Deep-link: ?to=username — открыть чат сразу. ?text=... — предзаполнить input.
@@ -1453,22 +1453,18 @@ function closeInstall(remember){
 }
 
 async function fetchPending(){
-  // Legacy DM (sender_id виден серверу) + Sealed DM (без sender_id)
   try{
     const d = await chat('/pending');
-    if (d.messages && d.messages.length) {
-      const ackIds = [];
-      for (const m of d.messages) {
-        const ok = await ingestIncoming(m);
-        if (ok) ackIds.push(m.id);
-      }
-      if (ackIds.length) {
-        try { await chat('/ack', 'POST', { ids: ackIds }); } catch(_) {}
-      }
+    if (!d.messages || !d.messages.length) return;
+    // Параллельный decrypt всех pending — раньше последовательно тормозило на 50+ сообщениях
+    const results = await Promise.all(d.messages.map(m =>
+      ingestIncoming(m).catch(e => { console.warn('[ingest] err', e); return false; })
+    ));
+    const ackIds = d.messages.filter((_, i) => results[i]).map(m => m.id);
+    if (ackIds.length) {
+      try { await chat('/ack', 'POST', { ids: ackIds }); } catch(_) {}
     }
   }catch(e){ /* offline */ }
-  // sealed-pending временно отключён (отладка)
-  // await fetchPendingSealed();
 }
 
 async function fetchPendingSealed(){
