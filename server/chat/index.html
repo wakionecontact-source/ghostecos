@@ -1467,7 +1467,8 @@ async function fetchPending(){
       }
     }
   }catch(e){ /* offline */ }
-  await fetchPendingSealed();
+  // sealed-pending временно отключён (отладка)
+  // await fetchPendingSealed();
 }
 
 async function fetchPendingSealed(){
@@ -2174,13 +2175,10 @@ async function sendMessage(){
       payload.reply_to = currentReply.sid;
       payload.reply_preview = optimistic.reply_preview;
     }
-    // Sealed Sender: sender_id больше не виден серверу.
-    // sid внутри envelope нужен чтобы receiver мог потом отправить delivered/read
-    // обратно (encryptSealed({type:'delivered', target_sid: env.sid}, my_username))
-    payload.sid = optimistic.localId || ('s' + Date.now() + Math.random().toString(36).slice(2,6));
-    optimistic._payloadSid = payload.sid;
-    const ct = await encryptSealed(activePeer.username, payload);
-    const r = await chat('/send_sealed', 'POST', { to_username: activePeer.username, ciphertext: ct });
+    // Legacy /send (sealed sender временно отключён — было слишком много багов,
+    // вернёмся когда отладим schema совместимости).
+    const ct = await encryptForPeer(activePeer.username, payload);
+    const r = await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: ct });
     optimistic.sid = r.id;
     optimistic.created_at = r.created_at;
     optimistic.pending = false;
@@ -2349,21 +2347,10 @@ async function openChat(username, display_name){
   // Отправим read для всех непрочитанных входящих
   const unread = activeMessages.filter(m => !m.from_me && !m.read);
   if (unread.length) {
-    // Legacy /read для сообщений без sealed-meta
-    const legacyIds = unread.filter(m => !m._sealedFromUsername).map(m => m.sid).filter(x => typeof x === 'number');
-    if (legacyIds.length) {
-      chat('/read', 'POST', { ids: legacyIds, from_username: username }).catch(()=>{});
-    }
-    // Sealed: для каждого sealed-сообщения шлём sender'у sealed-read через /send_sealed
-    for (const m of unread) {
-      if (m._sealedFromUsername && m._sealedPayloadSid != null) {
-        try {
-          const ct = await encryptSealed(m._sealedFromUsername, {
-            type: 'read', target_sid: m._sealedPayloadSid
-          });
-          chat('/send_sealed', 'POST', { to_username: m._sealedFromUsername, ciphertext: ct }).catch(()=>{});
-        } catch(_) {}
-      }
+    // Legacy /read — sealed-read временно отключён (отладка)
+    const unreadIds = unread.map(m => m.sid).filter(x => typeof x === 'number');
+    if (unreadIds.length) {
+      chat('/read', 'POST', { ids: unreadIds, from_username: username }).catch(()=>{});
     }
     for (const m of unread) {
       m.read = true;
