@@ -516,6 +516,19 @@ def init():
             FOREIGN KEY (owner_id) REFERENCES users(id),
             FOREIGN KEY (contact_id) REFERENCES users(id)
         );
+        -- Read-метки: receiver открыл chat → /read POST → запись здесь.
+        -- Нужно потому что после /ack чат_dm удаляется, и sender после refresh
+        -- не мог узнать прочитано или нет. WS chat.read может потеряться.
+        -- Cleanup по TTL — read-state имеет смысл только пока юзер видит чат.
+        CREATE TABLE IF NOT EXISTS chat_dm_read_marks (
+            sender_id INTEGER NOT NULL,
+            msg_id INTEGER NOT NULL,
+            recipient_id INTEGER NOT NULL,
+            read_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (sender_id, msg_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_dmread_sender ON chat_dm_read_marks(sender_id);
+        CREATE INDEX IF NOT EXISTS idx_dmread_old ON chat_dm_read_marks(read_at);
 
         -- ══════ ЭКОНОМИКА: Soul + NFT ══════════════════════════════════════════
         -- Состояние сезона (одна строка с активным сезоном)

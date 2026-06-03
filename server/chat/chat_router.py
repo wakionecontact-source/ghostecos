@@ -188,13 +188,24 @@ def delivery_status(body: DeliveryStatusBody, authorization: Optional[str] = Hea
         return {}
     c = db()
     ph = ",".join("?" * len(ids))
+    # Какие из моих ещё лежат в chat_dm (= не доставлены)
     rows = c.execute(
         f"SELECT id FROM chat_dm WHERE sender_id=? AND id IN ({ph})",
         [user["id"]] + ids,
     ).fetchall()
-    c.close()
     still_pending = {r["id"] for r in rows}
-    return {str(i): ("pending" if i in still_pending else "delivered") for i in ids}
+    # Какие уже прочитаны (запись в chat_dm_read_marks)
+    read_rows = c.execute(
+        f"SELECT msg_id FROM chat_dm_read_marks WHERE sender_id=? AND msg_id IN ({ph})",
+        [user["id"]] + ids,
+    ).fetchall()
+    read_ids = {r["msg_id"] for r in read_rows}
+    c.close()
+    def _status(i):
+        if i in still_pending: return "pending"
+        if i in read_ids: return "read"
+        return "delivered"
+    return {str(i): _status(i) for i in ids}
 
 
 class AckBody(BaseModel):
@@ -360,10 +371,27 @@ def read_messages(body: ReadBody, authorization: Optional[str] = Header(None)):
         return {"sent": 0}
     c = db()
     r = c.execute("SELECT id FROM users WHERE username=?", (sender_uname,)).fetchone()
-    c.close()
     if not r:
+        c.close()
         return {"sent": 0}
-    ws_hub.send_to(r["id"], "chat.read", {"ids": ids, "by_username": user["username"]})
+    sender_id = r["id"]
+    # Persisting read state: чтобы после refresh sender мог узнать прочитано или
+    # нет (WS chat.read мог потеряться). INSERT OR IGNORE — повторный /read той
+    # же id не перезапишет first read_at.
+    try:
+        c.executemany(
+            "INSERT OR IGNORE INTO chat_dm_read_marks (sender_id, msg_id, recipient_id) VALUES (?,?,?)",
+            [(sender_id, mid, user["id"]) for mid in ids],
+        )
+        c.commit()
+        # Opportunistic cleanup старых read-меток (>30 дней — точно не нужны)
+        c.execute("DELETE FROM chat_dm_read_marks WHERE read_at < datetime('now', '-30 day')")
+        c.commit()
+    except Exception as e:
+        # Не падаем — WS broadcast всё равно делаем
+        pass
+    c.close()
+    ws_hub.send_to(sender_id, "chat.read", {"ids": ids, "by_username": user["username"]})
     return {"sent": len(ids)}
 
 # ── Contacts ──────────────────────────────────────────────────────────────────

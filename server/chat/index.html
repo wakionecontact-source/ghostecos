@@ -2468,6 +2468,9 @@ async function openChat(username, display_name){
       idbUpdateMessage(m.sid, { read: true }).catch(()=>{});
     }
   }
+  // Догон delivered-статуса моих исходящих в этом чате (могли пропустить
+  // WS chat.delivered после refresh / отключения / переключения чатов)
+  try { syncDeliveryStatus(); } catch(_){}
 }
 
 async function refreshContactBtn(username){
@@ -3602,22 +3605,32 @@ function _fetchPendingWithRetry(){
       });
     }, 5000);
   });
+  // Параллельно догоняем delivery-статус своих сообщений (sender мог пропустить
+  // WS chat.delivered если был offline в момент когда receiver сделал /ack).
+  // Без этого «дискета» висит вечно даже после refresh.
+  try { syncDeliveryStatus(); } catch(_){}
 }
 
 // Спрашивает сервер какие из моих !delivered сообщений уже доставлены.
 // Sender может пропустить WS chat.delivered если был offline в момент receiver/ack.
 async function syncDeliveryStatus(){
   try {
-    // Берём свои сообщения (from_me=true, !delivered, есть sid) — максимум 200 свежих
-    const pending = (activeMessages || []).filter(m => m.from_me && !m.delivered && m.sid).slice(-200);
-    if (!pending.length) return;
-    const ids = pending.map(m => +m.sid).filter(Boolean);
+    // Берём свои сообщения которые ещё не прочитаны (нужны как delivered, так
+    // и не-delivered — потому что сообщение может стать сразу 'read' пропустив
+    // 'delivered' если receiver открыл чат с уже-загруженным сообщением).
+    const candidates = (activeMessages || []).filter(m => m.from_me && !m.read && m.sid).slice(-200);
+    if (!candidates.length) return;
+    const ids = candidates.map(m => +m.sid).filter(Boolean);
     if (!ids.length) return;
     const r = await chat('/delivery_status', 'POST', { ids });
     let changed = false;
-    for (const m of pending) {
+    for (const m of candidates) {
       const s = r[String(m.sid)];
-      if (s === 'delivered' && !m.delivered) {
+      if (s === 'read' && !m.read) {
+        m.read = true; m.delivered = true;
+        idbUpdateMessage(m.sid, { read: true, delivered: true }).catch(()=>{});
+        changed = true;
+      } else if (s === 'delivered' && !m.delivered) {
         m.delivered = true;
         idbUpdateMessage(m.sid, { delivered: true }).catch(()=>{});
         changed = true;
