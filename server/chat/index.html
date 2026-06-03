@@ -1607,13 +1607,46 @@ async function ingestSealed(m){
 // INCOMING / OUTGOING
 // ════════════════════════════════════════════════════════════════════
 async function ingestIncoming(m){
-  // Дедуп для chat.echo: backend шлёт всем сокетам отправителя свой же ответ
-  // чтобы другие вкладки/устройства тоже увидели. Но текущая вкладка уже
-  // имеет optimistic в activeMessages с тем же sid (sendMessage присвоил
-  // r.id сразу после POST). Без этого дедупа сообщение дублируется в UI.
-  // idbAddMessage отсекает дубль в IDB, но не успевает до echo race-окно.
+  // ─── Дедуп chat.echo (отправитель видит своё же сообщение через WS) ───
+  // Backend шлёт echo всем сокетам отправителя для multi-tab. Текущая вкладка
+  // уже имеет optimistic в activeMessages. Два варианта race-окна:
+  //  (а) HTTP-ответ /send пришёл раньше echo → optimistic.sid уже = r.id →
+  //      дедуп по sid срабатывает.
+  //  (б) WS echo пришёл раньше HTTP-ответа → optimistic.sid всё ещё "tmp-..."
+  //      → дедуп по sid пропустит. Нужен fallback по from_me+pending+content.
   if (m && m.id != null && (activeMessages || []).some(x => String(x.sid) === String(m.id))) {
     return false;
+  }
+  // Fallback: ищем pending-optimistic с тем же контентом (для своих сообщений).
+  // Если нашли — присваиваем правильный sid и created_at, выходим без push.
+  if (m && m.from_username === (me && me.username) && Array.isArray(activeMessages)) {
+    // Расшифровать payload чтоб сравнить контент
+    let echoPayload = null;
+    if (m._decrypted) {
+      echoPayload = m._decrypted;
+    } else {
+      try { echoPayload = parsePayload(await decryptFromPeer(m.to_username, m.ciphertext)); }
+      catch(_) { echoPayload = null; }
+    }
+    if (echoPayload) {
+      const echoText = String(echoPayload.text || '');
+      const echoFileId = echoPayload.file_id;
+      const opt = activeMessages.find(x =>
+        x.pending && x.from_me && String(x.sid || '').startsWith('tmp-') &&
+        ((echoFileId != null && x.file_payload && x.file_payload.file_id === echoFileId) ||
+         (echoFileId == null && (x.text || '') === echoText))
+      );
+      if (opt) {
+        opt.sid = m.id;
+        opt.created_at = m.created_at;
+        opt.pending = false;
+        // Сохраним в IDB (sendMessage сам сохранит после своего await, но если он
+        // ещё не дошёл — пусть наша запись будет первой; idbAddMessage дедупит).
+        idbAddMessage(opt).catch(()=>{});
+        if (typeof renderMessages === 'function') renderMessages();
+        return false;
+      }
+    }
   }
   // m: {id, from_username, from_display_name, to_username, ciphertext, created_at, _decrypted?}
   const isMine = m.from_username === me.username;
