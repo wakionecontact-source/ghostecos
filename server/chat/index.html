@@ -1299,6 +1299,46 @@ async function idbPutDialog(d){
   const tx = db.transaction('dialogs', 'readwrite');
   await idbReq(tx, t => t.objectStore('dialogs').put(d));
 }
+
+// Удалить все сообщения с указанным peer (DM-юзер или group-key вида 'g:42')
+async function idbDeleteMessagesByPeer(peer){
+  const db = await openIDB();
+  const tx = db.transaction('messages', 'readwrite');
+  const idx = tx.objectStore('messages').index('peer');
+  const fileIdsToCleanup = [];
+  await new Promise((res, rej) => {
+    const cur = idx.openCursor(IDBKeyRange.only(peer));
+    cur.onsuccess = e => {
+      const c = e.target.result;
+      if (c) {
+        const v = c.value;
+        const fp = v.file_payload || v.file;
+        if (fp && fp.file_id) fileIdsToCleanup.push(String(fp.file_id));
+        c.delete();
+        c.continue();
+      } else res();
+    };
+    cur.onerror = () => rej(cur.error);
+  });
+  // Заодно почистим filecache для этих сообщений (медиа уже не нужны)
+  if (fileIdsToCleanup.length && db.objectStoreNames.contains('filecache')) {
+    try {
+      const ftx = db.transaction('filecache', 'readwrite');
+      const fs = ftx.objectStore('filecache');
+      for (const fid of fileIdsToCleanup) {
+        try { fs.delete(fid); } catch(_){}
+      }
+    } catch(_){}
+  }
+  return fileIdsToCleanup.length;
+}
+
+// Удалить запись dialog (превью чата в списке) по username
+async function idbDeleteDialog(username){
+  const db = await openIDB();
+  const tx = db.transaction('dialogs', 'readwrite');
+  await idbReq(tx, t => t.objectStore('dialogs').delete(username));
+}
 async function idbGetDialogs(){
   const db = await openIDB();
   const tx = db.transaction('dialogs', 'readonly');
@@ -2532,6 +2572,95 @@ async function refreshContactBtn(username){
   } catch(_) {}
 }
 
+// ─── Меню «...» в шапке чата: очистить историю / удалить чат ───
+function openChatActionsMenu(ev, username){
+  ev.stopPropagation();
+  // Закрываем если уже открыто
+  const existing = document.getElementById('chatActionsPopup');
+  if (existing) { existing.remove(); return; }
+  const pop = document.createElement('div');
+  pop.id = 'chatActionsPopup';
+  pop.className = 'sb-popup';
+  pop.style.cssText = 'display:block;position:fixed;right:14px;top:62px;left:auto;min-width:220px;z-index:200;';
+  pop.innerHTML = `
+    <div class="sb-popup-item" onclick="closeChatActionsMenu();clearChatHistory(${jsAttr(username)})"><i class="fa-solid fa-broom"></i> Очистить историю</div>
+    <div class="sb-popup-item danger" onclick="closeChatActionsMenu();deleteChatDialog(${jsAttr(username)})"><i class="fa-solid fa-trash"></i> Удалить чат</div>
+  `;
+  document.body.appendChild(pop);
+  // Закрытие по клику вне
+  setTimeout(() => {
+    document.addEventListener('click', _closeChatActionsOnce, {once: true});
+  }, 50);
+}
+function closeChatActionsMenu(){
+  const p = document.getElementById('chatActionsPopup');
+  if (p) p.remove();
+  document.removeEventListener('click', _closeChatActionsOnce);
+}
+function _closeChatActionsOnce(){ closeChatActionsMenu(); }
+
+// Очистка истории сообщений: удаляет messages + filecache, но оставляет dialog.
+async function clearChatHistory(username){
+  if (!await Dialog.confirm(
+    `Удалить ВСЮ историю переписки с @${username} у себя? Собеседник свои сообщения сохранит.`,
+    { title: 'Очистить историю?', okText: 'Очистить', danger: true }
+  )) return;
+  try {
+    const cnt = await idbDeleteMessagesByPeer(username);
+    // Сбрасываем превью в диалоге
+    const d = dialogs.find(x => x.username === username);
+    if (d) {
+      d.last_text = ''; d.last_at = null; d.last_from_me = false; d.unread = 0;
+      await idbPutDialog(d);
+    }
+    // Чистим активный чат если он был открыт
+    if (activePeer && activePeer.username === username) {
+      // Cleanup blob/audio URL'ов
+      try {
+        for (const m of activeMessages) {
+          if (m && m._imgUrl) { URL.revokeObjectURL(m._imgUrl); m._imgUrl = null; }
+        }
+        if (typeof _voiceAudios !== 'undefined' && _voiceAudios.forEach) {
+          _voiceAudios.forEach(entry => {
+            try { entry && entry.audio && entry.audio.pause(); } catch(_){}
+            if (entry && entry.url) URL.revokeObjectURL(entry.url);
+          });
+          _voiceAudios.clear();
+        }
+      } catch(_) {}
+      activeMessages = [];
+      renderChat();
+    }
+    renderDialogs(document.getElementById('sbSearch').value);
+    showToast(`История очищена (${cnt} сообщ.)`);
+  } catch(e) {
+    showToast('Ошибка: ' + (e.message || e), true);
+  }
+}
+
+// Удалить чат полностью: messages + dialog. Возврат в список.
+async function deleteChatDialog(username){
+  if (!await Dialog.confirm(
+    `Удалить чат с @${username}? Вся история и сам диалог будут удалены у вас локально. Собеседник этого не заметит, а на сервере непрочитанные ваши сообщения всё ещё доставятся ему.`,
+    { title: 'Удалить чат?', okText: 'Удалить', danger: true }
+  )) return;
+  try {
+    await idbDeleteMessagesByPeer(username);
+    await idbDeleteDialog(username);
+    // Уберём из памяти
+    dialogs = dialogs.filter(x => x.username !== username);
+    // Если этот чат был открыт — возврат к списку
+    if (activePeer && activePeer.username === username) {
+      backToList();  // он уже сам renderDialogs сделает
+    } else {
+      renderDialogs(document.getElementById('sbSearch').value);
+    }
+    showToast('Чат удалён');
+  } catch(e) {
+    showToast('Ошибка: ' + (e.message || e), true);
+  }
+}
+
 async function toggleContact(username){
   const btn = document.getElementById('chatContactBtn');
   if (!btn) return;
@@ -2584,6 +2713,7 @@ function renderChat(){
       </div>
       <button class="chat-menu" id="chatContactBtn" onclick="toggleContact(${jsAttr(p.username)})" title="Добавить в контакты"><i class="fa-solid fa-user-plus"></i></button>
       <button class="chat-menu" onclick="openPeerProfile(${jsAttr(p.username)})" title="Профиль"><i class="fa-solid fa-user"></i></button>
+      <button class="chat-menu" onclick="openChatActionsMenu(event,${jsAttr(p.username)})" title="Ещё"><i class="fa-solid fa-ellipsis-vertical"></i></button>
     </div>
     <div class="chat-body" id="chatBody"></div>
     <div id="replyBar"></div>
