@@ -3545,9 +3545,12 @@ function openMsgMenu(ev, sid){
   const menu = document.createElement('div');
   menu.style.cssText = 'background:rgba(15,23,42,0.96);backdrop-filter:blur(10px);border:1px solid var(--border-strong);border-radius:12px;padding:6px;box-shadow:0 12px 32px rgba(0,0,0,0.45);min-width:170px;';
   const items = [{icon:'fa-reply', label:'Ответить', cb:() => startReply(m)}];
-  // Копировать — для любого не-удалённого сообщения с текстом
+  // Копировать — только если есть текст
   if (!m.deleted && (m.text || '').trim()) {
     items.push({icon:'fa-copy', label:'Копировать', cb:() => copyMsgText(m)});
+  }
+  // Переслать — для любого не-удалённого (текст ИЛИ медиа)
+  if (!m.deleted && ((m.text || '').trim() || m.file_payload || m.file)) {
     items.push({icon:'fa-share', label:'Переслать', cb:() => openForwardSheet(sid)});
   }
   if (m.from_me) {
