@@ -3153,14 +3153,71 @@ async function doForwardTo(kind, target){
   const m = activeMessages.find(x => String(x.sid) === String(sid));
   if (!m) return;
   const origAuthor = m.from_me ? me.username : (m.sender_username || (activePeer ? activePeer.username : ''));
-  const text = m.text || '';
-  const payload = { type: 'msg', text, forwarded_from: origAuthor || null };
+
   try {
+    const fp = m.file_payload || m.file;
+    const isMedia = !!(fp && fp.file_id && fp.key && fp.iv);
+    let payload;
+
+    if (isMedia) {
+      // ─── Пересылка медиа (картинка/видео/файл/голосовое) ───
+      // Сервер не отдаёт /file/{id} никому кроме (sender, receiver) → C получит
+      // 403 если просто переадресовать file_id. Нужен decrypt+re-encrypt+re-upload
+      // с новым ключом и для нового получателя.
+      if (kind !== 'dm') {
+        showToast('Пересылка файлов в группы пока не поддержана', true);
+        return;
+      }
+      showToast('Пересылаю файл…');
+      const encOriginal = await fetchEncryptedFile(fp.file_id, fp.mime);
+      if (!encOriginal) throw new Error('Файл недоступен (удалён с сервера и нет локального кэша)');
+      // Decrypt оригинала
+      const oldKey = await crypto.subtle.importKey('raw', b64d(fp.key), {name:'AES-GCM'}, false, ['decrypt']);
+      const plain = await crypto.subtle.decrypt({name:'AES-GCM', iv: b64d(fp.iv)}, oldKey, encOriginal);
+      // Re-encrypt свежим ключом + IV для нового получателя
+      const newKey = await crypto.subtle.generateKey({name:'AES-GCM', length:256}, true, ['encrypt','decrypt']);
+      const newIv = crypto.getRandomValues(new Uint8Array(12));
+      const newCt = await crypto.subtle.encrypt({name:'AES-GCM', iv: newIv}, newKey, plain);
+      const newKeyRaw = await crypto.subtle.exportKey('raw', newKey);
+      // Upload re-encrypted blob с привязкой к новому получателю
+      const form = new FormData();
+      form.append('to_username', target);
+      form.append('blob', new Blob([newCt], {type:'application/octet-stream'}), 'enc');
+      const upRes = await fetch(CHAT_API + '/file/upload', {
+        method: 'POST', headers: {'Authorization': 'Bearer ' + token}, body: form,
+      });
+      if (!upRes.ok) {
+        const t = await upRes.text();
+        let msg = t; try { msg = JSON.parse(t).detail || t; } catch(_){}
+        throw new Error(msg || 'upload failed');
+      }
+      const { file_id: newFileId } = await upRes.json();
+      // Кэшируем у себя (как при обычной отправке)
+      await idbCacheFile(newFileId, newCt, fp.mime).catch(()=>{});
+      payload = {
+        type: fp.voice ? 'voice' : 'file',
+        file_id: newFileId,
+        file_name: fp.file_name || fp.name || (fp.voice ? 'voice' : 'file'),
+        mime: fp.mime || 'application/octet-stream',
+        size: fp.size || 0,
+        key: b64e(newKeyRaw),
+        iv: b64e(newIv),
+        ...(fp.voice ? {voice: true, duration: fp.duration || 0} : {}),
+        forwarded_from: origAuthor || null,
+      };
+    } else {
+      // ─── Пересылка текста ───
+      const text = (m.text || '').trim();
+      if (!text) { showToast('Нечего пересылать (пустое сообщение)', true); return; }
+      payload = { type: 'msg', text, forwarded_from: origAuthor || null };
+    }
+
+    // ─── Отправка адресату ───
     if (kind === 'dm') {
       const ct = await encryptForPeer(target, payload);
       await chat('/send', 'POST', { to_username: target, ciphertext: ct });
     } else {
-      // group: загружаем участников если активная не та
+      // group: только для текста (см. ранее)
       const g = groups.find(x => x.id === target);
       if (!g) return showToast('Группа не найдена', true);
       const info = await chat(`/group/${target}`);
@@ -3170,7 +3227,10 @@ async function doForwardTo(kind, target){
       setTimeout(() => _myGroupSharedKeys.delete(r.id), 60000);
     }
     showToast('Переслано');
-  } catch(e) { showToast(e.message || 'Не удалось переслать', true); }
+  } catch(e) {
+    console.error('[forward]', e);
+    showToast(e.message || 'Не удалось переслать', true);
+  }
 }
 
 // ── Emoji-палитра ──
