@@ -502,6 +502,10 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
       <input class="auth-input" id="regName" placeholder="Отображаемое имя" autocomplete="name">
       <input class="auth-input" id="regPassword" type="password" placeholder="Пароль (мин 8)" autocomplete="new-password">
       <input class="auth-input" id="regPasswordConfirm" type="password" placeholder="Повторите пароль" autocomplete="new-password">
+      <label style="display:flex;align-items:flex-start;gap:8px;margin:12px 2px 4px;font-size:13px;color:var(--sub);cursor:pointer;line-height:1.5;">
+        <input type="checkbox" id="regAge18" style="margin-top:3px;width:16px;height:16px;accent-color:var(--primary);cursor:pointer;flex-shrink:0;">
+        <span>Подтверждаю, что мне исполнилось <b>18 лет</b>, и согласен с <a href="/terms" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;">условиями пользования</a> и <a href="/privacy" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;">политикой приватности</a></span>
+      </label>
       <button class="auth-btn" id="regBtn" onclick="doRegister()">Зарегистрироваться</button>
       <div class="auth-error" id="regError"></div>
       <p style="font-size:11px;color:var(--sub);text-align:center;margin-top:14px;line-height:1.55;">
@@ -1347,14 +1351,16 @@ async function doRegister(){
   const n=document.getElementById('regName').value.trim();
   const p=document.getElementById('regPassword').value;
   const c=document.getElementById('regPasswordConfirm').value;
+  const age18 = !!document.getElementById('regAge18').checked;
   err.textContent='';if(!u||!n||!p||!c){err.textContent='Заполните все поля';return;}
   if(p!==c){err.textContent='Пароли не совпадают';return;}
+  if(!age18){err.textContent='Подтвердите, что вам исполнилось 18 лет';return;}
   btn.disabled=true;btn.textContent='...';
   // Реф: сначала из URL, потом из localStorage (лендинг мог сохранить)
   let ref = (new URLSearchParams(location.search)).get('ref') || localStorage.getItem('gs_ref') || null;
   if (ref) ref = ref.trim().replace(/^@/, '').toLowerCase();
   try{
-    const d=await soc('/register','POST',{username:u,display_name:n,password:p,ref:ref||undefined});
+    const d=await soc('/register','POST',{username:u,display_name:n,password:p,ref:ref||undefined,age_18_confirm:age18});
     if (ref) localStorage.removeItem('gs_ref');
     token=d.token;me=d;
     localStorage.setItem('gs_token',token);localStorage.setItem('gs_me',JSON.stringify(me));setSsoCookie(token);
