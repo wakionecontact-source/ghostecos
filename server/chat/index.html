@@ -3128,7 +3128,7 @@ function openForwardSheet(sid){
   // DM-диалоги + группы (кроме текущего чата)
   const dItems = dialogs
     .filter(d => !(activePeer && activePeer.username === d.username))
-    .map(d => `<div class="dialog" onclick="doForwardTo('dm', ${JSON.stringify(d.username)})">
+    .map(d => `<div class="dialog" onclick="doForwardTo('dm', ${jsAttr(d.username)})">
       <div class="d-av">${ini(d.display_name||d.username)}</div>
       <div class="d-body"><div class="d-row1"><div class="d-name">${esc(d.display_name||d.username)}</div></div></div>
     </div>`);

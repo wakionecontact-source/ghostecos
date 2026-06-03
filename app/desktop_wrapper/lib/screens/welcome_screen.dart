@@ -27,8 +27,8 @@ class _Slide {
 const _slides = [
   _Slide(
     icon: Icons.lock_outline,
-    title: 'GhostEcos',
-    body: 'Приватная экосистема. Один аккаунт — мессенджер, соцсеть, банк и игра.',
+    title: 'Ghost',
+    body: 'Приватная экосистема. Один аккаунт — мессенджер, соцсеть и банк.',
     accent: GE.primary,
   ),
   _Slide(
@@ -40,13 +40,13 @@ const _slides = [
   _Slide(
     icon: Icons.currency_bitcoin,
     title: 'Своя экономика',
-    body: 'Gost / Soul / Prem — игровые валюты. Зарабатывай активностью, торгуй NFT, покупай у других.',
+    body: 'Gost / Soul / Prem — три валюты. Зарабатывай активностью, торгуй NFT, покупай у других.',
     accent: GE.yellow,
   ),
   _Slide(
-    icon: Icons.public,
-    title: 'Своя страна на карте',
-    body: 'GhostNation — строй государство на реальной спутниковой карте. Уникально, нигде больше нет.',
+    icon: Icons.forum_outlined,
+    title: 'Своя лента',
+    body: 'Посты, реакции, репосты, миниска. Без рекламы, без алгоритмов, без слежки.',
     accent: GE.red,
   ),
 ];

@@ -23,7 +23,7 @@ dependencies:
   sqflite: ^2.4.0                  # SQL DB для сообщений / диалогов / кэша
   sqflite_common_ffi: ^2.3.3       # для десктопа
   path_provider: ^2.1.5            # пути к app dir
-  flutter_secure_storage: ^9.2.2   # для приват-ключа и токена
+  flutter_secure_storage: ^10.3.1   # для приват-ключа и токена
   shared_preferences: ^2.3.3       # для не-секретных настроек (тема, иконка)
 
   # ─── State management ───
@@ -31,25 +31,26 @@ dependencies:
 
   # ─── UI ───
   flutter_svg: ^2.0.10             # SVG для иконок и NFT
-  font_awesome_flutter: ^10.7.0    # иконки в стиле сайта
+  font_awesome_flutter: ^11.0.0    # иконки в стиле сайта
   flutter_markdown: ^0.7.4         # для рендера markdown
-  image_picker: ^1.1.2             # выбор фото/видео
-  file_picker: ^8.1.4              # выбор файлов
+  # image_picker / file_picker — отложены до M5 (вернутся вместе с attach UI)
+  # image_picker: ^1.1.2
+  # file_picker: ^11.0.2
   # cached_network_image: ^3.4.1   # disabled пока system_tray есть (uuid conflict), вернём в M5
   intl: ^0.20.1                    # форматирование дат
   url_launcher: ^6.3.1             # внешние ссылки
 
-  # ─── Голосовые ───
-  record: ^5.2.0                   # запись аудио
-  audioplayers: ^6.1.0             # воспроизведение
+  # ─── Голосовые ─── (отложено до M5, вернуть когда нужно)
+  # record: ^5.2.0
+  # audioplayers: ^6.1.0
 
   # ─── Уведомления + системные ───
-  flutter_local_notifications: ^17.2.4
-  package_info_plus: ^8.1.0
+  flutter_local_notifications: ^18.0.1
+  package_info_plus: ^8.1.4         # 9.x ломает компиляцию package_info_plus android
 
   # ─── Desktop only ───
-  window_manager: ^0.4.3
-  tray_manager: ^0.3.1             # совместим с современным uuid ^4.x
+  window_manager: ^0.5.1
+  tray_manager: ^0.5.2             # совместим с современным uuid ^4.x
   launch_at_startup: ^0.5.1
 
   # ─── WebView (легаси, оставлено пока MainShell не переписан в native — M4) ───
