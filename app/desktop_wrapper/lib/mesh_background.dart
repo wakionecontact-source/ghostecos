@@ -4,9 +4,10 @@ import 'package:flutter/material.dart';
 import 'theme.dart';
 
 class MeshBackground extends StatefulWidget {
-  final Widget child;
+  /// Дочерний виджет — необязательный. Без него работает как fullscreen фон.
+  final Widget? child;
   final int particleCount;
-  const MeshBackground({super.key, required this.child, this.particleCount = 40});
+  const MeshBackground({super.key, this.child, this.particleCount = 40});
   @override
   State<MeshBackground> createState() => _MeshBackgroundState();
 }
@@ -86,7 +87,7 @@ class _MeshBackgroundState extends State<MeshBackground>
               },
             );
           }),
-          widget.child,
+          if (widget.child != null) widget.child!,
         ],
       ),
     );

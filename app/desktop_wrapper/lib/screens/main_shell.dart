@@ -1,28 +1,29 @@
-// MainShell — native sidebar + контент-зона (WebView пока для каждого раздела).
+// MainShell — главный экран после логина.
+// Mobile: BottomNavigationBar снизу.
+// Desktop: NavigationRail слева, контент справа.
+// 4 таба: Чат / Лента / Банк / Профиль.
+//
+// Каждый экран — native, без WebView. Заглушки пока (M5-M7 их наполнят).
+
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../theme.dart';
-import '../auth_service.dart';
-import '../platform_webview.dart';
+import '../services/auth_service.dart';
+import '../services/db_service.dart';
+import '../services/crypto_service.dart';
+import '../services/ws_client.dart';
+import '../widgets/glass.dart';
 
-enum Section { chat, feed, bank }
+enum Section {
+  chat(label: 'Чаты', iconOutline: Icons.chat_bubble_outline, iconFilled: Icons.chat_bubble),
+  feed(label: 'Лента', iconOutline: Icons.dynamic_feed_outlined, iconFilled: Icons.dynamic_feed),
+  bank(label: 'Банк', iconOutline: Icons.account_balance_wallet_outlined, iconFilled: Icons.account_balance_wallet),
+  profile(label: 'Профиль', iconOutline: Icons.person_outline, iconFilled: Icons.person);
 
-extension SectionInfo on Section {
-  String get label => {
-    Section.chat: 'Чат',
-    Section.feed: 'Лента',
-    Section.bank: 'Банк',
-  }[this]!;
-  IconData get icon => {
-    Section.chat: Icons.chat_bubble_outline,
-    Section.feed: Icons.dynamic_feed_outlined,
-    Section.bank: Icons.account_balance_wallet_outlined,
-  }[this]!;
-  String get path => {
-    Section.chat: '/chat/',
-    Section.feed: '/social',
-    Section.bank: '/bank/',
-  }[this]!;
+  final String label;
+  final IconData iconOutline;
+  final IconData iconFilled;
+  const Section({required this.label, required this.iconOutline, required this.iconFilled});
 }
 
 class MainShell extends StatefulWidget {
@@ -34,122 +35,227 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   Section _section = Section.chat;
+  bool _bootstrapped = false;
   String? _username;
   String? _displayName;
-  String? _token;
-  bool _loaded = false;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _loadMe();
+    _bootstrap();
   }
 
-  Future<void> _loadMe() async {
-    final t = await AuthService.token();
-    final u = await AuthService.username();
-    final d = await AuthService.displayName();
-    setState(() {
-      _token = t; _username = u; _displayName = d; _loaded = true;
-    });
-  }
+  /// Стартовая инициализация после успешного логина:
+  /// 1. Загрузить юзера из AuthService.
+  /// 2. Открыть БД для этого юзера.
+  /// 3. Сгенерить/загрузить E2E ключи.
+  /// 4. Подключить WebSocket.
+  Future<void> _bootstrap() async {
+    try {
+      final u = await AuthService.username();
+      final dn = await AuthService.displayName();
+      if (u == null) throw Exception('Нет username');
+      _username = u;
+      _displayName = dn ?? u;
 
-  String _injectScript() {
-    if (_token == null) return '';
-    final esc = _token!.replaceAll("'", r"\'");
-    final u = (_username ?? '').replaceAll("'", r"\'");
-    final dn = (_displayName ?? _username ?? '').replaceAll("'", r"\'");
-    return '''
-      try {
-        localStorage.setItem('gs_token', '$esc');
-        localStorage.setItem('gs_me', JSON.stringify({
-          username: '$u', display_name: '$dn'
-        }));
-        document.cookie = 'gs_token=$esc; path=/; SameSite=Lax; Secure';
-      } catch(e) {}
-    ''';
-  }
+      await DbService.instance.init(u);
+      await CryptoService.instance.ensureKeys();
+      WsClient.instance.connect();
 
-  void _switch(Section s) => setState(() => _section = s);
+      if (mounted) setState(() => _bootstrapped = true);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    }
+  }
 
   Future<void> _logout() async {
+    await WsClient.instance.disconnect();
+    await DbService.instance.close();
+    await CryptoService.instance.wipe();
     await AuthService.logout();
     widget.onLoggedOut();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!_loaded) {
+    if (_error != null) {
+      return Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: GlassCard(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.error_outline, size: 48, color: GE.red),
+                  const SizedBox(height: 12),
+                  Text('Не удалось запустить:\n$_error',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: GE.text)),
+                  const SizedBox(height: 16),
+                  GlassButton(label: 'Выйти', danger: true, onTap: _logout),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    if (!_bootstrapped) {
       return const Scaffold(
-        backgroundColor: GE.bg,
+        backgroundColor: Colors.transparent,
         body: Center(child: CircularProgressIndicator(color: GE.primary)),
       );
     }
-    // Mobile (Android) — bottom-tabbar. Desktop — sidebar.
-    final isMobile = Platform.isAndroid || Platform.isIOS;
+    final isWide = MediaQuery.of(context).size.width >= 720;
     return Scaffold(
-      backgroundColor: GE.bg,
-      body: isMobile
-          ? _mobileBody()
-          : Row(children: [
-              _Sidebar(
-                current: _section,
-                username: _username ?? '?',
-                displayName: _displayName ?? _username ?? '?',
-                onSwitch: _switch,
-                onLogout: _logout,
-              ),
-              Expanded(child: _content()),
-            ]),
-      bottomNavigationBar: isMobile
-          ? BottomNavigationBar(
-              backgroundColor: GE.bgDeep,
-              selectedItemColor: GE.primary,
-              unselectedItemColor: GE.sub,
-              currentIndex: _section.index,
-              onTap: (i) => _switch(Section.values[i]),
-              type: BottomNavigationBarType.fixed,
-              items: [
-                for (final s in Section.values)
-                  BottomNavigationBarItem(icon: Icon(s.icon), label: s.label),
-              ],
-            )
-          : null,
+      backgroundColor: Colors.transparent,
+      body: isWide ? _wideLayout() : _mobileLayout(),
     );
   }
 
-  Widget _mobileBody() {
-    return SafeArea(child: _content());
+  // ─── Layout: mobile (≤720) ─────────────────────────────────────────
+  Widget _mobileLayout() {
+    return Column(
+      children: [
+        Expanded(child: _sectionBody()),
+        _GlassBottomNav(
+          current: _section,
+          onTap: (s) => setState(() => _section = s),
+        ),
+      ],
+    );
   }
 
-  Widget _content() {
-    // Каждый раздел перерисовывается отдельным WebView, KeyedSubtree сохраняет state
-    return IndexedStack(
-      index: _section.index,
+  // ─── Layout: desktop/tablet (>720) ─────────────────────────────────
+  Widget _wideLayout() {
+    return Row(
       children: [
-        for (final s in Section.values)
-          KeyedSubtree(
-            key: ValueKey(s),
-            child: GeWebView(
-              url: '${GE.baseUrl}${s.path}',
-              injectScript: _injectScript(),
-            ),
-          ),
+        _SideRail(
+          current: _section,
+          onTap: (s) => setState(() => _section = s),
+          username: _username ?? '?',
+          displayName: _displayName ?? _username ?? '?',
+          onLogout: _logout,
+        ),
+        Expanded(child: _sectionBody()),
       ],
+    );
+  }
+
+  Widget _sectionBody() {
+    // Пока заглушки. M5-M7 их наполнят.
+    switch (_section) {
+      case Section.chat:
+        return _placeholder(Icons.chat_bubble_outline, 'Чаты',
+            'Сюда придёт нативный список диалогов и групп (M5).');
+      case Section.feed:
+        return _placeholder(Icons.dynamic_feed_outlined, 'Лента',
+            'Сюда придёт нативная лента GhostSocial (M6).');
+      case Section.bank:
+        return _placeholder(Icons.account_balance_wallet_outlined, 'Банк',
+            'Сюда придёт нативный кошелёк Gost/Soul/Prem + NFT (M7).');
+      case Section.profile:
+        return _ProfilePane(
+          username: _username ?? '?',
+          displayName: _displayName ?? '?',
+          onLogout: _logout,
+        );
+    }
+  }
+
+  Widget _placeholder(IconData icon, String title, String body) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: GlassCard(
+          padding: const EdgeInsets.all(28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 56, color: GE.primary.withValues(alpha: 0.7)),
+              const SizedBox(height: 14),
+              Text(title,
+                  style: const TextStyle(
+                      color: GE.text, fontSize: 22, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 10),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 320),
+                child: Text(body,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: GE.sub, fontSize: 13, height: 1.45)),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
 
-class _Sidebar extends StatelessWidget {
+// ── Bottom-nav в glass-стиле ───────────────────────────────────────────
+class _GlassBottomNav extends StatelessWidget {
   final Section current;
+  final ValueChanged<Section> onTap;
+  const _GlassBottomNav({required this.current, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    return GlassCard(
+      padding: EdgeInsets.fromLTRB(8, 8, 8, 8 + bottomInset),
+      radius: 0,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          for (final s in Section.values) _navItem(s),
+        ],
+      ),
+    );
+  }
+
+  Widget _navItem(Section s) {
+    final active = s == current;
+    return Expanded(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(GE.radiusSm),
+        onTap: () => onTap(s),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(active ? s.iconFilled : s.iconOutline,
+                  size: 22, color: active ? GE.primary : GE.sub),
+              const SizedBox(height: 4),
+              Text(s.label,
+                  style: TextStyle(
+                    color: active ? GE.primary : GE.sub,
+                    fontSize: 11,
+                    fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                  )),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Боковой Rail для десктопа ──────────────────────────────────────────
+class _SideRail extends StatelessWidget {
+  final Section current;
+  final ValueChanged<Section> onTap;
   final String username, displayName;
-  final ValueChanged<Section> onSwitch;
   final VoidCallback onLogout;
-  const _Sidebar({
+  const _SideRail({
     required this.current,
+    required this.onTap,
     required this.username,
     required this.displayName,
-    required this.onSwitch,
     required this.onLogout,
   });
 
@@ -157,12 +263,13 @@ class _Sidebar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: 220,
-      decoration: BoxDecoration(
-        color: GE.bgDeep,
-        border: Border(right: BorderSide(color: GE.border)),
+      decoration: const BoxDecoration(
+        color: GE.glassFill,
+        border: Border(right: BorderSide(color: GE.glassBorder, width: 1)),
       ),
       child: Column(
         children: [
+          // Brand-header
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
             child: ShaderMask(
@@ -170,29 +277,23 @@ class _Sidebar extends StatelessWidget {
                 colors: [Colors.white, GE.primary],
               ).createShader(b),
               child: const Text(
-                'GhostEcos',
+                'Ghost',
                 style: TextStyle(
-                  fontSize: 20, fontWeight: FontWeight.w800,
+                  fontSize: 22, fontWeight: FontWeight.w800,
                   color: Colors.white, letterSpacing: 0.5,
                 ),
               ),
             ),
           ),
-          const Divider(color: GE.border, height: 1),
+          const Divider(color: GE.glassBorder, height: 1),
           const SizedBox(height: 8),
-          for (final s in Section.values)
-            _NavItem(
-              section: s,
-              active: s == current,
-              onTap: () => onSwitch(s),
-            ),
+          for (final s in Section.values) _RailItem(s, s == current, () => onTap(s)),
           const Spacer(),
-          const Divider(color: GE.border, height: 1),
-          // User card
+          const Divider(color: GE.glassBorder, height: 1),
           InkWell(
             onTap: onLogout,
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(14),
               child: Row(
                 children: [
                   Container(
@@ -215,14 +316,12 @@ class _Sidebar extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(displayName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1, overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                                color: GE.text, fontSize: 13,
-                                fontWeight: FontWeight.w600)),
+                              color: GE.text, fontSize: 13, fontWeight: FontWeight.w600,
+                            )),
                         Text('@$username',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1, overflow: TextOverflow.ellipsis,
                             style: const TextStyle(color: GE.sub, fontSize: 11)),
                       ],
                     ),
@@ -238,11 +337,11 @@ class _Sidebar extends StatelessWidget {
   }
 }
 
-class _NavItem extends StatelessWidget {
+class _RailItem extends StatelessWidget {
   final Section section;
   final bool active;
   final VoidCallback onTap;
-  const _NavItem({required this.section, required this.active, required this.onTap});
+  const _RailItem(this.section, this.active, this.onTap);
   @override
   Widget build(BuildContext context) {
     return InkWell(
@@ -251,15 +350,13 @@ class _NavItem extends StatelessWidget {
         margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: active ? GE.primary.withValues(alpha: 0.12) : Colors.transparent,
-          borderRadius: BorderRadius.circular(10),
-          border: active
-              ? Border.all(color: GE.primary.withValues(alpha: 0.30))
-              : null,
+          color: active ? GE.primary.withValues(alpha: 0.15) : Colors.transparent,
+          borderRadius: BorderRadius.circular(GE.radiusSm),
+          border: active ? Border.all(color: GE.primary.withValues(alpha: 0.30)) : null,
         ),
         child: Row(
           children: [
-            Icon(section.icon,
+            Icon(active ? section.iconFilled : section.iconOutline,
                 size: 18, color: active ? GE.primary : GE.sub),
             const SizedBox(width: 12),
             Text(section.label,
@@ -271,6 +368,120 @@ class _NavItem extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ── Профиль (минимальный — будет наполняться в M5+) ───────────────────
+class _ProfilePane extends StatelessWidget {
+  final String username, displayName;
+  final VoidCallback onLogout;
+  const _ProfilePane({
+    required this.username,
+    required this.displayName,
+    required this.onLogout,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          GlassCard(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Container(
+                  width: 56, height: 56,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(colors: [GE.primary, GE.primary2]),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
+                    style: const TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.w800, fontSize: 22),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(displayName,
+                          style: const TextStyle(
+                              color: GE.text, fontSize: 18, fontWeight: FontWeight.w700)),
+                      Text('@$username',
+                          style: const TextStyle(color: GE.sub, fontSize: 13)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          GlassCard(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Column(
+              children: [
+                _profileRow(Icons.settings_outlined, 'Настройки',
+                    onTap: () => _todo(context, 'Настройки придут в M8')),
+                _profileRow(Icons.shield_outlined, 'Безопасность',
+                    onTap: () => _todo(context, 'Код-пароль и паник-пароль в M8')),
+                _profileRow(Icons.palette_outlined, 'Внешний вид',
+                    onTap: () => _todo(context, 'Темы и иконки в M8')),
+                _profileRow(Icons.terminal_outlined, 'Логи',
+                    onTap: () => _todo(context, 'Просмотрщик логов в M8')),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          GlassButton(
+            label: 'Выйти из аккаунта',
+            icon: Icons.logout,
+            danger: true,
+            fullWidth: true,
+            onTap: onLogout,
+          ),
+          const Spacer(),
+          Center(
+            child: Text(
+              '${GE.appName} · v0.2.0 · ${Platform.operatingSystem}',
+              style: const TextStyle(color: GE.muted, fontSize: 11),
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  Widget _profileRow(IconData icon, String label, {VoidCallback? onTap}) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: GE.primary),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(label,
+                  style: const TextStyle(color: GE.text, fontSize: 14, fontWeight: FontWeight.w500)),
+            ),
+            const Icon(Icons.chevron_right, color: GE.sub, size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _todo(BuildContext context, String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
     );
   }
 }

@@ -53,11 +53,7 @@ dependencies:
   tray_manager: ^0.5.2             # совместим с современным uuid ^4.x
   launch_at_startup: ^0.5.1
 
-  # ─── WebView (легаси, оставлено пока MainShell не переписан в native — M4) ───
-  webview_windows: ^0.4.0
-  webview_flutter: ^4.10.0
-  webview_flutter_android: ^4.1.0
-  system_tray: ^2.0.3              # легаси, заменим на tray_manager в M4
+  # WebView и system_tray больше не используются — MainShell нативный (M4).
 
   # ─── HTTP (для совместимости со старым кодом) ───
   http: ^1.2.2

@@ -1,27 +1,30 @@
-// GhostEcos Desktop — единое приложение со всеми разделами.
-// Welcome (первый запуск) → Auth → MainShell (sidebar + WebView секции).
+// Ghost — единое native приложение. Mesh-фон сквозной + glass-карточки.
+//
+// Архитектура: welcome → auth → main_shell с табами (Чат / Лента / Банк /
+// Профиль). Никаких WebView. Cross-platform: Android, iOS, Windows, Linux,
+// macOS из одного кода.
+
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:window_manager/window_manager.dart';
-import 'package:system_tray/system_tray.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:launch_at_startup/launch_at_startup.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'theme.dart';
-import 'auth_service.dart';
+import 'mesh_background.dart';
+import 'services/auth_service.dart';
 import 'screens/welcome_screen.dart';
 import 'screens/auth_screen.dart';
 import 'screens/main_shell.dart';
 
+// Desktop-only imports — на мобиле не подключатся (Platform-guard).
+import 'package:window_manager/window_manager.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Desktop-only init (window manager — нет смысла на мобильных)
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
     await windowManager.ensureInitialized();
     await windowManager.waitUntilReadyToShow(
       const WindowOptions(
         size: Size(1200, 780),
-        minimumSize: Size(720, 520),
+        minimumSize: Size(380, 600),
         backgroundColor: GE.bg,
         titleBarStyle: TitleBarStyle.normal,
         title: GE.appName,
@@ -32,21 +35,39 @@ void main() async {
       },
     );
   }
-  runApp(const GhostEcosApp());
+  runApp(const GhostApp());
 }
 
-class GhostEcosApp extends StatelessWidget {
-  const GhostEcosApp({super.key});
+class GhostApp extends StatelessWidget {
+  const GhostApp({super.key});
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: GE.appName,
       debugShowCheckedModeBanner: false,
       theme: GE.theme(),
-      home: const _Router(),
+      home: const _Root(),
     );
   }
 }
+
+/// Root-виджет: mesh-фон + Router.
+class _Root extends StatelessWidget {
+  const _Root();
+  @override
+  Widget build(BuildContext context) {
+    // Mesh-фон под всем приложением — стекло «плавает» поверх.
+    return Stack(
+      children: const [
+        Positioned.fill(child: ColoredBox(color: GE.bg)),
+        Positioned.fill(child: MeshBackground()),
+        Positioned.fill(child: _Router()),
+      ],
+    );
+  }
+}
+
+enum _Stage { loading, welcome, auth, app }
 
 class _Router extends StatefulWidget {
   const _Router();
@@ -54,24 +75,12 @@ class _Router extends StatefulWidget {
   State<_Router> createState() => _RouterState();
 }
 
-enum _Stage { loading, welcome, auth, app }
-
-class _RouterState extends State<_Router> with WindowListener {
+class _RouterState extends State<_Router> {
   _Stage _stage = _Stage.loading;
-  final SystemTray _tray = SystemTray();
-  bool _trayReady = false;
-  bool _minimizeToTray = true;
-  bool get _isDesktop =>
-      Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
   @override
   void initState() {
     super.initState();
-    if (_isDesktop) {
-      windowManager.addListener(this);
-      _initTray();
-      _initAutostart();
-    }
     _initStage();
   }
 
@@ -79,6 +88,7 @@ class _RouterState extends State<_Router> with WindowListener {
     final prefs = await SharedPreferences.getInstance();
     final welcomeDone = prefs.getBool('welcome_done') ?? false;
     final token = await AuthService.token();
+    if (!mounted) return;
     setState(() {
       if (!welcomeDone) {
         _stage = _Stage.welcome;
@@ -90,76 +100,12 @@ class _RouterState extends State<_Router> with WindowListener {
     });
   }
 
-  Future<void> _initTray() async {
-    try {
-      await _tray.initSystemTray(
-        title: GE.appName,
-        iconPath: 'assets/icon.ico',
-        toolTip: GE.appName,
-      );
-      final menu = Menu();
-      await menu.buildFrom([
-        MenuItemLabel(label: 'Открыть', onClicked: (_) async {
-          await windowManager.show(); await windowManager.focus();
-        }),
-        MenuSeparator(),
-        MenuItemCheckbox(
-          label: 'Сворачивать в трей при закрытии',
-          checked: _minimizeToTray,
-          onClicked: (item) {
-            setState(() => _minimizeToTray = !_minimizeToTray);
-            item.setCheck(_minimizeToTray);
-          },
-        ),
-        MenuSeparator(),
-        MenuItemLabel(label: 'Выйти', onClicked: (_) async {
-          await windowManager.destroy();
-        }),
-      ]);
-      await _tray.setContextMenu(menu);
-      _tray.registerSystemTrayEventHandler((ev) async {
-        if (ev == kSystemTrayEventClick) {
-          await windowManager.show(); await windowManager.focus();
-        } else if (ev == kSystemTrayEventRightClick) {
-          await _tray.popUpContextMenu();
-        }
-      });
-      _trayReady = true;
-    } catch (_) {}
-  }
-
-  Future<void> _initAutostart() async {
-    try {
-      final pkg = await PackageInfo.fromPlatform();
-      launchAtStartup.setup(
-        appName: GE.appName,
-        appPath: Platform.resolvedExecutable,
-        packageName: pkg.packageName,
-      );
-    } catch (_) {}
-  }
-
-  @override
-  void onWindowClose() async {
-    if (!_isDesktop) return;
-    if (_minimizeToTray && _trayReady) {
-      await windowManager.hide();
-    } else {
-      await windowManager.destroy();
-    }
-  }
-
-  @override
-  void dispose() {
-    if (_isDesktop) windowManager.removeListener(this);
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     switch (_stage) {
       case _Stage.loading:
         return const Scaffold(
+          backgroundColor: Colors.transparent,
           body: Center(child: CircularProgressIndicator(color: GE.primary)),
         );
       case _Stage.welcome:
