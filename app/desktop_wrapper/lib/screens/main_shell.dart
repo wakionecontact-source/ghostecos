@@ -13,6 +13,10 @@ import '../services/db_service.dart';
 import '../services/crypto_service.dart';
 import '../services/ws_client.dart';
 import '../widgets/glass.dart';
+import 'settings_screen.dart';
+import 'chat_list_screen.dart';
+import 'feed_screen.dart';
+import 'wallet_screen.dart';
 
 enum Section {
   chat(label: 'Чаты', iconOutline: Icons.chat_bubble_outline, iconFilled: Icons.chat_bubble),
@@ -90,11 +94,11 @@ class _MainShellState extends State<MainShell> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.error_outline, size: 48, color: GE.red),
+                  Icon(Icons.error_outline, size: 48, color: GE.red),
                   const SizedBox(height: 12),
                   Text('Не удалось запустить:\n$_error',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: GE.text)),
+                      style: TextStyle(color: GE.text)),
                   const SizedBox(height: 16),
                   GlassButton(label: 'Выйти', danger: true, onTap: _logout),
                 ],
@@ -105,7 +109,7 @@ class _MainShellState extends State<MainShell> {
       );
     }
     if (!_bootstrapped) {
-      return const Scaffold(
+      return Scaffold(
         backgroundColor: Colors.transparent,
         body: Center(child: CircularProgressIndicator(color: GE.primary)),
       );
@@ -150,14 +154,11 @@ class _MainShellState extends State<MainShell> {
     // Пока заглушки. M5-M7 их наполнят.
     switch (_section) {
       case Section.chat:
-        return _placeholder(Icons.chat_bubble_outline, 'Чаты',
-            'Сюда придёт нативный список диалогов и групп (M5).');
+        return const ChatListScreen();
       case Section.feed:
-        return _placeholder(Icons.dynamic_feed_outlined, 'Лента',
-            'Сюда придёт нативная лента GhostSocial (M6).');
+        return const FeedScreen();
       case Section.bank:
-        return _placeholder(Icons.account_balance_wallet_outlined, 'Банк',
-            'Сюда придёт нативный кошелёк Gost/Soul/Prem + NFT (M7).');
+        return const WalletScreen();
       case Section.profile:
         return _ProfilePane(
           username: _username ?? '?',
@@ -179,14 +180,14 @@ class _MainShellState extends State<MainShell> {
               Icon(icon, size: 56, color: GE.primary.withValues(alpha: 0.7)),
               const SizedBox(height: 14),
               Text(title,
-                  style: const TextStyle(
+                  style: TextStyle(
                       color: GE.text, fontSize: 22, fontWeight: FontWeight.w800)),
               const SizedBox(height: 10),
               ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 320),
                 child: Text(body,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(color: GE.sub, fontSize: 13, height: 1.45)),
+                    style: TextStyle(color: GE.sub, fontSize: 13, height: 1.45)),
               ),
             ],
           ),
@@ -263,7 +264,7 @@ class _SideRail extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: 220,
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: GE.glassFill,
         border: Border(right: BorderSide(color: GE.glassBorder, width: 1)),
       ),
@@ -273,7 +274,7 @@ class _SideRail extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
             child: ShaderMask(
-              shaderCallback: (b) => const LinearGradient(
+              shaderCallback: (b) => LinearGradient(
                 colors: [Colors.white, GE.primary],
               ).createShader(b),
               child: const Text(
@@ -285,11 +286,11 @@ class _SideRail extends StatelessWidget {
               ),
             ),
           ),
-          const Divider(color: GE.glassBorder, height: 1),
+          Divider(color: GE.glassBorder, height: 1),
           const SizedBox(height: 8),
           for (final s in Section.values) _RailItem(s, s == current, () => onTap(s)),
           const Spacer(),
-          const Divider(color: GE.glassBorder, height: 1),
+          Divider(color: GE.glassBorder, height: 1),
           InkWell(
             onTap: onLogout,
             child: Padding(
@@ -298,7 +299,7 @@ class _SideRail extends StatelessWidget {
                 children: [
                   Container(
                     width: 36, height: 36,
-                    decoration: const BoxDecoration(
+                    decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       gradient: LinearGradient(colors: [GE.primary, GE.primary2]),
                     ),
@@ -317,16 +318,16 @@ class _SideRail extends StatelessWidget {
                       children: [
                         Text(displayName,
                             maxLines: 1, overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: GE.text, fontSize: 13, fontWeight: FontWeight.w600,
                             )),
                         Text('@$username',
                             maxLines: 1, overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: GE.sub, fontSize: 11)),
+                            style: TextStyle(color: GE.sub, fontSize: 11)),
                       ],
                     ),
                   ),
-                  const Icon(Icons.logout, color: GE.sub, size: 16),
+                  Icon(Icons.logout, color: GE.sub, size: 16),
                 ],
               ),
             ),
@@ -395,7 +396,7 @@ class _ProfilePane extends StatelessWidget {
               children: [
                 Container(
                   width: 56, height: 56,
-                  decoration: const BoxDecoration(
+                  decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     gradient: LinearGradient(colors: [GE.primary, GE.primary2]),
                   ),
@@ -412,10 +413,10 @@ class _ProfilePane extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(displayName,
-                          style: const TextStyle(
+                          style: TextStyle(
                               color: GE.text, fontSize: 18, fontWeight: FontWeight.w700)),
                       Text('@$username',
-                          style: const TextStyle(color: GE.sub, fontSize: 13)),
+                          style: TextStyle(color: GE.sub, fontSize: 13)),
                     ],
                   ),
                 ),
@@ -428,11 +429,17 @@ class _ProfilePane extends StatelessWidget {
             child: Column(
               children: [
                 _profileRow(Icons.settings_outlined, 'Настройки',
-                    onTap: () => _todo(context, 'Настройки придут в M8')),
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => const SettingsScreen(),
+                        ))),
+                _profileRow(Icons.palette_outlined, 'Темы интерфейса',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => const SettingsScreen(),
+                        ))),
                 _profileRow(Icons.shield_outlined, 'Безопасность',
-                    onTap: () => _todo(context, 'Код-пароль и паник-пароль в M8')),
-                _profileRow(Icons.palette_outlined, 'Внешний вид',
-                    onTap: () => _todo(context, 'Темы и иконки в M8')),
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => const SettingsScreen(),
+                        ))),
                 _profileRow(Icons.terminal_outlined, 'Логи',
                     onTap: () => _todo(context, 'Просмотрщик логов в M8')),
               ],
@@ -450,7 +457,7 @@ class _ProfilePane extends StatelessWidget {
           Center(
             child: Text(
               '${GE.appName} · v0.2.0 · ${Platform.operatingSystem}',
-              style: const TextStyle(color: GE.muted, fontSize: 11),
+              style: TextStyle(color: GE.muted, fontSize: 11),
             ),
           ),
           const SizedBox(height: 8),
@@ -470,9 +477,9 @@ class _ProfilePane extends StatelessWidget {
             const SizedBox(width: 14),
             Expanded(
               child: Text(label,
-                  style: const TextStyle(color: GE.text, fontSize: 14, fontWeight: FontWeight.w500)),
+                  style: TextStyle(color: GE.text, fontSize: 14, fontWeight: FontWeight.w500)),
             ),
-            const Icon(Icons.chevron_right, color: GE.sub, size: 18),
+            Icon(Icons.chevron_right, color: GE.sub, size: 18),
           ],
         ),
       ),

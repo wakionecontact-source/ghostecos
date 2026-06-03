@@ -16,12 +16,16 @@ dependencies:
   web_socket_channel: ^3.0.0       # WebSocket для real-time
 
   # ─── Crypto (E2E совместимо с WebCrypto API на web-фронте) ───
-  cryptography: ^2.7.0             # ECDH P-256, HKDF-SHA256, AES-GCM, Ed25519
+  # pointycastle — pure Dart, поддерживает ECDH P-256 / HKDF-SHA256 /
+  # AES-GCM. Никаких native bindings → строится на любой compileSdk.
+  pointycastle: ^4.0.0
   convert: ^3.1.1                  # hex/base64
+  asn1lib: ^1.5.3                  # парсинг PKCS8/SPKI если понадобится миграция
 
   # ─── Локальное хранилище ───
   sqflite: ^2.4.0                  # SQL DB для сообщений / диалогов / кэша
-  sqflite_common_ffi: ^2.3.3       # для десктопа
+  # sqflite_common_ffi отключён пока — он тянет sqlite3 native и build падает
+  # на handshake. Для desktop добавим обратно в M9 когда зашейпим релиз.
   path_provider: ^2.1.5            # пути к app dir
   flutter_secure_storage: ^10.3.1   # для приват-ключа и токена
   shared_preferences: ^2.3.3       # для не-секретных настроек (тема, иконка)
@@ -40,9 +44,13 @@ dependencies:
   intl: ^0.20.1                    # форматирование дат
   url_launcher: ^6.3.1             # внешние ссылки
 
-  # ─── Голосовые ─── (отложено до M5, вернуть когда нужно)
-  # record: ^5.2.0
-  # audioplayers: ^6.1.0
+  # ─── Голосовые ───
+  record: ^6.1.1                   # запись аудио, новая версия чтоб обойти record_linux баг
+  audioplayers: ^6.1.0             # воспроизведение
+  # ─── Attach (картинки/видео) ───
+  image_picker: ^1.1.2
+  # file_picker 11 ломает Android-сборку (broken plugin.xml) — оставляем
+  # только image_picker. Произвольные файлы добавим через intent позже.
 
   # ─── Уведомления + системные ───
   flutter_local_notifications: ^18.0.1

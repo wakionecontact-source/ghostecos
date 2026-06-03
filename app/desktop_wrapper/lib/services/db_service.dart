@@ -20,7 +20,6 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 class StoredMessage {
   /// Серверный ID сообщения (sid в IDB), уникален per-peer.
@@ -159,11 +158,8 @@ class DbService {
     await _db?.close();
     _db = null;
     _currentUser = username;
-    // На desktop инициализируем FFI bindings.
-    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-      sqfliteFfiInit();
-      databaseFactory = databaseFactoryFfi;
-    }
+    // NB: на desktop (Windows/Linux/macOS) sqflite нужен FFI (sqflite_common_ffi)
+    // — отключено пока, build падал на скачивании native sqlite3. Вернём в M9.
     final dir = await getApplicationSupportDirectory();
     final path = p.join(dir.path, 'ghost_$username.db');
     if (kDebugMode) print('[DB] open $path');
@@ -293,6 +289,33 @@ class DbService {
 
   Future<void> deleteMessagesByPeer(String peer) async {
     await _safeDb.delete('messages', where: 'peer = ?', whereArgs: [peer]);
+  }
+
+  /// Поиск по тексту во всех сообщениях. Возвращает совпадения с peer-ом
+  /// (чтобы при тапе можно было открыть нужный чат).
+  Future<List<StoredMessage>> searchMessages(String query, {int limit = 50}) async {
+    if (query.trim().isEmpty) return [];
+    final rows = await _safeDb.query(
+      'messages',
+      where: 'deleted = 0 AND text LIKE ?',
+      whereArgs: ['%${query.trim()}%'],
+      orderBy: 'sid DESC',
+      limit: limit,
+    );
+    return rows.map(StoredMessage.fromMap).toList();
+  }
+
+  /// Поиск диалогов локально по username / display_name.
+  Future<List<StoredDialog>> searchDialogs(String query, {int limit = 20}) async {
+    if (query.trim().isEmpty) return [];
+    final q = '%${query.trim().toLowerCase()}%';
+    final rows = await _safeDb.query(
+      'dialogs',
+      where: 'LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?',
+      whereArgs: [q, q],
+      limit: limit,
+    );
+    return rows.map(StoredDialog.fromMap).toList();
   }
 
   /// Проверить дубль по sid (для дедупа echo). Возвращает true если уже есть.

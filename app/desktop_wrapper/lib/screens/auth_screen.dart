@@ -110,7 +110,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Text(_err!,
-                          style: const TextStyle(color: GE.red, fontSize: 13)),
+                          style: TextStyle(color: GE.red, fontSize: 13)),
                     ),
                   ],
                   const SizedBox(height: 16),
@@ -133,24 +133,24 @@ class _AuthScreenState extends State<AuthScreen> {
     return TextField(
       controller: c,
       obscureText: obscure,
-      style: const TextStyle(color: GE.text, fontSize: 14),
+      style: TextStyle(color: GE.text, fontSize: 14),
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle: const TextStyle(color: GE.sub, fontSize: 14),
+        hintStyle: TextStyle(color: GE.sub, fontSize: 14),
         filled: true,
         fillColor: const Color(0x66000000),
         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: GE.borderStrong),
+          borderSide: BorderSide(color: GE.borderStrong),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: GE.borderStrong),
+          borderSide: BorderSide(color: GE.borderStrong),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: GE.primary, width: 1.5),
+          borderSide: BorderSide(color: GE.primary, width: 1.5),
         ),
       ),
     );
@@ -164,7 +164,7 @@ class _Brand extends StatelessWidget {
     return Column(
       children: [
         ShaderMask(
-          shaderCallback: (b) => const LinearGradient(
+          shaderCallback: (b) => LinearGradient(
             colors: [Colors.white, GE.primary],
           ).createShader(b),
           child: const Text(
@@ -176,7 +176,7 @@ class _Brand extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 4),
-        const Text('Один аккаунт — вся экосистема',
+        Text('Один аккаунт — вся экосистема',
             style: TextStyle(color: GE.sub, fontSize: 12)),
       ],
     );
@@ -245,9 +245,9 @@ class _Age18Checkbox extends StatelessWidget {
             activeColor: GE.primary,
             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
-          const Expanded(
+          Expanded(
             child: Padding(
-              padding: EdgeInsets.only(top: 12),
+              padding: const EdgeInsets.only(top: 12),
               child: Text(
                 'Подтверждаю, что мне исполнилось 18 лет',
                 style: TextStyle(color: GE.sub, fontSize: 12, height: 1.5),
@@ -273,7 +273,7 @@ class _PrimaryBtn extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 14),
         decoration: BoxDecoration(
-          gradient: const LinearGradient(colors: [GE.primary, GE.primary2]),
+          gradient: LinearGradient(colors: [GE.primary, GE.primary2]),
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(color: GE.primary.withValues(alpha: 0.4),
@@ -302,8 +302,8 @@ class _Disclaimer extends StatelessWidget {
   }
   @override
   Widget build(BuildContext context) {
-    final base = const TextStyle(color: GE.sub, fontSize: 11, height: 1.55);
-    final link = const TextStyle(color: GE.primary, fontSize: 11, height: 1.55);
+    final base = TextStyle(color: GE.sub, fontSize: 11, height: 1.55);
+    final link = TextStyle(color: GE.primary, fontSize: 11, height: 1.55);
     return Text.rich(
       TextSpan(style: base, children: [
         const TextSpan(text: 'Входя или регистрируя аккаунт вы соглашаетесь с '),

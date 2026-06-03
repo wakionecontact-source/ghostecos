@@ -53,7 +53,7 @@ class GlassCard extends StatelessWidget {
             border: Border.all(color: GE.glassBorder, width: GE.glassStroke),
             boxShadow: glow
                 ? [
-                    const BoxShadow(
+                    BoxShadow(
                       color: GE.glowFill,
                       blurRadius: 26,
                       spreadRadius: 1,
@@ -102,7 +102,7 @@ class GlassButton extends StatelessWidget {
     final radius = BorderRadius.circular(GE.radiusSm);
     final isCta = primary || danger;
     final gradient = primary
-        ? const LinearGradient(
+        ? LinearGradient(
             colors: [GE.primary2, GE.primary],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
@@ -154,7 +154,7 @@ class GlassButton extends StatelessWidget {
           if (!loading)
             Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 color: GE.text,
                 fontSize: 14,
                 fontWeight: FontWeight.w700,
@@ -237,11 +237,11 @@ class GlassInput extends StatelessWidget {
             onFieldSubmitted: onSubmitted,
             autofocus: autofocus,
             maxLines: obscure ? 1 : maxLines,
-            style: const TextStyle(color: GE.text, fontSize: 14),
+            style: TextStyle(color: GE.text, fontSize: 14),
             cursorColor: GE.primary,
             decoration: InputDecoration(
               hintText: hint,
-              hintStyle: const TextStyle(color: GE.sub, fontSize: 14),
+              hintStyle: TextStyle(color: GE.sub, fontSize: 14),
               prefixIcon:
                   icon != null ? Icon(icon, size: 18, color: GE.sub) : null,
               suffixIcon: suffix,
@@ -284,9 +284,9 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
         child: AppBar(
           backgroundColor: GE.bg.withValues(alpha: 0.45),
           surfaceTintColor: Colors.transparent,
-          shape: const Border(bottom: BorderSide(color: GE.glassBorder, width: 0.5)),
+          shape: Border(bottom: BorderSide(color: GE.glassBorder, width: 0.5)),
           title: title ?? (titleText != null ? Text(titleText!) : null),
-          leading: leading ?? (showBack ? const BackButton(color: GE.text) : null),
+          leading: leading ?? (showBack ? BackButton(color: GE.text) : null),
           actions: actions,
         ),
       ),
@@ -311,7 +311,7 @@ Future<T?> showGlassSheet<T>(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
         child: Container(
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             color: GE.glassFill,
             border: Border(top: BorderSide(color: GE.glassBorder, width: 1)),
           ),

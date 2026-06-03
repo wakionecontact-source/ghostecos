@@ -5,11 +5,14 @@
 // macOS из одного кода.
 
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'theme.dart';
 import 'mesh_background.dart';
 import 'services/auth_service.dart';
+import 'services/theme_service.dart';
 import 'screens/welcome_screen.dart';
 import 'screens/auth_screen.dart';
 import 'screens/main_shell.dart';
@@ -19,10 +22,23 @@ import 'package:window_manager/window_manager.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Загружаем сохранённую тему — должно произойти ДО первого runApp,
+  // чтобы статические поля GE сразу имели правильные цвета.
+  await ThemeService.instance.load();
+  // Прозрачные status/nav bar — mesh должен просвечивать через них (Android 15+
+  // и так включает edge-to-edge, но без этого system bars будут с дефолтным
+  // тёмным фоном поверх mesh).
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+    systemNavigationBarColor: Colors.transparent,
+    systemNavigationBarIconBrightness: Brightness.light,
+    systemNavigationBarContrastEnforced: false,
+  ));
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
     await windowManager.ensureInitialized();
     await windowManager.waitUntilReadyToShow(
-      const WindowOptions(
+      WindowOptions(
         size: Size(1200, 780),
         minimumSize: Size(380, 600),
         backgroundColor: GE.bg,
@@ -42,11 +58,16 @@ class GhostApp extends StatelessWidget {
   const GhostApp({super.key});
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: GE.appName,
-      debugShowCheckedModeBanner: false,
-      theme: GE.theme(),
-      home: const _Root(),
+    // ValueListenableBuilder перерисует MaterialApp при смене темы → все
+    // GE.* сразу подхватят новые значения через rebuild.
+    return ValueListenableBuilder<Palette>(
+      valueListenable: ThemeService.instance.notifier,
+      builder: (_, _, _) => MaterialApp(
+        title: GE.appName,
+        debugShowCheckedModeBanner: false,
+        theme: GE.theme(),
+        home: const _Root(),
+      ),
     );
   }
 }
@@ -56,12 +77,23 @@ class _Root extends StatelessWidget {
   const _Root();
   @override
   Widget build(BuildContext context) {
-    // Mesh-фон под всем приложением — стекло «плавает» поверх.
+    // Mesh-фон растянут на ВЕСЬ экран включая зоны под status/nav bar — он
+    // должен красиво просвечивать через прозрачные системные панели.
+    // А UI (Router и его экраны) — внутри SafeArea, чтобы не лез под камеру/
+    // кнопку «домой» (Android 15+ edge-to-edge по умолчанию).
     return Stack(
-      children: const [
+      children: [
         Positioned.fill(child: ColoredBox(color: GE.bg)),
-        Positioned.fill(child: MeshBackground()),
-        Positioned.fill(child: _Router()),
+        const Positioned.fill(child: MeshBackground()),
+        Positioned.fill(
+          child: SafeArea(
+            // SafeArea сам по себе НЕ закрашивает фон — mesh остаётся виден
+            // под status bar (transparent). minimum=EdgeInsets.zero на случай
+            // когда системных insets нет (например на десктопе).
+            minimum: EdgeInsets.zero,
+            child: _Router(),
+          ),
+        ),
       ],
     );
   }
@@ -104,7 +136,7 @@ class _RouterState extends State<_Router> {
   Widget build(BuildContext context) {
     switch (_stage) {
       case _Stage.loading:
-        return const Scaffold(
+        return Scaffold(
           backgroundColor: Colors.transparent,
           body: Center(child: CircularProgressIndicator(color: GE.primary)),
         );

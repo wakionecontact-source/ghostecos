@@ -24,7 +24,7 @@ class _Slide {
   });
 }
 
-const _slides = [
+List<_Slide> get _slides => [
   _Slide(
     icon: Icons.lock_outline,
     title: 'Ghost',
@@ -102,7 +102,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                 children: [
                   TextButton(
                     onPressed: _finish,
-                    child: const Text('Пропустить',
+                    child: Text('Пропустить',
                         style: TextStyle(color: GE.sub, fontSize: 14)),
                   ),
                   const Spacer(),
@@ -198,7 +198,7 @@ class _SlideViewState extends State<_SlideView> with SingleTickerProviderStateMi
                   opacity: fade,
                   child: Text(
                     s.title,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 32, fontWeight: FontWeight.w800,
                       color: GE.text, letterSpacing: -0.5,
                     ),
@@ -213,7 +213,7 @@ class _SlideViewState extends State<_SlideView> with SingleTickerProviderStateMi
                   child: Text(
                     s.body,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 15, height: 1.55, color: GE.sub,
                     ),
                   ),
@@ -240,7 +240,7 @@ class _PrimaryButton extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
         decoration: BoxDecoration(
-          gradient: const LinearGradient(colors: [GE.primary, GE.primary2]),
+          gradient: LinearGradient(colors: [GE.primary, GE.primary2]),
           borderRadius: BorderRadius.circular(14),
           boxShadow: [
             BoxShadow(

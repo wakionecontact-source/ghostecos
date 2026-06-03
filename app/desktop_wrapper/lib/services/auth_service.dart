@@ -17,7 +17,7 @@ class AuthService {
   static const _kSeedHash = 'gs_seed_hash';
 
   static const _secure = FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    aOptions: AndroidOptions(),
     iOptions: IOSOptions(accessibility: KeychainAccessibility.unlocked_this_device),
   );
 

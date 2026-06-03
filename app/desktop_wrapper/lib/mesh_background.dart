@@ -62,13 +62,13 @@ class _MeshBackgroundState extends State<MeshBackground>
         fit: StackFit.expand,
         children: [
           // Базовый градиент
-          const DecoratedBox(
+          DecoratedBox(
             decoration: BoxDecoration(
               gradient: RadialGradient(
-                center: Alignment(-0.6, -0.8),
+                center: const Alignment(-0.6, -0.8),
                 radius: 1.4,
-                colors: [Color(0x4D7C3AED), GE.bgDeep, GE.bg],
-                stops: [0, 0.5, 1],
+                colors: [const Color(0x4D7C3AED), GE.bgDeep, GE.bg],
+                stops: const [0, 0.5, 1],
               ),
             ),
           ),
