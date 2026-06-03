@@ -451,6 +451,75 @@ def del_contact(username: str, authorization: Optional[str] = Header(None)):
     c.close()
     return {"status": "ok"}
 
+@router.delete("/chat/with/{username}")
+def delete_chat_with(
+    username: str,
+    both: bool = False,
+    authorization: Optional[str] = Header(None),
+):
+    """Удалить серверный буфер чата с peer.
+    both=False: только МОИ исходящие к нему (которые он ещё не получил)
+                + мои read-метки для его сообщений.
+    both=True:  обе стороны (его непрочитанные + мои) + WS-сигнал
+                peer-у чтобы он удалил локально у себя.
+
+    Сервер не хранит уже-доставленные сообщения (они в IDB у клиента),
+    поэтому полное «удалить у всех» работает только пока peer онлайн или
+    придёт онлайн в течение цикла. Best effort, как в TG.
+    """
+    user = auth_member(authorization)
+    _rate_limit(f"chatdel:{user['id']}", limit=10, window=60)
+    c = db()
+    peer = _get_user_by_username(c, username)
+    if not peer:
+        c.close()
+        raise HTTPException(404, "Юзер не найден")
+    if peer["id"] == user["id"]:
+        c.close()
+        raise HTTPException(400, "Нельзя удалить чат с собой")
+    deleted_outgoing = 0
+    deleted_incoming = 0
+    try:
+        # Мои исходящие → ему (не доставленные ещё)
+        c.execute(
+            "DELETE FROM chat_dm WHERE sender_id=? AND receiver_id=?",
+            (user["id"], peer["id"]),
+        )
+        deleted_outgoing = c.total_changes
+        # Мои read-метки для его сообщений (он отправлял, я прочитал)
+        c.execute(
+            "DELETE FROM chat_dm_read_marks WHERE sender_id=? AND recipient_id=?",
+            (peer["id"], user["id"]),
+        )
+        if both:
+            # Его исходящие → мне (которые я ещё не ack-нул)
+            c.execute(
+                "DELETE FROM chat_dm WHERE sender_id=? AND receiver_id=?",
+                (peer["id"], user["id"]),
+            )
+            deleted_incoming = c.total_changes
+            # Его read-метки для моих сообщений
+            c.execute(
+                "DELETE FROM chat_dm_read_marks WHERE sender_id=? AND recipient_id=?",
+                (user["id"], peer["id"]),
+            )
+        c.commit()
+    finally:
+        c.close()
+    # Если both=True — сообщим peer-у через WS, пусть удалит у себя локально.
+    # Если peer offline сейчас — событие потеряется, удаление будет только серверное.
+    if both:
+        ws_hub.send_to(peer["id"], "chat.cleared_by_peer", {
+            "by_username": user["username"],
+        })
+    return {
+        "status": "ok",
+        "deleted_outgoing": deleted_outgoing,
+        "deleted_incoming": deleted_incoming,
+        "notified_peer": both,
+    }
+
+
 @router.get("/contacts/check/{username}")
 def check_contact(username: str, authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)

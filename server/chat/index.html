@@ -2583,7 +2583,6 @@ function openChatActionsMenu(ev, username){
   pop.className = 'sb-popup';
   pop.style.cssText = 'display:block;position:fixed;right:14px;top:62px;left:auto;min-width:220px;z-index:200;';
   pop.innerHTML = `
-    <div class="sb-popup-item" onclick="closeChatActionsMenu();clearChatHistory(${jsAttr(username)})"><i class="fa-solid fa-broom"></i> Очистить историю</div>
     <div class="sb-popup-item danger" onclick="closeChatActionsMenu();deleteChatDialog(${jsAttr(username)})"><i class="fa-solid fa-trash"></i> Удалить чат</div>
   `;
   document.body.appendChild(pop);
@@ -2638,27 +2637,82 @@ async function clearChatHistory(username){
   }
 }
 
+// Кастомная модалка удаления чата с чекбоксом «удалить и у собеседника».
+// Возвращает {confirmed: bool, both: bool}.
+function _deleteChatPrompt(username){
+  return new Promise(res => {
+    const ov = document.createElement('div');
+    ov.className = 'ge-dlg-overlay';
+    ov.innerHTML = `
+      <div class="ge-dlg-box">
+        <div class="ge-dlg-title">Удалить чат с @${esc(username)}?</div>
+        <div class="ge-dlg-msg">История и сам диалог будут удалены у вас локально.</div>
+        <label style="display:flex;align-items:flex-start;gap:10px;margin-top:14px;font-size:13px;color:#cbd5e1;line-height:1.45;cursor:pointer;">
+          <input type="checkbox" id="delChatBoth" style="margin-top:2px;width:16px;height:16px;accent-color:#f43f5e;flex-shrink:0;cursor:pointer;">
+          <span>Удалить и у собеседника<br><span style="font-size:11px;color:#94a3b8;">Сработает только если он не успел получить сообщения. Уже прочитанные у него остаются.</span></span>
+        </label>
+        <div class="ge-dlg-actions">
+          <button class="ge-dlg-btn cancel" id="delChatCancel">Отмена</button>
+          <button class="ge-dlg-btn danger" id="delChatOk">Удалить</button>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+    requestAnimationFrame(() => ov.classList.add('show'));
+    const close = (confirmed, both) => {
+      ov.classList.remove('show');
+      setTimeout(() => ov.remove(), 160);
+      res({confirmed, both});
+    };
+    ov.querySelector('#delChatCancel').onclick = () => close(false, false);
+    ov.querySelector('#delChatOk').onclick = () => {
+      const both = ov.querySelector('#delChatBoth').checked;
+      close(true, both);
+    };
+    ov.onclick = e => { if (e.target === ov) close(false, false); };
+  });
+}
+
 // Удалить чат полностью: messages + dialog. Возврат в список.
+// both=true → также серверный буфер + WS-сигнал peer-у удалить у себя.
 async function deleteChatDialog(username){
-  if (!await Dialog.confirm(
-    `Удалить чат с @${username}? Вся история и сам диалог будут удалены у вас локально. Собеседник этого не заметит, а на сервере непрочитанные ваши сообщения всё ещё доставятся ему.`,
-    { title: 'Удалить чат?', okText: 'Удалить', danger: true }
-  )) return;
+  const {confirmed, both} = await _deleteChatPrompt(username);
+  if (!confirmed) return;
   try {
+    // Серверная часть (зачистка pending + опционально notify peer-а)
+    try {
+      await chat(`/chat/with/${encodeURIComponent(username)}?both=${both ? 'true' : 'false'}`, 'DELETE');
+    } catch(e) {
+      // Не фатально — локальное удаление всё равно сделаем
+      console.warn('[delete chat] server cleanup failed:', e && e.message);
+    }
+    // Локальная часть — всегда
     await idbDeleteMessagesByPeer(username);
     await idbDeleteDialog(username);
-    // Уберём из памяти
     dialogs = dialogs.filter(x => x.username !== username);
-    // Если этот чат был открыт — возврат к списку
     if (activePeer && activePeer.username === username) {
-      backToList();  // он уже сам renderDialogs сделает
+      backToList();
     } else {
       renderDialogs(document.getElementById('sbSearch').value);
     }
-    showToast('Чат удалён');
+    showToast(both ? 'Чат удалён у обоих' : 'Чат удалён у себя');
   } catch(e) {
     showToast('Ошибка: ' + (e.message || e), true);
   }
+}
+
+// Локальная очистка чата без сервера — вызывается из WS-обработчика когда
+// собеседник попросил «удалить у обоих».
+async function _deleteChatLocally(username){
+  try {
+    await idbDeleteMessagesByPeer(username);
+    await idbDeleteDialog(username);
+    dialogs = dialogs.filter(x => x.username !== username);
+    if (activePeer && activePeer.username === username) {
+      backToList();
+    } else {
+      renderDialogs(document.getElementById('sbSearch').value);
+    }
+  } catch(_) {}
 }
 
 async function toggleContact(username){
@@ -3850,6 +3904,14 @@ async function handleWs(m){
         idbUpdateMessage(id, { read: true, delivered: true }).catch(()=>{});
       }
       if (activePeer && activePeer.username === d.by_username) renderMessages();
+    }
+  }
+  else if (t === 'chat.cleared_by_peer') {
+    // Собеседник нажал «удалить чат и у меня» → чистим всё локально.
+    const peer = (d && d.by_username || '').toLowerCase();
+    if (peer) {
+      _deleteChatLocally(peer);
+      showToast(`@${peer} удалил(а) чат у обоих`);
     }
   }
   else if (t === 'chat.typing') {
