@@ -1,7 +1,7 @@
-name: ghostecos_desktop
-description: GhostEcos — приватный мессенджер с экосистемой (desktop).
+name: ghost
+description: Ghost — приватный мессенджер с экосистемой (чат, лента, банк) на Mesh + жидкое стекло.
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.2.0+1
 
 environment:
   sdk: ^3.12.0
@@ -10,24 +10,61 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
+
+  # ─── Сеть ───
+  dio: ^5.7.0                      # HTTP client с интерсепторами, retry, multipart
+  web_socket_channel: ^3.0.0       # WebSocket для real-time
+
+  # ─── Crypto (E2E совместимо с WebCrypto API на web-фронте) ───
+  cryptography: ^2.7.0             # ECDH P-256, HKDF-SHA256, AES-GCM, Ed25519
+  convert: ^3.1.1                  # hex/base64
+
+  # ─── Локальное хранилище ───
+  sqflite: ^2.4.0                  # SQL DB для сообщений / диалогов / кэша
+  sqflite_common_ffi: ^2.3.3       # для десктопа
+  path_provider: ^2.1.5            # пути к app dir
+  flutter_secure_storage: ^9.2.2   # для приват-ключа и токена
+  shared_preferences: ^2.3.3       # для не-секретных настроек (тема, иконка)
+
+  # ─── State management ───
+  provider: ^6.1.2                 # простой, понятный
+
+  # ─── UI ───
+  flutter_svg: ^2.0.10             # SVG для иконок и NFT
+  font_awesome_flutter: ^10.7.0    # иконки в стиле сайта
+  flutter_markdown: ^0.7.4         # для рендера markdown
+  image_picker: ^1.1.2             # выбор фото/видео
+  file_picker: ^8.1.4              # выбор файлов
+  # cached_network_image: ^3.4.1   # disabled пока system_tray есть (uuid conflict), вернём в M5
+  intl: ^0.20.1                    # форматирование дат
+  url_launcher: ^6.3.1             # внешние ссылки
+
+  # ─── Голосовые ───
+  record: ^5.2.0                   # запись аудио
+  audioplayers: ^6.1.0             # воспроизведение
+
+  # ─── Уведомления + системные ───
+  flutter_local_notifications: ^17.2.4
+  package_info_plus: ^8.1.0
+
+  # ─── Desktop only ───
+  window_manager: ^0.4.3
+  tray_manager: ^0.3.1             # совместим с современным uuid ^4.x
+  launch_at_startup: ^0.5.1
+
+  # ─── WebView (легаси, оставлено пока MainShell не переписан в native — M4) ───
   webview_windows: ^0.4.0
   webview_flutter: ^4.10.0
   webview_flutter_android: ^4.1.0
-  system_tray: ^2.0.3
-  window_manager: ^0.4.3
-  flutter_local_notifications: ^17.2.4
-  launch_at_startup: ^0.5.1
-  package_info_plus: ^8.1.0
-  url_launcher: ^6.3.1
-  # Native auth + persistence
+  system_tray: ^2.0.3              # легаси, заменим на tray_manager в M4
+
+  # ─── HTTP (для совместимости со старым кодом) ───
   http: ^1.2.2
-  shared_preferences: ^2.3.3
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
-  # MSIX installer для Windows Store / standalone install
   msix: ^3.16.7
 
 flutter:
@@ -36,12 +73,12 @@ flutter:
     - assets/icon.ico
     - assets/icon.png
 
-# MSIX (Windows installer) конфиг
+# MSIX (Windows installer)
 msix_config:
-  display_name: GhostEcos
-  publisher_display_name: GhostEcos
-  identity_name: online.ghost_chat.GhostEcos
-  msix_version: 0.1.0.0
+  display_name: Ghost
+  publisher_display_name: Ghost
+  identity_name: online.ghost_chat.Ghost
+  msix_version: 0.2.0.0
   logo_path: assets/icon.png
   capabilities: internetClient, microphone
-  publisher: CN=GhostEcos
+  publisher: CN=Ghost
