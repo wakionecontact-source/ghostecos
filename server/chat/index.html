@@ -1686,17 +1686,37 @@ async function ingestIncoming(m){
     if (echoPayload) {
       const echoText = String(echoPayload.text || '');
       const echoFileId = echoPayload.file_id;
-      const opt = activeMessages.find(x =>
-        x.pending && x.from_me && String(x.sid || '').startsWith('tmp-') &&
-        ((echoFileId != null && x.file_payload && x.file_payload.file_id === echoFileId) ||
-         (echoFileId == null && (x.text || '') === echoText))
-      );
+      const echoFileName = echoPayload.file_name || '';
+      const echoFileSize = Number(echoPayload.size || 0);
+      const opt = activeMessages.find(x => {
+        if (!x.pending || !x.from_me || !String(x.sid || '').startsWith('tmp-')) return false;
+        // (a) optimistic уже получил file_payload (HTTP response успел) — сравнить file_id
+        if (echoFileId != null && x.file_payload && x.file_payload.file_id === echoFileId) return true;
+        // (b) optimistic ещё без file_payload (WS echo обогнал POST response) —
+        //     сравнить имя+размер из временного x.file (ставится при создании optimistic)
+        if (echoFileId != null && x.file && x.file.name === echoFileName && Number(x.file.size||0) === echoFileSize) return true;
+        // (c) текстовое сообщение — сравнить текст
+        if (echoFileId == null && (x.text || '') === echoText) return true;
+        return false;
+      });
       if (opt) {
         opt.sid = m.id;
         opt.created_at = m.created_at;
         opt.pending = false;
-        // Сохраним в IDB (sendMessage сам сохранит после своего await, но если он
-        // ещё не дошёл — пусть наша запись будет первой; idbAddMessage дедупит).
+        // Если это echo файла и у optimistic ещё нет file_payload (POST /send не
+        // успел вернуться) — заполним сами, чтобы sendFileMessage не создал второй.
+        if (echoFileId != null && !opt.file_payload && echoPayload.key && echoPayload.iv) {
+          opt.file_payload = {
+            file_id: echoFileId,
+            file_name: echoFileName,
+            mime: echoPayload.mime || 'application/octet-stream',
+            size: echoFileSize,
+            key: echoPayload.key,
+            iv: echoPayload.iv,
+            ...(echoPayload.voice ? {voice: true, duration: Number(echoPayload.duration)||0} : {}),
+          };
+        }
+        // Сохраним в IDB (sendMessage сам сохранит после своего await — idbAddMessage дедупит)
         idbAddMessage(opt).catch(()=>{});
         if (typeof renderMessages === 'function') renderMessages();
         return false;
@@ -2020,7 +2040,7 @@ function openMediaViewer(sid){
         <div class="nm">${esc(fp.file_name || fp.name || 'Изображение')}</div>
         <div class="sub">${fmtSize(fp.size || 0)} · ${esc(fp.mime || 'image')}</div>
       </div>
-      <button class="mv-btn" onclick="event.stopPropagation();downloadFile(${JSON.stringify(String(sid))})" title="Скачать"><i class="fa-solid fa-download"></i></button>
+      <button class="mv-btn" onclick="event.stopPropagation();downloadFile(${jsAttr(sid)})" title="Скачать"><i class="fa-solid fa-download"></i></button>
       <button class="mv-btn" onclick="closeMediaViewer()" title="Закрыть"><i class="fa-solid fa-xmark"></i></button>
     </div>
     <img class="mv-img" src="${m._imgUrl}" alt="${esc(fp.file_name || '')}">
