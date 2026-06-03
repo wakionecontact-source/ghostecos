@@ -128,6 +128,14 @@ button,input,textarea{font-family:inherit;}
 .chat-empty h3{font-size:18px;font-weight:700;color:var(--text);margin-bottom:6px;}
 .chat-empty p{font-size:14px;line-height:1.5;color:var(--sub);max-width:300px;}
 
+/* Отключаем системное long-press меню браузера на медиа в чате —
+   long-press резервируем за нашим контекстным меню (Reply/Delete/...). */
+.msg-img, .msg-video, .msg-file, .msg-voice, .voice-play {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 /* ── TG-style кастомный скроллбар ───────────────────────────────────── */
 .chat-body{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 14px 6px;display:flex;flex-direction:column;gap:2px;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(168,85,247,0.2) transparent;transition:scrollbar-color 0.3s;}
 .chat-body:hover, .chat-body.scrolling{scrollbar-color:rgba(168,85,247,0.55) transparent;}
@@ -2849,9 +2857,13 @@ function renderMessages(){
       const isVideo = fp.mime && fp.mime.startsWith('video/');
       const isVoice = !!fp.voice || (fp.mime && fp.mime.startsWith('audio/'));
       const sidArg = JSON.stringify(String(m.sid)).replace(/"/g, '&quot;');
+      // Универсальные атрибуты для медиа: long-press / right-click → меню сообщения.
+      // На мобиле click срабатывает на сам элемент (play/lightbox/download), а
+      // долгое нажатие 500мс открывает меню (Reply/Edit/Delete/Forward/...).
+      const mediaCtx = `oncontextmenu="event.preventDefault();event.stopPropagation();openMsgMenu(event,${sidArg})" ontouchstart="mediaTouchStart(event,${sidArg})" ontouchend="mediaTouchEnd()" ontouchcancel="mediaTouchEnd()" ontouchmove="mediaTouchMove(event)"`;
       if (isVoice) {
         const dur = fmtVoiceTime(fp.duration || 0);
-        bubbleBody = `<div class="msg-voice">
+        bubbleBody = `<div class="msg-voice" ${mediaCtx}>
           <button class="voice-play" onclick="toggleVoicePlay(${sidArg})"><i class="fa-solid fa-play"></i></button>
           <div class="voice-mid">
             <div class="voice-bar"><div class="voice-bar-fill"></div></div>
@@ -2859,9 +2871,9 @@ function renderMessages(){
           </div>
         </div>`;
       } else if (isImg && m._imgUrl) {
-        bubbleBody = `<img class="msg-img" src="${m._imgUrl}" alt="${esc(fp.file_name||fp.name||'')}" onclick="openMediaViewer(${sidArg})">`;
+        bubbleBody = `<img class="msg-img" src="${m._imgUrl}" alt="${esc(fp.file_name||fp.name||'')}" onclick="openMediaViewer(${sidArg})" ${mediaCtx}>`;
       } else if (isVideo && m._imgUrl) {
-        bubbleBody = `<video class="msg-video" src="${m._imgUrl}" controls preload="metadata"></video>`;
+        bubbleBody = `<video class="msg-video" src="${m._imgUrl}" controls preload="metadata" ${mediaCtx}></video>`;
       } else if ((isImg || isVideo) && m.file_payload) {
         const lbl = isVideo ? 'распаковываю видео…' : 'загружаю…';
         const w = isVideo ? 260 : 200, h = isVideo ? 180 : 140;
@@ -2872,7 +2884,8 @@ function renderMessages(){
         const size = fmtSize(fp.size || 0);
         const icon = fileIcon(fp.file_name || fp.name || '');
         const sidArg = JSON.stringify(String(m.sid)).replace(/"/g, '&quot;');
-        bubbleBody = `<div class="msg-file" onclick="downloadFile(${sidArg})">
+        const mediaCtx = `oncontextmenu="event.preventDefault();event.stopPropagation();openMsgMenu(event,${sidArg})" ontouchstart="mediaTouchStart(event,${sidArg})" ontouchend="mediaTouchEnd()" ontouchcancel="mediaTouchEnd()" ontouchmove="mediaTouchMove(event)"`;
+        bubbleBody = `<div class="msg-file" onclick="downloadFile(${sidArg})" ${mediaCtx}>
           <div class="msg-file-icon"><i class="fa-solid ${icon}"></i></div>
           <div class="msg-file-info">
             <div class="msg-file-name">${name}</div>
@@ -2984,6 +2997,49 @@ function msgTouchMove(ev){
   _swipeState.bubbleEl.style.transform = `translateX(${capped}px)`;
   const icon = _swipeState.msgEl.querySelector('.msg-swipe-icon');
   if (icon) icon.style.opacity = Math.min(1, capped / 50);
+}
+
+// ─── Long-press на медиа (img/video/voice/file) → открыть меню сообщения ───
+// На bubble (текстовом) меню открывается по простому тапу. На медиа click
+// зарезервирован за play/lightbox/download, поэтому для меню используем
+// длинное нажатие 500мс или контекстное меню (правый клик / Apple Pencil).
+let _mediaPressTimer = null;
+let _mediaPressOpened = false;
+let _mediaPressStart = null;
+
+function mediaTouchStart(ev, sid){
+  if (_mediaPressTimer) clearTimeout(_mediaPressTimer);
+  _mediaPressOpened = false;
+  const t = (ev.touches && ev.touches[0]) || ev;
+  _mediaPressStart = { x: t.clientX, y: t.clientY };
+  // Сохраняем clientX/Y потому что ev.touches исчезает в setTimeout
+  const px = t.clientX, py = t.clientY;
+  _mediaPressTimer = setTimeout(() => {
+    _mediaPressTimer = null;
+    _mediaPressOpened = true;
+    // Подавим последующий click чтоб не открылся lightbox после меню
+    _swipeSuppressClick = true;
+    setTimeout(() => { _swipeSuppressClick = false; }, 400);
+    openMsgMenu({clientX: px, clientY: py, preventDefault(){}, stopPropagation(){}}, sid);
+  }, 500);
+}
+function mediaTouchMove(ev){
+  if (!_mediaPressTimer || !_mediaPressStart) return;
+  const t = (ev.touches && ev.touches[0]) || ev;
+  const dx = Math.abs(t.clientX - _mediaPressStart.x);
+  const dy = Math.abs(t.clientY - _mediaPressStart.y);
+  // Если палец двинулся > 8px — это не long-press (свайп или скролл)
+  if (dx > 8 || dy > 8) {
+    clearTimeout(_mediaPressTimer); _mediaPressTimer = null;
+  }
+}
+function mediaTouchEnd(){
+  if (_mediaPressTimer) { clearTimeout(_mediaPressTimer); _mediaPressTimer = null; }
+  _mediaPressStart = null;
+  // Если меню было открыто — подавим click который вот-вот сработает
+  if (_mediaPressOpened) {
+    _mediaPressOpened = false;
+  }
 }
 
 function msgTouchEnd(){
