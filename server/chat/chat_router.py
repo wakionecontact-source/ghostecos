@@ -520,6 +520,57 @@ def delete_chat_with(
     }
 
 
+@router.get("/users/search")
+def search_users(
+    q: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Поиск пользователей для чата по username / display_name.
+    Отличие от /api/soc/search: всегда возвращает юзеров (не посты ленты),
+    игнорирует префикс @, сортирует exact > prefix > contains, помечает
+    есть ли у юзера E2E-ключи (можно ли сразу начать чат)."""
+    user = auth_member(authorization)
+    _rate_limit(f"usearch:{user['id']}", limit=60, window=60)
+    term = (q or "").strip().lstrip("@").lower()
+    if not term:
+        return {"results": []}
+    if len(term) > 50:
+        term = term[:50]
+    c = db()
+    like = f"%{term}%"
+    rows = c.execute(
+        """
+        SELECT username, display_name,
+               (x25519_pub IS NOT NULL AND x25519_pub != '') AS has_keys
+          FROM users
+         WHERE LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?
+         LIMIT 50
+        """,
+        (like, like),
+    ).fetchall()
+    c.close()
+    # Сортируем на питоне для точных совпадений в верхушке
+    def score(r):
+        u = (r["username"] or "").lower()
+        d = (r["display_name"] or "").lower()
+        if u == term or d == term:
+            return 0          # точное совпадение
+        if u.startswith(term) or d.startswith(term):
+            return 1          # префикс
+        return 2              # contains
+    sorted_rows = sorted(rows, key=score)[:20]
+    return {
+        "results": [
+            {
+                "username": r["username"],
+                "display_name": r["display_name"] or r["username"],
+                "has_keys": bool(r["has_keys"]),
+            }
+            for r in sorted_rows
+        ]
+    }
+
+
 @router.get("/contacts/check/{username}")
 def check_contact(username: str, authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
