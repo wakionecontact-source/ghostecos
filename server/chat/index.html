@@ -1607,6 +1607,14 @@ async function ingestSealed(m){
 // INCOMING / OUTGOING
 // ════════════════════════════════════════════════════════════════════
 async function ingestIncoming(m){
+  // Дедуп для chat.echo: backend шлёт всем сокетам отправителя свой же ответ
+  // чтобы другие вкладки/устройства тоже увидели. Но текущая вкладка уже
+  // имеет optimistic в activeMessages с тем же sid (sendMessage присвоил
+  // r.id сразу после POST). Без этого дедупа сообщение дублируется в UI.
+  // idbAddMessage отсекает дубль в IDB, но не успевает до echo race-окно.
+  if (m && m.id != null && (activeMessages || []).some(x => String(x.sid) === String(m.id))) {
+    return false;
+  }
   // m: {id, from_username, from_display_name, to_username, ciphertext, created_at, _decrypted?}
   const isMine = m.from_username === me.username;
   const peerUsername = isMine ? m.to_username : m.from_username;
