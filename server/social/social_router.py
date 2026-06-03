@@ -220,8 +220,19 @@ class _WSHub:
         # user_id -> set[WebSocket]. 0 = аноним/гость (тоже получают broadcast)
         self._by_uid: dict = defaultdict(set)
         self._lock = asyncio.Lock()
+        # Главный event loop — фиксируем при первом register (где есть running loop).
+        # КРИТИЧНО: FastAPI выполняет `def` (sync) ручки в threadpool, у этих потоков
+        # СВОЙ asyncio loop НЕ существует. asyncio.get_event_loop() из них бросает
+        # RuntimeError → старый код silently возвращал и broadcast не работал.
+        # Теперь сохраняем main loop здесь и шлём корутины через run_coroutine_threadsafe.
+        self._loop = None
 
     async def register(self, uid: int, ws: WebSocket):
+        if self._loop is None:
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                pass
         async with self._lock:
             self._by_uid[uid].add(ws)
 
@@ -238,6 +249,28 @@ class _WSHub:
             # битый сокет — выкинем его при следующем reconnect
             pass
 
+    def _schedule(self, coro):
+        """Безопасно запустить корутину независимо от того, в каком потоке
+        мы находимся (async ручка → main loop running, sync ручка → threadpool)."""
+        loop = self._loop
+        if loop is None:
+            # Никто ещё не подключался → нечего слать; всё равно попробуем
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                coro.close()
+                return
+        if loop.is_running():
+            try:
+                # cross-thread safe; если мы УЖЕ в loop'е — это тоже работает корректно
+                asyncio.run_coroutine_threadsafe(coro, loop)
+            except Exception:
+                try: coro.close()
+                except Exception: pass
+        else:
+            try: coro.close()
+            except Exception: pass
+
     # Типы событий, которые гости могут получать через broadcast (публичные)
     _PUBLIC_BROADCAST = {"post.new", "post.edit", "post.delete", "post.react",
                           "post.comment", "post.vote", "presence"}
@@ -245,29 +278,22 @@ class _WSHub:
     def broadcast(self, ev_type: str, data: dict):
         """Послать событие подключённым. Приватные (notif.*, chat.*) — только залогиненным.
         Гости (uid=0) получают только публичные события из _PUBLIC_BROADCAST."""
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            return
         payload = {"type": ev_type, "data": data}
         is_public = ev_type in self._PUBLIC_BROADCAST
         for uid, sockets in list(self._by_uid.items()):
             if uid == 0 and not is_public:
                 continue  # гостям приватные события не показываем
             for ws in list(sockets):
-                loop.create_task(self._send(ws, payload))
+                self._schedule(self._send(ws, payload))
 
     def send_to(self, uid: int, ev_type: str, data: dict):
-        """Послать конкретному юзеру (всем его открытым вкладкам/устройствам)."""
+        """Послать конкретному юзеру (всем его открытым вкладкам/устройствам).
+        Работает из любого потока: async ручки И sync ручки (FastAPI threadpool)."""
         if uid is None or uid <= 0:
-            return
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
             return
         payload = {"type": ev_type, "data": data}
         for ws in list(self._by_uid.get(uid, ())):
-            loop.create_task(self._send(ws, payload))
+            self._schedule(self._send(ws, payload))
 
 ws_hub = _WSHub()
 

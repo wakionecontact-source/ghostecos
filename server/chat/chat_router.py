@@ -150,10 +150,16 @@ def send_message(body: SendBody, authorization: Optional[str] = Header(None)):
         "created_at": row["created_at"],
     }
     # Real-time доставка получателю — если онлайн, отправляем и тут же удаляем
-    sent = False
-    for ws in list(ws_hub._by_uid.get(to_user["id"], ())):
-        sent = True
-        break
+    sockets_recv = list(ws_hub._by_uid.get(to_user["id"], ()))
+    sockets_send = list(ws_hub._by_uid.get(user["id"], ()))
+    sent = bool(sockets_recv)
+    # Диагностика: вижу ли я WS-подключения receiver-а на момент /send.
+    # Если 0 — клиент думает что online (WS живой у него), но сервер уже отвалился.
+    import logging as _lg
+    _lg.getLogger('gc').info(
+        f"[send msg={msg_id}] sender={user['username']} → recv={to_user['username']} | "
+        f"ws_sender={len(sockets_send)} ws_recv={len(sockets_recv)}"
+    )
     ws_hub.send_to(to_user["id"], "chat.new", payload)
     # Echo отправителю — он не из БД получает, а сразу отображает
     ws_hub.send_to(user["id"], "chat.echo", payload)
