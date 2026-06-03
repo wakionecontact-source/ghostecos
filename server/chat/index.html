@@ -348,6 +348,13 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 .voice-bar-fill{position:absolute;top:0;left:0;height:100%;background:#fff;width:0;transition:width 0.1s linear;}
 .msg.theirs .voice-bar-fill{background:var(--primary);}
 .voice-time{font-size:11px;opacity:0.7;font-variant-numeric:tabular-nums;}
+/* Аудио-файл (mp3/ogg/wav) — отличается от голосового тем что имеет название трека сверху */
+.msg-audio{display:flex;align-items:center;gap:11px;padding:6px 4px;min-width:240px;max-width:300px;}
+.audio-mid{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;}
+.audio-name{font-size:13px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.msg.theirs .audio-name{color:var(--text);}
+.audio-meta{display:flex;justify-content:space-between;align-items:center;font-size:11px;opacity:0.7;font-variant-numeric:tabular-nums;}
+.audio-size{font-size:10px;}
 
 /* ─── UI записи голосового ─── */
 .rec-bar{display:none;align-items:center;gap:10px;background:rgba(244,63,94,0.10);border-top:1px solid rgba(244,63,94,0.30);padding:10px 14px;flex-shrink:0;}
@@ -1887,14 +1894,24 @@ function fileIcon(name){
 }
 
 async function pickAndSendFile(input){
-  const f = input.files && input.files[0];
+  const files = Array.from(input.files || []);
   input.value = ''; // сброс чтобы можно было загрузить тот же файл снова
-  if (!f || !activePeer) return;
-  if (f.size > MAX_FILE_SIZE) {
-    showToast(`Слишком большой: ${fmtSize(f.size)}. Максимум ${fmtSize(MAX_FILE_SIZE)}`, true);
-    return;
+  if (!files.length || !activePeer) return;
+  // Каждый файл = отдельное сообщение (как в TG для non-album файлов).
+  // Отправляем последовательно чтобы не превысить per-pair rate-limit и
+  // сохранить порядок появления у получателя.
+  for (const f of files) {
+    if (f.size > MAX_FILE_SIZE) {
+      showToast(`«${f.name}» слишком большой (${fmtSize(f.size)}, макс ${fmtSize(MAX_FILE_SIZE)})`, true);
+      continue;
+    }
+    await _sendSingleFile(f);
   }
-  const tempId = 'tmp-' + Date.now();
+}
+
+async function _sendSingleFile(f){
+  if (!activePeer) return;
+  const tempId = 'tmp-' + Date.now() + '-' + Math.floor(Math.random()*10000);
   const optimistic = {
     sid: tempId, peer: activePeer.username, from_me: true,
     text: '', created_at: new Date().toISOString(), pending: true,
@@ -2789,9 +2806,9 @@ function renderChat(){
     <div class="chat-foot">
       <div class="input-wrap">
         <button class="foot-btn" title="Прикрепить" onclick="openAttachSheet()"><i class="fa-solid fa-paperclip"></i></button>
-        <input type="file" id="filePicker" style="display:none" onchange="pickAndSendFile(this)">
-        <input type="file" id="filePickerImg" accept="image/*" style="display:none" onchange="pickAndSendFile(this)">
-        <input type="file" id="filePickerVid" accept="video/*" style="display:none" onchange="pickAndSendFile(this)">
+        <input type="file" id="filePicker" multiple style="display:none" onchange="pickAndSendFile(this)">
+        <input type="file" id="filePickerImg" accept="image/*" multiple style="display:none" onchange="pickAndSendFile(this)">
+        <input type="file" id="filePickerVid" accept="video/*" multiple style="display:none" onchange="pickAndSendFile(this)">
         <textarea class="send-input" id="sendInput" placeholder="Сообщение" rows="1"></textarea>
         <button class="foot-btn" title="Эмодзи" onclick="openEmojiSheet()"><i class="fa-regular fa-face-smile"></i></button>
       </div>
@@ -2855,7 +2872,10 @@ function renderMessages(){
       const fp = m.file_payload || m.file;
       const isImg = fp.mime && fp.mime.startsWith('image/');
       const isVideo = fp.mime && fp.mime.startsWith('video/');
-      const isVoice = !!fp.voice || (fp.mime && fp.mime.startsWith('audio/'));
+      // Голосовое = записано через микрофон (помечено voice:true), круглый UI без названия.
+      // Аудио-файл = .mp3/.ogg/.wav прикреплён через attach, TG-style плеер с именем трека.
+      const isVoice = !!fp.voice;
+      const isAudioFile = !fp.voice && fp.mime && fp.mime.startsWith('audio/');
       const sidArg = JSON.stringify(String(m.sid)).replace(/"/g, '&quot;');
       // Универсальные атрибуты для медиа: long-press / right-click → меню сообщения.
       // На мобиле click срабатывает на сам элемент (play/lightbox/download), а
@@ -2868,6 +2888,21 @@ function renderMessages(){
           <div class="voice-mid">
             <div class="voice-bar"><div class="voice-bar-fill"></div></div>
             <div class="voice-time">${dur}</div>
+          </div>
+        </div>`;
+      } else if (isAudioFile) {
+        // TG-style audio file: play кнопка слева, справа — имя трека, прогресс-бар и размер
+        const name = esc(fp.file_name || fp.name || 'audio');
+        const size = fmtSize(fp.size || 0);
+        bubbleBody = `<div class="msg-audio" ${mediaCtx}>
+          <button class="voice-play" onclick="toggleVoicePlay(${sidArg})"><i class="fa-solid fa-play"></i></button>
+          <div class="audio-mid">
+            <div class="audio-name">${name}</div>
+            <div class="voice-bar"><div class="voice-bar-fill"></div></div>
+            <div class="audio-meta">
+              <span class="voice-time">0:00</span>
+              <span class="audio-size">${size}</span>
+            </div>
           </div>
         </div>`;
       } else if (isImg && m._imgUrl) {
