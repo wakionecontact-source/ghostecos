@@ -24,6 +24,10 @@ class GlassCard extends StatelessWidget {
   final VoidCallback? onTap;
   final Color? fillOverride;
   final double? blurOverride;
+  /// lite=true — без BackdropFilter (без blur). На списочных tile это
+  /// единственный способ сохранить 60fps на мобиле — blur на каждом item
+  /// убивает GPU. Визуально почти не отличить, потому что mesh-фон видно.
+  final bool lite;
 
   const GlassCard({
     super.key,
@@ -34,38 +38,51 @@ class GlassCard extends StatelessWidget {
     this.onTap,
     this.fillOverride,
     this.blurOverride,
+    this.lite = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final radiusObj = BorderRadius.circular(radius);
-    Widget content = ClipRRect(
+    final box = BoxDecoration(
+      color: fillOverride ??
+          (lite ? GE.glassFill.withValues(alpha: 0.6) : GE.glassFill),
       borderRadius: radiusObj,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(
-          sigmaX: blurOverride ?? GE.glassBlur,
-          sigmaY: blurOverride ?? GE.glassBlur,
-        ),
-        child: Container(
-          decoration: BoxDecoration(
-            color: fillOverride ?? GE.glassFill,
-            borderRadius: radiusObj,
-            border: Border.all(color: GE.glassBorder, width: GE.glassStroke),
-            boxShadow: glow
-                ? [
-                    BoxShadow(
-                      color: GE.glowFill,
-                      blurRadius: 26,
-                      spreadRadius: 1,
-                    ),
-                  ]
-                : null,
-          ),
-          padding: padding,
-          child: child,
-        ),
-      ),
+      border: Border.all(color: GE.glassBorder, width: GE.glassStroke),
+      boxShadow: glow
+          ? [
+              BoxShadow(
+                color: GE.glowFill,
+                blurRadius: 26,
+                spreadRadius: 1,
+              ),
+            ]
+          : null,
     );
+    Widget content;
+    if (lite) {
+      // Без BackdropFilter — никакого GPU-blur, дёшево.
+      content = Container(
+        decoration: box,
+        padding: padding,
+        child: child,
+      );
+    } else {
+      content = ClipRRect(
+        borderRadius: radiusObj,
+        child: BackdropFilter(
+          filter: ImageFilter.blur(
+            sigmaX: blurOverride ?? GE.glassBlur,
+            sigmaY: blurOverride ?? GE.glassBlur,
+          ),
+          child: Container(
+            decoration: box,
+            padding: padding,
+            child: child,
+          ),
+        ),
+      );
+    }
     if (onTap == null) return content;
     return InkWell(
       borderRadius: radiusObj,

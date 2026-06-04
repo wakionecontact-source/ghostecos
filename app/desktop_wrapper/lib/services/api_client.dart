@@ -51,9 +51,34 @@ class ApiClient {
       onResponse: (resp, handler) {
         if (resp.statusCode != null && resp.statusCode! >= 400) {
           final msg = _extractError(resp.data);
-          throw ApiException(resp.statusCode!, msg);
+          // Через handler.reject ApiException дойдёт до caller'а в .error
+          // DioException — а сам caller увидит человеческий toString().
+          handler.reject(DioException(
+            requestOptions: resp.requestOptions,
+            response: resp,
+            type: DioExceptionType.badResponse,
+            error: ApiException(resp.statusCode!, msg),
+            message: msg,
+          ));
+          return;
         }
         handler.next(resp);
+      },
+      onError: (err, handler) {
+        // Если в err.error лежит наш ApiException — заменяем сообщение
+        // на человеческое, чтобы print('$e') показывал текст ошибки.
+        final inner = err.error;
+        if (inner is ApiException) {
+          handler.next(DioException(
+            requestOptions: err.requestOptions,
+            response: err.response,
+            type: err.type,
+            error: inner,
+            message: inner.message,
+          ));
+          return;
+        }
+        handler.next(err);
       },
     ));
     return d;
@@ -113,6 +138,24 @@ class ApiClient {
       'blob': MultipartFile.fromBytes(encryptedBytes, filename: name),
     });
     final r = await _chat.post('/file/upload', data: form);
+    return Map<String, dynamic>.from(r.data);
+  }
+
+  /// Загрузить картинку/видео/аудио на соц-бэк (/api/soc/upload).
+  /// Возвращает {url, type, ...} как отдаёт сервер.
+  Future<Map<String, dynamic>> uploadSocFile({
+    required List<int> bytes,
+    required String filename,
+    String? mime,
+  }) async {
+    final form = FormData.fromMap({
+      'file': MultipartFile.fromBytes(
+        bytes,
+        filename: filename,
+        contentType: mime != null ? DioMediaType.parse(mime) : null,
+      ),
+    });
+    final r = await _soc.post('/upload', data: form);
     return Map<String, dynamic>.from(r.data);
   }
 

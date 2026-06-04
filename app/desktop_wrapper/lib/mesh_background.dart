@@ -1,13 +1,15 @@
 // Mesh обои — анимированные частицы + линии между близкими. Имитация веб-mesh.js.
+import 'dart:io' show Platform;
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'theme.dart';
 
 class MeshBackground extends StatefulWidget {
   /// Дочерний виджет — необязательный. Без него работает как fullscreen фон.
   final Widget? child;
-  final int particleCount;
-  const MeshBackground({super.key, this.child, this.particleCount = 40});
+  final int? particleCount;
+  const MeshBackground({super.key, this.child, this.particleCount});
   @override
   State<MeshBackground> createState() => _MeshBackgroundState();
 }
@@ -24,19 +26,29 @@ class _MeshBackgroundState extends State<MeshBackground>
   List<_Particle> _particles = [];
   Size? _lastSize;
 
+  /// На мобиле — половина частиц и медленный апдейт. На десктопе — полноценный.
+  int get _effectiveParticleCount {
+    if (widget.particleCount != null) return widget.particleCount!;
+    if (kIsWeb) return 30;
+    if (Platform.isAndroid || Platform.isIOS) return 18;
+    return 40;
+  }
+
   @override
   void initState() {
     super.initState();
+    // Не самый частый repaint — раз в кадр всё равно, но логика тика
+    // легче. Период 60s = более плавно медленнее.
     _ctrl = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 30),
+      duration: const Duration(seconds: 60),
     )..repeat();
   }
 
   void _initParticles(Size size) {
     if (_lastSize == size) return;
     _lastSize = size;
-    _particles = List.generate(widget.particleCount, (_) {
+    _particles = List.generate(_effectiveParticleCount, (_) {
       return _Particle(
         _rand.nextDouble() * size.width,
         _rand.nextDouble() * size.height,
@@ -72,21 +84,25 @@ class _MeshBackgroundState extends State<MeshBackground>
               ),
             ),
           ),
-          // Сетка частиц
-          LayoutBuilder(builder: (ctx, c) {
-            final size = Size(c.maxWidth, c.maxHeight);
-            _initParticles(size);
-            return AnimatedBuilder(
-              animation: _ctrl,
-              builder: (_, __) {
-                _tick(size);
-                return CustomPaint(
-                  size: size,
-                  painter: _MeshPainter(_particles),
-                );
-              },
-            );
-          }),
+          // Сетка частиц — RepaintBoundary изолирует mesh от UI поверх,
+          // чтобы apple-blur и list-rebuild не triggered repaint mesh-холста
+          // и наоборот.
+          RepaintBoundary(
+            child: LayoutBuilder(builder: (ctx, c) {
+              final size = Size(c.maxWidth, c.maxHeight);
+              _initParticles(size);
+              return AnimatedBuilder(
+                animation: _ctrl,
+                builder: (_, __) {
+                  _tick(size);
+                  return CustomPaint(
+                    size: size,
+                    painter: _MeshPainter(_particles),
+                  );
+                },
+              );
+            }),
+          ),
           if (widget.child != null) widget.child!,
         ],
       ),

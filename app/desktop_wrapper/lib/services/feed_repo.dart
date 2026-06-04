@@ -5,57 +5,161 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'api_client.dart';
 
+class FeedMedia {
+  final String type; // 'image' | 'video' | 'audio'
+  final String url;
+  const FeedMedia({required this.type, required this.url});
+  static FeedMedia? tryParse(dynamic m) {
+    if (m is! Map) return null;
+    final t = m['type'];
+    final u = m['url'];
+    if (t is! String || u is! String) return null;
+    return FeedMedia(type: t, url: u);
+  }
+}
+
+class FromChannel {
+  final int id;
+  final String name;
+  final String? username;
+  const FromChannel({required this.id, required this.name, this.username});
+}
+
 class FeedPost {
   final int id;
+  final int? userId;
   final String content;
   final String authorUsername;
   final String authorDisplayName;
   final dynamic createdAt;
   final dynamic editedAt;
-  final List<dynamic>? media;
+  final List<FeedMedia> media;
   final bool isNsfw;
+  final bool nsfwSetByAdmin;
   final int commentsCount;
+  final int viewsCount;
+  final int repostsCount;
   int activity;
   final Map<String, int> reactions;
   String? myReaction;
   bool reposted;
+  /// true → я подписан на автора (`am_following` с сервера).
   bool followed;
+  final bool isRepost;
+  final FromChannel? fromChannel;
 
   FeedPost({
     required this.id,
+    this.userId,
     required this.content,
     required this.authorUsername,
     required this.authorDisplayName,
     required this.createdAt,
     this.editedAt,
-    this.media,
+    List<FeedMedia>? media,
     this.isNsfw = false,
+    this.nsfwSetByAdmin = false,
     this.commentsCount = 0,
+    this.viewsCount = 0,
+    this.repostsCount = 0,
     this.activity = 0,
     Map<String, int>? reactions,
     this.myReaction,
     this.reposted = false,
     this.followed = false,
-  }) : reactions = reactions ?? {};
+    this.isRepost = false,
+    this.fromChannel,
+  }) : reactions = reactions ?? {},
+       media = media ?? const [];
 
-  factory FeedPost.fromMap(Map<String, dynamic> m) => FeedPost(
-        id: m['id'] as int,
-        content: (m['content'] as String?) ?? '',
-        authorUsername: (m['username'] as String?) ?? 'anon',
-        authorDisplayName: (m['display_name'] as String?) ??
-            (m['username'] as String?) ?? 'anon',
-        createdAt: m['created_at'],
-        editedAt: m['edited_at'],
-        media: (m['media'] is List) ? m['media'] as List : null,
-        isNsfw: (m['is_nsfw'] as int? ?? 0) == 1,
-        commentsCount: (m['comments_count'] as int?) ?? 0,
-        activity: (m['activity'] as int?) ?? 0,
-        reactions: (m['reactions'] is Map)
-            ? Map<String, int>.from((m['reactions'] as Map).map((k, v) =>
-                MapEntry(k.toString(), (v as num).toInt())))
-            : <String, int>{},
-        myReaction: m['my_reaction'] as String?,
-      );
+  /// Толерантно приводит значение к bool — принимает bool / int (0,1) / null.
+  static bool _asBool(dynamic v) {
+    if (v is bool) return v;
+    if (v is num) return v != 0;
+    if (v is String) return v == '1' || v.toLowerCase() == 'true';
+    return false;
+  }
+
+  /// Толерантно приводит к int — принимает num / bool / null.
+  static int _asInt(dynamic v) {
+    if (v is num) return v.toInt();
+    if (v is bool) return v ? 1 : 0;
+    if (v is String) return int.tryParse(v) ?? 0;
+    return 0;
+  }
+
+  factory FeedPost.fromMap(Map<String, dynamic> m) {
+    // /post/feed возвращает reactions в формате
+    //   {counts: {emoji: int}, your_emoji: str|null, total: int}
+    // или плоско {emoji: int} (для тестов / старых ручек). Поддерживаем оба.
+    Map<String, int> reacs = <String, int>{};
+    String? mine;
+    final raw = m['reactions'];
+    if (raw is Map) {
+      final counts = raw['counts'];
+      if (counts is Map) {
+        // hydrated формат
+        counts.forEach((k, v) {
+          if (v is num) reacs[k.toString()] = v.toInt();
+        });
+        if (raw['your_emoji'] is String) mine = raw['your_emoji'] as String;
+      } else {
+        // плоский формат {emoji: int}
+        raw.forEach((k, v) {
+          if (v is num) reacs[k.toString()] = v.toInt();
+        });
+      }
+    }
+    mine ??= m['my_reaction'] as String?;
+    final mediaList = <FeedMedia>[];
+    if (m['media'] is List) {
+      for (final mm in (m['media'] as List)) {
+        final mo = FeedMedia.tryParse(mm);
+        if (mo != null) mediaList.add(mo);
+      }
+    }
+    FromChannel? fc;
+    if (m['from_channel'] is Map) {
+      final fm = m['from_channel'] as Map;
+      final cid = _asInt(fm['id']);
+      final cname = fm['name'] as String?;
+      if (cid > 0 && cname != null) {
+        fc = FromChannel(id: cid, name: cname, username: fm['username'] as String?);
+      }
+    }
+    return FeedPost(
+      id: _asInt(m['id']),
+      userId: _asInt(m['user_id']) > 0 ? _asInt(m['user_id']) : null,
+      content: (m['content'] as String?) ?? '',
+      authorUsername: (m['username'] as String?) ?? 'anon',
+      authorDisplayName: (m['display_name'] as String?) ??
+          (m['username'] as String?) ?? 'anon',
+      createdAt: m['created_at'],
+      editedAt: m['edited_at'],
+      media: mediaList,
+      // is_nsfw приходит как bool с сервера (fmt_post: bool(is_nsfw))
+      isNsfw: _asBool(m['is_nsfw']),
+      nsfwSetByAdmin: _asBool(m['nsfw_set_by_admin']),
+      commentsCount: _asInt(m['comments_count']),
+      viewsCount: _asInt(m['views_count']),
+      repostsCount: _asInt(m['reposts_count']),
+      activity: _asInt(m['activity']),
+      reactions: reacs,
+      myReaction: mine,
+      // am_following — серверное имя; followed оставляем для legacy/тестов
+      followed: _asBool(m['am_following']) || _asBool(m['followed']),
+      isRepost: _asBool(m['is_repost']),
+      fromChannel: fc,
+    );
+  }
+}
+
+/// Локальный helper — int|num|null → int? без cast-exception.
+int? _maybeInt(dynamic v) {
+  if (v is int) return v;
+  if (v is num) return v.toInt();
+  if (v is String) return int.tryParse(v);
+  return null;
 }
 
 class FeedRepo {
@@ -64,26 +168,64 @@ class FeedRepo {
   final _api = ApiClient();
 
   final ValueNotifier<List<FeedPost>> postsNotifier = ValueNotifier([]);
+  /// Последняя ошибка загрузки (null если успех / ещё не пробовали).
+  final ValueNotifier<String?> errorNotifier = ValueNotifier(null);
   final Set<int> _seen = {};
   bool _loading = false;
   bool _exhausted = false;
+  int _offset = 0;
+  String _sort = 'foryou';
+  int _randomSeed = 1;
+  String? _tag;
+
+  String get sort => _sort;
+  String? get tag => _tag;
+
+  void setSort(String sort) {
+    if (_sort == sort) return;
+    _sort = sort;
+    if (sort == 'random') {
+      _randomSeed = (DateTime.now().microsecondsSinceEpoch % 999983).abs() + 1;
+    }
+  }
+
+  void setTag(String? tag) {
+    final t = (tag ?? '').trim();
+    _tag = t.isEmpty ? null : t.toLowerCase();
+  }
 
   /// Загрузить следующую пачку постов (исключая уже виденные).
+  /// sort: foryou / new / top / old / random / following
   Future<void> loadMore({int batch = 30}) async {
     if (_loading || _exhausted) return;
     _loading = true;
     try {
-      final exclude = _seen.isEmpty ? '' : _seen.take(400).join(',');
-      final r = await _api.socGet('/post/feed', {
-        'limit': batch,
-        if (exclude.isNotEmpty) 'exclude': exclude,
-      });
-      // /post/feed возвращает {posts: [...]}, либо просто список
+      late dynamic r;
+      if (_sort == 'foryou') {
+        // Алгоритмическая лента: candidate-pool с эксклюдом.
+        final exclude = _seen.isEmpty ? '' : _seen.take(400).join(',');
+        r = await _api.socGet('/post/feed', {
+          'limit': batch,
+          'offset': _offset,
+          if (exclude.isNotEmpty) 'exclude': exclude,
+        });
+      } else {
+        // Классическая лента /post?sort=...
+        final q = <String, dynamic>{
+          'sort': _sort,
+          'offset': _offset,
+        };
+        if (_tag != null) q['tag'] = _tag;
+        if (_sort == 'random') q['seed'] = _randomSeed;
+        r = await _api.socGet('/post', q);
+      }
+      // /post возвращает чистый список постов; /post/feed тоже список
+      // (см. _hydrate_posts → return). Старые ручки могли отдавать {posts}.
       List rawList;
-      if (r is Map && r['posts'] is List) {
-        rawList = r['posts'] as List;
-      } else if (r is List) {
+      if (r is List) {
         rawList = r;
+      } else if (r is Map && r['posts'] is List) {
+        rawList = r['posts'] as List;
       } else if (r is Map && r['candidates'] is List) {
         rawList = r['candidates'] as List;
       } else {
@@ -94,17 +236,34 @@ class FeedRepo {
         return;
       }
       final newPosts = <FeedPost>[];
+      String? firstSkipErr;
+      int skipped = 0;
       for (final raw in rawList) {
-        if (raw is! Map) continue;
-        final m = Map<String, dynamic>.from(raw);
-        final id = m['id'] as int?;
-        if (id == null || _seen.contains(id)) continue;
-        _seen.add(id);
-        newPosts.add(FeedPost.fromMap(m));
+        if (raw is! Map) { skipped++; continue; }
+        try {
+          final m = Map<String, dynamic>.from(raw);
+          final id = _maybeInt(m['id']);
+          if (id == null || _seen.contains(id)) continue;
+          _seen.add(id);
+          newPosts.add(FeedPost.fromMap(m));
+        } catch (e) {
+          skipped++;
+          firstSkipErr ??= e.toString();
+          if (kDebugMode) print('[FeedRepo] skip bad post: $e');
+        }
       }
       postsNotifier.value = [...postsNotifier.value, ...newPosts];
+      _offset += rawList.length;
+      // Если пришло N постов и ВСЕ не разобрались — это парсинг-баг, надо
+      // показать юзеру, иначе он увидит "лента пуста" и подумает что нет данных.
+      if (postsNotifier.value.isEmpty && rawList.isNotEmpty && skipped > 0) {
+        errorNotifier.value = 'Не удалось разобрать ответ ленты ($skipped шт). $firstSkipErr';
+      } else {
+        errorNotifier.value = null;
+      }
     } catch (e) {
       if (kDebugMode) print('[FeedRepo.loadMore] $e');
+      errorNotifier.value = e.toString();
     } finally {
       _loading = false;
     }
@@ -114,6 +273,7 @@ class FeedRepo {
   Future<void> refresh() async {
     _seen.clear();
     _exhausted = false;
+    _offset = 0;
     postsNotifier.value = [];
     await loadMore();
   }
@@ -160,18 +320,115 @@ class FeedRepo {
     }
   }
 
-  /// Опубликовать новый пост.
-  Future<int?> publish(String text) async {
+  /// Опубликовать новый пост с медиа и NSFW.
+  /// media — список объектов {type, url} (после _uploadMedia).
+  Future<int?> publish(
+    String text, {
+    List<FeedMedia> media = const [],
+    bool isNsfw = false,
+  }) async {
     try {
-      final r = await _api.socPost('/post/new', {'content': text});
-      final id = (r as Map)['id'] as int?;
-      if (id != null) {
+      final r = await _api.socPost('/post/new', {
+        'text': text,                                          // ВАЖНО: text, не content
+        if (media.isNotEmpty)
+          'media': media.map((m) => {'type': m.type, 'url': m.url}).toList(),
+        'is_nsfw': isNsfw,
+      });
+      final id = _asInt((r as Map)['id']);
+      if (id > 0) {
         await refresh();
+        return id;
       }
-      return id;
+      return null;
     } catch (e) {
       if (kDebugMode) print('[FeedRepo.publish] $e');
       rethrow;
     }
+  }
+
+  /// Аплоад файла (картинка/видео/аудио) → возвращает FeedMedia.
+  Future<FeedMedia> uploadMedia(List<int> bytes, String filename, String mime) async {
+    final r = await _api.uploadSocFile(bytes: bytes, filename: filename, mime: mime);
+    final type = r['type'] as String? ?? 'image';
+    final url = r['url'] as String? ?? '';
+    if (url.isEmpty) throw Exception('Сервер не вернул URL медиа');
+    return FeedMedia(type: type, url: url);
+  }
+
+  /// Удалить пост (только свой).
+  Future<void> deletePost(int postId) async {
+    await _api.socDelete('/post/$postId');
+    final list = postsNotifier.value.where((p) => p.id != postId).toList();
+    postsNotifier.value = list;
+  }
+
+  /// Редактировать пост (только свой, окно времени).
+  Future<void> editPost(int postId, {String? text, bool? isNsfw}) async {
+    await _api.socPatch('/post/$postId', {
+      if (text != null) 'text': text,
+      if (isNsfw != null) 'is_nsfw': isNsfw,
+    });
+    // Не делаем refresh — обновим только этот пост из локального состояния.
+    final list = [...postsNotifier.value];
+    final i = list.indexWhere((p) => p.id == postId);
+    if (i >= 0 && text != null) {
+      // Создаём «обновлённый» FeedPost (FeedPost immutable text/createdAt — пересоздаём).
+      final old = list[i];
+      list[i] = FeedPost(
+        id: old.id, userId: old.userId, content: text,
+        authorUsername: old.authorUsername, authorDisplayName: old.authorDisplayName,
+        createdAt: old.createdAt, editedAt: DateTime.now().toUtc().toIso8601String(),
+        media: old.media, isNsfw: isNsfw ?? old.isNsfw,
+        nsfwSetByAdmin: old.nsfwSetByAdmin,
+        commentsCount: old.commentsCount, viewsCount: old.viewsCount,
+        repostsCount: old.repostsCount, activity: old.activity,
+        reactions: Map<String, int>.from(old.reactions), myReaction: old.myReaction,
+        reposted: old.reposted, followed: old.followed,
+        isRepost: old.isRepost, fromChannel: old.fromChannel,
+      );
+      postsNotifier.value = list;
+    }
+  }
+
+  /// Подписаться / отписаться от автора. Обновляет followed во всех его постах.
+  Future<void> toggleFollow(String username) async {
+    final list = postsNotifier.value;
+    final currentlyFollowing = list
+        .firstWhere((p) => p.authorUsername == username,
+            orElse: () => FeedPost(
+              id: 0, content: '', authorUsername: '', authorDisplayName: '',
+              createdAt: null,
+            ))
+        .followed;
+    try {
+      if (currentlyFollowing) {
+        await _api.socDelete('/follow/$username');
+      } else {
+        await _api.socPost('/follow/$username');
+      }
+      final updated = list.map((p) {
+        if (p.authorUsername != username) return p;
+        p.followed = !currentlyFollowing;
+        return p;
+      }).toList();
+      postsNotifier.value = updated;
+    } catch (e) {
+      if (kDebugMode) print('[FeedRepo.toggleFollow] $e');
+      rethrow;
+    }
+  }
+
+  /// Отметить пост просмотренным (для алгоритмической ленты).
+  Future<void> markViewed(int postId) async {
+    try {
+      await _api.socPost('/post/view', {'post_id': postId});
+    } catch (_) { /* best effort */ }
+  }
+
+  static int _asInt(dynamic v) {
+    if (v is num) return v.toInt();
+    if (v is bool) return v ? 1 : 0;
+    if (v is String) return int.tryParse(v) ?? 0;
+    return 0;
   }
 }

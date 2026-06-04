@@ -29,21 +29,28 @@ class _WalletScreenState extends State<WalletScreen> {
 
   Future<void> _load() async {
     try {
-      // GET /api/soc/wallet возвращает {gost, soul, prem}
+      // GET /api/soc/wallet → {balance: {gost,soul,prem}, daily_reward, next_daily_in}
+      // GET /api/soc/wallet/tx → {transactions: [{delta, currency, source, ...}], has_more}
       final w = await _api.socGet('/wallet');
-      final tx = await _api.socGet('/wallet/tx', {'limit': 30});
+      final tx = await _api.socGet('/wallet/tx');
       if (!mounted) return;
       setState(() {
         if (w is Map) {
-          _gost = (w['gost'] as num?)?.toInt() ?? 0;
-          _soul = (w['soul'] as num?) ?? 0;
-          _prem = (w['prem'] as num?) ?? 0;
+          final bal = w['balance'];
+          if (bal is Map) {
+            _gost = (bal['gost'] as num?)?.toInt() ?? 0;
+            _soul = (bal['soul'] as num?) ?? 0;
+            _prem = (bal['prem'] as num?) ?? 0;
+          }
         }
-        if (tx is Map && tx['items'] is List) {
-          _txs = ((tx['items'] as List)
-              .whereType<Map>()
-              .map((m) => Map<String, dynamic>.from(m)))
-              .toList();
+        if (tx is Map) {
+          final list = tx['transactions'] ?? tx['items'] ?? const [];
+          if (list is List) {
+            _txs = list
+                .whereType<Map>()
+                .map((m) => Map<String, dynamic>.from(m))
+                .toList();
+          }
         } else if (tx is List) {
           _txs = tx.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList();
         }
@@ -93,11 +100,14 @@ class _WalletScreenState extends State<WalletScreen> {
               ),
             )
           else ...[
-            _balanceRow('Gost', '$_gost', '⚪', GE.muted, 'Базовая валюта — за активность'),
+            _balanceRow('Gost', '$_gost', 'G', Icons.toll, GE.blue,
+                'Базовая валюта — за активность'),
             const SizedBox(height: 8),
-            _balanceRow('Soul', _fmt(_soul), '🔮', GE.primary, 'Премиум — за реальные деньги или эмиссию'),
+            _balanceRow('Soul', _fmt(_soul), 'S', Icons.auto_awesome, GE.primary,
+                'Премиум — за реальные деньги или эмиссию'),
             const SizedBox(height: 8),
-            _balanceRow('Prem', _fmt(_prem), '👑', GE.yellow, 'Подписка — даёт привилегии'),
+            _balanceRow('Prem', _fmt(_prem), 'P', Icons.workspace_premium, GE.yellow,
+                'Подписка — даёт привилегии'),
             const SizedBox(height: 16),
             _actionsBar(),
             const SizedBox(height: 16),
@@ -129,7 +139,8 @@ class _WalletScreenState extends State<WalletScreen> {
                 letterSpacing: 0.5)),
       );
 
-  Widget _balanceRow(String name, String value, String icon, Color color, String hint) {
+  Widget _balanceRow(String name, String value, String letter, IconData icon,
+      Color color, String hint) {
     return GlassCard(
       padding: const EdgeInsets.all(16),
       child: Row(
@@ -138,10 +149,26 @@ class _WalletScreenState extends State<WalletScreen> {
             width: 48, height: 48,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: color.withValues(alpha: 0.2),
+              gradient: LinearGradient(
+                colors: [color.withValues(alpha: 0.55), color.withValues(alpha: 0.85)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              border: Border.all(color: color.withValues(alpha: 0.6), width: 1),
             ),
             alignment: Alignment.center,
-            child: Text(icon, style: const TextStyle(fontSize: 22)),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Icon(icon, color: Colors.white.withValues(alpha: 0.35), size: 30),
+                Text(letter,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.5)),
+              ],
+            ),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -200,42 +227,112 @@ class _WalletScreenState extends State<WalletScreen> {
     );
   }
 
+  static const _sourceLabel = {
+    'daily': 'Ежедневный бонус',
+    'register': 'За регистрацию',
+    'post': 'За пост',
+    'react': 'Реакция',
+    'comment': 'Комментарий',
+    'follow': 'Подписка',
+    'transfer': 'Перевод',
+    'transfer_in': 'Перевод входящий',
+    'transfer_out': 'Перевод исходящий',
+    'nft_buy': 'Покупка NFT',
+    'nft_sell': 'Продажа NFT',
+    'username': 'Кастомный @username',
+    'soul_emit': 'Эмиссия Soul',
+    'overwatch': 'Overwatch',
+    'mint': 'Минт NFT',
+    'admin': 'Админ-корректировка',
+  };
+
+  Color _currencyColor(String c) {
+    switch (c) {
+      case 'soul': return GE.primary;
+      case 'prem': return GE.yellow;
+      default: return GE.blue;
+    }
+  }
+
   Widget _txTile(Map<String, dynamic> t) {
-    final amount = (t['amount'] as num?)?.toInt() ?? 0;
+    final amount = ((t['delta'] as num?) ?? (t['amount'] as num?) ?? 0).toInt();
     final currency = (t['currency'] as String?) ?? 'gost';
-    final reason = (t['reason'] as String?) ?? '';
+    final rawSource = (t['source'] as String?) ?? (t['reason'] as String?) ?? '';
+    final label = _sourceLabel[rawSource] ?? (rawSource.isEmpty ? 'Операция' : rawSource);
     final at = t['created_at'];
     final positive = amount > 0;
+    final curColor = _currencyColor(currency);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: GlassCard(
+        lite: true,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
           children: [
-            Icon(positive ? Icons.arrow_downward : Icons.arrow_upward,
-                color: positive ? GE.green : GE.red, size: 18),
+            Container(
+              width: 32, height: 32,
+              decoration: BoxDecoration(
+                color: (positive ? GE.green : GE.red).withValues(alpha: 0.15),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(positive ? Icons.arrow_downward : Icons.arrow_upward,
+                  color: positive ? GE.green : GE.red, size: 16),
+            ),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(reason.isEmpty ? '$currency' : reason,
-                      style: TextStyle(color: GE.text, fontSize: 13)),
+                  Text(label,
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: GE.text, fontSize: 13, fontWeight: FontWeight.w500)),
                   if (at != null)
-                    Text(at.toString(),
+                    Text(_fmtAt(at),
                         style: TextStyle(color: GE.sub, fontSize: 11)),
                 ],
               ),
             ),
-            Text('${positive ? '+' : ''}$amount',
-                style: TextStyle(
-                    color: positive ? GE.green : GE.red,
-                    fontWeight: FontWeight.w700,
-                    fontFeatures: const [FontFeature.tabularFigures()])),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text('${positive ? '+' : ''}$amount',
+                    style: TextStyle(
+                        color: positive ? GE.green : GE.red,
+                        fontWeight: FontWeight.w800, fontSize: 15,
+                        fontFeatures: const [FontFeature.tabularFigures()])),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: curColor.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(currency.toUpperCase(),
+                      style: TextStyle(
+                          color: curColor, fontSize: 9, fontWeight: FontWeight.w800,
+                          letterSpacing: 0.5)),
+                ),
+              ],
+            ),
           ],
         ),
       ),
     );
+  }
+
+  String _fmtAt(dynamic at) {
+    if (at == null) return '';
+    try {
+      final dt = (at is int)
+          ? DateTime.fromMillisecondsSinceEpoch(at * 1000)
+          : DateTime.parse(at.toString()).toLocal();
+      final now = DateTime.now();
+      final diff = now.difference(dt);
+      if (diff.inMinutes < 1) return 'только что';
+      if (diff.inMinutes < 60) return '${diff.inMinutes} мин назад';
+      if (diff.inHours < 24) return '${diff.inHours} ч назад';
+      if (diff.inDays < 7) return '${diff.inDays} д назад';
+      return '${dt.day.toString().padLeft(2, '0')}.${dt.month.toString().padLeft(2, '0')}.${dt.year}';
+    } catch (_) { return ''; }
   }
 
   String _fmt(num v) {

@@ -34,7 +34,7 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final _inputCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   final _imagePicker = ImagePicker();
@@ -56,12 +56,25 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _init();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Когда возвращаемся на экран — тянем свежее из обоих каналов.
+      ChatRepo.instance.fetchPending();
+      ChatRepo.instance.fetchPendingSealed();
+    }
   }
 
   Future<void> _init() async {
     _myUsername = await AuthService.username();
     await ChatRepo.instance.markChatRead(widget.peer);
+    // Сразу проверяем свежие сообщения от веба (Sealed Sender 2.0) и legacy.
+    ChatRepo.instance.fetchPending();
+    ChatRepo.instance.fetchPendingSealed();
     if (!mounted) return;
     setState(() {});
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -89,6 +102,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _highlightTimer?.cancel();
     _recordTicker?.cancel();
     _inputCtrl.dispose();

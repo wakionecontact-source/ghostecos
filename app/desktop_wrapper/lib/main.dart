@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'theme.dart';
 import 'mesh_background.dart';
@@ -22,6 +23,10 @@ import 'package:window_manager/window_manager.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Инициализация локалей для intl (DateFormat('E', 'ru') и подобное).
+  // Без этого упадёт LocaleDataException при показе дня недели в списке чатов.
+  await initializeDateFormatting('ru');
+  await initializeDateFormatting('en');
   // Загружаем сохранённую тему — должно произойти ДО первого runApp,
   // чтобы статические поля GE сразу имели правильные цвета.
   await ThemeService.instance.load();

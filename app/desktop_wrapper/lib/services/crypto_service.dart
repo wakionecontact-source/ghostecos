@@ -23,8 +23,10 @@ class CryptoService {
 
   static const _kPrivD = 'gs_e2e_priv_d_v3';        // приват D-coordinate (32 bytes b64)
   static const _kPubRaw = 'gs_e2e_pub_raw_v3';       // 65 bytes uncompressed (b64)
+  /// EncryptedSharedPreferences=true — AES-GCM шифрование значений в SharedPrefs,
+  /// иначе на старом Android приват-ключ лежит в plain SharedPrefs.
   static const _secure = FlutterSecureStorage(
-    aOptions: AndroidOptions(),
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
 
   // Curve params
@@ -120,6 +122,59 @@ class CryptoService {
     cipher.init(false, AEADParameters(KeyParameter(aesKey), 128, iv, Uint8List(0)));
     final plain = cipher.process(ct);
     return utf8.decode(plain);
+  }
+
+  /// Зашифровать sealed envelope для receiverStaticPub.
+  /// Формат envelope (binary): [ephPub(65)] || [iv(12)] || [AES-GCM(shared, iv, payload)]
+  /// Shared = ECDH(eph_priv, receiver_static_pub) — БЕЗ HKDF (parity с веб).
+  /// payload автоматически дополняется from_username + ts.
+  Future<String> encryptSealed({
+    required Uint8List receiverPubRaw,
+    required Map<String, dynamic> payload,
+    required String fromUsername,
+  }) async {
+    final pair = _generateKeyPair();
+    final ephPriv = (pair.privateKey as ECPrivateKey).d!;
+    final ephPub = pair.publicKey as ECPublicKey;
+    final ephPubRaw = _pubToRaw(ephPub);
+    final agreement = ECDHBasicAgreement()..init(ECPrivateKey(ephPriv, _curve));
+    final shared = agreement.calculateAgreement(_rawToPub(receiverPubRaw));
+    final aesKey = _encodeBigInt(shared, 32);
+    final iv = _randomBytes(12);
+    final fullPayload = <String, dynamic>{
+      ...payload,
+      'from_username': fromUsername,
+      'ts': DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000,
+    };
+    final pt = utf8.encode(jsonEncode(fullPayload));
+    final cipher = GCMBlockCipher(AESEngine())
+      ..init(true, AEADParameters(KeyParameter(aesKey), 128, iv, Uint8List(0)));
+    final ct = cipher.process(Uint8List.fromList(pt));
+    final out = Uint8List(65 + 12 + ct.length);
+    out.setRange(0, 65, ephPubRaw);
+    out.setRange(65, 77, iv);
+    out.setRange(77, 77 + ct.length, ct);
+    return base64Encode(out);
+  }
+
+  /// Расшифровать sealed envelope. Возвращает {from_username, type, text, sid, ...}.
+  Future<Map<String, dynamic>> decryptSealed(String envelopeB64) async {
+    if (_privD == null) await ensureKeys();
+    final bytes = base64Decode(envelopeB64);
+    if (bytes.length < 65 + 12 + 16) {
+      throw Exception('sealed envelope too short (${bytes.length})');
+    }
+    final ephPubRaw = Uint8List.fromList(bytes.sublist(0, 65));
+    final iv = Uint8List.fromList(bytes.sublist(65, 77));
+    final ct = Uint8List.fromList(bytes.sublist(77));
+    final agreement = ECDHBasicAgreement()..init(ECPrivateKey(_privD, _curve));
+    final shared = agreement.calculateAgreement(_rawToPub(ephPubRaw));
+    final aesKey = _encodeBigInt(shared, 32);
+    final cipher = GCMBlockCipher(AESEngine())
+      ..init(false, AEADParameters(KeyParameter(aesKey), 128, iv, Uint8List(0)));
+    final pt = cipher.process(ct);
+    final json = utf8.decode(pt);
+    return Map<String, dynamic>.from(jsonDecode(json) as Map);
   }
 
   /// ECDH → HKDF-SHA256 → 32-байт AES ключ.

@@ -215,6 +215,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: GlassCard(
+          lite: true,
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -364,7 +365,15 @@ class _DialogTile extends StatelessWidget {
       return DateFormat('HH:mm').format(local);
     }
     final daysAgo = now.difference(local).inDays;
-    if (daysAgo < 7) return DateFormat('E', 'ru').format(local);
+    if (daysAgo < 7) {
+      try {
+        return DateFormat('E', 'ru').format(local);
+      } catch (_) {
+        // Локаль ещё не успела инициализироваться — fallback.
+        const days = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'];
+        return days[local.weekday - 1];
+      }
+    }
     return DateFormat('dd.MM').format(local);
   }
 }
