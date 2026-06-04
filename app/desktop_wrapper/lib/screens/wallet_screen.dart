@@ -2,6 +2,7 @@
 // быстрые действия. NFT-витрина в отдельном табе.
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
 import '../services/api_client.dart';
 import '../widgets/glass.dart';
@@ -209,22 +210,24 @@ class _WalletScreenState extends State<WalletScreen> {
             label: 'NFT',
             icon: Icons.diamond_outlined,
             primary: true,
-            onTap: () {},
+            onTap: _openNft,
           ),
         ),
       ],
     );
   }
 
+  void _openNft() {
+    // Native NFT-витрины пока нет — открываем веб-страницу банка
+    // (там реальный маркет + минт + покупка).
+    launchUrl(Uri.parse('${GE.baseUrl}/bank/'),
+        mode: LaunchMode.externalApplication);
+  }
+
   void _todoTransfer() {
-    showDialog<void>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Перевод'),
-        content: const Text('Native-перевод придёт после MVP. Пока через веб /bank/.'),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
-      ),
-    );
+    // Open web /bank/ для перевода — там полный поток.
+    launchUrl(Uri.parse('${GE.baseUrl}/bank/'),
+        mode: LaunchMode.externalApplication);
   }
 
   static const _sourceLabel = {

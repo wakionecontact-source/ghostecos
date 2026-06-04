@@ -18,6 +18,7 @@ import '../services/chat_repo.dart';
 import '../services/db_service.dart';
 import '../services/auth_service.dart';
 import '../widgets/glass.dart';
+import 'profile_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final String peer;
@@ -440,12 +441,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final notif = ChatRepo.instance.messagesNotifier(widget.peer);
+    final isGroup = widget.peer.startsWith('g:');
     return Scaffold(
       backgroundColor: Colors.transparent,
       resizeToAvoidBottomInset: true,
-      appBar: GlassAppBar(
-        showBack: true,
-        titleText: widget.displayName,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(64),
+        child: _ChatHeader(
+          peer: widget.peer,
+          displayName: widget.displayName,
+          isGroup: isGroup,
+        ),
       ),
       body: SafeArea(
         top: false,
@@ -1126,5 +1132,123 @@ class _VoiceTileState extends State<_VoiceTile> {
     final mm = d.inMinutes.toString().padLeft(2, '0');
     final ss = d.inSeconds.remainder(60).toString().padLeft(2, '0');
     return '$mm:$ss';
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+/// Шапка чата: avatar + display_name + @username + online-индикатор.
+/// Тап → ProfileScreen (для DM). Презенс через ChatRepo.watchPresence.
+class _ChatHeader extends StatelessWidget {
+  final String peer;
+  final String displayName;
+  final bool isGroup;
+  const _ChatHeader({
+    required this.peer,
+    required this.displayName,
+    required this.isGroup,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final initial = displayName.isNotEmpty ? displayName[0].toUpperCase() : '?';
+    return SafeArea(
+      bottom: false,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: isGroup
+              ? null
+              : () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => ProfileScreen(username: peer),
+                  )),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(4, 8, 12, 8),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: Icon(Icons.arrow_back, color: GE.text),
+                  onPressed: () => Navigator.of(context).maybePop(),
+                ),
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Container(
+                      width: 42, height: 42,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient:
+                            LinearGradient(colors: [GE.primary2, GE.primary]),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(initial,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 18)),
+                    ),
+                    if (!isGroup)
+                      Positioned(
+                        right: -2, bottom: -2,
+                        child: ValueListenableBuilder<bool>(
+                          valueListenable:
+                              ChatRepo.instance.watchPresence(peer),
+                          builder: (_, online, __) => Container(
+                            width: 14, height: 14,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: online ? GE.green : GE.muted,
+                              border: Border.all(color: GE.bg, width: 2),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(displayName,
+                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: GE.text,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700)),
+                      if (!isGroup)
+                        ValueListenableBuilder<bool>(
+                          valueListenable:
+                              ChatRepo.instance.watchPresence(peer),
+                          builder: (_, online, __) => Row(children: [
+                            Text('@$peer',
+                                style: TextStyle(color: GE.sub, fontSize: 11)),
+                            const SizedBox(width: 6),
+                            Text('·',
+                                style: TextStyle(color: GE.sub, fontSize: 11)),
+                            const SizedBox(width: 6),
+                            Text(
+                              online ? 'в сети' : 'не в сети',
+                              style: TextStyle(
+                                color: online ? GE.green : GE.muted,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ]),
+                        ),
+                      if (isGroup)
+                        Text(peer,
+                            style: TextStyle(color: GE.sub, fontSize: 11)),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right, color: GE.sub, size: 18),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

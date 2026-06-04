@@ -2,6 +2,7 @@
 // на iOS / Keystore на Android / DPAPI на Windows). Юзернейм/display_name — в
 // SharedPreferences (не секретно). Поддерживает гостевой режим (UUID-токен).
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -15,6 +16,11 @@ class AuthService {
   static const _kDisplay = 'gs_display';
   static const _kIsGuest = 'gs_is_guest';
   static const _kSeedHash = 'gs_seed_hash';
+  // TDA-1: уникальный ID этого устройства. Хранится в SecureStorage навсегда,
+  // переживает logout (но не удаление приложения), чтобы не triggerить 2FA
+  // повторно при возврате юзера на то же устройство.
+  static const _secureDeviceId = 'gs_device_id_v1';
+  static const _kDeviceName = 'gs_device_name';
 
   static const _secure = FlutterSecureStorage(
     aOptions: AndroidOptions(),
@@ -45,6 +51,42 @@ class AuthService {
       (await SharedPreferences.getInstance()).getString(_kDisplay);
   static Future<bool> isGuest() async =>
       (await SharedPreferences.getInstance()).getBool(_kIsGuest) ?? false;
+
+  /// TDA-1: уникальный DID этого устройства. Генерируется один раз, потом
+  /// читается из SecureStorage.
+  static Future<String> deviceId() async {
+    try {
+      final existing = await _secure.read(key: _secureDeviceId);
+      if (existing != null && existing.isNotEmpty) return existing;
+    } catch (_) {}
+    final fresh = _randUuidV4();
+    try {
+      await _secure.write(key: _secureDeviceId, value: fresh);
+    } catch (_) {
+      // Fallback в SharedPrefs если SecureStorage недоступен
+      final p = await SharedPreferences.getInstance();
+      await p.setString(_secureDeviceId, fresh);
+    }
+    return fresh;
+  }
+
+  static Future<String> deviceName() async {
+    final p = await SharedPreferences.getInstance();
+    final saved = p.getString(_kDeviceName);
+    if (saved != null && saved.isNotEmpty) return saved;
+    // Default: платформа + первые 4 символа DID
+    final did = await deviceId();
+    final platform = Platform.operatingSystem; // 'android' / 'ios' / 'windows' / ...
+    final cap = platform[0].toUpperCase() + platform.substring(1);
+    final name = '$cap · ${did.substring(0, 4)}';
+    await p.setString(_kDeviceName, name);
+    return name;
+  }
+
+  static Future<void> setDeviceName(String name) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_kDeviceName, name);
+  }
 
   static Future<void> _saveAuth(Map d, {bool guest = false}) async {
     _cachedToken = d['token'] as String;
@@ -91,8 +133,16 @@ class AuthService {
   ));
 
   static Future<Map<String, dynamic>> login(String username, String password) async {
+    final did = await deviceId();
+    final dname = await deviceName();
     final r = await _dio.post('/login',
-        data: jsonEncode({'username': username, 'password': password}));
+        data: jsonEncode({
+          'username': username,
+          'password': password,
+          'device_id': did,
+          'device_name': dname,
+          'platform': Platform.operatingSystem,
+        }));
     if (r.statusCode != 200) throw _err(r.data, r.statusCode!);
     final d = Map<String, dynamic>.from(r.data);
     await _saveAuth(d);
@@ -106,6 +156,8 @@ class AuthService {
     required bool age18,
     String? ref,
   }) async {
+    final did = await deviceId();
+    final dname = await deviceName();
     final r = await _dio.post('/register',
         data: jsonEncode({
           'username': username,
@@ -113,6 +165,9 @@ class AuthService {
           'password': password,
           'age_18_confirm': age18,
           if (ref != null) 'ref': ref,
+          'device_id': did,
+          'device_name': dname,
+          'platform': Platform.operatingSystem,
         }));
     if (r.statusCode != 200) throw _err(r.data, r.statusCode!);
     final d = Map<String, dynamic>.from(r.data);

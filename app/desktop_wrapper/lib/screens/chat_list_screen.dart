@@ -13,6 +13,7 @@ import '../services/db_service.dart';
 import '../services/search_service.dart';
 import '../widgets/glass.dart';
 import 'chat_screen.dart';
+import 'profile_screen.dart';
 
 class ChatListScreen extends StatefulWidget {
   const ChatListScreen({super.key});
@@ -94,11 +95,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   style: TextStyle(
                       color: GE.text, fontSize: 20, fontWeight: FontWeight.w800)),
               const Spacer(),
-              IconButton(
-                icon: Icon(Icons.edit_note, color: GE.primary),
-                onPressed: () => _newChatPrompt(context),
-                tooltip: 'Новый чат',
-              ),
+              // Кнопка «Новый чат» убрана — поиск ниже сам открывает чат по
+              // username (если совпадение точное, можно начать переписку).
             ],
           ),
         ),
@@ -297,7 +295,14 @@ class _DialogTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
         child: Row(
           children: [
-            _Avatar(d.displayName, size: 48),
+            GestureDetector(
+              onTap: d.username.startsWith('g:')
+                  ? null
+                  : () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => ProfileScreen(username: d.username),
+                      )),
+              child: _Avatar(d.displayName, size: 48),
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(

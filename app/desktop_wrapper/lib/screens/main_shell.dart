@@ -7,6 +7,7 @@
 
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
 import '../services/auth_service.dart';
 import '../services/db_service.dart';
@@ -15,7 +16,10 @@ import '../services/ws_client.dart';
 import '../widgets/glass.dart';
 import 'settings_screen.dart';
 import 'chat_list_screen.dart';
+import 'devices_screen.dart';
 import 'feed_screen.dart';
+import 'profile_screen.dart';
+import 'social_pane.dart';
 import 'wallet_screen.dart';
 
 enum Section {
@@ -156,7 +160,7 @@ class _MainShellState extends State<MainShell> {
       case Section.chat:
         return const ChatListScreen();
       case Section.feed:
-        return const FeedScreen();
+        return const SocialPane();
       case Section.bank:
         return const WalletScreen();
       case Section.profile:
@@ -392,6 +396,9 @@ class _ProfilePane extends StatelessWidget {
         children: [
           GlassCard(
             padding: const EdgeInsets.all(20),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => ProfileScreen(username: username),
+            )),
             child: Row(
               children: [
                 Container(
@@ -417,9 +424,20 @@ class _ProfilePane extends StatelessWidget {
                               color: GE.text, fontSize: 18, fontWeight: FontWeight.w700)),
                       Text('@$username',
                           style: TextStyle(color: GE.sub, fontSize: 13)),
+                      const SizedBox(height: 4),
+                      Row(children: [
+                        Icon(Icons.person_outline, size: 12, color: GE.primary),
+                        const SizedBox(width: 4),
+                        Text('Открыть полный профиль',
+                            style: TextStyle(
+                                color: GE.primary,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600)),
+                      ]),
                     ],
                   ),
                 ),
+                Icon(Icons.chevron_right, color: GE.sub),
               ],
             ),
           ),
@@ -428,18 +446,23 @@ class _ProfilePane extends StatelessWidget {
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Column(
               children: [
+                // Доступные разделы.
+                _profileRow(Icons.devices_outlined, 'Мои устройства',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => const DevicesScreen(),
+                        ))),
+                _profileRow(Icons.auto_awesome_outlined, 'Wrapped — мой год',
+                    onTap: () => launchUrl(
+                        Uri.parse('${GE.baseUrl}/wrapped/$username'),
+                        mode: LaunchMode.externalApplication)),
+                // Настройки / темы / безопасность временно отключены —
+                // экран SettingsScreen сохранён в коде, см. settings_screen.dart.
                 _profileRow(Icons.settings_outlined, 'Настройки',
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                          builder: (_) => const SettingsScreen(),
-                        ))),
+                    onTap: () => _todo(context, 'Настройки в разработке')),
                 _profileRow(Icons.palette_outlined, 'Темы интерфейса',
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                          builder: (_) => const SettingsScreen(),
-                        ))),
+                    onTap: () => _todo(context, 'Темы в разработке')),
                 _profileRow(Icons.shield_outlined, 'Безопасность',
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                          builder: (_) => const SettingsScreen(),
-                        ))),
+                    onTap: () => _todo(context, 'Безопасность в разработке')),
                 _profileRow(Icons.terminal_outlined, 'Логи',
                     onTap: () => _todo(context, 'Просмотрщик логов в M8')),
               ],

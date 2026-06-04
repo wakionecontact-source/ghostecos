@@ -32,6 +32,19 @@ class ChatRepo {
   /// Список диалогов для главного списка.
   final ValueNotifier<List<StoredDialog>> dialogsNotifier = ValueNotifier([]);
 
+  /// Online/offline статус пиров. Подписка через `watchPresence(username)`.
+  /// Запрашивается через WS `presence.ask`, обновляется через WS `presence`.
+  final Map<String, ValueNotifier<bool>> _presenceByPeer = {};
+
+  ValueNotifier<bool> watchPresence(String username) {
+    final notif = _presenceByPeer.putIfAbsent(username, () => ValueNotifier(false));
+    // Запрашиваем у сервера актуальное состояние
+    try {
+      _ws.send('presence.ask', {'username': username});
+    } catch (_) {}
+    return notif;
+  }
+
   /// Сообщения по peer. Каждый ChatScreen подписывается на свой.
   final Map<String, ValueNotifier<List<StoredMessage>>> _msgsByPeer = {};
   /// Какие peer-ы уже подгружены из БД — чтобы не дёргать SQL на каждый getter.
@@ -47,8 +60,13 @@ class ChatRepo {
     return notif;
   }
 
-  /// Кэш чужих pubkey-ов в RAM на сессию.
+  /// Кэш одного pubkey (legacy: owner-device) пира в RAM.
   final Map<String, Uint8List> _peerPubCache = {};
+  /// TDA-4: кэш ВСЕХ device-pubkey'ев пира. При peer.devices_changed WS-event
+  /// сбрасываем для конкретного юзера.
+  final Map<String, List<Uint8List>> _peerDevicePubsCache = {};
+  /// Кэш моих other-device pubkey'ев (self-echo на свои устройства).
+  List<Uint8List> _myOtherDevicePubs = const [];
 
   /// Подписки WS — для cancel при logout.
   final List<dynamic> _subs = [];
@@ -79,11 +97,15 @@ class ChatRepo {
       _ws.on('chat.delivered', _onChatDelivered),
       _ws.on('chat.read', _onChatRead),
       _ws.on('chat.cleared_by_peer', _onChatClearedByPeer),
+      _ws.on('presence', _onPresence),
+      _ws.on('peer.devices_changed', _onPeerDevicesChanged),
     ]);
 
     // Догнать накопленное в фоне — оба канала.
     unawaited(fetchPending());
     unawaited(fetchPendingSealed());
+    // TDA-4: подгрузить мои other-device pubkey'и (для self-echo).
+    unawaited(_refreshMyOtherDevicePubs());
   }
 
   Future<void> dispose() async {
@@ -204,24 +226,72 @@ class ChatRepo {
   // ─── Получение чужого pubkey (с кэшем) ───────────────────────────────
   Future<Uint8List> getPeerPub(String username) async {
     if (_peerPubCache.containsKey(username)) return _peerPubCache[username]!;
+    await _loadPeerKeys(username);
+    return _peerPubCache[username]!;
+  }
+
+  /// TDA-4: получить ВСЕ pubkey'и пира (по одному на каждое его устройство).
+  /// При fanout-отправке шифруем содержимое отдельно под каждый.
+  Future<List<Uint8List>> getPeerDevicePubs(String username) async {
+    if (_peerDevicePubsCache.containsKey(username)) {
+      return _peerDevicePubsCache[username]!;
+    }
+    await _loadPeerKeys(username);
+    return _peerDevicePubsCache[username] ?? [_peerPubCache[username]!];
+  }
+
+  Future<void> _loadPeerKeys(String username) async {
     final r = await _api.chatGet('/keys/$username');
-    final pubB64 = (r as Map)['x25519_pub'] as String?;
-    if (pubB64 == null || pubB64.isEmpty) {
+    final m = r is Map ? r : const {};
+    final ownerPubB64 = m['x25519_pub'] as String?;
+    final devicesRaw = (m['device_pubkeys'] as List?) ?? const [];
+    if ((ownerPubB64 == null || ownerPubB64.isEmpty) && devicesRaw.isEmpty) {
       throw Exception('У @$username нет E2E-ключей');
     }
-    final raw = Uint8List.fromList(base64Decode(pubB64));
-    _peerPubCache[username] = raw;
-    // TOFU pin (первое значение запоминаем; в M8 добавим UI для смены ключа).
-    final pinned = await _db.getPinnedPub(username);
-    if (pinned == null) {
-      await _db.pinPub(username, pubB64, accepted: true);
-    } else if (pinned != pubB64) {
-      if (kDebugMode) {
-        print('[ChatRepo] WARN: pubkey changed for $username! pinned vs new differ');
-      }
-      // TODO M8: показать UI «ключ собеседника изменился, принять?»
+    // Owner-pubkey — для legacy compat и TOFU pinning.
+    Uint8List ownerRaw;
+    if (ownerPubB64 != null && ownerPubB64.isNotEmpty) {
+      ownerRaw = Uint8List.fromList(base64Decode(ownerPubB64));
+    } else {
+      ownerRaw = Uint8List.fromList(base64Decode(devicesRaw.first as String));
     }
-    return raw;
+    _peerPubCache[username] = ownerRaw;
+    // Полный список устройств. Если девайсов нет — берём только owner.
+    final devList = <Uint8List>[];
+    final seen = <String>{};
+    for (final s in devicesRaw) {
+      if (s is String && s.isNotEmpty && seen.add(s)) {
+        devList.add(Uint8List.fromList(base64Decode(s)));
+      }
+    }
+    if (devList.isEmpty) devList.add(ownerRaw);
+    _peerDevicePubsCache[username] = devList;
+    // TOFU pin owner-pub (используем для индикации смены ключа в чат-bubble).
+    if (ownerPubB64 != null) {
+      final pinned = await _db.getPinnedPub(username);
+      if (pinned == null) {
+        await _db.pinPub(username, ownerPubB64, accepted: true);
+      } else if (pinned != ownerPubB64 && kDebugMode) {
+        print('[ChatRepo] pubkey changed for @$username (TOFU)');
+      }
+    }
+  }
+
+  /// TDA-4: подгрузить мои other-device pubkey'и (для self-echo).
+  Future<void> _refreshMyOtherDevicePubs() async {
+    try {
+      final r = await _api.chatGet('/keys/me');
+      if (r is Map) {
+        final list = (r['other_device_pubkeys'] as List?) ?? const [];
+        _myOtherDevicePubs = list
+            .whereType<String>()
+            .where((s) => s.isNotEmpty)
+            .map((s) => Uint8List.fromList(base64Decode(s)))
+            .toList();
+      }
+    } catch (e) {
+      if (kDebugMode) print('[ChatRepo] refresh self-pubs: $e');
+    }
   }
 
   // ─── Догон pending с сервера (legacy /pending) ────────────────────────
@@ -313,6 +383,30 @@ class ChatRepo {
     }
     final fromUsername = env['from_username'] as String?;
     if (fromUsername == null) return false;
+
+    // TDA-4 self-echo: я отправлял с другого устройства → here I'm receiver,
+    // но peer диалога — это `peer_hint` (с кем шла реальная переписка), а
+    // fromMe=true. Кладём в БД с peer=peer_hint, fromMe=true.
+    final isSelfEcho = (env['self_echo'] == true) && (fromUsername == _myUsername);
+    final peerHint = env['peer_hint'] as String?;
+    if (isSelfEcho && peerHint != null) {
+      final t = env['type'] as String? ?? 'msg';
+      if (t == 'msg') {
+        final localSid = _sealedSid(id);
+        if (await _db.messageExists(peerHint, localSid)) return true;
+        await _db.upsertMessage(StoredMessage(
+          sid: localSid,
+          peer: peerHint,
+          fromMe: true,
+          text: (env['text'] as String?) ?? '',
+          createdAt: createdAt,
+        ));
+        await _refreshMessages(peerHint);
+        await _bumpDialog(peerHint, lastText: (env['text'] as String?) ?? '',
+            fromMe: true, lastAt: createdAt);
+        return true;
+      }
+    }
 
     final type = env['type'] as String? ?? 'msg';
     // Управляющие sealed-типы: delivered/read с target_sid (sid отправителя).
@@ -589,13 +683,18 @@ class ChatRepo {
     await _bumpDialog(toUsername, lastText: trimmed, fromMe: true);
 
     try {
-      final peerPub = await getPeerPub(toUsername);
+      // TDA-4 fanout: шифруем под все pubkey'и пира (multi-device).
+      final peerDevPubs = await getPeerDevicePubs(toUsername);
       final payload = jsonEncode({'type': 'msg', 'text': trimmed});
-      final ciphertext =
-          await _crypto.encryptFor(theirPubRaw: peerPub, plaintext: payload);
+
+      // Первый /send — основной (он же возвращает sid). Дополнительные
+      // device-копии отправляются параллельно через sealed-канал.
+      final firstPub = peerDevPubs.first;
+      final firstCt = await _crypto.encryptFor(
+          theirPubRaw: firstPub, plaintext: payload);
       final resp = await _api.chatPost('/send', {
         'to_username': toUsername,
-        'ciphertext': ciphertext,
+        'ciphertext': firstCt,
       });
       final realSid = (resp as Map)['id'] as int;
       final createdAt = resp['created_at'];
@@ -612,11 +711,62 @@ class ChatRepo {
       await _refreshMessages(toUsername);
       await _bumpDialog(toUsername,
           lastText: trimmed, fromMe: true, lastAt: createdAt);
+
+      // Доп. копии для остальных device-pubkey'ев пира (если их >1) — sealed.
+      // Sealed envelope содержит from_username внутри → получатель знает кто я.
+      if (peerDevPubs.length > 1) {
+        final me = _myUsername ?? await AuthService.username() ?? '';
+        for (var i = 1; i < peerDevPubs.length; i++) {
+          unawaited(_fanoutSealed(
+              toUsername: toUsername, pub: peerDevPubs[i], me: me, text: trimmed));
+        }
+      }
+
+      // Self-echo: на мои other-device, чтобы они увидели исходящее.
+      if (_myOtherDevicePubs.isNotEmpty) {
+        final me = _myUsername ?? await AuthService.username() ?? '';
+        for (final pub in _myOtherDevicePubs) {
+          unawaited(_fanoutSealed(
+              toUsername: me, pub: pub, me: me, text: trimmed,
+              selfEcho: true, peerHint: toUsername));
+        }
+      }
     } catch (e) {
       if (kDebugMode) print('[sendDmText] $e');
       await _db.updateMessageFlags(toUsername, tempSid, {'pending': 0});
       await _refreshMessages(toUsername);
       rethrow;
+    }
+  }
+
+  /// TDA-4: отправка sealed envelope под конкретный pubkey. Используется
+  /// для fanout-копий пира + self-echo на свои other-devices. Если
+  /// selfEcho=true — отправляется НА свой username, payload содержит
+  /// `peer_hint` (с кем реально шёл диалог), чтобы получающее устройство
+  /// положило сообщение в правильный peer-чат.
+  Future<void> _fanoutSealed({
+    required String toUsername,
+    required Uint8List pub,
+    required String me,
+    required String text,
+    bool selfEcho = false,
+    String? peerHint,
+  }) async {
+    try {
+      final payload = <String, dynamic>{
+        'type': 'msg',
+        'text': text,
+        if (selfEcho && peerHint != null) 'peer_hint': peerHint,
+        if (selfEcho) 'self_echo': true,
+      };
+      final ct = await _crypto.encryptSealed(
+          receiverPubRaw: pub, payload: payload, fromUsername: me);
+      await _api.chatPost('/send_sealed', {
+        'to_username': toUsername,
+        'ciphertext': ct,
+      });
+    } catch (e) {
+      if (kDebugMode) print('[ChatRepo._fanoutSealed] $e');
     }
   }
 
@@ -677,6 +827,22 @@ class ChatRepo {
       await _db.updateMessageFlags(peer, id, {'read': 1, 'delivered': 1});
     }
     await _refreshMessages(peer);
+  }
+
+  Future<void> _onPeerDevicesChanged(Map<String, dynamic> d) async {
+    final username = d['username'] as String?;
+    if (username == null) return;
+    _peerPubCache.remove(username);
+    _peerDevicePubsCache.remove(username);
+    if (kDebugMode) print('[ChatRepo] device-cache очищен для @$username');
+  }
+
+  Future<void> _onPresence(Map<String, dynamic> d) async {
+    final username = d['username'] as String?;
+    final online = (d['online'] as bool?) ?? false;
+    if (username == null) return;
+    final notif = _presenceByPeer[username];
+    if (notif != null) notif.value = online;
   }
 
   Future<void> _onChatClearedByPeer(Map<String, dynamic> d) async {

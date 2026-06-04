@@ -14,6 +14,7 @@
 //   • hashtag / @mention навигация (тапнул #foo → setTag('foo') → refresh)
 
 import 'dart:async';
+import 'dart:ui' show ImageFilter;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -21,12 +22,18 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
+import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/feed_repo.dart';
 import '../widgets/glass.dart';
+import 'comments_screen.dart';
+import 'profile_screen.dart';
 
 class FeedScreen extends StatefulWidget {
-  const FeedScreen({super.key});
+  /// embedded=true → не показываем собственный header (используется внутри SocialPane,
+  /// который уже имеет верхний таб-бар «Лента / Миниски / Поиск / Уведомления»).
+  final bool embedded;
+  const FeedScreen({super.key, this.embedded = false});
   @override
   State<FeedScreen> createState() => _FeedScreenState();
 }
@@ -112,7 +119,7 @@ class _FeedScreenState extends State<FeedScreen> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _header(),
+        if (!widget.embedded) _header(),
         _sortBar(),
         if (_activeTag != null) _tagBar(),
         Expanded(child: _body()),
@@ -284,7 +291,9 @@ class _FeedScreenState extends State<FeedScreen> {
                 p: p,
                 myUsername: _myUsername,
                 onOpenTag: _openTag,
-                onOpenUser: (u) => _snack('Профиль @$u — скоро'),
+                onOpenUser: (u) => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => ProfileScreen(username: u),
+                )),
                 onError: _snack,
               );
             },
@@ -571,10 +580,53 @@ class _PostCardState extends State<_PostCard> {
               if (p.fromChannel != null) _fromChannelBadge(p.fromChannel!),
               _headerRow(p),
               const SizedBox(height: 8),
+              // NSFW: рендерим контент всегда, но если не раскрыт — поверх
+              // кладём BackdropFilter blur с кнопкой "Показать".
               if (p.isNsfw && !_nsfwRevealed)
-                _nsfwOverlay()
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Stack(
+                    children: [
+                      // Реальный контент под блюром
+                      Opacity(
+                        opacity: 0.85,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (p.content.isNotEmpty) _contentText(p.content),
+                            if (p.media.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              _MediaGrid(media: p.media),
+                            ],
+                          ],
+                        ),
+                      ),
+                      // Backdrop blur поверх
+                      Positioned.fill(
+                        child: ClipRect(
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+                            child: Container(color: Colors.black.withValues(alpha: 0.35)),
+                          ),
+                        ),
+                      ),
+                      // Кнопка «Показать»
+                      Positioned.fill(
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: () => setState(() => _nsfwRevealed = true),
+                            child: Center(child: _nsfwRevealCard()),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
               else ...[
                 if (p.content.isNotEmpty) _contentText(p.content),
+                if (p.content.isNotEmpty)
+                  _LinkPreviewWidget(content: p.content),
                 if (p.media.isNotEmpty) ...[
                   const SizedBox(height: 8),
                   _MediaGrid(media: p.media),
@@ -723,40 +775,37 @@ class _PostCardState extends State<_PostCard> {
     );
   }
 
-  Widget _nsfwOverlay() {
+  /// Компактная плашка «Показать», накладывается поверх размытого контента.
+  Widget _nsfwRevealCard() {
     final byAdmin = widget.p.nsfwSetByAdmin;
     return Container(
-      height: 160,
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
       decoration: BoxDecoration(
-        color: Colors.black54,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: GE.red.withValues(alpha: 0.4)),
+        color: Colors.black.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: GE.red.withValues(alpha: 0.7), width: 1),
       ),
-      alignment: Alignment.center,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.visibility_off, color: GE.red, size: 28),
-          const SizedBox(height: 6),
-          Text(byAdmin ? 'Помечено модерацией' : 'Контент 18+',
-              style: TextStyle(color: GE.text, fontWeight: FontWeight.w700)),
+          Icon(Icons.visibility_off, color: GE.red, size: 22),
           const SizedBox(height: 4),
+          Text(byAdmin ? 'Помечено модерацией' : 'Контент 18+',
+              style: TextStyle(
+                  color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+          const SizedBox(height: 2),
           Text(byAdmin ? 'Автор не указал NSFW' : 'Автор пометил как взрослый',
-              style: TextStyle(color: GE.sub, fontSize: 11)),
-          const SizedBox(height: 10),
-          InkWell(
-            onTap: () => setState(() => _nsfwRevealed = true),
-            borderRadius: BorderRadius.circular(8),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: GE.red.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: GE.red),
-              ),
-              child: Text('Показать',
-                  style: TextStyle(color: GE.red, fontWeight: FontWeight.w700)),
+              style: TextStyle(color: Colors.white70, fontSize: 11)),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              color: GE.red.withValues(alpha: 0.25),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: GE.red),
             ),
+            child: Text('Показать',
+                style: TextStyle(color: GE.red, fontWeight: FontWeight.w700, fontSize: 12)),
           ),
         ],
       ),
@@ -905,7 +954,12 @@ class _PostCardState extends State<_PostCard> {
         ),
         // Комментарии
         InkWell(
-          onTap: () => widget.onError('Комменты — скоро'),
+          onTap: () => Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => CommentsScreen(
+              postId: p.id,
+              postPreview: p.content,
+            ),
+          )),
           borderRadius: BorderRadius.circular(14),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
@@ -1119,9 +1173,146 @@ class _PostCardState extends State<_PostCard> {
         await _confirmAndDelete(p);
         break;
       case 'report':
-        widget.onError('Жалоба отправлена');
+        await _openReportSheet(p);
         break;
     }
+  }
+
+  Future<void> _openReportSheet(FeedPost p) async {
+    final reasons = <(String, String)>[
+      ('spam', 'Спам'),
+      ('nsfw', '18+ не помечено'),
+      ('abuse', 'Оскорбления / травля'),
+      ('illegal', 'Незаконный контент'),
+      ('scam', 'Мошенничество'),
+      ('other', 'Другое'),
+    ];
+    final commentCtrl = TextEditingController();
+    String? selected;
+    final sent = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) {
+        return StatefulBuilder(builder: (innerCtx, setSheet) {
+          final bottom = MediaQuery.of(innerCtx).viewInsets.bottom;
+          bool sending = false;
+          Future<void> doSend() async {
+            if (selected == null) return;
+            setSheet(() => sending = true);
+            try {
+              await ApiClient().socPost('/post/${p.id}/report', {
+                'reason': selected,
+                'comment': commentCtrl.text.trim(),
+              });
+              if (!innerCtx.mounted) return;
+              Navigator.pop(sheetCtx, true);
+            } catch (e) {
+              setSheet(() => sending = false);
+              ScaffoldMessenger.of(innerCtx).showSnackBar(
+                  SnackBar(content: Text('Не отправилось: $e')));
+            }
+          }
+          return Padding(
+            padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + bottom),
+            child: GlassCard(
+              padding: const EdgeInsets.all(16),
+              radius: GE.radiusLg,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Icon(Icons.flag_outlined, color: GE.red),
+                    const SizedBox(width: 8),
+                    Text('Пожаловаться на пост',
+                        style: TextStyle(
+                            color: GE.text,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700)),
+                  ]),
+                  const SizedBox(height: 4),
+                  Text('Анонимно. Модерация рассмотрит за 24 часа.',
+                      style: TextStyle(color: GE.sub, fontSize: 11)),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: reasons.map((r) {
+                      final (key, label) = r;
+                      final active = selected == key;
+                      return InkWell(
+                        onTap: () => setSheet(() => selected = key),
+                        borderRadius: BorderRadius.circular(20),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 160),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: active
+                                ? GE.red.withValues(alpha: 0.18)
+                                : GE.glassFill,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: active ? GE.red : GE.glassBorder,
+                              width: active ? 1.2 : 0.6,
+                            ),
+                          ),
+                          child: Text(label,
+                              style: TextStyle(
+                                  color: active ? GE.red : GE.text,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600)),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: commentCtrl,
+                    maxLines: 3,
+                    minLines: 2,
+                    maxLength: 300,
+                    style: TextStyle(color: GE.text, fontSize: 13),
+                    cursorColor: GE.primary,
+                    decoration: InputDecoration(
+                      hintText: 'Комментарий (опционально)',
+                      hintStyle: TextStyle(color: GE.sub),
+                      filled: true,
+                      fillColor: GE.glassFill,
+                      counterStyle:
+                          TextStyle(color: GE.sub, fontSize: 10),
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide(color: GE.glassBorder)),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    TextButton(
+                      onPressed: sending
+                          ? null
+                          : () => Navigator.pop(sheetCtx, false),
+                      child: const Text('Отмена'),
+                    ),
+                    const Spacer(),
+                    GlassButton(
+                      label: 'Отправить',
+                      icon: Icons.send,
+                      primary: true,
+                      loading: sending,
+                      onTap: (selected == null || sending) ? null : doSend,
+                    ),
+                  ]),
+                ],
+              ),
+            ),
+          );
+        });
+      },
+    );
+    if (!mounted) return;
+    if (sent == true) widget.onError('Жалоба отправлена');
   }
 
   Future<void> _openEditDialog(FeedPost p) async {
@@ -1405,6 +1596,151 @@ class _AudioTile extends StatelessWidget {
                 style: TextStyle(color: GE.text, fontSize: 13)),
           ),
         ]),
+      ),
+    );
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+/// LinkPreview: парсит первую http(s)-ссылку из контента поста, тянет
+/// /linkpreview?url=, рисует карточку с image + title + description.
+/// Кэш в памяти на сессию, чтобы не дёргать сервер на каждый rebuild.
+class _LinkPreviewWidget extends StatefulWidget {
+  final String content;
+  const _LinkPreviewWidget({required this.content});
+
+  @override
+  State<_LinkPreviewWidget> createState() => _LinkPreviewWidgetState();
+}
+
+class _LinkPreviewWidgetState extends State<_LinkPreviewWidget> {
+  static final RegExp _urlRe = RegExp(r'\bhttps?://[^\s<>"]+', caseSensitive: false);
+  // Process-wide cache: url → preview data | null (отсутствие)
+  static final Map<String, Map<String, dynamic>?> _cache = {};
+  static final ApiClient _api = ApiClient();
+  Map<String, dynamic>? _data;
+  bool _loading = false;
+  bool _failed = false;
+  String? _url;
+
+  @override
+  void initState() {
+    super.initState();
+    _detect();
+  }
+
+  void _detect() {
+    final m = _urlRe.firstMatch(widget.content);
+    if (m == null) return;
+    var u = m.group(0)!;
+    // обрезаем хвостовую пунктуацию
+    u = u.replaceAll(RegExp(r'[.,;!?)]+$'), '');
+    _url = u;
+    if (_cache.containsKey(u)) {
+      _data = _cache[u];
+      _failed = _data == null;
+      return;
+    }
+    _load(u);
+  }
+
+  Future<void> _load(String u) async {
+    setState(() => _loading = true);
+    try {
+      final r = await _api.socGet('/linkpreview', {'url': u});
+      if (!mounted) return;
+      if (r is Map && (r['title'] != null || r['image'] != null)) {
+        final data = Map<String, dynamic>.from(r);
+        _cache[u] = data;
+        setState(() { _data = data; _loading = false; });
+      } else {
+        _cache[u] = null;
+        setState(() { _failed = true; _loading = false; });
+      }
+    } catch (_) {
+      if (!mounted) return;
+      _cache[u] = null;
+      setState(() { _failed = true; _loading = false; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_url == null || _failed) return const SizedBox.shrink();
+    if (_loading) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: GlassCard(
+          lite: true,
+          padding: const EdgeInsets.all(10),
+          child: Row(children: [
+            SizedBox(
+              width: 14, height: 14,
+              child: CircularProgressIndicator(color: GE.primary, strokeWidth: 2),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(_url!,
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: GE.sub, fontSize: 11)),
+            ),
+          ]),
+        ),
+      );
+    }
+    if (_data == null) return const SizedBox.shrink();
+    final image = _data!['image'] as String?;
+    final title = (_data!['title'] as String?) ?? _url!;
+    final desc = _data!['description'] as String?;
+    final site = (_data!['site'] as String?) ?? Uri.tryParse(_url!)?.host ?? '';
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: GlassCard(
+        lite: true,
+        padding: EdgeInsets.zero,
+        onTap: () => launchUrl(Uri.parse(_url!),
+            mode: LaunchMode.externalApplication),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(GE.radiusMd),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (image != null && image.isNotEmpty)
+                Image.network(image,
+                    height: 140, fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => const SizedBox.shrink()),
+              Padding(
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (site.isNotEmpty)
+                      Text(site.toUpperCase(),
+                          style: TextStyle(
+                              color: GE.primary,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.5)),
+                    Text(title,
+                        maxLines: 2, overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: GE.text,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            height: 1.3)),
+                    if (desc != null && desc.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(desc,
+                          maxLines: 2, overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: GE.sub, fontSize: 11, height: 1.35)),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

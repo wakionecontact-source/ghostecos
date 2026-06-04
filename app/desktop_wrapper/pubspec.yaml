@@ -1,7 +1,7 @@
 name: ghost
 description: Ghost — приватный мессенджер с экосистемой (чат, лента, банк) на Mesh + жидкое стекло.
 publish_to: 'none'
-version: 0.2.0+1
+version: 1.1.0+4
 
 environment:
   sdk: ^3.12.0
@@ -71,6 +71,21 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^6.0.0
   msix: ^3.16.7
+  flutter_launcher_icons: ^0.14.4
+
+# Genericiator иконок: запустить `dart run flutter_launcher_icons` после замены
+# assets/icon.png. Создаст mipmap-*, AppIcon.appiconset, Windows favicon.
+flutter_launcher_icons:
+  android: true
+  ios: false                          # включим когда заведём Xcode-проект (M9)
+  image_path: "assets/icon.png"
+  min_sdk_android: 24
+  adaptive_icon_background: "#3B0C93"
+  adaptive_icon_foreground: "assets/icon.png"
+  windows:
+    generate: true
+    image_path: "assets/icon.png"
+    icon_size: 256
 
 flutter:
   uses-material-design: true
@@ -83,7 +98,7 @@ msix_config:
   display_name: Ghost
   publisher_display_name: Ghost
   identity_name: online.ghost_chat.Ghost
-  msix_version: 0.2.0.0
+  msix_version: 0.3.0.2
   logo_path: assets/icon.png
   capabilities: internetClient, microphone
   publisher: CN=Ghost

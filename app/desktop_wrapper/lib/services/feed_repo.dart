@@ -334,12 +334,38 @@ class FeedRepo {
           'media': media.map((m) => {'type': m.type, 'url': m.url}).toList(),
         'is_nsfw': isNsfw,
       });
-      final id = _asInt((r as Map)['id']);
-      if (id > 0) {
-        await refresh();
-        return id;
+      if (r is! Map) return null;
+      final id = _asInt(r['id']);
+      if (id <= 0) return null;
+      // Оптимистично вставляем новый пост в начало ленты — пользователь
+      // сразу видит результат, не ждёт перезагрузку. Дальше в фоне
+      // дотягиваем настоящий ответ сервера (если refresh жив).
+      try {
+        final m = Map<String, dynamic>.from(r);
+        // Если сервер не вернул структуру поста — собираем минимальную
+        // карту чтобы FeedPost.fromMap не упал.
+        m['id'] = id;
+        m.putIfAbsent('content', () => text);
+        m.putIfAbsent('media',
+            () => media.map((mm) => {'type': mm.type, 'url': mm.url}).toList());
+        m.putIfAbsent('is_nsfw', () => isNsfw);
+        m.putIfAbsent('created_at',
+            () => DateTime.now().toUtc().toIso8601String());
+        m.putIfAbsent('username', () => m['username'] ?? 'you');
+        m.putIfAbsent('display_name', () => m['display_name'] ?? 'Вы');
+        final post = FeedPost.fromMap(m);
+        if (!_seen.contains(id)) {
+          _seen.add(id);
+          postsNotifier.value = [post, ...postsNotifier.value];
+        }
+      } catch (e) {
+        if (kDebugMode) print('[FeedRepo.publish] optimistic skip: $e');
       }
-      return null;
+      // refresh в фоне — даже если упадёт, пост уже в ленте.
+      unawaited(refresh().catchError((e) {
+        if (kDebugMode) print('[FeedRepo.publish] refresh ignored: $e');
+      }));
+      return id;
     } catch (e) {
       if (kDebugMode) print('[FeedRepo.publish] $e');
       rethrow;
