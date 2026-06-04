@@ -34,8 +34,18 @@ class ChatRepo {
 
   /// Сообщения по peer. Каждый ChatScreen подписывается на свой.
   final Map<String, ValueNotifier<List<StoredMessage>>> _msgsByPeer = {};
-  ValueNotifier<List<StoredMessage>> messagesNotifier(String peer) =>
-      _msgsByPeer.putIfAbsent(peer, () => ValueNotifier([]));
+  /// Какие peer-ы уже подгружены из БД — чтобы не дёргать SQL на каждый getter.
+  final Set<String> _msgsLoadedFromDb = {};
+
+  ValueNotifier<List<StoredMessage>> messagesNotifier(String peer) {
+    final notif = _msgsByPeer.putIfAbsent(peer, () => ValueNotifier([]));
+    // Первое обращение → асинхронно подгружаем историю из локальной БД.
+    if (!_msgsLoadedFromDb.contains(peer)) {
+      _msgsLoadedFromDb.add(peer);
+      unawaited(_refreshMessages(peer));
+    }
+    return notif;
+  }
 
   /// Кэш чужих pubkey-ов в RAM на сессию.
   final Map<String, Uint8List> _peerPubCache = {};
@@ -87,26 +97,14 @@ class ChatRepo {
     _initialized = false;
   }
 
-  // ─── Публикация моего публичного ключа ───────────────────────────────
-  /// Сначала проверяем, не совпадает ли мой локальный pubkey с тем что уже на
-  /// сервере — если совпадает, ничего не льём (экономим rate-limit). Если на
-  /// сервере другой / отсутствует — публикуем. encrypted_private_key мы
-  /// не используем (наш приват в SecureStorage), но сервер требует валидный
-  /// формат — шлём детерминированный nonce 48 байт.
-  Future<void> _publishMyPubKey() async {
+  // ─── Управление ключами (для UI Settings) ────────────────────────────
+  /// Принудительно перезалить мой публичный ключ на сервер. Полезно когда
+  /// автоматическая синхронизация не помогла и пиры пишут «не удалось
+  /// расшифровать». Возвращает сообщение для пользователя.
+  Future<String> forcePublishMyPubKey() async {
     try {
       final pubRaw = await _crypto.myPublicKeyRaw();
       final myPubB64 = base64Encode(pubRaw);
-      // 1. Сравнить с сервером
-      try {
-        final mine = await _api.chatGet('/keys/me');
-        if (mine is Map && mine['x25519_pub'] == myPubB64) {
-          if (kDebugMode) print('[ChatRepo] pubkey уже на сервере, не перезаливаем');
-          return;
-        }
-      } catch (_) {/* если /keys/me провалился — попробуем upload */}
-      // 2. Залить. encrypted_private_key должен быть base64 длиной 40-500 raw bytes.
-      // Шлём 48 байт нулей (просто placeholder, мы его не читаем обратно).
       final dummyEncPriv = base64Encode(List<int>.filled(48, 0));
       final dummySalt = base64Encode(List<int>.filled(16, 0));
       await _api.chatPost('/keys/upload', {
@@ -114,9 +112,92 @@ class ChatRepo {
         'encrypted_private_key': dummyEncPriv,
         'key_salt': dummySalt,
       });
-      if (kDebugMode) print('[ChatRepo] pubkey опубликован');
+      _peerPubCache.clear();
+      return 'Ключ обновлён. Пиры должны подтвердить новый ключ при следующем сообщении.';
+    } catch (e) {
+      return 'Не удалось: $e';
+    }
+  }
+
+  /// Перегенерировать E2E-пару заново (новый приват + новый паблик), залить
+  /// на сервер. Все ранее зашифрованные сообщения от пиров СТАНУТ нечитаемыми
+  /// — это nuclear option для случая когда ничего больше не помогает.
+  Future<String> regenerateKeys() async {
+    try {
+      await _crypto.wipe();
+      await _crypto.ensureKeys();        // сгенерит новую пару
+      return await forcePublishMyPubKey();
+    } catch (e) {
+      return 'Не удалось перегенерить: $e';
+    }
+  }
+
+  // ─── Публикация моего публичного ключа ───────────────────────────────
+  /// Сравниваем серверный pubkey с моим локальным. Если на сервере другой
+  /// (или его нет) — публикуем мой (т.к. **приват только у нас**, мы единственный
+  /// источник истины для этого аккаунта на данном устройстве). Если совпадают —
+  /// ничего не делаем (экономим rate-limit 5/час).
+  ///
+  /// Бонус: если на сервере был чужой pubkey (например веб-клиент с другим
+  /// приватом) и мы его перезаписываем — пиры увидят rotation и должны
+  /// подтвердить новый ключ через TOFU. До того их зашифрованные сообщения
+  /// не расшифровать (приват другой).
+  Future<void> _publishMyPubKey() async {
+    try {
+      final pubRaw = await _crypto.myPublicKeyRaw();
+      final myPubB64 = base64Encode(pubRaw);
+      // 1. Сравнить с сервером
+      String? serverPub;
+      try {
+        final mine = await _api.chatGet('/keys/me');
+        if (mine is Map) serverPub = mine['x25519_pub'] as String?;
+      } catch (_) {/* если /keys/me провалился — попробуем upload */}
+      if (serverPub == myPubB64) {
+        if (kDebugMode) print('[ChatRepo] pubkey уже актуален');
+        return;
+      }
+      if (kDebugMode) {
+        print('[ChatRepo] pubkey mismatch: '
+            'server=${serverPub?.substring(0, 16) ?? "null"}... '
+            'mine=${myPubB64.substring(0, 16)}... → залить мой');
+      }
+      // 2. Заливаем мой. encrypted_private_key — 48 байт placeholder (приват
+      // в SecureStorage локально, sync приватников через seed/QR — отдельная фаза).
+      final dummyEncPriv = base64Encode(List<int>.filled(48, 0));
+      final dummySalt = base64Encode(List<int>.filled(16, 0));
+      await _api.chatPost('/keys/upload', {
+        'x25519_pub': myPubB64,
+        'encrypted_private_key': dummyEncPriv,
+        'key_salt': dummySalt,
+      });
+      if (kDebugMode) print('[ChatRepo] pubkey опубликован успешно');
+      // 3. Чистим локальный кэш peer-ов: если у меня кэширован их pubkey
+      // отдельно — он остаётся валидным; чистка нужна если пиры тоже сменили
+      // ключи (TOFU re-pin при ошибке расшифровки).
+      _peerPubCache.clear();
     } catch (e) {
       if (kDebugMode) print('[ChatRepo] publish pub failed: $e');
+    }
+  }
+
+  /// При получении envelope, которую не можем расшифровать (InvalidCipherText),
+  /// возможно у пира сменился pubkey. Сбрасываем TOFU pin и кэш, чтобы при
+  /// следующем входящем сообщении подтянуть свежий pubkey с сервера.
+  Future<void> _refreshPeerPubAfterDecryptFail(String username) async {
+    _peerPubCache.remove(username);
+    try {
+      // Перетягиваем с сервера и пересохраняем pin.
+      final r = await _api.chatGet('/keys/$username');
+      final pubB64 = (r as Map)['x25519_pub'] as String?;
+      if (pubB64 != null && pubB64.isNotEmpty) {
+        await _db.pinPub(username, pubB64, accepted: true);
+        _peerPubCache[username] = Uint8List.fromList(base64Decode(pubB64));
+        if (kDebugMode) {
+          print('[ChatRepo] перепиновали ключ @$username (после decrypt fail)');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) print('[ChatRepo] re-pin failed: $e');
     }
   }
 
@@ -619,7 +700,13 @@ class ChatRepo {
     try {
       plainJson = await _crypto.decryptFrom(theirPubRaw: senderPub, envelopeB64: cipher);
     } catch (e) {
-      plainJson = '{"type":"msg","text":"[не удалось расшифровать]"}';
+      if (kDebugMode) {
+        print('[ChatRepo._ingestIncoming] decrypt fail (peer=$peerUsername): $e');
+      }
+      // Возможно ключ пира сменился — перепиновываем, чтобы СЛЕДУЮЩЕЕ
+      // сообщение могло расшифроваться.
+      unawaited(_refreshPeerPubAfterDecryptFail(peerUsername));
+      plainJson = '{"type":"msg","text":"[не удалось расшифровать — ключ собеседника мог измениться]"}';
     }
     final payload = _parsePayload(plainJson);
     final type = payload['type'] as String? ?? 'msg';
@@ -886,6 +973,9 @@ class ChatRepo {
   }
 
   Future<void> markChatRead(String peer) async {
+    // Гарантированно подгружаем историю из БД при открытии чата.
+    _msgsLoadedFromDb.add(peer);
+    await _refreshMessages(peer);
     await _db.resetUnread(peer);
     dialogsNotifier.value = await _db.getDialogs();
     // Сообщим серверу что прочитал входящие (он пингует sender'у двойную галку).

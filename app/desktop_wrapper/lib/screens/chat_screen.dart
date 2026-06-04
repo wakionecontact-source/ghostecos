@@ -442,11 +442,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final notif = ChatRepo.instance.messagesNotifier(widget.peer);
     return Scaffold(
       backgroundColor: Colors.transparent,
+      resizeToAvoidBottomInset: true,
       appBar: GlassAppBar(
         showBack: true,
         titleText: widget.displayName,
       ),
-      body: Column(
+      body: SafeArea(
+        top: false,
+        child: Column(
         children: [
           Expanded(
             child: ValueListenableBuilder<List<StoredMessage>>(
@@ -501,6 +504,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           if (_replyTo != null || _editing != null) _replyEditBar(),
           _composer(),
         ],
+      ),
       ),
     );
   }
@@ -569,10 +573,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Widget _composer() {
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     final hasText = _inputCtrl.text.trim().isNotEmpty;
+    // НЕ добавляем viewInsets.bottom: Scaffold с resizeToAvoidBottomInset=true
+    // (default) уже сжимает body над клавиатурой. Если добавить bottomInset
+    // тут — composer улетает на высоту клавиатуры дважды.
     return Padding(
-      padding: EdgeInsets.fromLTRB(8, 4, 8, 8 + bottomInset),
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
       child: GlassCard(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         radius: GE.radiusLg,

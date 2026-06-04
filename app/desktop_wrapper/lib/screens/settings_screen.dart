@@ -3,6 +3,7 @@
 
 import 'package:flutter/material.dart';
 import '../theme.dart';
+import '../services/chat_repo.dart';
 import '../services/theme_service.dart';
 import '../widgets/glass.dart';
 
@@ -82,6 +83,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 20),
+          _sectionTitle('E2E ключи'),
+          GlassCard(
+            child: Column(
+              children: [
+                _tile(Icons.upload_outlined,
+                    'Перезалить мой ключ на сервер', _forcePublishKey,
+                    sub: 'Используй если пиры пишут «не удалось расшифровать»'),
+                _tile(Icons.refresh, 'Перегенерировать E2E-пару',
+                    () => _confirmRegenerate(context),
+                    sub: 'NUCLEAR: новый приват, всю старую переписку нельзя расшифровать',
+                    danger: true),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
           _sectionTitle('О приложении'),
           GlassCard(
             child: Column(
@@ -120,20 +136,80 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _tile(IconData icon, String label, VoidCallback onTap) {
+  Widget _tile(IconData icon, String label, VoidCallback onTap,
+      {String? sub, bool danger = false}) {
+    final color = danger ? GE.red : GE.primary;
+    final textColor = danger ? GE.red : GE.text;
     return InkWell(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Icon(icon, size: 20, color: GE.primary),
+            Icon(icon, size: 20, color: color),
             const SizedBox(width: 12),
-            Expanded(child: Text(label, style: TextStyle(color: GE.text, fontSize: 14))),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: TextStyle(color: textColor, fontSize: 14)),
+                  if (sub != null) ...[
+                    const SizedBox(height: 2),
+                    Text(sub,
+                        style: TextStyle(color: GE.sub, fontSize: 11)),
+                  ],
+                ],
+              ),
+            ),
             Icon(Icons.chevron_right, color: GE.sub, size: 20),
           ],
         ),
       ),
+    );
+  }
+
+  Future<void> _forcePublishKey() async {
+    _snack('Заливаю ключ на сервер...');
+    final res = await ChatRepo.instance.forcePublishMyPubKey();
+    _snack(res);
+  }
+
+  Future<void> _confirmRegenerate(BuildContext ctx) async {
+    final ok = await showDialog<bool>(
+      context: ctx,
+      builder: (dctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0F172A),
+        title: Text('Перегенерировать E2E-пару?',
+            style: TextStyle(color: GE.text)),
+        content: Text(
+          'ВНИМАНИЕ: будет создан новый приватный ключ. Все ранее присланные '
+          'тебе сообщения, зашифрованные старым публичным ключом, СТАНУТ '
+          'нечитаемыми. Делать ТОЛЬКО если ничего больше не помогает.',
+          style: TextStyle(color: GE.sub),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dctx, false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dctx, true),
+            child: Text('Перегенерировать', style: TextStyle(color: GE.red)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    _snack('Генерирую новый ключ...');
+    final res = await ChatRepo.instance.regenerateKeys();
+    _snack(res);
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
     );
   }
 }

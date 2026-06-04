@@ -279,6 +279,14 @@ class DbService {
     required int realSid,
     required dynamic createdAt,
   }) async {
+    // Если на (peer, realSid) уже лежит запись (старая дубль с сервера до
+    // того как мы успели promote) — удаляем её, иначе UPDATE упадёт на
+    // UNIQUE constraint PRIMARY KEY (sid, peer).
+    await _safeDb.delete(
+      'messages',
+      where: 'peer = ? AND sid = ? AND temp_sid IS NULL',
+      whereArgs: [peer, realSid],
+    );
     final updated = await _safeDb.update(
       'messages',
       {
