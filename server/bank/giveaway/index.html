@@ -158,6 +158,7 @@ main{max-width:680px;margin:0 auto;padding:22px 16px 36px;}
 
 /* ── Card (gradient border via padding) ── */
 .gv-card{position:relative;border-radius:22px;padding:1px;background:linear-gradient(155deg,rgba(168,85,247,0.55),rgba(236,72,153,0.28) 42%,rgba(255,255,255,0.05) 82%);box-shadow:0 22px 48px -16px rgba(124,58,237,0.45);animation:fadeUp .4s ease-out;}
+.gv-card[data-noanim]{animation:none;}
 .gv-card.done{background:linear-gradient(155deg,rgba(34,197,94,0.4),rgba(255,255,255,0.05) 70%);box-shadow:0 18px 40px -18px rgba(34,197,94,0.3);}
 .gv-card.ending{background:linear-gradient(155deg,rgba(244,63,94,0.6),rgba(251,191,36,0.25) 50%,rgba(255,255,255,0.05));}
 .gv-inner{position:relative;overflow:hidden;background:linear-gradient(180deg,rgba(17,24,39,0.94),rgba(8,12,26,0.97));border-radius:21px;padding:18px;}
@@ -465,6 +466,9 @@ let token = localStorage.getItem('gs_token');
 let adminToken = localStorage.getItem('ge_admin_token') || '';
 let _items = [];
 let _serverOffset = 0;
+// id карточек, которые уже хоть раз рендерились — чтобы при тиковой
+// перерисовке (каждые 25с) не запускать у них fadeUp анимацию заново.
+const _seenIds = new Set();
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function fmtNum(n){return (n||0).toLocaleString('ru-RU');}
@@ -697,6 +701,8 @@ function adminButtons(g){
 
 function cardHTML(g){
   const isLoggedIn = !!(token && !token.startsWith('guest_'));
+  const noAnim = _seenIds.has(g.id) ? ' data-noanim' : '';
+  _seenIds.add(g.id);
   const winLabel = g.winners_count > 1 ? `${g.winners_count} победителя` : '1 победитель';
   const prize = `
     <div class="gv-prize">
@@ -719,7 +725,7 @@ function cardHTML(g){
     } else {
       winners = `<div class="gv-noone">Никто не участвовал — победителей нет.</div>`;
     }
-    return `<div class="gv-card done" id="g${g.id}" data-gid="${g.id}"><div class="gv-inner">
+    return `<div class="gv-card done" id="g${g.id}" data-gid="${g.id}"${noAnim}><div class="gv-inner">
       <div class="gv-row"><span class="gv-badge done"><i class="fa-solid fa-check"></i> Завершён</span><span class="gv-num">#${g.id}</span><button class="gv-share" onclick="openShare(${g.id})" title="Поделиться"><i class="fa-solid fa-share-nodes"></i></button></div>
       <div class="gv-title">${esc(g.title)}</div>
       ${g.description ? `<div class="gv-desc">${esc(g.description)}</div>` : ''}
@@ -740,7 +746,7 @@ function cardHTML(g){
   else if (g.my_entered) btn = `<button class="gv-btn entered" disabled><i class="fa-solid fa-check"></i> Вы участвуете</button>`;
   else btn = `<button class="gv-btn enter" onclick="enter(${g.id})"><i class="fa-solid fa-ticket"></i> Участвовать</button>`;
 
-  return `<div class="gv-card ${ending?'ending':''}" id="g${g.id}" data-gid="${g.id}" data-ends="${g.ends_at}"><div class="gv-inner">
+  return `<div class="gv-card ${ending?'ending':''}" id="g${g.id}" data-gid="${g.id}" data-ends="${g.ends_at}"${noAnim}><div class="gv-inner">
     <div class="gv-row">
       <span class="gv-badge ${ending?'ending':'live'}">${ending?'<i class="fa-solid fa-hourglass-half"></i> Скоро':'<span class="dot"></span> Идёт'}</span>
       <span class="gv-num">#${g.id}</span>
@@ -807,6 +813,9 @@ function _scrollAndFlash(card){
     card.classList.add('gv-focus');
     setTimeout(() => card.classList.remove('gv-focus'), 3600);
   }, 380);
+  // Чистим #gID из URL без перезагрузки и без срабатывания hashchange
+  // (replaceState не триггерит событие — наш слушатель не зациклится).
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (_) {}
 }
 window.addEventListener('hashchange', () => { _focusHashCard(true); });
 
