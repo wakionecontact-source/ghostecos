@@ -784,25 +784,32 @@ function render(){
 
 // ── Deep-link к карточке #gID ───────────────────────────────────────
 let _lastFocusedHash = '';
+function _clearHash(){
+  // replaceState не триггерит hashchange — наш слушатель не зацикливается
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (_) {}
+}
 function _focusHashCard(force){
   const m = (location.hash || '').match(/^#g(\d+)/i);
   if (!m) return;
   const id = m[1];
   const hashKey = '#g' + id;
   if (!force && _lastFocusedHash === hashKey) return;
+  _lastFocusedHash = hashKey; // помечаем сразу, чтобы тиковый render не зашёл сюда повторно
   // Карточка может ещё не существовать (приходит на следующем loadList)
   const card = document.getElementById('g' + id);
   if (!card){
-    // подождём пока появится: если за 2с нет — карточки нет, мягко сообщим
     setTimeout(() => {
       const again = document.getElementById('g' + id);
-      if (again){ _scrollAndFlash(again); _lastFocusedHash = hashKey; }
-      else _notify('Розыгрыш #' + id + ' не найден', 'err');
+      if (again){
+        _scrollAndFlash(again);
+      } else {
+        _notify('Розыгрыш #' + id + ' не найден', 'err');
+        _clearHash(); // несуществующий — тоже чистим, чтобы F5 не дёргал снова
+      }
     }, 1500);
     return;
   }
   _scrollAndFlash(card);
-  _lastFocusedHash = hashKey;
 }
 function _scrollAndFlash(card){
   // Учёт фикс-шапки (~58px) + safe-area
@@ -813,9 +820,7 @@ function _scrollAndFlash(card){
     card.classList.add('gv-focus');
     setTimeout(() => card.classList.remove('gv-focus'), 3600);
   }, 380);
-  // Чистим #gID из URL без перезагрузки и без срабатывания hashchange
-  // (replaceState не триггерит событие — наш слушатель не зациклится).
-  try { history.replaceState(null, '', location.pathname + location.search); } catch (_) {}
+  _clearHash();
 }
 window.addEventListener('hashchange', () => { _focusHashCard(true); });
 
