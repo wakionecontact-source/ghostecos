@@ -39,12 +39,19 @@ class RegisterBody(BaseModel):
     username: str
     display_name: str
     password: str
-    ref: Optional[str] = None   # username пригласителя (из ?ref=... на лендинге)
-    age_18_confirm: bool = False  # ToS: подтверждение что юзеру 18+
+    ref: Optional[str] = None
+    age_18_confirm: bool = False
+    # TDA-1: опциональная привязка устройства
+    device_id: Optional[str] = None
+    device_name: Optional[str] = None
+    platform: Optional[str] = None
 
 class LoginBody(BaseModel):
     username: str
     password: str
+    device_id: Optional[str] = None
+    device_name: Optional[str] = None
+    platform: Optional[str] = None
 
 class PollBody(BaseModel):
     question: str
@@ -68,6 +75,10 @@ class EditPostBody(BaseModel):
 
 class CommentBody(BaseModel):
     text: str
+    parent_comment_id: Optional[int] = None
+
+class CommentReactBody(BaseModel):
+    emoji: str
 
 class EditProfileBody(BaseModel):
     display_name: Optional[str] = None
@@ -1138,6 +1149,24 @@ def bootstrap_economy():
             print(f"[economy] migration done: now in Gost")
     c.close()
 
+
+
+# TDA-4: уведомить ВСЕХ кто общался с этим юзером, что у него сменились
+# pubkey'и устройств. Клиенты сбросят _peerPubCache.
+def broadcast_devices_changed(user_id: int, username: str):
+    """Шлём всем WS-подключённым юзерам событие peer.devices_changed."""
+    try:
+        payload = {"username": username}
+        for uid, sockets in list(getattr(ws_hub, '_by_uid', {}).items()):
+            if uid == user_id:
+                continue
+            try:
+                ws_hub.send_to(uid, "peer.devices_changed", payload)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 init()
 bootstrap_economy()
 
@@ -1155,6 +1184,14 @@ def auth(authorization: Optional[str]) -> dict:
         "SELECT u.* FROM users u JOIN soc_tokens t ON t.user_id = u.id WHERE t.token = ?",
         (token,),
     ).fetchone()
+    if not row:
+        # TDA-1 bridge: токены device-уровня лежат в user_devices
+        row = c.execute(
+            "SELECT u.*, d.id AS _device_pk, d.device_id AS _did FROM users u "
+            "JOIN user_devices d ON d.user_id = u.id "
+            "WHERE d.token=? AND d.is_active=1 AND d.is_blocked=0 LIMIT 1",
+            (token,),
+        ).fetchone()
     c.close()
     if not row:
         raise HTTPException(401, "Invalid token")
@@ -1409,9 +1446,26 @@ def register(body: RegisterBody, request: Request):
         except Exception: pass
         try: award_gost(referrer_id, 'refout')  # пригласителю
         except Exception: pass
+    # TDA-1: первое устройство = owner аккаунта
+    final_token = token
+    final_did = None
+    if getattr(body, 'device_id', None):
+        import device_auth as _da
+        c2 = db()
+        try:
+            dev = _da.register_device(
+                c2, uid, body.device_id, body.device_name,
+                getattr(body, 'platform', None), is_owner=True
+            )
+            final_token = dev["token"]
+            final_did = dev["device_id"]
+        finally:
+            c2.close()
     return {
-        "id": uid, "username": username, "display_name": display_name, "token": token,
-        "seed_phrase": seed,  # показываем ОДИН РАЗ — юзер должен сохранить!
+        "id": uid, "username": username, "display_name": display_name,
+        "token": final_token,
+        "device_id": final_did,
+        "seed_phrase": seed,
         "referrer": ref_username if referrer_id else None,
     }
 
@@ -1506,7 +1560,23 @@ def login(body: LoginBody, request: Request):
     if not ok:
         c.close()
         raise HTTPException(401, "Неверное имя пользователя или пароль")
-    # Выдаём (или переиспользуем) соц-токен
+    # TDA-1: если есть device_id — регистрируем устройство и возвращаем
+    # device-уровневый токен. Если нет — legacy fallback на soc_tokens.
+    import device_auth as _da
+    if getattr(body, 'device_id', None):
+        existing_devs = c.execute(
+            "SELECT id FROM user_devices WHERE user_id=? LIMIT 1", (u["id"],)
+        ).fetchone()
+        is_first_dev = not existing_devs
+        d = _da.register_device(
+            c, u["id"], body.device_id, body.device_name,
+            getattr(body, 'platform', None), is_owner=is_first_dev
+        )
+        c.close()
+        return {"id": u["id"], "username": u["username"],
+                "display_name": u["display_name"], "token": d["token"],
+                "device_id": d["device_id"]}
+    # Legacy путь
     tok_row = c.execute("SELECT token FROM soc_tokens WHERE user_id=?", (u["id"],)).fetchone()
     if tok_row:
         token = tok_row["token"]
@@ -2759,20 +2829,129 @@ def react(post_id: int, body: ReactBody, authorization: Optional[str] = Header(N
 
 # ── Comments ───────────────────────────────────────────────────────────────────
 
+# ── Comments v2 (TT-style): reactions + replies ──
+# Хелпер: для списка comment_ids возвращает {id: {counts: {emoji: int}, your: str|None, replies_count: int}}
+def _hydrate_comments(c, comment_ids, viewer_id):
+    if not comment_ids:
+        return {}
+    qs = ",".join("?" * len(comment_ids))
+    out = {cid: {"counts": {}, "your": None, "replies_count": 0} for cid in comment_ids}
+    # reactions: counts
+    for r in c.execute(f"""
+        SELECT comment_id, emoji, COUNT(*) as cnt
+        FROM soc_comment_reactions
+        WHERE comment_id IN ({qs})
+        GROUP BY comment_id, emoji
+    """, comment_ids).fetchall():
+        out[r["comment_id"]]["counts"][r["emoji"]] = r["cnt"]
+    # your reaction
+    if viewer_id:
+        for r in c.execute(f"""
+            SELECT comment_id, emoji FROM soc_comment_reactions
+            WHERE comment_id IN ({qs}) AND user_id=?
+        """, comment_ids + [viewer_id]).fetchall():
+            out[r["comment_id"]]["your"] = r["emoji"]
+    # replies_count (только для top-level)
+    for r in c.execute(f"""
+        SELECT parent_id, COUNT(*) as cnt FROM soc_comments
+        WHERE parent_id IN ({qs}) GROUP BY parent_id
+    """, comment_ids).fetchall():
+        if r["parent_id"] in out:
+            out[r["parent_id"]]["replies_count"] = r["cnt"]
+    return out
+
 @router.get("/com/get/{post_id}")
-def get_comments(post_id: int, offset: int = Query(0), authorization: Optional[str] = Header(None)):
+def get_comments(post_id: int, offset: int = Query(0), limit: int = Query(10),
+                 sort: str = Query("top"),
+                 authorization: Optional[str] = Header(None)):
+    # AUDIT-1 fix: ловим ТОЛЬКО HTTPException (auth_member кидает её для
+    # неавторизованных). Любой другой Exception — это реальный баг и
+    # должен пробросится наверх, а не делать пользователя анонимным.
+    user_or_none = None
+    try:
+        user_or_none = auth_member(authorization)
+    except HTTPException:
+        pass
+    viewer_id = user_or_none["id"] if user_or_none else None
     auth(authorization)
+    # AUDIT-3 fix: явный whitelist sort, чтобы будущая правка не открыла SQL-injection
+    if sort not in ("top", "new"):
+        sort = "top"
+    limit = max(1, min(50, limit))
     c = db()
-    rows = c.execute("""
-        SELECT cm.id, cm.text, cm.created_at, u.username, u.display_name
-        FROM soc_comments cm JOIN users u ON cm.user_id=u.id
-        WHERE cm.post_id=? ORDER BY cm.created_at DESC LIMIT 3 OFFSET ?
-    """, (post_id, offset)).fetchall()
+    # AUDIT-2 fix: вместо коррелированных subquery'ев в ORDER BY (O(N²))
+    # — derived tables c GROUP BY, JOIN'ятся один раз (O(N) к страйджу).
+    # Замечание: для ОЧЕНЬ горячих постов стоит денормализовать top_score
+    # колонкой и обновлять триггерами, но в текущем масштабе LEFT JOIN ок.
+    if sort == "top":
+        order_sql = "ORDER BY top_score DESC, cm.created_at DESC"
+    else:
+        order_sql = "ORDER BY cm.created_at DESC"
+    rows = c.execute(f"""
+        SELECT cm.id, cm.text, cm.created_at, cm.parent_id, cm.reply_to_id,
+               u.username, u.display_name,
+               (COALESCE(rx.cnt, 0) + COALESCE(rp.cnt, 0)) as top_score
+        FROM soc_comments cm
+        JOIN users u ON cm.user_id = u.id
+        LEFT JOIN (
+            SELECT comment_id, COUNT(*) as cnt
+            FROM soc_comment_reactions GROUP BY comment_id
+        ) rx ON rx.comment_id = cm.id
+        LEFT JOIN (
+            SELECT parent_id, COUNT(*) as cnt
+            FROM soc_comments WHERE parent_id IS NOT NULL GROUP BY parent_id
+        ) rp ON rp.parent_id = cm.id
+        WHERE cm.post_id = ? AND cm.parent_id IS NULL
+        {order_sql}
+        LIMIT ? OFFSET ?
+    """, (post_id, limit, offset)).fetchall()
     total = c.execute(
-        "SELECT COUNT(*) as cnt FROM soc_comments WHERE post_id=?", (post_id,)
+        "SELECT COUNT(*) as cnt FROM soc_comments WHERE post_id=? AND parent_id IS NULL", (post_id,)
     ).fetchone()["cnt"]
+    ids = [r["id"] for r in rows]
+    hydr = _hydrate_comments(c, ids, viewer_id)
     c.close()
-    return {"comments": [dict(r) for r in rows], "has_more": (offset + 3) < total, "total": total}
+    out = []
+    for r in rows:
+        d = dict(r)
+        h = hydr.get(r["id"], {"counts": {}, "your": None, "replies_count": 0})
+        d["reactions"] = {"counts": h["counts"], "your_emoji": h["your"], "total": sum(h["counts"].values())}
+        d["replies_count"] = h["replies_count"]
+        out.append(d)
+    return {"comments": out, "has_more": (offset + limit) < total, "total": total}
+
+@router.get("/com/replies/{comment_id}")
+def get_replies(comment_id: int, offset: int = Query(0), limit: int = Query(10), authorization: Optional[str] = Header(None)):
+    # AUDIT-1 fix: ловим только HTTPException (см. get_comments)
+    user_or_none = None
+    try: user_or_none = auth_member(authorization)
+    except HTTPException: pass
+    viewer_id = user_or_none["id"] if user_or_none else None
+    auth(authorization)
+    limit = max(1, min(50, limit))
+    c = db()
+    # Подтянем родителя (на которого был реальный reply, не top-level parent) для quote-плашки
+    rows = c.execute("""
+        SELECT cm.id, cm.text, cm.created_at, cm.parent_id, cm.reply_to_id,
+               u.username, u.display_name,
+               rt.text as reply_to_text, rtu.username as reply_to_username, rtu.display_name as reply_to_name
+        FROM soc_comments cm JOIN users u ON cm.user_id=u.id
+        LEFT JOIN soc_comments rt ON cm.reply_to_id = rt.id
+        LEFT JOIN users rtu ON rt.user_id = rtu.id
+        WHERE cm.parent_id=?
+        ORDER BY cm.created_at ASC LIMIT ? OFFSET ?
+    """, (comment_id, limit, offset)).fetchall()
+    total = c.execute("SELECT COUNT(*) as cnt FROM soc_comments WHERE parent_id=?", (comment_id,)).fetchone()["cnt"]
+    ids = [r["id"] for r in rows]
+    hydr = _hydrate_comments(c, ids, viewer_id)
+    c.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        h = hydr.get(r["id"], {"counts": {}, "your": None, "replies_count": 0})
+        d["reactions"] = {"counts": h["counts"], "your_emoji": h["your"], "total": sum(h["counts"].values())}
+        out.append(d)
+    return {"replies": out, "has_more": (offset + limit) < total, "total": total}
 
 @router.post("/com/{post_id}")
 def write_comment(post_id: int, body: CommentBody, authorization: Optional[str] = Header(None)):
@@ -2788,15 +2967,37 @@ def write_comment(post_id: int, body: CommentBody, authorization: Optional[str] 
     if not post:
         c.close()
         raise HTTPException(404, "Post not found")
+    # parent_comment_id: проверим что коммент существует И принадлежит ЭТОМУ посту.
+    # AUDIT-4 note: prow["post_id"] != post_id даёт 400. Поскольку reply_to_id =
+    # body.parent_comment_id (= тот же id), он проверен той же проверкой —
+    # cross-post quote невозможен.
+    parent_id = body.parent_comment_id  # после flatten будет top-level
+    reply_to_id = body.parent_comment_id  # ОРИГИНАЛ — то на что юзер реально ответил
+    parent_author_id = None
+    if parent_id is not None:
+        prow = c.execute(
+            "SELECT post_id, user_id, parent_id FROM soc_comments WHERE id=?", (parent_id,)
+        ).fetchone()
+        if not prow or prow["post_id"] != post_id:
+            c.close()
+            raise HTTPException(400, "Bad parent")
+        # Threading в один уровень: если parent — это уже reply, перевешиваем на его top-level,
+        # но reply_to_id сохраняет настоящий target — чтобы в UI показать «↳ @user»
+        if prow["parent_id"] is not None:
+            parent_id = prow["parent_id"]
+        parent_author_id = prow["user_id"]
     c.execute(
-        "INSERT INTO soc_comments (post_id, user_id, text) VALUES (?,?,?)", (post_id, user["id"], text)
+        "INSERT INTO soc_comments (post_id, user_id, text, parent_id, reply_to_id) VALUES (?,?,?,?,?)",
+        (post_id, user["id"], text, parent_id, reply_to_id)
     )
-    # ВАЖНО: забираем id комментария СРАЗУ. Если делать после _add_notif,
-    # last_insert_rowid() вернёт id уведомления (ломает ответ + WS broadcast + award dedup).
     comment_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
     notified = {user["id"]}
+    # Уведомления: 1) автору поста; 2) автору родителя если reply; 3) упомянутым
     _add_notif(c, post["user_id"], user["id"], "comment", post_id, text[:120])
     notified.add(post["user_id"])
+    if parent_author_id and parent_author_id not in notified:
+        _add_notif(c, parent_author_id, user["id"], "reply", post_id, text[:120])
+        notified.add(parent_author_id)
     for uname in _extract_mentions(text):
         u = c.execute("SELECT id FROM users WHERE username=?", (uname,)).fetchone()
         if u and u["id"] not in notified:
@@ -2805,7 +3006,6 @@ def write_comment(post_id: int, body: CommentBody, authorization: Optional[str] 
     c.commit()
     total = c.execute("SELECT COUNT(*) as cnt FROM soc_comments WHERE post_id=?", (post_id,)).fetchone()["cnt"]
     c.close()
-    # Награда автору поста за чужой коммент. ref_id = comment_id чтобы каждый отдельный коммент засчитывался.
     if post["user_id"] != user["id"]:
         try: award_gost(post["user_id"], 'comment', actor_id=user["id"], ref_type='comment', ref_id=comment_id)
         except Exception: pass
@@ -2813,11 +3013,51 @@ def write_comment(post_id: int, body: CommentBody, authorization: Optional[str] 
         "post_id": post_id,
         "comments_count": total,
         "comment": {
-            "id": comment_id, "text": text,
+            "id": comment_id, "text": text, "parent_id": parent_id,
             "username": user["username"], "display_name": user["display_name"],
         },
     })
-    return {"status": "ok", "comment_id": comment_id}
+    return {"status": "ok", "comment_id": comment_id, "parent_id": parent_id}
+
+@router.post("/com/{comment_id}/react")
+def react_comment(comment_id: int, body: CommentReactBody, authorization: Optional[str] = Header(None)):
+    """Toggle реакция на коммент. Если такая же — снимаем; другая — заменяем; нет — ставим."""
+    user = auth_member(authorization)
+    _rate_limit(f"comrx:{user['id']}", limit=60, window=60)
+    emoji = (body.emoji or "").strip()
+    allowed = {"heart", "fire", "laugh", "sad", "clap", "eyes"}
+    if emoji not in allowed:
+        raise HTTPException(400, "Bad emoji")
+    c = db()
+    cm = c.execute("SELECT id, user_id, post_id FROM soc_comments WHERE id=?", (comment_id,)).fetchone()
+    if not cm:
+        c.close()
+        raise HTTPException(404, "Comment not found")
+    existing = c.execute(
+        "SELECT emoji FROM soc_comment_reactions WHERE comment_id=? AND user_id=?",
+        (comment_id, user["id"])
+    ).fetchone()
+    your = None
+    if existing and existing["emoji"] == emoji:
+        c.execute("DELETE FROM soc_comment_reactions WHERE comment_id=? AND user_id=?", (comment_id, user["id"]))
+    elif existing:
+        c.execute("UPDATE soc_comment_reactions SET emoji=? WHERE comment_id=? AND user_id=?",
+                  (emoji, comment_id, user["id"]))
+        your = emoji
+    else:
+        c.execute("INSERT INTO soc_comment_reactions (comment_id, user_id, emoji) VALUES (?,?,?)",
+                  (comment_id, user["id"], emoji))
+        your = emoji
+        # уведомление автору коммента
+        if cm["user_id"] != user["id"]:
+            _add_notif(c, cm["user_id"], user["id"], "comment_react", cm["post_id"], emoji)
+    c.commit()
+    # пересобираем counts
+    counts = {}
+    for r in c.execute("SELECT emoji, COUNT(*) as cnt FROM soc_comment_reactions WHERE comment_id=? GROUP BY emoji", (comment_id,)).fetchall():
+        counts[r["emoji"]] = r["cnt"]
+    c.close()
+    return {"status": "ok", "your_emoji": your, "counts": counts, "total": sum(counts.values())}
 
 @router.delete("/com/{comment_id}")
 def delete_comment(comment_id: int, authorization: Optional[str] = Header(None)):
