@@ -3,7 +3,7 @@ import asyncio
 from typing import Optional, List
 from pydantic import BaseModel
 from collections import defaultdict
-import sqlite3, secrets, os, uuid, json, io, hashlib, hmac, re, time
+import sqlite3, secrets, os, uuid, json, io, hashlib, hmac, re, time, random
 
 router = APIRouter(prefix="/api/soc", tags=["GhostSocial"])
 
@@ -1026,6 +1026,44 @@ def init():
     except sqlite3.OperationalError: pass
     try: c.execute("CREATE INDEX IF NOT EXISTS idx_username_cd_released ON soc_username_cooldown(released_at)")
     except sqlite3.OperationalError: pass
+
+    # ── Розыгрыши GhostBank (giveaway): движок розыгрышей Gost ──
+    # Создаёт только владелец (GE_ADMIN_TOKEN). Каждый розыгрыш — разовый с дедлайном.
+    # entries: 1 билет на аккаунт (UNIQUE). winners: кто выиграл и сколько Gost получил.
+    try:
+        c.executescript('''
+        CREATE TABLE IF NOT EXISTS soc_giveaways (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            prize_gost INTEGER NOT NULL,          -- Gost каждому победителю
+            winners_count INTEGER NOT NULL DEFAULT 1,
+            status TEXT NOT NULL DEFAULT 'active', -- active | finished | cancelled
+            ends_at INTEGER NOT NULL,              -- unix-время дедлайна
+            created_at INTEGER NOT NULL,
+            drawn_at INTEGER NOT NULL DEFAULT 0,   -- unix-время розыгрыша (0 если ещё не разыгран)
+            created_by INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_soc_giveaways_status ON soc_giveaways(status, ends_at);
+        CREATE TABLE IF NOT EXISTS soc_giveaway_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            giveaway_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            UNIQUE(giveaway_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_soc_ga_entries_ga ON soc_giveaway_entries(giveaway_id);
+        CREATE TABLE IF NOT EXISTS soc_giveaway_winners (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            giveaway_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            prize_gost INTEGER NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_soc_ga_winners_ga ON soc_giveaway_winners(giveaway_id);
+        ''')
+    except sqlite3.OperationalError:
+        pass
 
     c.commit()
     c.close()
@@ -6760,3 +6798,319 @@ def nft_transfer(body: NftTransferBody, authorization: Optional[str] = Header(No
     ws_hub.send_to(recipient["id"], "nft.received", {"nft_id": body.nft_id, "from": user["username"]})
     return {"status": "ok", "fee": NFT_TRANSFER_FEE_SOUL,
             "recipient": {"username": recipient["username"], "display_name": recipient["display_name"]}}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# РОЗЫГРЫШИ (GIVEAWAY) — движок розыгрышей Gost для GhostBank
+# Создавать/разыгрывать/отменять/удалять может ТОЛЬКО владелец (GE_ADMIN_TOKEN),
+# тем же токеном что и /admin/economy/*. Участие — бесплатно, 1 билет на аккаунт.
+# Каждый розыгрыш разовый: по дедлайну выбираются случайные победители
+# (random.SystemRandom) и им атомарно начисляется Gost. Страница: /bank/giveaway/
+# ══════════════════════════════════════════════════════════════════════════════
+
+GIVEAWAY_MAX_PRIZE = 1_000_000          # потолок Gost на одного победителя
+GIVEAWAY_MAX_WINNERS = 1000
+GIVEAWAY_MAX_DURATION_S = 366 * 86400   # макс. до дедлайна (1 год)
+GIVEAWAY_MIN_DURATION_S = 60            # мин. до дедлайна
+
+
+def _optional_uid(authorization: Optional[str]) -> int:
+    """Мягкая авторизация: вернуть user_id если валидный токен реального юзера,
+    иначе 0 (гость или без токена). Не бросает — список розыгрышей публичный."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return 0
+    try:
+        u = auth(authorization)
+    except HTTPException:
+        return 0
+    return u["id"] if (u and not u.get("is_guest")) else 0
+
+
+def _giveaway_public(c, g: dict, uid: int = 0) -> dict:
+    """Формат розыгрыша для API: счётчик участников, участвую ли я,
+    список победителей (для завершённых)."""
+    gid = g["id"]
+    entries_count = c.execute(
+        "SELECT COUNT(*) AS n FROM soc_giveaway_entries WHERE giveaway_id=?", (gid,)
+    ).fetchone()["n"]
+    my_entered = False
+    if uid > 0:
+        my_entered = c.execute(
+            "SELECT 1 FROM soc_giveaway_entries WHERE giveaway_id=? AND user_id=?", (gid, uid)
+        ).fetchone() is not None
+    winners = []
+    if g["status"] == "finished":
+        wrows = c.execute(
+            "SELECT w.user_id, w.prize_gost, u.username, u.display_name "
+            "FROM soc_giveaway_winners w LEFT JOIN users u ON u.id = w.user_id "
+            "WHERE w.giveaway_id=? ORDER BY w.id", (gid,),
+        ).fetchall()
+        winners = [
+            {"username": r["username"], "display_name": r["display_name"], "prize_gost": r["prize_gost"]}
+            for r in wrows
+        ]
+    return {
+        "id": gid,
+        "title": g["title"],
+        "description": g["description"],
+        "prize_gost": g["prize_gost"],
+        "winners_count": g["winners_count"],
+        "status": g["status"],
+        "ends_at": g["ends_at"],
+        "created_at": g["created_at"],
+        "drawn_at": g["drawn_at"],
+        "entries_count": entries_count,
+        "my_entered": my_entered,
+        "winners": winners,
+    }
+
+
+def _draw_giveaway(gid: int) -> dict:
+    """Разыгрывает один розыгрыш атомарно: выбирает случайных победителей из
+    участников, начисляет им Gost, помечает finished. Идемпотентно — повторный
+    вызов на завершённом ничего не делает (защита от двойного розыгрыша)."""
+    winners_payload = []
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        g = c.execute("SELECT * FROM soc_giveaways WHERE id=?", (gid,)).fetchone()
+        if not g or g["status"] != "active":
+            c.execute("ROLLBACK"); c.close()
+            return {"drawn": False, "reason": "not_active"}
+        now = int(time.time())
+        pool = [r["user_id"] for r in c.execute(
+            "SELECT user_id FROM soc_giveaway_entries WHERE giveaway_id=?", (gid,)
+        ).fetchall()]
+        prize = int(g["prize_gost"])
+        k = min(int(g["winners_count"]), len(pool))
+        winners = random.SystemRandom().sample(pool, k) if k > 0 else []
+        for win_uid in winners:
+            c.execute(
+                "INSERT INTO soc_giveaway_winners (giveaway_id, user_id, prize_gost, created_at) "
+                "VALUES (?,?,?,?)", (gid, win_uid, prize, now),
+            )
+            # source='giveaway' не покрыт partial дедуп-индексом — начисляем прямо тут
+            c.execute("INSERT OR IGNORE INTO soc_wallets (user_id) VALUES (?)", (win_uid,))
+            c.execute(
+                "INSERT INTO soc_wallet_tx (user_id, currency, delta, source, actor_id, ref_type, ref_id) "
+                "VALUES (?, 'gost', ?, 'giveaway', 0, 'giveaway', ?)", (win_uid, prize, gid),
+            )
+            c.execute(
+                "UPDATE soc_wallets SET gost = gost + ?, updated_at = CURRENT_TIMESTAMP WHERE user_id=?",
+                (prize, win_uid),
+            )
+            new_bal = c.execute("SELECT gost FROM soc_wallets WHERE user_id=?", (win_uid,)).fetchone()["gost"]
+            winners_payload.append((win_uid, prize, new_bal))
+        c.execute("UPDATE soc_giveaways SET status='finished', drawn_at=? WHERE id=?", (now, gid))
+        c.execute("COMMIT")
+    except Exception:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close()
+        raise
+    c.close()
+    # WS-пуши вне транзакции: подсветить +Gost в кошельке и сообщить о победе
+    for win_uid, prize, new_bal in winners_payload:
+        ws_hub.send_to(win_uid, "wallet.credit", {
+            "currency": "gost", "delta": prize, "source": "giveaway", "balance": new_bal,
+        })
+        ws_hub.send_to(win_uid, "giveaway.win", {"giveaway_id": gid, "prize_gost": prize})
+    return {"drawn": True, "winners_count": len(winners_payload)}
+
+
+def _finalize_due_giveaways() -> None:
+    """Ленивое завершение: разыгрывает активные розыгрыши с истёкшим дедлайном.
+    Вызывается при чтении списка — не нужен фоновый планировщик."""
+    c = db()
+    try:
+        due = c.execute(
+            "SELECT id FROM soc_giveaways WHERE status='active' AND ends_at<=?",
+            (int(time.time()),),
+        ).fetchall()
+    finally:
+        c.close()
+    for r in due:
+        try:
+            _draw_giveaway(r["id"])
+        except Exception:
+            pass
+
+
+@router.get("/giveaway/list")
+def giveaway_list(scope: str = Query("all"), authorization: Optional[str] = Header(None)):
+    """Список розыгрышей. scope=active — только активные; all — активные + завершённые.
+    Публичный (виден и без логина); my_entered заполняется для залогиненных."""
+    uid = _optional_uid(authorization)
+    _finalize_due_giveaways()
+    c = db()
+    if scope == "active":
+        rows = c.execute(
+            "SELECT * FROM soc_giveaways WHERE status='active' ORDER BY ends_at ASC"
+        ).fetchall()
+    else:
+        rows = c.execute(
+            "SELECT * FROM soc_giveaways WHERE status != 'cancelled' "
+            "ORDER BY (status='active') DESC, "
+            "CASE WHEN status='active' THEN ends_at ELSE -drawn_at END ASC"
+        ).fetchall()
+    out = [_giveaway_public(c, dict(g), uid) for g in rows]
+    c.close()
+    return {"giveaways": out, "server_now": int(time.time())}
+
+
+@router.get("/giveaway/{gid}")
+def giveaway_get(gid: int, authorization: Optional[str] = Header(None)):
+    """Один розыгрыш по id (для шеринга/детальной страницы). Публичный."""
+    uid = _optional_uid(authorization)
+    _finalize_due_giveaways()
+    c = db()
+    g = c.execute("SELECT * FROM soc_giveaways WHERE id=?", (gid,)).fetchone()
+    if not g:
+        c.close()
+        raise HTTPException(404, "Розыгрыш не найден")
+    out = _giveaway_public(c, dict(g), uid)
+    c.close()
+    return {"giveaway": out, "server_now": int(time.time())}
+
+
+@router.post("/giveaway/{gid}/enter")
+def giveaway_enter(gid: int, authorization: Optional[str] = Header(None)):
+    """Участие в розыгрыше. Только реальный аккаунт, 1 билет на аккаунт."""
+    user = auth_member(authorization)
+    _rate_limit(f"ga_enter:{user['id']}", limit=20, window=60)
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        g = c.execute("SELECT status, ends_at FROM soc_giveaways WHERE id=?", (gid,)).fetchone()
+        if not g:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(404, "Розыгрыш не найден")
+        if g["status"] != "active":
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(400, "Розыгрыш уже завершён")
+        if int(time.time()) >= g["ends_at"]:
+            c.execute("ROLLBACK"); c.close()
+            raise HTTPException(400, "Время участия истекло")
+        already = False
+        try:
+            c.execute(
+                "INSERT INTO soc_giveaway_entries (giveaway_id, user_id, created_at) VALUES (?,?,?)",
+                (gid, user["id"], int(time.time())),
+            )
+        except sqlite3.IntegrityError:
+            already = True  # уже участвует (UNIQUE giveaway_id+user_id)
+        count = c.execute(
+            "SELECT COUNT(*) AS n FROM soc_giveaway_entries WHERE giveaway_id=?", (gid,)
+        ).fetchone()["n"]
+        c.execute("COMMIT")
+    except HTTPException:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close(); raise
+    except Exception as e:
+        try: c.execute("ROLLBACK")
+        except Exception: pass
+        c.close()
+        raise HTTPException(500, f"Ошибка участия: {e}")
+    c.close()
+    return {"entered": True, "already": already, "entries_count": count}
+
+
+# ── Админские ручки (только владелец, GE_ADMIN_TOKEN) ──
+
+class GiveawayCreateBody(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    prize_gost: int
+    winners_count: int = 1
+    ends_at: Optional[int] = None        # unix-время дедлайна
+    duration_hours: Optional[float] = None  # альтернатива ends_at: длительность от «сейчас»
+    token: str
+
+
+class GiveawayTokenBody(BaseModel):
+    token: str
+
+
+@router.post("/giveaway/create")
+def giveaway_create(body: GiveawayCreateBody, request: Request):
+    """Создать розыгрыш. Только владелец."""
+    _rate_limit(f"ga_admin:{_client_ip(request)}", limit=60, window=60)
+    _check_admin_token(body.token)
+    title = re.sub(r"[\x00-\x1f\x7f]", "", body.title or "").strip()
+    if not (1 <= len(title) <= 120):
+        raise HTTPException(400, "Заголовок 1–120 символов")
+    description = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", body.description or "").strip()[:1000]
+    prize = int(body.prize_gost)
+    if not (1 <= prize <= GIVEAWAY_MAX_PRIZE):
+        raise HTTPException(400, f"Приз должен быть 1–{GIVEAWAY_MAX_PRIZE} Gost")
+    winners = int(body.winners_count or 1)
+    if not (1 <= winners <= GIVEAWAY_MAX_WINNERS):
+        raise HTTPException(400, f"Победителей 1–{GIVEAWAY_MAX_WINNERS}")
+    now = int(time.time())
+    if body.ends_at is not None:
+        ends_at = int(body.ends_at)
+    elif body.duration_hours is not None:
+        ends_at = now + int(float(body.duration_hours) * 3600)
+    else:
+        raise HTTPException(400, "Укажите ends_at или duration_hours")
+    if ends_at - now < GIVEAWAY_MIN_DURATION_S:
+        raise HTTPException(400, "Дедлайн слишком близко (минимум 60 секунд)")
+    if ends_at - now > GIVEAWAY_MAX_DURATION_S:
+        raise HTTPException(400, "Дедлайн слишком далеко (максимум 1 год)")
+    c = db()
+    try:
+        cur = c.execute(
+            "INSERT INTO soc_giveaways (title, description, prize_gost, winners_count, status, ends_at, created_at, drawn_at, created_by) "
+            "VALUES (?,?,?,?,'active',?,?,0,0)",
+            (title, description, prize, winners, ends_at, now),
+        )
+        gid = cur.lastrowid
+        c.commit()
+        g = c.execute("SELECT * FROM soc_giveaways WHERE id=?", (gid,)).fetchone()
+        out = _giveaway_public(c, dict(g), 0)
+    finally:
+        c.close()
+    return {"status": "ok", "giveaway": out}
+
+
+@router.post("/giveaway/{gid}/draw")
+def giveaway_draw(gid: int, body: GiveawayTokenBody, request: Request):
+    """Разыграть досрочно (не дожидаясь дедлайна). Только владелец."""
+    _rate_limit(f"ga_admin:{_client_ip(request)}", limit=60, window=60)
+    _check_admin_token(body.token)
+    res = _draw_giveaway(gid)
+    if not res.get("drawn"):
+        raise HTTPException(400, "Розыгрыш уже завершён или не найден")
+    return {"status": "ok", **res}
+
+
+@router.post("/giveaway/{gid}/cancel")
+def giveaway_cancel(gid: int, body: GiveawayTokenBody, request: Request):
+    """Отменить активный розыгрыш (без выплат). Только владелец."""
+    _rate_limit(f"ga_admin:{_client_ip(request)}", limit=60, window=60)
+    _check_admin_token(body.token)
+    c = db()
+    g = c.execute("SELECT status FROM soc_giveaways WHERE id=?", (gid,)).fetchone()
+    if not g:
+        c.close()
+        raise HTTPException(404, "Розыгрыш не найден")
+    if g["status"] != "active":
+        c.close()
+        raise HTTPException(400, "Отменить можно только активный розыгрыш")
+    c.execute("UPDATE soc_giveaways SET status='cancelled' WHERE id=?", (gid,))
+    c.commit(); c.close()
+    return {"status": "ok"}
+
+
+@router.delete("/giveaway/{gid}")
+def giveaway_delete(gid: int, token: str = Query(...)):
+    """Удалить розыгрыш вместе с участниками и победителями. Только владелец.
+    Не отзывает уже начисленный победителям Gost."""
+    _check_admin_token(token)
+    c = db()
+    c.execute("DELETE FROM soc_giveaway_entries WHERE giveaway_id=?", (gid,))
+    c.execute("DELETE FROM soc_giveaway_winners WHERE giveaway_id=?", (gid,))
+    c.execute("DELETE FROM soc_giveaways WHERE id=?", (gid,))
+    c.commit(); c.close()
+    return {"status": "ok"}

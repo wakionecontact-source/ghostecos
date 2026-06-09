@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Розыгрыши GhostBank</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/bank/manifest.json">
+<meta name="theme-color" content="#7c3aed">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="GhostBank">
+<!-- Open Graph (превью при шеринге в Telegram/WhatsApp) -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="GhostBank">
+<meta property="og:title" content="Розыгрыши GhostBank">
+<meta property="og:description" content="Бесплатные розыгрыши Gost в экосистеме GhostEcos. Один билет на аккаунт — испытай удачу.">
+<meta property="og:url" content="https://ghostecos.duckdns.org/bank/giveaway/">
+<meta name="twitter:card" content="summary">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+:root{
+  --bg:#020617; --bg-deep:#060a1a; --surface:rgba(15,23,42,0.5);
+  --border:rgba(255,255,255,0.08); --border-strong:rgba(255,255,255,0.13);
+  --primary:#a855f7; --primary2:#7c3aed; --primary3:#ec4899;
+  --text:#f1f5f9; --sub:#94a3b8;
+  --red:#f43f5e; --green:#22c55e; --yellow:#fbbf24; --gost:#a855f7;
+}
+html{background:var(--bg);scroll-behavior:smooth}
+body{
+  background:transparent;color:var(--text);font-family:'Inter',sans-serif;
+  overflow-x:hidden;
+  padding-top:calc(56px + env(safe-area-inset-top));
+  padding-bottom:calc(40px + env(safe-area-inset-bottom));
+  min-height:100vh;position:relative;
+}
+body::before{
+  content:"";position:fixed;inset:0;z-index:-1;
+  background:
+    radial-gradient(80% 60% at 20% 0%,rgba(124,58,237,0.15),transparent 60%),
+    radial-gradient(70% 60% at 100% 100%,rgba(236,72,153,0.10),transparent 60%),
+    linear-gradient(180deg,var(--bg-deep),var(--bg));
+}
+button{font-family:inherit;border:0;background:none;color:inherit;cursor:pointer;}
+button:disabled{cursor:not-allowed;}
+a{color:inherit;text-decoration:none;}
+input,select,textarea{font-family:inherit;}
+
+header{position:fixed;top:0;left:0;right:0;background:rgba(2,6,23,0.78);backdrop-filter:blur(22px) saturate(140%);-webkit-backdrop-filter:blur(22px) saturate(140%);border-bottom:1px solid var(--border);z-index:100;}
+.header-top{min-height:56px;display:flex;align-items:center;gap:8px;padding:env(safe-area-inset-top) 14px 0;max-width:720px;margin:0 auto;width:100%;}
+.h-back{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:15px;color:var(--sub);background:var(--surface);border:1px solid var(--border);flex-shrink:0;}
+.h-back:hover{color:var(--text);}
+.header-brand{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:800;}
+.header-brand i{font-size:16px;background:linear-gradient(135deg,var(--primary),var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.header-brand span{background:linear-gradient(90deg,var(--primary),var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:0.3px;}
+.h-spacer{flex:1;}
+.h-icon-btn{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--sub);background:var(--surface);border:1px solid var(--border);flex-shrink:0;}
+.h-icon-btn:hover{color:var(--text);}
+.h-icon-btn.on{color:var(--primary);border-color:rgba(168,85,247,0.4);}
+
+main{max-width:720px;margin:0 auto;padding:18px 16px 30px;}
+
+.page-head{text-align:center;margin-bottom:22px;}
+.page-title{font-size:24px;font-weight:800;letter-spacing:0.3px;background:linear-gradient(90deg,var(--primary),var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.page-sub{color:var(--sub);font-size:13px;margin-top:6px;line-height:1.5;}
+
+/* админ-баннер */
+.admin-bar{display:none;align-items:center;gap:10px;background:linear-gradient(90deg,rgba(168,85,247,0.14),rgba(236,72,153,0.10));border:1px solid rgba(168,85,247,0.35);border-radius:14px;padding:11px 14px;margin-bottom:18px;}
+.admin-bar.show{display:flex;}
+.admin-bar i{color:var(--primary);}
+.admin-bar .ab-text{flex:1;font-size:12px;color:var(--sub);}
+.admin-bar .ab-text b{color:var(--text);}
+.admin-bar button{font-size:12px;font-weight:700;padding:7px 12px;border-radius:9px;}
+.ab-create{background:linear-gradient(90deg,var(--primary),var(--primary2));color:#fff;}
+.ab-exit{background:var(--surface);border:1px solid var(--border)!important;color:var(--sub);}
+
+.gv-list{display:flex;flex-direction:column;gap:14px;}
+
+.gv-card{position:relative;overflow:hidden;background:var(--surface);border:1px solid var(--border-strong);border-radius:18px;padding:16px;backdrop-filter:blur(8px);animation:fadeUp 0.35s ease-out;}
+.gv-card::before{content:'';position:absolute;top:-60%;right:-25%;width:180%;height:180%;background:radial-gradient(circle,rgba(168,85,247,0.16) 0%,transparent 55%);opacity:0.5;pointer-events:none;}
+.gv-card.done{opacity:0.92;}
+.gv-card.done::before{background:radial-gradient(circle,rgba(34,197,94,0.12) 0%,transparent 55%);}
+.gv-card > *{position:relative;z-index:1;}
+
+.gv-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px;}
+.gv-prize{display:flex;align-items:baseline;gap:7px;}
+.gv-prize i{font-size:18px;color:var(--gost);align-self:center;}
+.gv-prize b{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1;}
+.gv-prize span{font-size:12px;color:var(--sub);font-weight:600;}
+.gv-status{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;padding:5px 9px;border-radius:999px;display:flex;align-items:center;gap:6px;white-space:nowrap;}
+.gv-status.live{background:rgba(168,85,247,0.16);color:#c4b5fd;}
+.gv-status.live .dot{width:6px;height:6px;border-radius:50%;background:var(--primary);box-shadow:0 0 0 0 rgba(168,85,247,0.6);animation:pulse 1.8s infinite;}
+.gv-status.done{background:rgba(34,197,94,0.14);color:#86efac;}
+.gv-status.ending{background:rgba(244,63,94,0.16);color:#fda4af;}
+
+.gv-title{font-size:16px;font-weight:700;margin-bottom:5px;line-height:1.3;}
+.gv-desc{font-size:13px;color:var(--sub);line-height:1.5;margin-bottom:14px;white-space:pre-wrap;word-break:break-word;}
+
+.gv-timer-wrap{background:rgba(2,6,23,0.4);border:1px solid var(--border);border-radius:13px;padding:12px;text-align:center;margin-bottom:12px;}
+.gv-timer{font-size:24px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:1px;color:var(--text);}
+.gv-timer.ending{color:var(--red);}
+.gv-timer-label{font-size:10px;color:var(--sub);text-transform:uppercase;letter-spacing:0.6px;margin-top:4px;}
+
+.gv-meta{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:12px;color:var(--sub);margin-bottom:14px;}
+.gv-meta span{display:flex;align-items:center;gap:6px;}
+.gv-meta i{color:var(--primary);font-size:12px;}
+
+.gv-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:9px;padding:13px;border-radius:13px;font-size:14px;font-weight:700;transition:transform 0.15s;}
+.gv-btn.enter{background:linear-gradient(90deg,var(--primary),var(--primary2));color:#fff;box-shadow:0 8px 22px rgba(168,85,247,0.32);}
+.gv-btn.enter:hover:not(:disabled){transform:translateY(-2px);}
+.gv-btn.entered{background:rgba(34,197,94,0.14);color:#86efac;border:1px solid rgba(34,197,94,0.3);}
+.gv-btn.login{background:var(--surface);border:1px solid var(--border-strong);color:var(--text);}
+.gv-btn:disabled{opacity:0.7;}
+
+.gv-winners{background:rgba(2,6,23,0.4);border:1px solid var(--border);border-radius:13px;padding:12px;}
+.gv-winners-title{font-size:11px;color:var(--sub);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:10px;display:flex;align-items:center;gap:7px;}
+.gv-winners-title i{color:var(--yellow);}
+.gv-winner{display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--border);}
+.gv-winner:first-of-type{border-top:0;}
+.gv-winner .av{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary3));display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0;}
+.gv-winner .wn{flex:1;min-width:0;}
+.gv-winner .wn .nm{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.gv-winner .wn .un{font-size:11px;color:var(--sub);}
+.gv-winner b{color:var(--green);font-size:13px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap;}
+.gv-empty-winners{font-size:12px;color:var(--sub);text-align:center;padding:4px;}
+
+/* админ-кнопки на карточке */
+.gv-admin{display:flex;gap:8px;margin-top:10px;}
+.gv-admin button{flex:1;font-size:11px;font-weight:700;padding:8px;border-radius:9px;background:var(--surface);border:1px solid var(--border)!important;color:var(--sub);display:flex;align-items:center;justify-content:center;gap:5px;}
+.gv-admin button:hover{color:var(--text);}
+.gv-admin .draw{color:#c4b5fd;border-color:rgba(168,85,247,0.3)!important;}
+.gv-admin .del{color:#fda4af;border-color:rgba(244,63,94,0.25)!important;}
+
+.empty,.loading{text-align:center;color:var(--sub);padding:60px 20px;font-size:14px;}
+.empty i,.loading i{display:block;font-size:34px;color:var(--primary);opacity:0.4;margin-bottom:14px;}
+.loading i{animation:spin 1s linear infinite;}
+
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(168,85,247,0.5);}70%{box-shadow:0 0 0 7px rgba(168,85,247,0);}100%{box-shadow:0 0 0 0 rgba(168,85,247,0);}}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* модалки */
+.modal-overlay{position:fixed;inset:0;background:rgba(2,6,23,0.7);backdrop-filter:blur(4px);z-index:250;display:none;align-items:center;justify-content:center;padding:18px;}
+.modal-overlay.show{display:flex;}
+.modal{background:#0b1124;border:1px solid var(--border-strong);border-radius:18px;padding:20px;width:100%;max-width:440px;max-height:90vh;overflow-y:auto;animation:fadeUp 0.25s ease-out;}
+.modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
+.modal-title{font-size:17px;font-weight:800;}
+.modal-close{width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:var(--sub);background:var(--surface);}
+.field{margin-bottom:14px;}
+.field label{display:block;font-size:12px;color:var(--sub);margin-bottom:6px;font-weight:600;}
+.field input,.field textarea{width:100%;background:rgba(2,6,23,0.5);border:1px solid var(--border-strong);border-radius:11px;padding:11px 13px;color:var(--text);font-size:14px;}
+.field input:focus,.field textarea:focus{outline:0;border-color:var(--primary);}
+.field textarea{resize:vertical;min-height:64px;}
+.field .hint{font-size:11px;color:var(--sub);margin-top:5px;}
+.presets{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:8px;}
+.preset{font-size:12px;font-weight:600;padding:7px 11px;border-radius:9px;background:var(--surface);border:1px solid var(--border);color:var(--sub);}
+.preset.on,.preset:hover{color:var(--text);border-color:var(--primary);}
+.modal-actions{display:flex;gap:10px;margin-top:8px;}
+.modal-actions button{flex:1;padding:12px;border-radius:11px;font-size:14px;font-weight:700;}
+.btn-primary{background:linear-gradient(90deg,var(--primary),var(--primary2));color:#fff;}
+.btn-ghost{background:var(--surface);border:1px solid var(--border)!important;color:var(--sub);}
+
+.toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);background:#0b1124;border:1px solid var(--border-strong);color:var(--text);padding:12px 20px;border-radius:12px;font-size:13px;font-weight:600;opacity:0;pointer-events:none;transition:all 0.3s;z-index:400;max-width:90%;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,0.4);}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+.toast.err{border-color:var(--red);color:#fda4af;}
+.toast.ok{border-color:var(--green);color:#86efac;}
+</style>
+</head>
+<body>
+
+<div id="mesh-bg"></div>
+<script src="/mesh.js"></script>
+
+<header>
+  <div class="header-top">
+    <a href="/bank/" class="h-back" title="В банк"><i class="fa-solid fa-arrow-left"></i></a>
+    <div class="header-brand"><i class="fa-solid fa-gift"></i><span>Розыгрыши</span></div>
+    <div class="h-spacer"></div>
+    <button class="h-icon-btn" id="adminBtn" title="Управление" onclick="toggleAdmin()"><i class="fa-solid fa-lock"></i></button>
+  </div>
+</header>
+
+<main>
+  <div class="page-head">
+    <div class="page-title">Розыгрыши GhostBank</div>
+    <div class="page-sub">Бесплатно. Один билет на аккаунт. По таймеру выбирается победитель и получает Gost мгновенно.</div>
+  </div>
+
+  <div class="admin-bar" id="adminBar">
+    <i class="fa-solid fa-shield-halved"></i>
+    <div class="ab-text">Режим владельца. <b>Только вы</b> создаёте розыгрыши.</div>
+    <button class="ab-create" onclick="openCreate()"><i class="fa-solid fa-plus"></i> Создать</button>
+    <button class="ab-exit" onclick="exitAdmin()">Выйти</button>
+  </div>
+
+  <div id="list" class="gv-list">
+    <div class="loading"><i class="fa-solid fa-spinner"></i>Загрузка розыгрышей...</div>
+  </div>
+</main>
+
+<!-- Модалка: создать розыгрыш -->
+<div class="modal-overlay" id="createModal" onclick="if(event.target===this)closeCreate()">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">Новый розыгрыш</div>
+      <button class="modal-close" onclick="closeCreate()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="field"><label>Название</label><input id="cTitle" maxlength="120" placeholder="Например: Розыгрыш 5000 Gost"></div>
+    <div class="field"><label>Описание (опционально)</label><textarea id="cDesc" maxlength="1000" placeholder="Условия, что разыгрываем, для кого..."></textarea></div>
+    <div class="field"><label>Приз каждому победителю (Gost)</label><input id="cPrize" type="number" min="1" max="1000000" placeholder="1000"></div>
+    <div class="field"><label>Сколько победителей</label><input id="cWinners" type="number" min="1" max="1000" value="1"></div>
+    <div class="field">
+      <label>Когда розыгрыш (дедлайн)</label>
+      <div class="presets">
+        <button class="preset" onclick="setPreset(1,this)">Через 1 час</button>
+        <button class="preset" onclick="setPreset(24,this)">Через сутки</button>
+        <button class="preset" onclick="setPreset(72,this)">3 дня</button>
+        <button class="preset" onclick="setPreset(168,this)">Неделя</button>
+      </div>
+      <input id="cDeadline" type="datetime-local">
+      <div class="hint">Можно выбрать точную дату или нажать пресет.</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-ghost" onclick="closeCreate()">Отмена</button>
+      <button class="btn-primary" id="cSubmit" onclick="submitCreate()">Создать розыгрыш</button>
+    </div>
+  </div>
+</div>
+
+<!-- Модалка: ввод токена владельца -->
+<div class="modal-overlay" id="tokenModal" onclick="if(event.target===this)closeToken()">
+  <div class="modal" style="max-width:400px;">
+    <div class="modal-head">
+      <div class="modal-title">Вход владельца</div>
+      <button class="modal-close" onclick="closeToken()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="field">
+      <label>Админ-токен</label>
+      <input id="tToken" type="password" placeholder="GE_ADMIN_TOKEN" autocomplete="off">
+      <div class="hint">Токен из окружения сервиса. Хранится только в этом браузере.</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-ghost" onclick="closeToken()">Отмена</button>
+      <button class="btn-primary" onclick="saveToken()">Войти</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// Розыгрыши GhostBank — фронт. Авторизация общая с банком (gs_token).
+// Создание/управление — только владелец (GE_ADMIN_TOKEN, локально в браузере).
+// ═══════════════════════════════════════════════════════════════════════════
+const API = '/api/soc';
+let token = localStorage.getItem('gs_token');
+let me = null;
+try { me = JSON.parse(localStorage.getItem('gs_me') || 'null'); } catch (_) {}
+let adminToken = localStorage.getItem('ge_admin_token') || '';
+let _items = [];
+let _serverOffset = 0;     // serverNow - clientNow (сек), для синхрона таймеров
+let _presetPicked = null;
+
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function fmtNum(n){return (n||0).toLocaleString('ru-RU');}
+function ini(n){return n ? n[0].toUpperCase() : '?';}
+function nowSec(){return Math.floor(Date.now()/1000) + _serverOffset;}
+
+function showToast(msg, kind){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (kind ? ' ' + kind : '');
+  setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+async function api(path, method='GET', body=null){
+  const h = { 'Content-Type': 'application/json' };
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 20000);
+  let r;
+  try { r = await fetch(API + path, { method, headers: h, body: body ? JSON.stringify(body) : null, signal: ctrl.signal }); }
+  finally { clearTimeout(tid); }
+  if (!r.ok) {
+    const text = await r.text();
+    let msg = text; try { msg = JSON.parse(text).detail || text; } catch (_) {}
+    const e = new Error(msg); e.status = r.status; throw e;
+  }
+  return r.json();
+}
+
+// ── Список ──
+async function loadList(){
+  try {
+    const d = await api('/giveaway/list?scope=all');
+    _serverOffset = (d.server_now || 0) - Math.floor(Date.now()/1000);
+    _items = d.giveaways || [];
+    render();
+  } catch (e) {
+    document.getElementById('list').innerHTML =
+      `<div class="empty"><i class="fa-solid fa-triangle-exclamation"></i>Не удалось загрузить: ${esc(e.message)}</div>`;
+  }
+}
+
+function fmtTimer(secLeft){
+  if (secLeft <= 0) return 'розыгрыш...';
+  const d = Math.floor(secLeft / 86400);
+  const h = Math.floor((secLeft % 86400) / 3600);
+  const m = Math.floor((secLeft % 3600) / 60);
+  const s = secLeft % 60;
+  const pad = (x) => String(x).padStart(2, '0');
+  if (d > 0) return `${d}д ${pad(h)}:${pad(m)}:${pad(s)}`;
+  return `${pad(h)}:${pad(m)}:${pad(s)}`;
+}
+
+function cardHTML(g){
+  // Залогинен = есть токен и он не гостевой (сервер тоже трактует guest_* как гостя)
+  const isLoggedIn = !!(token && !token.startsWith('guest_'));
+  if (g.status === 'finished'){
+    let winners;
+    if (g.winners && g.winners.length){
+      winners = g.winners.map(w => `
+        <div class="gv-winner">
+          <span class="av">${esc(ini(w.display_name || w.username))}</span>
+          <div class="wn"><div class="nm">${esc(w.display_name || w.username)}</div><div class="un">@${esc(w.username)}</div></div>
+          <b>+${fmtNum(w.prize_gost)} Gost</b>
+        </div>`).join('');
+    } else {
+      winners = `<div class="gv-empty-winners">Никто не участвовал — победителей нет.</div>`;
+    }
+    return `
+      <div class="gv-card done">
+        <div class="gv-top">
+          <div class="gv-prize"><i class="fa-solid fa-ghost"></i><b>${fmtNum(g.prize_gost)}</b><span>Gost${g.winners_count>1?' x'+g.winners_count:''}</span></div>
+          <div class="gv-status done"><i class="fa-solid fa-check"></i> Завершён</div>
+        </div>
+        <div class="gv-title">${esc(g.title)}</div>
+        ${g.description ? `<div class="gv-desc">${esc(g.description)}</div>` : ''}
+        <div class="gv-winners">
+          <div class="gv-winners-title"><i class="fa-solid fa-trophy"></i> ${g.winners.length>1?'Победители':'Победитель'} (${g.entries_count} участников)</div>
+          ${winners}
+        </div>
+        ${adminToken ? adminButtons(g) : ''}
+      </div>`;
+  }
+  // active
+  const secLeft = Math.max(0, g.ends_at - nowSec());
+  const ending = secLeft > 0 && secLeft < 3600;
+  let btn;
+  if (!isLoggedIn){
+    btn = `<a class="gv-btn login" href="/social/"><i class="fa-solid fa-right-to-bracket"></i> Войти, чтобы участвовать</a>`;
+  } else if (g.my_entered){
+    btn = `<button class="gv-btn entered" disabled><i class="fa-solid fa-check"></i> Вы участвуете</button>`;
+  } else {
+    btn = `<button class="gv-btn enter" onclick="enter(${g.id})"><i class="fa-solid fa-ticket"></i> Участвовать</button>`;
+  }
+  return `
+    <div class="gv-card active">
+      <div class="gv-top">
+        <div class="gv-prize"><i class="fa-solid fa-ghost"></i><b>${fmtNum(g.prize_gost)}</b><span>Gost${g.winners_count>1?' x'+g.winners_count:''}</span></div>
+        <div class="gv-status ${ending?'ending':'live'}">${ending?'<i class="fa-solid fa-hourglass-half"></i> Скоро':'<span class="dot"></span> Идёт'}</div>
+      </div>
+      <div class="gv-title">${esc(g.title)}</div>
+      ${g.description ? `<div class="gv-desc">${esc(g.description)}</div>` : ''}
+      <div class="gv-timer-wrap">
+        <div class="gv-timer ${ending?'ending':''}" data-ends="${g.ends_at}" data-gid="${g.id}">${fmtTimer(secLeft)}</div>
+        <div class="gv-timer-label">до розыгрыша</div>
+      </div>
+      <div class="gv-meta">
+        <span><i class="fa-solid fa-users"></i> ${fmtNum(g.entries_count)} участников</span>
+        <span><i class="fa-solid fa-trophy"></i> ${g.winners_count} ${g.winners_count>1?'победителей':'победитель'}</span>
+      </div>
+      ${btn}
+      ${adminToken ? adminButtons(g) : ''}
+    </div>`;
+}
+
+function adminButtons(g){
+  if (g.status === 'active'){
+    return `<div class="gv-admin">
+      <button class="draw" onclick="drawNow(${g.id})"><i class="fa-solid fa-dice"></i> Разыграть сейчас</button>
+      <button onclick="cancelGa(${g.id})"><i class="fa-solid fa-ban"></i> Отменить</button>
+      <button class="del" onclick="deleteGa(${g.id})"><i class="fa-solid fa-trash"></i></button>
+    </div>`;
+  }
+  return `<div class="gv-admin"><button class="del" onclick="deleteGa(${g.id})"><i class="fa-solid fa-trash"></i> Удалить запись</button></div>`;
+}
+
+function render(){
+  const el = document.getElementById('list');
+  if (!_items.length){
+    el.innerHTML = `<div class="empty"><i class="fa-solid fa-gift"></i>Пока нет розыгрышей.${adminToken?' Создайте первый — кнопка «Создать» выше.':' Загляните позже.'}</div>`;
+    return;
+  }
+  el.innerHTML = _items.map(cardHTML).join('');
+}
+
+// Тикаем таймеры каждую секунду без перезагрузки списка
+function tick(){
+  let needReload = false;
+  document.querySelectorAll('.gv-timer[data-ends]').forEach(elm => {
+    const left = Math.max(0, parseInt(elm.dataset.ends, 10) - nowSec());
+    elm.textContent = fmtTimer(left);
+    if (left <= 0) needReload = true;
+    else if (left < 3600 && !elm.classList.contains('ending')) elm.classList.add('ending');
+  });
+  if (needReload) loadList();   // дедлайн вышел — подтянуть результат розыгрыша
+}
+
+// ── Участие ──
+async function enter(gid){
+  if (!token){ location.href = '/social/'; return; }
+  try {
+    const r = await api(`/giveaway/${gid}/enter`, 'POST');
+    showToast(r.already ? 'Вы уже участвуете' : 'Вы в игре. Удачи!', 'ok');
+    loadList();
+  } catch (e){
+    if (e.status === 403){ showToast('Войдите в аккаунт, чтобы участвовать', 'err'); }
+    else showToast(e.message || 'Не удалось', 'err');
+  }
+}
+
+// ── Админ-режим ──
+function toggleAdmin(){
+  if (adminToken){ exitAdmin(); }
+  else { document.getElementById('tokenModal').classList.add('show'); setTimeout(()=>document.getElementById('tToken').focus(),50); }
+}
+function closeToken(){ document.getElementById('tokenModal').classList.remove('show'); }
+function saveToken(){
+  const v = document.getElementById('tToken').value.trim();
+  if (!v){ showToast('Введите токен', 'err'); return; }
+  adminToken = v;
+  localStorage.setItem('ge_admin_token', v);
+  document.getElementById('tToken').value = '';
+  closeToken();
+  applyAdminUI();
+  showToast('Режим владельца включён', 'ok');
+  render();
+}
+function exitAdmin(){
+  adminToken = '';
+  localStorage.removeItem('ge_admin_token');
+  applyAdminUI();
+  render();
+  showToast('Вышли из режима владельца');
+}
+function applyAdminUI(){
+  document.getElementById('adminBar').classList.toggle('show', !!adminToken);
+  document.getElementById('adminBtn').classList.toggle('on', !!adminToken);
+}
+
+// ── Создание ──
+function openCreate(){
+  document.getElementById('cTitle').value = '';
+  document.getElementById('cDesc').value = '';
+  document.getElementById('cPrize').value = '';
+  document.getElementById('cWinners').value = '1';
+  document.getElementById('cDeadline').value = '';
+  _presetPicked = null;
+  document.querySelectorAll('.preset').forEach(p => p.classList.remove('on'));
+  document.getElementById('createModal').classList.add('show');
+}
+function closeCreate(){ document.getElementById('createModal').classList.remove('show'); }
+
+function setPreset(hours, btn){
+  const d = new Date(Date.now() + hours * 3600 * 1000);
+  // datetime-local хочет локальное время без таймзоны
+  const off = d.getTimezoneOffset() * 60000;
+  document.getElementById('cDeadline').value = new Date(d - off).toISOString().slice(0, 16);
+  document.querySelectorAll('.preset').forEach(p => p.classList.remove('on'));
+  btn.classList.add('on');
+}
+
+async function submitCreate(){
+  if (!adminToken){ showToast('Нет токена владельца', 'err'); return; }
+  const title = document.getElementById('cTitle').value.trim();
+  const desc = document.getElementById('cDesc').value.trim();
+  const prize = parseInt(document.getElementById('cPrize').value, 10);
+  const winners = parseInt(document.getElementById('cWinners').value, 10) || 1;
+  const deadline = document.getElementById('cDeadline').value;
+  if (!title){ showToast('Введите название', 'err'); return; }
+  if (!prize || prize < 1){ showToast('Укажите приз в Gost', 'err'); return; }
+  if (!deadline){ showToast('Выберите дедлайн', 'err'); return; }
+  const endsAt = Math.floor(new Date(deadline).getTime() / 1000);
+  if (endsAt - Math.floor(Date.now()/1000) < 60){ showToast('Дедлайн должен быть в будущем', 'err'); return; }
+  const btn = document.getElementById('cSubmit');
+  btn.disabled = true; btn.textContent = 'Создаём...';
+  try {
+    await api('/giveaway/create', 'POST', {
+      title, description: desc, prize_gost: prize, winners_count: winners, ends_at: endsAt, token: adminToken,
+    });
+    closeCreate();
+    showToast('Розыгрыш создан', 'ok');
+    loadList();
+  } catch (e){
+    if (e.status === 403){ showToast('Неверный токен владельца', 'err'); }
+    else showToast(e.message || 'Ошибка', 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Создать розыгрыш';
+  }
+}
+
+async function drawNow(gid){
+  if (!confirm('Разыграть сейчас, не дожидаясь дедлайна? Победитель будет выбран случайно из участников.')) return;
+  try {
+    const r = await api(`/giveaway/${gid}/draw`, 'POST', { token: adminToken });
+    showToast(`Разыграно. Победителей: ${r.winners_count}`, 'ok');
+    loadList();
+  } catch (e){ showToast(e.message || 'Ошибка', 'err'); }
+}
+async function cancelGa(gid){
+  if (!confirm('Отменить розыгрыш? Выплат не будет.')) return;
+  try { await api(`/giveaway/${gid}/cancel`, 'POST', { token: adminToken }); showToast('Отменён'); loadList(); }
+  catch (e){ showToast(e.message || 'Ошибка', 'err'); }
+}
+async function deleteGa(gid){
+  if (!confirm('Удалить розыгрыш полностью? Уже начисленный Gost не отзывается.')) return;
+  try { await api(`/giveaway/${gid}?token=${encodeURIComponent(adminToken)}`, 'DELETE'); showToast('Удалён'); loadList(); }
+  catch (e){ showToast(e.message || 'Ошибка', 'err'); }
+}
+
+// ── Старт ──
+applyAdminUI();
+loadList();
+setInterval(tick, 1000);
+setInterval(loadList, 25000);   // мягкий авто-рефреш счётчиков/статусов
+</script>
+</body>
+</html>
