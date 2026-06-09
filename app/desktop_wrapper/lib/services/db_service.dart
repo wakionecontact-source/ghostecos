@@ -282,10 +282,13 @@ class DbService {
     // Если на (peer, realSid) уже лежит запись (старая дубль с сервера до
     // того как мы успели promote) — удаляем её, иначе UPDATE упадёт на
     // UNIQUE constraint PRIMARY KEY (sid, peer).
+    // Удаляем ЛЮБУЮ запись с этим sid КРОМЕ нашего optimistic-target —
+    // покрывает кейс когда там finalized из WS-echo, ИЛИ другой optimistic
+    // с тем же sid (бывает при гонке двух последовательных send'ов).
     await _safeDb.delete(
       'messages',
-      where: 'peer = ? AND sid = ? AND temp_sid IS NULL',
-      whereArgs: [peer, realSid],
+      where: 'peer = ? AND sid = ? AND (temp_sid IS NULL OR temp_sid != ?)',
+      whereArgs: [peer, realSid, tempSid],
     );
     final updated = await _safeDb.update(
       'messages',

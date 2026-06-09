@@ -21,6 +21,7 @@ import 'feed_screen.dart';
 import 'profile_screen.dart';
 import 'social_pane.dart';
 import 'wallet_screen.dart';
+import 'wrapped_screen.dart';
 
 enum Section {
   chat(label: 'Чаты', iconOutline: Icons.chat_bubble_outline, iconFilled: Icons.chat_bubble),
@@ -452,9 +453,9 @@ class _ProfilePane extends StatelessWidget {
                           builder: (_) => const DevicesScreen(),
                         ))),
                 _profileRow(Icons.auto_awesome_outlined, 'Wrapped — мой год',
-                    onTap: () => launchUrl(
-                        Uri.parse('${GE.baseUrl}/wrapped/$username'),
-                        mode: LaunchMode.externalApplication)),
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => WrappedScreen(username: username),
+                        ))),
                 // Настройки / темы / безопасность временно отключены —
                 // экран SettingsScreen сохранён в коде, см. settings_screen.dart.
                 _profileRow(Icons.settings_outlined, 'Настройки',

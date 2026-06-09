@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
 import '../services/api_client.dart';
 import '../widgets/glass.dart';
+import 'nft_screen.dart';
 
 class WalletScreen extends StatefulWidget {
   const WalletScreen({super.key});
@@ -218,10 +219,9 @@ class _WalletScreenState extends State<WalletScreen> {
   }
 
   void _openNft() {
-    // Native NFT-витрины пока нет — открываем веб-страницу банка
-    // (там реальный маркет + минт + покупка).
-    launchUrl(Uri.parse('${GE.baseUrl}/bank/'),
-        mode: LaunchMode.externalApplication);
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => const NftScreen(),
+    ));
   }
 
   void _todoTransfer() {

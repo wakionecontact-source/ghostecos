@@ -25,6 +25,59 @@ class FromChannel {
   const FromChannel({required this.id, required this.name, this.username});
 }
 
+/// Опрос/викторина под постом.
+/// Бэкенд: /post/{id}/vote → {question, options, counts, total, my_vote, is_quiz, correct_idx}.
+class PollData {
+  final String question;
+  final List<String> options;
+  Map<int, int> counts; // option_idx → voters
+  int total;
+  int? myVote;
+  final bool isQuiz;
+  final int? correctIdx; // только после голосования в quiz
+
+  PollData({
+    required this.question,
+    required this.options,
+    Map<int, int>? counts,
+    this.total = 0,
+    this.myVote,
+    this.isQuiz = false,
+    this.correctIdx,
+  }) : counts = counts ?? <int, int>{};
+
+  static PollData? tryParse(dynamic raw) {
+    if (raw is! Map) return null;
+    final q = raw['question'] as String?;
+    final opts = raw['options'];
+    if (q == null || opts is! List) return null;
+    final options = opts.map((o) => o?.toString() ?? '').toList();
+    final counts = <int, int>{};
+    final rc = raw['counts'];
+    if (rc is Map) {
+      rc.forEach((k, v) {
+        final ki = k is int ? k : int.tryParse(k.toString());
+        if (ki != null && v is num) counts[ki] = v.toInt();
+      });
+    }
+    int? mv;
+    final mvRaw = raw['my_vote'];
+    if (mvRaw is num) mv = mvRaw.toInt();
+    int? ci;
+    final ciRaw = raw['correct_idx'];
+    if (ciRaw is num) ci = ciRaw.toInt();
+    return PollData(
+      question: q,
+      options: options,
+      counts: counts,
+      total: (raw['total'] is num) ? (raw['total'] as num).toInt() : 0,
+      myVote: mv,
+      isQuiz: (raw['is_quiz'] == true),
+      correctIdx: ci,
+    );
+  }
+}
+
 class FeedPost {
   final int id;
   final int? userId;
@@ -47,6 +100,7 @@ class FeedPost {
   bool followed;
   final bool isRepost;
   final FromChannel? fromChannel;
+  PollData? poll;
 
   FeedPost({
     required this.id,
@@ -69,6 +123,7 @@ class FeedPost {
     this.followed = false,
     this.isRepost = false,
     this.fromChannel,
+    this.poll,
   }) : reactions = reactions ?? {},
        media = media ?? const [];
 
@@ -150,6 +205,7 @@ class FeedPost {
       followed: _asBool(m['am_following']) || _asBool(m['followed']),
       isRepost: _asBool(m['is_repost']),
       fromChannel: fc,
+      poll: PollData.tryParse(m['poll']),
     );
   }
 }
@@ -370,6 +426,22 @@ class FeedRepo {
       if (kDebugMode) print('[FeedRepo.publish] $e');
       rethrow;
     }
+  }
+
+  /// Голосование в опросе. Возвращает обновлённый state опроса.
+  Future<PollData?> votePoll(int postId, int optionIdx) async {
+    final r = await _api.socPost('/post/$postId/vote', {'option_idx': optionIdx});
+    if (r is! Map) return null;
+    final updated = PollData.tryParse(r);
+    if (updated != null) {
+      final list = [...postsNotifier.value];
+      final i = list.indexWhere((p) => p.id == postId);
+      if (i >= 0) {
+        list[i].poll = updated;
+        postsNotifier.value = list;
+      }
+    }
+    return updated;
   }
 
   /// Аплоад файла (картинка/видео/аудио) → возвращает FeedMedia.

@@ -14,7 +14,7 @@
 //   • hashtag / @mention навигация (тапнул #foo → setTag('foo') → refresh)
 
 import 'dart:async';
-import 'dart:ui' show ImageFilter;
+import 'dart:ui' show ImageFilter, FontFeature;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -631,6 +631,10 @@ class _PostCardState extends State<_PostCard> {
                   const SizedBox(height: 8),
                   _MediaGrid(media: p.media),
                 ],
+                if (p.poll != null) ...[
+                  const SizedBox(height: 8),
+                  _PollWidget(post: p),
+                ],
               ],
               const SizedBox(height: 8),
               _stats(p),
@@ -653,29 +657,43 @@ class _PostCardState extends State<_PostCard> {
         ]),
       );
 
-  Widget _fromChannelBadge(FromChannel ch) => Container(
-        margin: const EdgeInsets.only(bottom: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: GE.primary.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: GE.primary.withValues(alpha: 0.3)),
-        ),
-        child: Row(children: [
-          Icon(Icons.campaign_outlined, size: 12, color: GE.primary),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              ch.username != null
-                  ? 'Канал · ${ch.name} · @${ch.username}'
-                  : 'Канал · ${ch.name}',
-              maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  color: GE.primary, fontSize: 11, fontWeight: FontWeight.w600),
-            ),
+  Widget _fromChannelBadge(FromChannel ch) {
+    final isClickable = ch.username != null;
+    final tile = Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: GE.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: GE.primary.withValues(alpha: 0.3)),
+      ),
+      child: Row(children: [
+        Icon(Icons.campaign_outlined, size: 12, color: GE.primary),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            ch.username != null
+                ? 'Канал · ${ch.name} · @${ch.username}'
+                : 'Канал · ${ch.name}',
+            maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+                color: GE.primary, fontSize: 11, fontWeight: FontWeight.w600),
           ),
-        ]),
-      );
+        ),
+        if (isClickable)
+          Icon(Icons.open_in_new, size: 11, color: GE.primary),
+      ]),
+    );
+    if (!isClickable) return tile;
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => launchUrl(
+        Uri.parse('${GE.baseUrl}/c/${ch.username}'),
+        mode: LaunchMode.externalApplication,
+      ),
+      child: tile,
+    );
+  }
 
   Widget _headerRow(FeedPost p) {
     return Row(
@@ -1784,5 +1802,206 @@ class _VisibilityAwareViewState extends State<VisibilityAwareView> {
     // Перепроверяем при каждом rebuild — достаточно для grep-сравнения с веб-IntersectionObserver.
     WidgetsBinding.instance.addPostFrameCallback((_) => _check());
     return widget.child;
+  }
+}
+
+/// Виджет опроса/викторины под постом.
+/// Если my_vote == null → показывает варианты-кнопки.
+/// После голосования → показывает варианты с заполнением + % + total.
+/// Quiz: после голосования зелёным подсвечивается correct_idx, красным — мой mismatch.
+class _PollWidget extends StatefulWidget {
+  final FeedPost post;
+  const _PollWidget({required this.post});
+  @override
+  State<_PollWidget> createState() => _PollWidgetState();
+}
+
+class _PollWidgetState extends State<_PollWidget> {
+  bool _busy = false;
+
+  Future<void> _vote(int idx) async {
+    if (_busy) return;
+    final poll = widget.post.poll;
+    if (poll == null || poll.myVote != null) return;
+    setState(() => _busy = true);
+    HapticFeedback.selectionClick();
+    try {
+      await FeedRepo.instance.votePoll(widget.post.id, idx);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не получилось проголосовать: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final poll = widget.post.poll;
+    if (poll == null) return const SizedBox.shrink();
+    final voted = poll.myVote != null;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: GE.glassBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: GE.primary.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(
+                  poll.isQuiz ? Icons.psychology : Icons.bar_chart,
+                  size: 11,
+                  color: GE.primary,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  poll.isQuiz ? 'ВИКТОРИНА' : 'ОПРОС',
+                  style: TextStyle(
+                    color: GE.primary,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.4,
+                  ),
+                ),
+              ]),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                poll.question,
+                style: TextStyle(
+                  color: GE.text,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  height: 1.3,
+                ),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 10),
+          ...List.generate(poll.options.length, (i) {
+            final cnt = poll.counts[i] ?? 0;
+            final pct = poll.total == 0 ? 0 : (cnt * 100 / poll.total).round();
+            final isMine = poll.myVote == i;
+            final isCorrect = (poll.correctIdx != null && poll.correctIdx == i);
+            final isWrongMine = voted && isMine &&
+                (poll.correctIdx != null && poll.correctIdx != i);
+
+            Color fill = GE.primary.withValues(alpha: 0.18);
+            Color border = GE.glassBorder;
+            IconData? badge;
+            Color? badgeColor;
+            if (voted) {
+              if (isCorrect) {
+                fill = const Color(0xFF22c55e).withValues(alpha: 0.22);
+                border = const Color(0xFF22c55e);
+                badge = Icons.check_circle;
+                badgeColor = const Color(0xFF22c55e);
+              } else if (isWrongMine) {
+                fill = const Color(0xFFef4444).withValues(alpha: 0.22);
+                border = const Color(0xFFef4444);
+                badge = Icons.cancel;
+                badgeColor = const Color(0xFFef4444);
+              } else if (isMine) {
+                fill = GE.primary.withValues(alpha: 0.28);
+                border = GE.primary;
+              }
+            }
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: InkWell(
+                onTap: voted || _busy ? null : () => _vote(i),
+                borderRadius: BorderRadius.circular(10),
+                child: Stack(
+                  children: [
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: border),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 11),
+                      child: Row(children: [
+                        Expanded(
+                          child: Text(
+                            poll.options[i],
+                            style: TextStyle(
+                                color: GE.text,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        if (badge != null)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: Icon(badge, size: 14, color: badgeColor),
+                          ),
+                        if (voted)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 8),
+                            child: Text(
+                              '$pct%',
+                              style: TextStyle(
+                                color: GE.text,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures()
+                                ],
+                              ),
+                            ),
+                          ),
+                      ]),
+                    ),
+                    // fill-полоска снизу (только после голосования)
+                    if (voted)
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: FractionallySizedBox(
+                              widthFactor: poll.total == 0 ? 0 : cnt / poll.total,
+                              alignment: Alignment.centerLeft,
+                              child: Container(color: fill),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          }),
+          if (voted) Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              '${poll.total} голос${_plural(poll.total)}',
+              style: TextStyle(color: GE.sub, fontSize: 11),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _plural(int n) {
+    final n10 = n % 10, n100 = n % 100;
+    if (n10 == 1 && n100 != 11) return '';
+    if (n10 >= 2 && n10 <= 4 && (n100 < 10 || n100 >= 20)) return 'а';
+    return 'ов';
   }
 }
