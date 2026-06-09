@@ -53,12 +53,18 @@ input,textarea{font-family:inherit;}
 
 /* ── Header ── */
 header{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(2,6,23,0.72);backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);border-bottom:1px solid var(--border);}
-.header-top{min-height:58px;display:flex;align-items:center;gap:10px;padding:env(safe-area-inset-top) 16px 0;max-width:680px;margin:0 auto;width:100%;}
+.header-top{min-height:58px;display:flex;align-items:center;gap:10px;padding:env(safe-area-inset-top) 14px 0;width:100%;}
 .h-back{width:36px;height:36px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:15px;color:var(--sub);background:var(--surface);border:1px solid var(--border);flex-shrink:0;transition:color .15s,border-color .15s;}
 .h-back:hover{color:var(--text);border-color:var(--border-strong);}
 .header-brand{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:800;user-select:none;}
 .header-brand i{font-size:17px;background:linear-gradient(135deg,var(--primary),var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
 .header-brand span{background:linear-gradient(90deg,var(--primary),var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:.3px;}
+.h-balance{display:flex;align-items:center;gap:9px;margin-left:auto;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:7px 14px;font-size:13.5px;font-weight:800;font-variant-numeric:tabular-nums;flex-shrink:0;transition:border-color .15s;}
+.h-balance:hover{border-color:var(--border-strong);}
+.h-balance .bi{display:flex;align-items:center;gap:6px;}
+.h-balance .g-ico{color:var(--gost);font-size:13px;}
+.h-balance .s-ico{color:#fb7185;font-size:13px;}
+.h-balance .sep{width:1px;height:15px;background:var(--border-strong);}
 
 main{max-width:680px;margin:0 auto;padding:22px 16px 36px;}
 
@@ -205,6 +211,11 @@ main{max-width:680px;margin:0 auto;padding:22px 16px 36px;}
   <div class="header-top">
     <a href="/bank/" class="h-back" title="В банк"><i class="fa-solid fa-arrow-left"></i></a>
     <div class="header-brand" id="brand" title="GhostBank"><i class="fa-solid fa-gift"></i><span>Розыгрыши</span></div>
+    <a href="/bank/" class="h-balance" id="hBalance" style="display:none;" title="Ваш баланс — открыть банк">
+      <span class="bi"><i class="fa-solid fa-ghost g-ico"></i><b id="hbGost">0</b></span>
+      <span class="sep"></span>
+      <span class="bi"><i class="fa-solid fa-fire s-ico"></i><b id="hbSoul">0</b></span>
+    </a>
   </div>
 </header>
 
@@ -325,7 +336,19 @@ async function api(path, method='GET', body=null){
   return r.json();
 }
 
+async function loadWallet(){
+  const el = document.getElementById('hBalance');
+  if (!token || token.startsWith('guest_')){ el.style.display = 'none'; return; }
+  try {
+    const w = await api('/wallet');
+    document.getElementById('hbGost').textContent = fmtNum((w.balance && w.balance.gost) || 0);
+    document.getElementById('hbSoul').textContent = fmtNum((w.balance && w.balance.soul) || 0);
+    el.style.display = 'flex';
+  } catch (_) { /* не залогинен или ошибка — баланс скрыт */ }
+}
+
 async function loadList(){
+  loadWallet();
   try {
     const d = await api('/giveaway/list?scope=all');
     _serverOffset = (d.server_now || 0) - Math.floor(Date.now()/1000);
@@ -518,7 +541,7 @@ async function submitCreate(){
   if (!prize || prize < 1){ showToast('Укажите приз в Gost', 'err'); return; }
   if (!deadline){ showToast('Выберите дедлайн', 'err'); return; }
   const endsAt = Math.floor(new Date(deadline).getTime()/1000);
-  if (endsAt - Math.floor(Date.now()/1000) < 60){ showToast('Дедлайн должен быть в будущем', 'err'); return; }
+  if (endsAt - Math.floor(Date.now()/1000) < 10){ showToast('Дедлайн должен быть в будущем', 'err'); return; }
   const btn = document.getElementById('cSubmit');
   btn.disabled = true; btn.textContent = 'Создаём...';
   try {

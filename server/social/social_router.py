@@ -6811,7 +6811,7 @@ def nft_transfer(body: NftTransferBody, authorization: Optional[str] = Header(No
 GIVEAWAY_MAX_PRIZE = 1_000_000          # потолок Gost на одного победителя
 GIVEAWAY_MAX_WINNERS = 1000
 GIVEAWAY_MAX_DURATION_S = 366 * 86400   # макс. до дедлайна (1 год)
-GIVEAWAY_MIN_DURATION_S = 60            # мин. до дедлайна
+GIVEAWAY_MIN_DURATION_S = 10            # мин. до дедлайна (короткие тест-розыгрыши)
 
 
 def _optional_uid(authorization: Optional[str]) -> int:
