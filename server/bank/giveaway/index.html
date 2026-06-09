@@ -200,6 +200,35 @@ main{max-width:680px;margin:0 auto;padding:22px 16px 36px;}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 .toast.err{border-color:var(--red);color:#fda4af;}
 .toast.ok{border-color:var(--green);color:#86efac;}
+
+/* ── Share button & bottom-sheet ───────────────────────────────────────── */
+.gv-row{align-items:center;}
+.gv-share{margin-left:6px;width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.06);border:1px solid var(--border);color:var(--sub);display:inline-flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;transition:background .15s,color .15s,transform .12s;}
+.gv-share:hover{background:rgba(168,85,247,0.18);color:var(--primary);}
+.gv-share:active{transform:scale(0.9);}
+
+.share-overlay{position:fixed;inset:0;background:rgba(2,6,23,0.7);backdrop-filter:blur(8px);z-index:500;opacity:0;pointer-events:none;transition:opacity .22s;}
+.share-overlay.open{opacity:1;pointer-events:auto;}
+.share-sheet{position:fixed;left:0;right:0;bottom:0;background:rgba(15,23,42,0.98);backdrop-filter:blur(28px);border-top:1px solid var(--border-strong);border-radius:24px 24px 0 0;padding:14px 18px calc(20px + env(safe-area-inset-bottom));z-index:501;transform:translateY(100%);transition:transform .32s cubic-bezier(0.32,0.72,0,1);box-shadow:0 -12px 40px rgba(0,0,0,0.5);max-height:88vh;overflow-y:auto;}
+.share-overlay.open + .share-sheet{transform:translateY(0);}
+.share-handle{width:38px;height:4px;background:var(--border-strong);border-radius:2px;margin:0 auto 14px;}
+.share-title{font-size:15px;font-weight:800;text-align:center;margin-bottom:14px;color:var(--text);}
+.share-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px 10px;margin-bottom:10px;}
+@media (min-width:560px){.share-grid{grid-template-columns:repeat(5,1fr);}}
+.share-opt{display:flex;flex-direction:column;align-items:center;gap:6px;background:none;border:none;color:var(--text);cursor:pointer;padding:8px 4px;border-radius:12px;transition:background .15s;}
+.share-opt:hover{background:rgba(255,255,255,0.05);}
+.share-opt-ico{width:46px;height:46px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:18px;color:#fff;}
+.share-opt-lbl{font-size:11px;text-align:center;color:var(--sub);line-height:1.2;}
+.share-opt.brand-repost .share-opt-ico{background:linear-gradient(135deg,#a855f7,#7c3aed);}
+.share-opt.brand-photo  .share-opt-ico{background:linear-gradient(135deg,#fb923c,#f97316);}
+.share-opt.brand-link   .share-opt-ico{background:linear-gradient(135deg,#64748b,#475569);}
+.share-opt.brand-chat   .share-opt-ico{background:#0b1124;padding:7px;}
+.share-opt.brand-chat   .share-opt-ico img{width:100%;height:100%;object-fit:contain;display:block;}
+.share-opt.brand-tg     .share-opt-ico{background:#229ED9;}
+.share-opt.brand-discord .share-opt-ico{background:#5865F2;}
+.share-opt.brand-wa     .share-opt-ico{background:#25D366;}
+.share-opt.brand-x      .share-opt-ico{background:#000;}
+.share-opt.brand-vk     .share-opt-ico{background:#0077FF;}
 </style>
 </head>
 <body>
@@ -405,7 +434,7 @@ function cardHTML(g){
       winners = `<div class="gv-noone">Никто не участвовал — победителей нет.</div>`;
     }
     return `<div class="gv-card done"><div class="gv-inner">
-      <div class="gv-row"><span class="gv-badge done"><i class="fa-solid fa-check"></i> Завершён</span><span class="gv-num">#${g.id}</span></div>
+      <div class="gv-row"><span class="gv-badge done"><i class="fa-solid fa-check"></i> Завершён</span><span class="gv-num">#${g.id}</span><button class="gv-share" onclick="openShare(${g.id})" title="Поделиться"><i class="fa-solid fa-share-nodes"></i></button></div>
       <div class="gv-title">${esc(g.title)}</div>
       ${g.description ? `<div class="gv-desc">${esc(g.description)}</div>` : ''}
       ${prize}
@@ -429,6 +458,7 @@ function cardHTML(g){
     <div class="gv-row">
       <span class="gv-badge ${ending?'ending':'live'}">${ending?'<i class="fa-solid fa-hourglass-half"></i> Скоро':'<span class="dot"></span> Идёт'}</span>
       <span class="gv-num">#${g.id}</span>
+      <button class="gv-share" onclick="openShare(${g.id})" title="Поделиться"><i class="fa-solid fa-share-nodes"></i></button>
     </div>
     <div class="gv-title">${esc(g.title)}</div>
     ${g.description ? `<div class="gv-desc">${esc(g.description)}</div>` : ''}
@@ -573,6 +603,196 @@ applyAdminUI();
 loadList();
 setInterval(tick, 1000);
 setInterval(loadList, 25000);
+
+// ── Share sheet ───────────────────────────────────────────────────────
+let _shareId = null;
+function findGw(id){ return (_items || []).find(g => g.id === id); }
+function _amLoggedIn(){
+  const t = localStorage.getItem('gs_token') || '';
+  return !!(t && !t.startsWith('guest_'));
+}
+
+// Собственный кастомный toast (не browser alert/confirm). Использует CSS .toast.
+let _toastTimer = null;
+function _notify(msg, kind){
+  let el = document.getElementById('_gvToast');
+  if (!el){
+    el = document.createElement('div');
+    el.id = '_gvToast';
+    el.className = 'toast';
+    document.body.appendChild(el);
+  }
+  el.className = 'toast' + (kind === 'err' ? ' err' : (kind === 'ok' ? ' ok' : ''));
+  el.textContent = msg;
+  // force reflow для re-trigger transition
+  void el.offsetWidth;
+  el.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+}
+
+function openShare(id){
+  _shareId = id;
+  const g = findGw(id);
+  if (!g){ _notify('Розыгрыш не загружен — обнови', 'err'); return; }
+  const url = location.origin + '/bank/giveaway/#g' + id;
+  document.getElementById('shareTitle').textContent = g.title || 'Розыгрыш';
+  document.getElementById('shareUrl').textContent = url;
+  document.getElementById('shareOverlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeShare(){
+  document.getElementById('shareOverlay').classList.remove('open');
+  document.body.style.overflow = '';
+  _shareId = null;
+}
+function _shareUrl(id){ return location.origin + '/bank/giveaway/#g' + id; }
+function _shareText(g){
+  const lines = ['🎁 ' + (g.title || 'Розыгрыш Gost')];
+  if (g.description) lines.push(g.description);
+  lines.push('Приз: ' + fmtNum(g.prize_gost) + ' Gost · ' +
+             (g.winners_count > 1 ? g.winners_count + ' победителя' : '1 победитель'));
+  lines.push(g.status === 'finished' ? 'Уже завершён, посмотри победителей' : 'Участвуй пока идёт!');
+  return lines.join('\n');
+}
+
+async function shareCopy(){
+  const g = findGw(_shareId); if (!g) { _notify('Карточка не найдена', 'err'); return; }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(_shareUrl(g.id));
+    } else {
+      // fallback для старых браузеров
+      const ta = document.createElement('textarea');
+      ta.value = _shareUrl(g.id);
+      ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    _notify('Ссылка скопирована', 'ok');
+  } catch (e) {
+    _notify('Не удалось скопировать', 'err');
+  }
+  closeShare();
+}
+
+async function shareRepost(){
+  const g = findGw(_shareId); if (!g) { _notify('Карточка не найдена', 'err'); return; }
+  if (!_amLoggedIn()) { _notify('Войди чтобы постить', 'err'); closeShare(); return; }
+  const text = _shareText(g) + '\n\n' + _shareUrl(g.id);
+  try {
+    const r = await fetch('/api/soc/post/new', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + (localStorage.getItem('gs_token') || ''),
+      },
+      body: JSON.stringify({ text: text })
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      throw new Error(r.status + ' ' + txt.slice(0, 80));
+    }
+    _notify('Опубликовано в твоём профиле', 'ok');
+  } catch (e) {
+    _notify('Не вышло: ' + e.message, 'err');
+  }
+  closeShare();
+}
+
+function sharePhoto(){
+  const g = findGw(_shareId); if (!g) { _notify('Карточка не найдена', 'err'); return; }
+  const a = document.createElement('a');
+  a.href = '/api/soc/og/giveaway/' + g.id + '.png';
+  a.download = 'giveaway_' + g.id + '.png';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  _notify('Скачивание начато', 'ok');
+  closeShare();
+}
+
+function shareChat(){
+  const g = findGw(_shareId); if (!g) { _notify('Карточка не найдена', 'err'); return; }
+  if (!_amLoggedIn()) { _notify('Войди в GhostChat', 'err'); closeShare(); return; }
+  // Пытаемся передать текст через query — если /chat/ это поддержит.
+  // Параллельно копируем в clipboard как страховку.
+  const text = _shareText(g) + '\n' + _shareUrl(g.id);
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text);
+    }
+  } catch (_) {}
+  _notify('Открываю чат, текст в буфере', 'ok');
+  setTimeout(() => {
+    location.href = '/chat/?compose=' + encodeURIComponent(text);
+  }, 600);
+}
+
+function shareExternal(network){
+  const g = findGw(_shareId); if (!g) { _notify('Карточка не найдена', 'err'); return; }
+  const url = _shareUrl(g.id);
+  const text = _shareText(g);
+  let href = '';
+  if (network === 'tg')      href = 'https://t.me/share/url?url=' + encodeURIComponent(url) + '&text=' + encodeURIComponent(text);
+  else if (network === 'wa') href = 'https://wa.me/?text=' + encodeURIComponent(text + '\n' + url);
+  else if (network === 'discord') {
+    try { navigator.clipboard.writeText(text + '\n' + url); _notify('Скопировано — вставь в Discord', 'ok'); }
+    catch (_) { _notify('Не удалось скопировать', 'err'); }
+    closeShare(); return;
+  }
+  else if (network === 'x')  href = 'https://twitter.com/intent/tweet?text=' + encodeURIComponent(text) + '&url=' + encodeURIComponent(url);
+  else if (network === 'vk') href = 'https://vk.com/share.php?url=' + encodeURIComponent(url) + '&title=' + encodeURIComponent(g.title || 'Розыгрыш');
+  if (href) window.open(href, '_blank', 'noopener,noreferrer');
+  closeShare();
+}
 </script>
+
+<!-- Share bottom-sheet -->
+<div class="share-overlay" id="shareOverlay" onclick="if(event.target===this)closeShare()"></div>
+<div class="share-sheet">
+  <div class="share-handle"></div>
+  <div class="share-title" id="shareTitle">Поделиться</div>
+  <div class="share-grid">
+    <button class="share-opt brand-repost" onclick="shareRepost()">
+      <div class="share-opt-ico"><i class="fa-solid fa-retweet"></i></div>
+      <div class="share-opt-lbl">Репост в профиль</div>
+    </button>
+    <button class="share-opt brand-photo" onclick="sharePhoto()">
+      <div class="share-opt-ico"><i class="fa-solid fa-image"></i></div>
+      <div class="share-opt-lbl">Как фото</div>
+    </button>
+    <button class="share-opt brand-link" onclick="shareCopy()">
+      <div class="share-opt-ico"><i class="fa-solid fa-link"></i></div>
+      <div class="share-opt-lbl">Скопировать</div>
+    </button>
+    <button class="share-opt brand-chat" onclick="shareChat()">
+      <div class="share-opt-ico"><img src="/favicon.png" alt="GhostChat"></div>
+      <div class="share-opt-lbl">В GhostChat</div>
+    </button>
+    <button class="share-opt brand-tg" onclick="shareExternal('tg')">
+      <div class="share-opt-ico"><i class="fa-brands fa-telegram"></i></div>
+      <div class="share-opt-lbl">Telegram</div>
+    </button>
+    <button class="share-opt brand-wa" onclick="shareExternal('wa')">
+      <div class="share-opt-ico"><i class="fa-brands fa-whatsapp"></i></div>
+      <div class="share-opt-lbl">WhatsApp</div>
+    </button>
+    <button class="share-opt brand-discord" onclick="shareExternal('discord')">
+      <div class="share-opt-ico"><i class="fa-brands fa-discord"></i></div>
+      <div class="share-opt-lbl">Discord</div>
+    </button>
+    <button class="share-opt brand-x" onclick="shareExternal('x')">
+      <div class="share-opt-ico"><i class="fa-brands fa-x-twitter"></i></div>
+      <div class="share-opt-lbl">X (Twitter)</div>
+    </button>
+    <button class="share-opt brand-vk" onclick="shareExternal('vk')">
+      <div class="share-opt-ico"><i class="fa-brands fa-vk"></i></div>
+      <div class="share-opt-lbl">VK</div>
+    </button>
+  </div>
+  <div style="text-align:center;font-size:11px;color:var(--sub2);word-break:break-all;padding:6px 4px 0" id="shareUrl"></div>
+</div>
 </body>
 </html>
