@@ -66,6 +66,54 @@ header{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(2,6,23,0.
 .h-balance .s-ico{color:#fb7185;font-size:13px;}
 .h-balance .sep{width:1px;height:15px;background:var(--border-strong);}
 
+/* ── Profile chip ── */
+.h-profile{margin-left:9px;width:36px;height:36px;border-radius:50%;background:var(--surface);border:1px solid var(--border);color:var(--sub);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;cursor:pointer;flex-shrink:0;transition:border-color .15s,transform .12s,background .15s;position:relative;}
+.h-profile:hover{border-color:var(--border-strong);color:var(--text);}
+.h-profile:active{transform:scale(0.95);}
+.h-profile.guest{color:var(--primary);}
+.h-profile.user{background:linear-gradient(135deg,rgba(168,85,247,0.32),rgba(236,72,153,0.24));border-color:rgba(168,85,247,0.45);color:#fff;}
+.h-profile .pdot{position:absolute;right:-2px;bottom:-2px;width:11px;height:11px;border-radius:50%;background:var(--green);border:2px solid #0a0f24;display:none;}
+.h-profile.user .pdot{display:block;}
+
+/* ── Profile dropdown ── */
+.pmenu{position:fixed;top:62px;right:14px;min-width:220px;background:#0b1124;border:1px solid var(--border-strong);border-radius:14px;box-shadow:0 20px 50px rgba(0,0,0,0.5);padding:8px;z-index:300;opacity:0;transform:translateY(-6px) scale(0.97);pointer-events:none;transition:all .18s cubic-bezier(.34,1.4,.64,1);}
+.pmenu.open{opacity:1;transform:translateY(0) scale(1);pointer-events:auto;}
+.pmenu .pm-head{padding:11px 13px 13px;border-bottom:1px solid var(--border);margin-bottom:6px;}
+.pmenu .pm-name{font-size:14px;font-weight:800;color:var(--text);line-height:1.2;}
+.pmenu .pm-handle{font-size:12px;color:var(--sub2);margin-top:3px;}
+.pmenu .pm-item{display:flex;align-items:center;gap:10px;width:100%;padding:10px 13px;font-size:13.5px;font-weight:600;color:var(--text);background:transparent;border:none;border-radius:9px;cursor:pointer;transition:background .12s;text-align:left;}
+.pmenu .pm-item:hover{background:rgba(168,85,247,0.10);}
+.pmenu .pm-item i{width:18px;text-align:center;color:var(--sub2);font-size:13px;}
+.pmenu .pm-item.danger{color:#fda4af;}
+.pmenu .pm-item.danger i{color:#fda4af;}
+
+/* ── SSO modal (login/register) ── */
+#loginOverlay{position:fixed;inset:0;background:rgba(2,6,23,0.72);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);display:none;align-items:flex-end;justify-content:center;z-index:500;}
+#loginOverlay.open{display:flex;animation:fadeIn .2s;}
+@media (min-width:640px){ #loginOverlay{align-items:center;} }
+.lg-sheet{width:100%;max-width:420px;background:#0b1124;border:1px solid var(--border-strong);border-top-left-radius:22px;border-top-right-radius:22px;padding:18px 18px 24px;animation:slideUp .35s cubic-bezier(.34,1.3,.64,1);max-height:88vh;overflow-y:auto;}
+@media (min-width:640px){ .lg-sheet{border-radius:22px;} }
+.lg-grab{width:42px;height:4px;border-radius:99px;background:var(--border-strong);margin:0 auto 14px;}
+.lg-tabs{display:flex;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:4px;margin-bottom:18px;}
+.lg-tab{flex:1;padding:9px;font-size:13px;font-weight:700;color:var(--sub);border:none;background:transparent;border-radius:8px;cursor:pointer;transition:all .15s;}
+.lg-tab.active{background:linear-gradient(95deg,var(--primary),var(--primary2));color:#fff;box-shadow:0 4px 14px rgba(124,58,237,0.4);}
+.lg-title{font-size:18px;font-weight:800;margin-bottom:6px;}
+.lg-sub{font-size:12.5px;color:var(--sub);margin-bottom:18px;line-height:1.5;}
+.lg-field{margin-bottom:12px;}
+.lg-field label{display:block;font-size:11px;font-weight:700;color:var(--sub2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;}
+.lg-field input{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:11px 13px;color:var(--text);font-size:14px;font-family:inherit;transition:border-color .15s;}
+.lg-field input:focus{outline:none;border-color:var(--primary);}
+.lg-check{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--sub);margin:6px 0 14px;line-height:1.4;cursor:pointer;}
+.lg-check input{margin-top:2px;flex-shrink:0;accent-color:var(--primary);}
+.lg-submit{width:100%;background:linear-gradient(95deg,var(--primary),var(--primary2));color:#fff;border:none;border-radius:12px;padding:13px;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 8px 22px rgba(124,58,237,0.45);transition:transform .12s,box-shadow .15s;}
+.lg-submit:hover{box-shadow:0 10px 26px rgba(124,58,237,0.55);}
+.lg-submit:active{transform:scale(0.98);}
+.lg-submit:disabled{opacity:0.55;cursor:wait;}
+.lg-err{font-size:12.5px;color:#fda4af;background:rgba(244,63,94,0.12);border:1px solid rgba(244,63,94,0.32);border-radius:10px;padding:9px 12px;margin-bottom:12px;display:none;}
+.lg-err.show{display:block;}
+.lg-foot{font-size:12px;color:var(--sub2);text-align:center;margin-top:14px;line-height:1.5;}
+.lg-foot a{color:var(--primary3);}
+
 main{max-width:680px;margin:0 auto;padding:22px 16px 36px;}
 
 /* ── Hero ── */
@@ -245,8 +293,54 @@ main{max-width:680px;margin:0 auto;padding:22px 16px 36px;}
       <span class="sep"></span>
       <span class="bi"><i class="fa-solid fa-fire s-ico"></i><b id="hbSoul">0</b></span>
     </a>
+    <button class="h-profile guest" id="hProfile" title="Войти" onclick="onProfileTap(event)">
+      <i class="fa-solid fa-right-to-bracket" id="hProfileIco"></i>
+      <span class="pdot"></span>
+    </button>
   </div>
 </header>
+
+<!-- Профильное меню (открывается при тапе на иконку, если залогинен) -->
+<div class="pmenu" id="pMenu">
+  <div class="pm-head">
+    <div class="pm-name" id="pmName">—</div>
+    <div class="pm-handle" id="pmHandle">@—</div>
+  </div>
+  <a class="pm-item" href="/social/" id="pmProfile"><i class="fa-solid fa-user"></i> Мой профиль</a>
+  <a class="pm-item" href="/bank/"><i class="fa-solid fa-wallet"></i> Кошелёк и история</a>
+  <button class="pm-item danger" onclick="doLogout()"><i class="fa-solid fa-right-from-bracket"></i> Выйти</button>
+</div>
+
+<!-- SSO модалка: вход/регистрация в общую учётку GhostEcos -->
+<div id="loginOverlay" onclick="if(event.target===this)closeLogin()">
+  <div class="lg-sheet" role="dialog" aria-modal="true">
+    <div class="lg-grab"></div>
+    <div class="lg-tabs">
+      <button class="lg-tab active" id="lgTabIn"  onclick="lgSwitch('in')">Вход</button>
+      <button class="lg-tab"        id="lgTabUp" onclick="lgSwitch('up')">Регистрация</button>
+    </div>
+    <div id="lgPaneIn">
+      <div class="lg-title">С возвращением</div>
+      <div class="lg-sub">Один аккаунт на GhostChat, GhostSocial и GhostBank.</div>
+      <div class="lg-err" id="lgErrIn"></div>
+      <div class="lg-field"><label>Логин</label><input id="lgInUser" type="text" autocomplete="username" placeholder="username"></div>
+      <div class="lg-field"><label>Пароль</label><input id="lgInPass" type="password" autocomplete="current-password" placeholder="••••••••"></div>
+      <button class="lg-submit" id="lgInBtn" onclick="doLogin()"><i class="fa-solid fa-right-to-bracket"></i> Войти</button>
+      <div class="lg-foot">Нет аккаунта? <a href="javascript:lgSwitch('up')">Создать</a></div>
+    </div>
+    <div id="lgPaneUp" style="display:none;">
+      <div class="lg-title">Создать аккаунт</div>
+      <div class="lg-sub">Логин — латиница и цифры. Пароль — минимум 8 символов.</div>
+      <div class="lg-err" id="lgErrUp"></div>
+      <div class="lg-field"><label>Имя</label><input id="lgUpName" type="text" placeholder="Как тебя называть"></div>
+      <div class="lg-field"><label>Логин</label><input id="lgUpUser" type="text" autocomplete="username" placeholder="username"></div>
+      <div class="lg-field"><label>Пароль</label><input id="lgUpPass" type="password" autocomplete="new-password" placeholder="минимум 8 символов"></div>
+      <label class="lg-check"><input type="checkbox" id="lgUpAge"> Мне 18+, я согласен с правилами экосистемы.</label>
+      <button class="lg-submit" id="lgUpBtn" onclick="doRegister()"><i class="fa-solid fa-user-plus"></i> Создать аккаунт</button>
+      <div class="lg-foot">Уже есть аккаунт? <a href="javascript:lgSwitch('in')">Войти</a></div>
+    </div>
+  </div>
+</div>
 
 <main>
   <div class="hero">
@@ -376,6 +470,146 @@ async function loadWallet(){
   } catch (_) { /* не залогинен или ошибка — баланс скрыт */ }
 }
 
+// ── Профиль / SSO ────────────────────────────────────────────────────
+let _me = null;
+
+async function loadMe(){
+  if (!token || token.startsWith('guest_')){ _me = null; paintProfile(); return; }
+  try {
+    const m = await api('/me');
+    if (m && !m.is_guest){ _me = m; }
+    else { _me = null; }
+  } catch (e) {
+    // 401 = токен протух — чистим, юзер увидит «Войти»
+    if (e.status === 401){ localStorage.removeItem('gs_token'); token = null; }
+    _me = null;
+  }
+  paintProfile();
+}
+
+function paintProfile(){
+  const btn = document.getElementById('hProfile');
+  const ico = document.getElementById('hProfileIco');
+  if (_me){
+    btn.classList.remove('guest'); btn.classList.add('user');
+    btn.title = '@' + _me.username;
+    ico.outerHTML = '<span id="hProfileIco">' + esc(ini(_me.display_name || _me.username)) + '</span>';
+    document.getElementById('pmName').textContent   = _me.display_name || _me.username;
+    document.getElementById('pmHandle').textContent = '@' + _me.username;
+    const prof = document.getElementById('pmProfile');
+    if (prof) prof.href = '/social/#u/' + _me.username;
+  } else {
+    btn.classList.add('guest'); btn.classList.remove('user');
+    btn.title = 'Войти';
+    ico.outerHTML = '<i class="fa-solid fa-right-to-bracket" id="hProfileIco"></i>';
+  }
+}
+
+function onProfileTap(ev){
+  ev.stopPropagation();
+  if (_me) togglePMenu(); else openLogin();
+}
+
+function togglePMenu(){
+  document.getElementById('pMenu').classList.toggle('open');
+}
+function closePMenu(){
+  document.getElementById('pMenu').classList.remove('open');
+}
+document.addEventListener('click', (e) => {
+  const pm = document.getElementById('pMenu');
+  const hp = document.getElementById('hProfile');
+  if (pm && pm.classList.contains('open') && !pm.contains(e.target) && !hp.contains(e.target)) closePMenu();
+});
+
+function openLogin(initialTab){
+  lgSwitch(initialTab === 'up' ? 'up' : 'in');
+  document.getElementById('lgErrIn').classList.remove('show');
+  document.getElementById('lgErrUp').classList.remove('show');
+  document.getElementById('loginOverlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  closePMenu();
+  setTimeout(() => {
+    const f = document.getElementById('lgInUser');
+    if (f && document.getElementById('lgPaneIn').style.display !== 'none') f.focus();
+  }, 80);
+}
+function closeLogin(){
+  document.getElementById('loginOverlay').classList.remove('open');
+  document.body.style.overflow = '';
+}
+function lgSwitch(which){
+  const inOn = which === 'in';
+  document.getElementById('lgTabIn').classList.toggle('active', inOn);
+  document.getElementById('lgTabUp').classList.toggle('active', !inOn);
+  document.getElementById('lgPaneIn').style.display = inOn ? 'block' : 'none';
+  document.getElementById('lgPaneUp').style.display = inOn ? 'none' : 'block';
+}
+function _lgErr(which, msg){
+  const el = document.getElementById(which === 'in' ? 'lgErrIn' : 'lgErrUp');
+  el.textContent = msg;
+  el.classList.add('show');
+}
+async function doLogin(){
+  const btn = document.getElementById('lgInBtn');
+  const u = document.getElementById('lgInUser').value.trim();
+  const p = document.getElementById('lgInPass').value;
+  if (!u || !p){ _lgErr('in', 'Заполните логин и пароль'); return; }
+  btn.disabled = true;
+  try {
+    const r = await fetch(API + '/login', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ username: u, password: p })
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.detail || ('Ошибка ' + r.status));
+    token = data.token;
+    localStorage.setItem('gs_token', token);
+    closeLogin();
+    _notify('Привет, @' + (data.username || u) + '!', 'ok');
+    await loadMe();
+    await loadList();
+  } catch (e) {
+    _lgErr('in', e.message || 'Не удалось войти');
+  } finally { btn.disabled = false; }
+}
+async function doRegister(){
+  const btn  = document.getElementById('lgUpBtn');
+  const name = document.getElementById('lgUpName').value.trim();
+  const u    = document.getElementById('lgUpUser').value.trim();
+  const p    = document.getElementById('lgUpPass').value;
+  const age  = document.getElementById('lgUpAge').checked;
+  if (!name || !u || !p){ _lgErr('up', 'Заполните все поля'); return; }
+  if (p.length < 8){ _lgErr('up', 'Пароль минимум 8 символов'); return; }
+  if (!age){ _lgErr('up', 'Подтвердите возраст 18+'); return; }
+  btn.disabled = true;
+  try {
+    const r = await fetch(API + '/register', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ username: u, display_name: name, password: p, age_18_confirm: true })
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.detail || ('Ошибка ' + r.status));
+    token = data.token;
+    localStorage.setItem('gs_token', token);
+    closeLogin();
+    _notify('Аккаунт создан, добро пожаловать!', 'ok');
+    await loadMe();
+    await loadList();
+  } catch (e) {
+    _lgErr('up', e.message || 'Не удалось создать аккаунт');
+  } finally { btn.disabled = false; }
+}
+function doLogout(){
+  localStorage.removeItem('gs_token');
+  token = null; _me = null;
+  closePMenu();
+  paintProfile();
+  document.getElementById('hBalance').style.display = 'none';
+  _notify('Вы вышли', 'ok');
+  loadList();
+}
+
 async function loadList(){
   loadWallet();
   try {
@@ -450,7 +684,7 @@ function cardHTML(g){
   const secLeft = Math.max(0, g.ends_at - nowSec());
   const ending = secLeft > 0 && secLeft < 3600;
   let btn;
-  if (!isLoggedIn) btn = `<a class="gv-btn login" href="/social/"><i class="fa-solid fa-right-to-bracket"></i> Войти</a>`;
+  if (!isLoggedIn) btn = `<button class="gv-btn login" onclick="openLogin()"><i class="fa-solid fa-right-to-bracket"></i> Войти</button>`;
   else if (g.my_entered) btn = `<button class="gv-btn entered" disabled><i class="fa-solid fa-check"></i> Вы участвуете</button>`;
   else btn = `<button class="gv-btn enter" onclick="enter(${g.id})"><i class="fa-solid fa-ticket"></i> Участвовать</button>`;
 
@@ -505,13 +739,13 @@ function tick(){
 }
 
 async function enter(gid){
-  if (!token){ location.href = '/social/'; return; }
+  if (!token || token.startsWith('guest_')){ openLogin(); return; }
   try {
     const r = await api(`/giveaway/${gid}/enter`, 'POST');
     showToast(r.already ? 'Вы уже участвуете' : 'Вы в игре. Удачи!', 'ok');
     loadList();
   } catch (e){
-    if (e.status === 403) showToast('Войдите в аккаунт, чтобы участвовать', 'err');
+    if (e.status === 403 || e.status === 401){ openLogin(); }
     else showToast(e.message || 'Не удалось', 'err');
   }
 }
@@ -600,9 +834,11 @@ async function deleteGa(gid){
 // ── Старт ──
 document.getElementById('brand').addEventListener('click', secretTap);
 applyAdminUI();
+loadMe();
 loadList();
 setInterval(tick, 1000);
 setInterval(loadList, 25000);
+setInterval(loadMe, 5 * 60 * 1000);
 
 // ── Share sheet ───────────────────────────────────────────────────────
 let _shareId = null;
