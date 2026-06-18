@@ -3084,6 +3084,13 @@ window.addEventListener('storage',e=>{
 // ════════════════════════════════════════════════════════════════════
 async function onReady(){
   console.log('[onReady] start');
+  // Сброс возможных залипших inline-стилей с предыдущих сессий/модалок.
+  // Иначе чат может стартовать с ненулевым padding-top или overflow:hidden.
+  try {
+    document.body.style.paddingTop = '';
+    document.body.style.overflow = '';
+    document.body.removeAttribute('data-km-shown');
+  } catch(_){}
   showApp();
   if (window._keyMissing) showKeyMissingBanner();
   applyLeftBtn();
