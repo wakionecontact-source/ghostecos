@@ -829,9 +829,14 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
     <div class="set-section">
       <div class="set-section-title">
         Мои устройства
-        <button class="set-add-btn" onclick="openKeysyncShow()" title="Подключить новое устройство">
-          <i class="fa-solid fa-plus"></i> Подключить
-        </button>
+        <span style="display:flex;gap:6px;align-items:center;">
+          <button class="set-add-btn" onclick="openKeysyncReceive()" title="Получить ключ с другого моего устройства">
+            <i class="fa-solid fa-arrow-down-to-bracket"></i> Получить
+          </button>
+          <button class="set-add-btn" onclick="openKeysyncShow()" title="Дать ключ новому устройству">
+            <i class="fa-solid fa-plus"></i> Подключить
+          </button>
+        </span>
       </div>
       <div id="setDevList" class="set-dev-list">
         <div class="set-dev-loading"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</div>
