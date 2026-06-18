@@ -3098,28 +3098,33 @@ window.addEventListener('storage',e=>{
 })();
 
 // Scroll-guard: чат — single-viewport SPA, внешний scroll невозможен по дизайну.
-// Если что-то всё-таки сдвинет window/documentElement scrollTop —
-// тут же возвращаем в 0. Защищает от любых неучтённых focus/animation/resize.
+// Любой сдвиг scrollY / documentElement.scrollTop возвращаем в 0.
+// А также сбрасываем застрявшие inline-стили body, которые могут расширить
+// его за пределы viewport (paddingTop, marginTop и т.п.).
 (function(){
   const lock = () => {
-    if (window.scrollY !== 0 || document.documentElement.scrollTop !== 0){
-      try { window.scrollTo(0, 0); } catch(_){}
-      try { document.documentElement.scrollTop = 0; } catch(_){}
-      try { document.body.scrollTop = 0; } catch(_){}
-    }
+    try {
+      if (window.scrollY !== 0) window.scrollTo(0, 0);
+      if (document.documentElement.scrollTop !== 0) document.documentElement.scrollTop = 0;
+      if (document.body.scrollTop !== 0) document.body.scrollTop = 0;
+    } catch(_){}
   };
-  window.addEventListener('scroll', lock, {passive: true, capture: true});
-  // Также реактивно — на каждый animation frame в первые 2 секунды после загрузки,
-  // чтобы поймать асинхронный сдвиг сразу после onReady.
-  let frames = 120;
-  const tick = () => {
+  window.addEventListener('scroll',  lock, {passive: true, capture: true});
+  window.addEventListener('click',   lock, {passive: true, capture: true});
+  window.addEventListener('keydown', lock, {passive: true, capture: true});
+  window.addEventListener('focusin', lock, {passive: true, capture: true});
+  window.addEventListener('resize',  lock, {passive: true, capture: true});
+
+  // Лёгкий «навсегда» rAF-цикл (1 dom read per frame, ~0.01% CPU).
+  // Гарантирует что даже если событие не сработало — drift схлопнется.
+  function loop(){
     lock();
-    if (--frames > 0) requestAnimationFrame(tick);
-  };
+    requestAnimationFrame(loop);
+  }
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => requestAnimationFrame(tick));
+    document.addEventListener('DOMContentLoaded', () => requestAnimationFrame(loop));
   } else {
-    requestAnimationFrame(tick);
+    requestAnimationFrame(loop);
   }
 })();
 
