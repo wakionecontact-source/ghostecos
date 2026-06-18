@@ -1525,6 +1525,22 @@ async function _ensureKeysServer(password){
   console.log('[E2E] upload OK, priv is non-extractable, saved to IDB');
 }
 
+// Проверяет, совпадает ли локальный pub (из IDB) с тем что на сервере.
+// При несоответствии — wipe IDB, отдаёт false (клиент должен показать banner).
+async function _checkLocalPubMatchesServer(){
+  try {
+    const r = await chat('/keys/me');
+    if (!r.x25519_pub) return true;  // на сервере pub нет — ничего сравнивать.
+    if (myPub && r.x25519_pub !== myPub){
+      console.warn('[E2E] local pub != server pub → wiping IDB');
+      try { await wipeKeysIDB(); } catch(_){}
+      myPriv = null; myPub = null;
+      return false;
+    }
+    return true;
+  } catch(_) { return true; }  // сетевая ошибка — не блокируем
+}
+
 // Режим «Только на устройстве»: приватник никогда не уходит на сервер.
 //   (a) Уже в памяти — продолжаем, синхронизируем pubkey на сервер на всякий случай.
 //   (b) Есть в IDB — поднимаем оттуда.
@@ -1535,20 +1551,26 @@ async function _ensureKeysLocal(password, modeRes){
   // (a) Ключи уже в памяти (например, init-путь подтянул их из IDB до doLogin).
   if (myPriv && myPub){
     console.log('[E2E] mode=local — keys already in memory');
-    try {
-      await chat('/keys/upload', 'POST', { x25519_pub: myPub, storage_mode: 'local' });
-    } catch(_){}
-    return;
+    // Сверяем с сервером — если pub разъехались, wipe и идём дальше как
+    // «новое устройство» (есть has_pub → banner).
+    if (!(await _checkLocalPubMatchesServer())){
+      // myPriv/myPub теперь null, продолжаем в ветке (c).
+    } else {
+      try { await chat('/keys/upload', 'POST', { x25519_pub: myPub, storage_mode: 'local' }); } catch(_){}
+      return;
+    }
   }
   // (b) Попробовать IDB.
   try {
     await openIDB();
     if (await loadKeysFromIDB()){
       console.log('[E2E] mode=local — keys loaded from IDB');
-      try {
-        await chat('/keys/upload', 'POST', { x25519_pub: myPub, storage_mode: 'local' });
-      } catch(_){}
-      return;
+      if (!(await _checkLocalPubMatchesServer())){
+        // wipe прошёл внутри, идём в ветку (c)
+      } else {
+        try { await chat('/keys/upload', 'POST', { x25519_pub: myPub, storage_mode: 'local' }); } catch(_){}
+        return;
+      }
     }
   } catch(e){
     console.warn('[E2E] mode=local — IDB load failed:', e);
@@ -1608,14 +1630,23 @@ function showKeyMissingBanner(){
       <button class="km-btn" onclick="openKeyFileImport()"><i class="fa-solid fa-file-arrow-up"></i> Файл</button>
       <button class="km-btn alt" onclick="kmSwitchToServerMode()" title="Переключиться на режим «На сервере»">Сервер</button>
     </div>
-    <button class="km-close" onclick="document.getElementById('_keyMissingBanner').remove()" title="Скрыть"><i class="fa-solid fa-xmark"></i></button>
+    <button class="km-close" onclick="hideKeyMissingBanner()" title="Скрыть"><i class="fa-solid fa-xmark"></i></button>
   `;
   document.body.appendChild(b);
+  // Чтобы баннер не перекрывал шапку чата — даём body отступ сверху равный
+  // высоте баннера (фиксируем после appendChild, когда измерения корректны).
+  requestAnimationFrame(() => {
+    const h = b.offsetHeight || 56;
+    document.body.style.paddingTop = h + 'px';
+    document.body.setAttribute('data-km-shown', '1');
+  });
 }
 
 function hideKeyMissingBanner(){
   const el = document.getElementById('_keyMissingBanner');
   if (el) el.remove();
+  document.body.style.paddingTop = '';
+  document.body.removeAttribute('data-km-shown');
   window._keyMissing = false;
 }
 
@@ -5573,13 +5604,15 @@ async function init(){
       if (!modeRes.mode){
         const chosen = await pickKeyStorageMode();
         await chat('/keys/storage_mode', 'POST', { mode: chosen });
-        // При выборе local — приватник в IDB уже есть; серверная копия зануляется
-        // на стороне сервера (POST /storage_mode сам это делает в ветке local).
       }
     } catch(e){
-      // Старый сервер без endpoint'а или сетевая ошибка — не блокируем вход.
       console.warn('[E2E] storage_mode check failed on init:', e);
     }
+    // Сверяем pub из IDB с pub на сервере. Если расходятся (юзер сбросил ключ
+    // на другом устройстве, мы не знаем) — wipe IDB и показываем banner.
+    // Без этой проверки все incoming сообщения падают как «не удалось расшифровать».
+    const ok = await _checkLocalPubMatchesServer();
+    if (!ok) window._keyMissing = true;
     await onReady();
     return;
   }
