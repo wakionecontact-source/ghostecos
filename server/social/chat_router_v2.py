@@ -331,12 +331,12 @@ def ack_v2(body: AckV2Body, authorization: Optional[str] = Header(None)):
         if not dev:
             raise HTTPException(404, "Текущее устройство не найдено")
         placeholders = ",".join("?" * len(body.ids))
-        c.execute(
+        cur = c.execute(
             f"DELETE FROM chat_dm_v2 WHERE receiver_user_id=? AND receiver_device_id=? "
             f"AND id IN ({placeholders})",
             (user["id"], dev["id"], *body.ids),
         )
         c.commit()
-        return {"status": "ok", "deleted": c.rowcount}
+        return {"status": "ok", "deleted": cur.rowcount}
     finally:
         c.close()
