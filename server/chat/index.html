@@ -5899,6 +5899,60 @@ async function joinGroupByTag(gid) {
   } catch(e) { showToast(e.message || 'Ошибка', true); }
 }
 
+// Levenshtein distance — для fuzzy-поиска похожих имён при опечатках.
+// O(a.length * b.length). Используем только для коротких usernames (≤30 симв),
+// так что копейки.
+function _levenshtein(a, b){
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const v0 = new Array(b.length + 1);
+  const v1 = new Array(b.length + 1);
+  for (let i = 0; i <= b.length; i++) v0[i] = i;
+  for (let i = 0; i < a.length; i++){
+    v1[0] = i + 1;
+    for (let j = 0; j < b.length; j++){
+      const cost = a[i] === b[j] ? 0 : 1;
+      v1[j+1] = Math.min(v1[j] + 1, v0[j+1] + 1, v0[j] + cost);
+    }
+    for (let j = 0; j <= b.length; j++) v0[j] = v1[j];
+  }
+  return v0[b.length];
+}
+
+// Возвращает массив {username, display_name} из локальных dialogs + contacts,
+// чьи username/display_name похожи на query с расстоянием ≤ 2, не пересекаясь
+// с already (списком username которые уже в результатах с сервера).
+function _searchSimilarLocal(query, already){
+  if (!query || query.length < 2) return [];
+  const q = query.toLowerCase();
+  const have = new Set(already.map(x => x.toLowerCase()));
+  const candidates = [];
+  const seen = new Set();
+  const pushCandidate = (username, display_name) => {
+    if (!username) return;
+    const u = username.toLowerCase();
+    if (have.has(u) || seen.has(u) || u === (me && me.username)) return;
+    // Расстояние Левенштейна до username и до display_name (если есть).
+    const dn = (display_name || '').toLowerCase();
+    const dist = Math.min(
+      _levenshtein(u, q),
+      dn ? _levenshtein(dn, q) : 99,
+    );
+    if (dist <= 2){
+      seen.add(u);
+      candidates.push({username, display_name: display_name || username, _dist: dist});
+    }
+  };
+  for (const d of (dialogs || [])) pushCandidate(d.username, d.display_name);
+  // Контакты — если есть глобальный кэш.
+  if (typeof contactsCache !== 'undefined' && Array.isArray(contactsCache)){
+    for (const c of contactsCache) pushCandidate(c.username, c.display_name);
+  }
+  candidates.sort((a, b) => a._dist - b._dist);
+  return candidates.slice(0, 5);
+}
+
 document.getElementById('newChatSearch').addEventListener('input', e => {
   const q = e.target.value.trim();
   clearTimeout(_t);
@@ -5906,11 +5960,16 @@ document.getElementById('newChatSearch').addEventListener('input', e => {
   _t = setTimeout(async () => {
     try {
       // Параллельно: 1) юзеры через GS-search, 2) канал/группа по точному тегу
-      const cleanTag = q.replace(/^@/, '').toLowerCase();
+      // ВАЖНО: q может уже содержать ведущие "@". Сначала чистим, потом ОДИН раз префиксуем.
+      const cleanTag = q.replace(/^@+/, '').toLowerCase();
       const [searchD, groupG] = await Promise.all([
-        soc(`/search?q=@${encodeURIComponent(q)}`).catch(()=>({results:[]})),
+        soc(`/search?q=@${encodeURIComponent(cleanTag)}`).catch(()=>({results:[]})),
         /^[a-z0-9_]{3,20}$/.test(cleanTag) ? tryGroupByTag(cleanTag) : Promise.resolve(null),
       ]);
+      // Подмешиваем «похожих» по Левенштейну на основе локальных диалогов и
+      // контактов — если сервер вернул мало, юзер увидит подсказки с опечатками.
+      const extraSimilar = _searchSimilarLocal(cleanTag, (searchD.results || []).map(u => u.username));
+      if (extraSimilar.length) searchD.results = (searchD.results || []).concat(extraSimilar);
       const res = document.getElementById('newChatResults');
       const list = (searchD.results || []).filter(u => u.username !== me.username);
       let html = '';
