@@ -44,7 +44,7 @@ button,input,textarea{font-family:inherit;}
 
 /* APP */
 #app{display:none;height:100vh;height:100dvh;overflow:hidden;}
-.app-grid{display:grid;grid-template-columns:1fr;height:100%;min-height:0;overflow:hidden;}
+.app-grid{display:grid;grid-template-columns:1fr;grid-template-rows:minmax(0,1fr);height:100%;min-height:0;overflow:hidden;}
 @media (min-width:800px){.app-grid{grid-template-columns:340px 1fr;}}
 
 .sb{display:flex;flex-direction:column;border-right:1px solid var(--border);background:rgba(2,6,23,0.6);backdrop-filter:blur(20px);min-width:0;height:100%;}
