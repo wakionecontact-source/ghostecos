@@ -871,6 +871,14 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
           <span class="tda-slider"></span>
         </label>
       </div>
+
+      <div class="set-row">
+        <div class="set-row-main">
+          <div class="set-row-title">Защита аккаунта v2 <span style="font-size:10px;font-weight:700;background:linear-gradient(95deg,#a855f7,#ec4899);color:#fff;padding:2px 6px;border-radius:99px;margin-left:6px;">BETA</span></div>
+          <div class="set-row-sub" id="setV2Text">Новый стек: forward secrecy, 12-словная seed-фраза для восстановления, multi-device без передачи приватника.</div>
+        </div>
+        <button class="set-btn" onclick="openV2Onboard()">Настроить</button>
+      </div>
     </div>
 
     <!-- Секция «Ожидающие одобрения» (показывается только если есть pending) -->
@@ -944,6 +952,39 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
         <i class="fa-solid fa-arrow-right"></i> Получить ключ
       </button>
       <div class="qr-status" id="qrRecvStatus"></div>
+    </div>
+  </div>
+</div>
+
+<!-- v2 онбординг: создание identity / восстановление через seed-фразу -->
+<div class="modal-overlay" id="v2OnboardModal" style="z-index:565;">
+  <div class="modal-sheet" style="max-width:540px;max-height:92vh;overflow-y:auto;">
+    <div class="m-handle"></div>
+    <div class="m-head">
+      <div class="m-title"><i class="fa-solid fa-shield-halved" style="margin-right:8px;color:var(--sub)"></i>Защита аккаунта v2</div>
+    </div>
+    <div id="v2Stage1" style="padding:6px 0 14px;">
+      <div class="qr-note">Новая криптосистема GhostChat: каждое сообщение шифруется уникальным ключом (forward secrecy), а потеря устройства больше не убивает аккаунт. Восстановление — через 12-словную фразу.</div>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-top:14px;">
+        <button class="qr-go-btn" onclick="v2StartCreate()"><i class="fa-solid fa-plus"></i> Создать новую identity</button>
+        <button class="set-btn" style="padding:12px;font-size:13.5px;" onclick="v2StartRecover()"><i class="fa-solid fa-rotate-left"></i> Восстановить через seed-фразу</button>
+      </div>
+    </div>
+    <div id="v2Stage2" style="display:none;padding:6px 0 14px;">
+      <div class="qr-note" style="background:rgba(244,63,94,0.10);border-color:rgba(244,63,94,0.40);color:#fda4af;"><b>Запишите эти 12 слов на бумаге.</b> Они — единственный способ восстановить аккаунт. Никому не показывайте. Скриншот хуже бумаги (может попасть в облако).</div>
+      <div id="v2SeedGrid" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;margin:14px 0;background:rgba(15,23,42,0.6);border:1px solid var(--border-strong);border-radius:13px;padding:14px;"></div>
+      <label class="lg-check" style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--text);margin:14px 0;cursor:pointer;">
+        <input type="checkbox" id="v2SeedConfirmed" style="margin-top:3px;accent-color:#a855f7;">
+        <span>Я записал фразу на бумаге и положил в надёжное место. Понимаю, что потеря фразы = потеря аккаунта без возможности восстановления.</span>
+      </label>
+      <button class="qr-go-btn" id="v2ConfirmBtn" disabled onclick="v2ConfirmAndPublish()"><i class="fa-solid fa-check"></i> Создать аккаунт v2</button>
+      <div id="v2CreateStatus" class="qr-status" style="margin-top:10px;"></div>
+    </div>
+    <div id="v2Stage3" style="display:none;padding:6px 0 14px;">
+      <div class="qr-note">Введите 12 слов вашей seed-фразы через пробел.</div>
+      <textarea id="v2RecoverInput" placeholder="abandon ability able..." style="width:100%;min-height:90px;background:rgba(15,23,42,0.6);border:1px solid var(--border-strong);border-radius:11px;padding:12px;color:var(--text);font-size:14px;font-family:inherit;outline:none;resize:vertical;margin:14px 0;"></textarea>
+      <button class="qr-go-btn" id="v2RecoverBtn" onclick="v2DoRecover()"><i class="fa-solid fa-arrow-right"></i> Восстановить</button>
+      <div id="v2RecoverStatus" class="qr-status" style="margin-top:10px;"></div>
     </div>
   </div>
 </div>
@@ -1110,6 +1151,10 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 <script src="/dialog.js"></script>
 <!-- QR-генератор для синхронизации устройств. ~10kb, defer чтобы не блокировать boot. -->
 <script defer src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+<!-- GhostChat Keys v2: TweetNaCl + BIP-39 wordlist + наш модуль. -->
+<script src="/chat/nacl.min.js"></script>
+<script src="/chat/bip39_en.js"></script>
+<script src="/chat/keys_v2.js"></script>
 <script>
 // ════════════════════════════════════════════════════════════════════
 // GhostChat web — E2E-зашифрованный мессенджер
@@ -1607,6 +1652,207 @@ async function _ensureKeysLocal(password, modeRes){
     storage_mode: 'local',
   });
   console.log('[E2E] mode=local — pub uploaded, priv stays on device only');
+}
+
+// ════════════════════════════════════════════════════════════════════
+// KEYS V2 ОНБОРДИНГ
+// Новый стек: BIP-39 → Ed25519 identity → X25519 device → AES-GCM.
+// См. server/KEYS_V2_SPEC.md
+// ════════════════════════════════════════════════════════════════════
+
+let _v2NewMnemonic = null;  // временно держим показанную фразу
+
+function openV2Onboard(){
+  // Stage 1 — выбор Create vs Recover.
+  document.getElementById('v2Stage1').style.display = '';
+  document.getElementById('v2Stage2').style.display = 'none';
+  document.getElementById('v2Stage3').style.display = 'none';
+  document.getElementById('v2OnboardModal').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeV2Onboard(){
+  document.getElementById('v2OnboardModal').classList.remove('open');
+  document.body.style.overflow = '';
+  _v2NewMnemonic = null;
+  const cb = document.getElementById('v2SeedConfirmed'); if (cb) cb.checked = false;
+  const btn = document.getElementById('v2ConfirmBtn'); if (btn) btn.disabled = true;
+}
+
+async function v2StartCreate(){
+  if (!window.GhostKeysV2 || !window.nacl){
+    alert('Криптомодуль ещё загружается, попробуйте через секунду');
+    return;
+  }
+  document.getElementById('v2Stage1').style.display = 'none';
+  document.getElementById('v2Stage2').style.display = '';
+  // Генерим mnemonic и показываем в гриде с порядковыми номерами.
+  _v2NewMnemonic = await GhostKeysV2.generateMnemonic();
+  const words = _v2NewMnemonic.split(' ');
+  document.getElementById('v2SeedGrid').innerHTML = words.map((w, i) => `
+    <div style="display:flex;align-items:center;gap:6px;background:rgba(168,85,247,0.08);border:1px solid rgba(168,85,247,0.22);border-radius:9px;padding:8px 10px;font-family:'JetBrains Mono','Consolas',monospace;font-size:13px;">
+      <span style="color:var(--sub);font-size:10px;width:18px;text-align:right;">${i+1}.</span>
+      <b style="flex:1;">${esc(w)}</b>
+    </div>`).join('');
+  // Чекбокс активирует кнопку.
+  const cb = document.getElementById('v2SeedConfirmed');
+  const btn = document.getElementById('v2ConfirmBtn');
+  cb.onchange = () => { btn.disabled = !cb.checked; };
+  btn.disabled = true;
+  cb.checked = false;
+}
+
+async function v2ConfirmAndPublish(){
+  if (!_v2NewMnemonic){ alert('Mnemonic не сгенерирован'); return; }
+  const status = document.getElementById('v2CreateStatus');
+  const btn = document.getElementById('v2ConfirmBtn');
+  btn.disabled = true;
+  status.className = 'qr-status'; status.textContent = 'Создаю identity…';
+  try {
+    const id = await GhostKeysV2.mnemonicToIdentity(_v2NewMnemonic);
+    const dev = GhostKeysV2.generateDeviceKey();
+    // proof — подпись фиксированной строки identity_priv'ом.
+    const proof = GhostKeysV2.signWithIdentity(id.identity_priv, GhostKeysV2._u8('ghostchat-v2-identity-claim'));
+    status.textContent = 'Публикую identity на сервере…';
+    await chat('/v2/identity/publish', 'POST', {
+      identity_pub: GhostKeysV2._b64e(id.identity_pub),
+      proof_signature: GhostKeysV2._b64e(proof),
+    });
+    status.textContent = 'Публикую ключ устройства…';
+    const devSig = GhostKeysV2.signWithIdentity(id.identity_priv, dev.device_pub);
+    await chat('/v2/device/publish', 'POST', {
+      device_pub: GhostKeysV2._b64e(dev.device_pub),
+      signed_prekey_sig: GhostKeysV2._b64e(devSig),
+    });
+    // Сохраняем в IDB. Pkcs8-варианта тут нет — храним raw байты в Uint8Array.
+    await _v2SaveToIDB({
+      identity_priv: id.identity_priv,
+      identity_pub:  id.identity_pub,
+      device_priv:   dev.device_priv,
+      device_pub:    dev.device_pub,
+      seed_hash:     await GhostKeysV2.hashMnemonic(_v2NewMnemonic),
+      created_at:    Math.floor(Date.now()/1000),
+    });
+    _v2NewMnemonic = null;  // забыли plain seed
+    status.className = 'qr-status ok'; status.textContent = 'Готово! v2 identity создан.';
+    setTimeout(() => closeV2Onboard(), 1200);
+  } catch(e){
+    status.className = 'qr-status err';
+    status.textContent = 'Ошибка: ' + (e.message || e);
+    btn.disabled = false;
+  }
+}
+
+function v2StartRecover(){
+  document.getElementById('v2Stage1').style.display = 'none';
+  document.getElementById('v2Stage3').style.display = '';
+  document.getElementById('v2RecoverInput').value = '';
+  document.getElementById('v2RecoverStatus').textContent = '';
+  setTimeout(() => document.getElementById('v2RecoverInput').focus(), 60);
+}
+
+async function v2DoRecover(){
+  const mnemonic = (document.getElementById('v2RecoverInput').value || '').trim();
+  const status = document.getElementById('v2RecoverStatus');
+  const btn = document.getElementById('v2RecoverBtn');
+  status.className = 'qr-status';
+  if (!mnemonic){ status.className = 'qr-status err'; status.textContent = 'Введите фразу'; return; }
+  btn.disabled = true; status.textContent = 'Проверяю фразу…';
+  try {
+    const valid = await GhostKeysV2.validateMnemonic(mnemonic);
+    if (!valid){
+      status.className = 'qr-status err';
+      status.textContent = 'Неверная фраза (12 слов, английских, из BIP-39 wordlist).';
+      btn.disabled = false; return;
+    }
+    status.textContent = 'Восстанавливаю identity…';
+    const id = await GhostKeysV2.mnemonicToIdentity(mnemonic);
+    // Сверим с сервером — должен совпасть с опубликованным identity_pub.
+    let me;
+    try { me = await chat('/v2/identity/me'); } catch(_) { me = {identity_pub: null}; }
+    if (me.identity_pub && me.identity_pub !== GhostKeysV2._b64e(id.identity_pub)){
+      status.className = 'qr-status err';
+      status.textContent = 'Эта фраза не от этого аккаунта (identity_pub на сервере другой).';
+      btn.disabled = false; return;
+    }
+    // Новый device key для этого устройства.
+    const dev = GhostKeysV2.generateDeviceKey();
+    const devSig = GhostKeysV2.signWithIdentity(id.identity_priv, dev.device_pub);
+    // Если identity ещё не на сервере (например, фраза от старого аккаунта) — публикуем.
+    if (!me.identity_pub){
+      const proof = GhostKeysV2.signWithIdentity(id.identity_priv, GhostKeysV2._u8('ghostchat-v2-identity-claim'));
+      await chat('/v2/identity/publish', 'POST', {
+        identity_pub: GhostKeysV2._b64e(id.identity_pub),
+        proof_signature: GhostKeysV2._b64e(proof),
+      });
+    }
+    await chat('/v2/device/publish', 'POST', {
+      device_pub: GhostKeysV2._b64e(dev.device_pub),
+      signed_prekey_sig: GhostKeysV2._b64e(devSig),
+    });
+    await _v2SaveToIDB({
+      identity_priv: id.identity_priv,
+      identity_pub:  id.identity_pub,
+      device_priv:   dev.device_priv,
+      device_pub:    dev.device_pub,
+      seed_hash:     await GhostKeysV2.hashMnemonic(mnemonic),
+      created_at:    Math.floor(Date.now()/1000),
+    });
+    status.className = 'qr-status ok'; status.textContent = 'Восстановлено!';
+    setTimeout(() => closeV2Onboard(), 1200);
+  } catch(e){
+    status.className = 'qr-status err';
+    status.textContent = 'Ошибка: ' + (e.message || e);
+    btn.disabled = false;
+  }
+}
+
+// ── v2 keys storage в IDB ────────────────────────────────────
+async function _v2SaveToIDB(obj){
+  const db = await openIDB();
+  if (!db.objectStoreNames.contains('v2_keys')){
+    // Стор будет создан при следующем upgrade — пока fallback на localStorage.
+    // Безопасность тут хуже (localStorage доступен через XSS), но это
+    // временно пока миграция схемы IDB.
+    try { localStorage.setItem('gs_v2keys_' + (me && me.username || 'anon'),
+        JSON.stringify({
+          identity_priv: GhostKeysV2._b64e(obj.identity_priv),
+          identity_pub:  GhostKeysV2._b64e(obj.identity_pub),
+          device_priv:   GhostKeysV2._b64e(obj.device_priv),
+          device_pub:    GhostKeysV2._b64e(obj.device_pub),
+          seed_hash:     obj.seed_hash,
+          created_at:    obj.created_at,
+        })); } catch(_){}
+    return;
+  }
+  const tx = db.transaction('v2_keys', 'readwrite');
+  tx.objectStore('v2_keys').put({key: 'main', ...obj});
+}
+async function _v2LoadFromIDB(){
+  try {
+    const db = await openIDB();
+    if (db.objectStoreNames.contains('v2_keys')){
+      const tx = db.transaction('v2_keys', 'readonly');
+      return await new Promise(r => {
+        const q = tx.objectStore('v2_keys').get('main');
+        q.onsuccess = () => r(q.result || null);
+        q.onerror = () => r(null);
+      });
+    }
+  } catch(_){}
+  // Fallback localStorage
+  try {
+    const raw = localStorage.getItem('gs_v2keys_' + (me && me.username || 'anon'));
+    if (!raw) return null;
+    const o = JSON.parse(raw);
+    return {
+      identity_priv: GhostKeysV2._b64d(o.identity_priv),
+      identity_pub:  GhostKeysV2._b64d(o.identity_pub),
+      device_priv:   GhostKeysV2._b64d(o.device_priv),
+      device_pub:    GhostKeysV2._b64d(o.device_pub),
+      seed_hash:     o.seed_hash,
+      created_at:    o.created_at,
+    };
+  } catch(_){ return null; }
 }
 
 // ════════════════════════════════════════════════════════════════════
