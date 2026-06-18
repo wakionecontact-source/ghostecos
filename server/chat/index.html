@@ -25,7 +25,7 @@ body::before{content:"";position:fixed;inset:0;z-index:-2;background:radial-grad
 button,input,textarea{font-family:inherit;}
 
 /* AUTH */
-#authScreen{position:fixed;inset:0;z-index:500;display:flex;align-items:center;justify-content:center;padding:24px;overflow-y:auto;}
+#authScreen{position:fixed;inset:0;z-index:500;display:none;align-items:center;justify-content:center;padding:24px;overflow-y:auto;}
 .auth-card{width:100%;max-width:400px;background:rgba(9,14,30,0.92);backdrop-filter:blur(30px);border:1px solid var(--border-strong);border-radius:24px;padding:36px 28px 32px;}
 .auth-logo{font-size:30px;font-weight:800;background:linear-gradient(90deg,var(--primary),var(--primary2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;text-align:center;margin-bottom:6px;}
 .auth-tagline{text-align:center;color:#475569;font-size:13px;margin-bottom:28px;}
@@ -662,6 +662,23 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 /* Boot overlay (генерация ключей) */
 .boot{position:fixed;inset:0;z-index:550;display:none;flex-direction:column;align-items:center;justify-content:center;background:rgba(2,6,23,0.85);backdrop-filter:blur(10px);text-align:center;padding:20px;}
 .boot.open{display:flex;}
+
+/* ── Ghostik — призрак-маскот, парит в правом нижнем углу. ── */
+#ghostik{position:fixed;right:18px;bottom:18px;z-index:520;display:flex;flex-direction:column;align-items:flex-end;gap:8px;pointer-events:none;}
+#ghostik > *{pointer-events:auto;}
+.g-body{background:transparent;border:none;cursor:pointer;padding:0;animation:gFloat 4s ease-in-out infinite;filter:drop-shadow(0 6px 14px rgba(168,85,247,0.45));transition:transform .15s;}
+.g-body:hover{transform:scale(1.08);}
+.g-body:active{transform:scale(0.94);}
+@keyframes gFloat{0%,100%{transform:translateY(0);}50%{transform:translateY(-7px);}}
+.g-bubble{max-width:260px;background:linear-gradient(180deg,rgba(11,17,36,0.98),rgba(15,23,42,0.98));border:1px solid rgba(168,85,247,0.45);color:var(--text);font-size:13px;line-height:1.5;padding:11px 14px;border-radius:14px;border-bottom-right-radius:3px;box-shadow:0 14px 32px rgba(0,0,0,0.45);opacity:0;transform:translateY(8px) scale(0.92);pointer-events:none;transition:all .22s cubic-bezier(.34,1.3,.64,1);position:relative;}
+.g-bubble.open{opacity:1;transform:translateY(0) scale(1);pointer-events:auto;}
+.g-bubble b{color:#c4b5fd;}
+.g-bubble .g-close{position:absolute;top:4px;right:7px;background:transparent;border:none;color:var(--sub);cursor:pointer;font-size:11px;padding:2px 4px;line-height:1;}
+.g-bubble .g-close:hover{color:var(--text);}
+@media (max-width:680px){
+  #ghostik{right:12px;bottom:12px;}
+  .g-bubble{max-width:220px;font-size:12px;}
+}
 .boot .spinner{width:50px;height:50px;border:3px solid rgba(168,85,247,0.2);border-top-color:var(--primary);border-radius:50%;animation:spin 0.9s linear infinite;margin-bottom:20px;}
 @keyframes spin{to{transform:rotate(360deg);}}
 .boot h3{font-size:17px;font-weight:700;margin-bottom:6px;}
@@ -723,10 +740,35 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
   </div>
 </div>
 
-<div class="boot" id="boot">
+<!-- Boot открыт сразу: чат не должен мигать формой входа пока проверяется
+     SSO-токен и тянутся ключи из IDB. После init showApp/showAuth уберут. -->
+<div class="boot open" id="boot">
   <div class="spinner"></div>
-  <h3 id="bootTitle">Подготовка чата</h3>
-  <p id="bootMsg">Минуточку…</p>
+  <h3 id="bootTitle">GhostChat</h3>
+  <p id="bootMsg">Подключаемся…</p>
+</div>
+
+<!-- Ghostik — наш дружелюбный призрак-помощник. -->
+<div id="ghostik" style="display:none;">
+  <div id="ghostikBubble" class="g-bubble"></div>
+  <button id="ghostikBody" class="g-body" onclick="ghostikToggleBubble()" title="Ghostik — твой помощник">
+    <svg viewBox="0 0 64 80" width="44" height="56" aria-hidden="true">
+      <defs>
+        <linearGradient id="gGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#c4b5fd"/>
+          <stop offset="100%" stop-color="#a855f7"/>
+        </linearGradient>
+      </defs>
+      <path d="M32 4 C16 4 8 18 8 32 v36 c0 4 4 6 7 3 l4-4 4 4 c2 2 6 2 8 0 l4-4 4 4 c2 2 6 2 8 0 l4-4 4 4 c3 3 7 1 7-3 V32 C56 18 48 4 32 4 Z"
+        fill="url(#gGrad)" stroke="rgba(255,255,255,0.18)" stroke-width="0.5"/>
+      <ellipse cx="23" cy="32" rx="5" ry="6.5" fill="#0b1124"/>
+      <ellipse cx="41" cy="32" rx="5" ry="6.5" fill="#0b1124"/>
+      <circle cx="24.5" cy="30" r="1.6" fill="#fff"/>
+      <circle cx="42.5" cy="30" r="1.6" fill="#fff"/>
+      <ellipse cx="21" cy="44" rx="3" ry="2" fill="rgba(244,114,182,0.40)"/>
+      <ellipse cx="43" cy="44" rx="3" ry="2" fill="rgba(244,114,182,0.40)"/>
+    </svg>
+  </button>
 </div>
 
 <div id="app">
@@ -3175,6 +3217,53 @@ async function idbGetDialogs(){
 function showAuth(){document.getElementById('authScreen').style.display='flex';document.getElementById('app').style.display='none';document.getElementById('boot').classList.remove('open');}
 function showApp(){document.getElementById('authScreen').style.display='none';document.getElementById('app').style.display='block';document.getElementById('boot').classList.remove('open');}
 function showBoot(title, msg){document.getElementById('bootTitle').textContent=title;document.getElementById('bootMsg').textContent=msg;document.getElementById('boot').classList.add('open');}
+
+// Fallback: если init не закончился за 10 сек (сетевая ошибка, JS-баг,
+// что угодно) — выпускаем юзера к форме логина чтобы не было вечного boot.
+(function(){
+  setTimeout(() => {
+    const boot = document.getElementById('boot');
+    if (boot && boot.classList.contains('open') && document.getElementById('app').style.display !== 'block'){
+      console.warn('[boot] timeout 10s — фолбэк на форму логина');
+      showAuth();
+    }
+  }, 10000);
+})();
+
+// ════════════════════════════════════════════════════════════════════
+// Ghostik — призрак-маскот, помогает советами в нужные моменты.
+// ════════════════════════════════════════════════════════════════════
+let _ghostikHideTimer = 0;
+function ghostikShow(){ const g = document.getElementById('ghostik'); if (g) g.style.display = 'flex'; }
+function ghostikHide(){ const g = document.getElementById('ghostik'); if (g) g.style.display = 'none'; }
+function ghostikToggleBubble(){
+  const b = document.getElementById('ghostikBubble');
+  if (!b) return;
+  if (b.classList.contains('open')) b.classList.remove('open');
+  else if ((b.textContent || '').trim()) b.classList.add('open');
+  else ghostikSay('Я тут чтобы подсказывать. Скоро будут советы по приватности и безопасности.', 6000);
+}
+function ghostikSay(text, durationMs){
+  ghostikShow();
+  const b = document.getElementById('ghostikBubble');
+  if (!b) return;
+  b.innerHTML = '<button class="g-close" onclick="document.getElementById(\'ghostikBubble\').classList.remove(\'open\')" title="Скрыть"><i class="fa-solid fa-xmark"></i></button>' + text;
+  // Микро-задержка нужна чтоб transition сработал после смены contents.
+  requestAnimationFrame(() => b.classList.add('open'));
+  if (_ghostikHideTimer) clearTimeout(_ghostikHideTimer);
+  if (durationMs && durationMs > 0){
+    _ghostikHideTimer = setTimeout(() => b.classList.remove('open'), durationMs);
+  }
+}
+
+// Триггер: подсказки при первом входе в чат за сессию.
+function _ghostikFirstTimeTips(){
+  if (localStorage.getItem('ghostik_seen_intro')) return;
+  setTimeout(() => {
+    ghostikSay('Привет! Я <b>Ghostik</b>. Если что — щёлкни по мне, скажу полезное.', 7000);
+    localStorage.setItem('ghostik_seen_intro', '1');
+  }, 2500);
+}
 function switchTab(t){
   document.getElementById('loginForm').style.display=t==='login'?'block':'none';
   document.getElementById('regForm').style.display=t==='reg'?'block':'none';
@@ -3497,6 +3586,9 @@ async function onReady(){
   // Pinned-чат «Поддержка GhostChat»: загружаем кто админ и перерисовываем
   // список диалогов с pinned-записью сверху (если ты не админ).
   loadSupportAdmin().catch(() => {});
+  // Ghostik — показываем призрака, при первом запуске бросает приветствие.
+  ghostikShow();
+  _ghostikFirstTimeTips();
   // Бейдж непрочитанных GhostSocial-уведомлений
   startGSBadgePolling();
   // Deep-link: ?to=username — открыть чат сразу. ?text=... — предзаполнить input.
