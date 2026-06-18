@@ -879,6 +879,14 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
         </div>
         <button class="set-btn" onclick="openV2Onboard()">Настроить</button>
       </div>
+
+      <div class="set-row">
+        <div class="set-row-main">
+          <div class="set-row-title">Пересоздать ключ</div>
+          <div class="set-row-sub">Сгенерировать новую пару ключей. Собеседники увидят предупреждение, что ключ изменился, и подтвердят его при следующем сообщении.</div>
+        </div>
+        <button class="set-btn danger" onclick="rotateMyKey()">Пересоздать</button>
+      </div>
     </div>
 
     <!-- Секция «Ожидающие одобрения» (показывается только если есть pending) -->
@@ -985,6 +993,30 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
       <textarea id="v2RecoverInput" placeholder="abandon ability able..." style="width:100%;min-height:90px;background:rgba(15,23,42,0.6);border:1px solid var(--border-strong);border-radius:11px;padding:12px;color:var(--text);font-size:14px;font-family:inherit;outline:none;resize:vertical;margin:14px 0;"></textarea>
       <button class="qr-go-btn" id="v2RecoverBtn" onclick="v2DoRecover()"><i class="fa-solid fa-arrow-right"></i> Восстановить</button>
       <div id="v2RecoverStatus" class="qr-status" style="margin-top:10px;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Safety code: модалка проверки ключа собеседника -->
+<div class="modal-overlay" id="safetyCodeModal" style="z-index:565;" onclick="if(event.target===this)closeSafetyCode()">
+  <div class="modal-sheet" style="max-width:520px;">
+    <div class="m-handle"></div>
+    <div class="m-head">
+      <div class="m-title"><i class="fa-solid fa-shield-halved" style="margin-right:8px;color:var(--sub)"></i>Код безопасности</div>
+      <button class="m-close" onclick="closeSafetyCode()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div style="padding:6px 0 14px;">
+      <div class="qr-note">
+        Сравните этот 60-значный код с тем, что видит ваш собеседник у себя в чате с вами. Если они <b>совпадают</b> — никто не подменил ключи между вами. Если <b>не совпадают</b> — возможно атака или один из вас сменил ключ; не доверяйте переписке пока не разберётесь.
+      </div>
+      <div id="safetyCodeBox" style="margin:18px 0;font-family:'JetBrains Mono','Consolas',monospace;font-size:17px;font-weight:800;text-align:center;letter-spacing:3px;line-height:1.7;color:var(--text);background:rgba(15,23,42,0.7);border:1.5px solid rgba(168,85,247,0.42);border-radius:14px;padding:18px;user-select:all;">
+        Загружаю…
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="set-btn" style="flex:1;padding:11px;" onclick="copySafetyCode()"><i class="fa-solid fa-copy"></i> Скопировать</button>
+        <button class="qr-go-btn" style="flex:2;margin:0;" onclick="closeSafetyCode()">Понятно</button>
+      </div>
+      <div id="safetyCodePeer" style="font-size:12px;color:var(--sub);text-align:center;margin-top:10px;"></div>
     </div>
   </div>
 </div>
@@ -1853,6 +1885,154 @@ async function _v2LoadFromIDB(){
       created_at:    o.created_at,
     };
   } catch(_){ return null; }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SAFETY CODE: проверка ключа собеседника (Signal-style fingerprint)
+// SHA-256 над двумя pub'ами (отсортированными лексикографически),
+// затем 30 байт → 60 десятичных цифр в 5 группах по 12.
+// ════════════════════════════════════════════════════════════════════
+
+async function _computeSafetyCode(myPubB64, theirPubB64){
+  // Сортируем чтобы у обоих собеседников получался ОДИН код,
+  // независимо от того кто из них «я».
+  const sorted = [myPubB64, theirPubB64].sort();
+  const concat = new TextEncoder().encode(sorted[0] + '|' + sorted[1]);
+  // 5 итераций SHA-256 чтобы slightly slow брутфорс предобразов.
+  let h = new Uint8Array(await crypto.subtle.digest('SHA-256', concat));
+  for (let i = 0; i < 4; i++) h = new Uint8Array(await crypto.subtle.digest('SHA-256', h));
+  // Берём первые 30 байт → конвертируем в 60 десятичных цифр (5 групп по 12)
+  let digits = '';
+  for (let i = 0; i < 30; i += 5){
+    // 5 байт → 40 бит → 12 десятичных цифр (макс ~1.1×10^12)
+    const v = (BigInt(h[i]) << 32n) | (BigInt(h[i+1]) << 24n) | (BigInt(h[i+2]) << 16n) | (BigInt(h[i+3]) << 8n) | BigInt(h[i+4]);
+    const piece = (v % 1000000000000n).toString().padStart(12, '0');
+    digits += piece;
+  }
+  // Форматируем: 12-12-12-12-12 → группы по 3 цифры для удобства чтения
+  // Итог: 60 цифр = 20 групп по 3, разнесём по строкам в UI
+  const parts = [];
+  for (let i = 0; i < 60; i += 12) parts.push(digits.slice(i, i+12));
+  return parts; // массив из 5 строк по 12 цифр
+}
+
+async function openSafetyCode(peerUsername){
+  document.getElementById('safetyCodeModal').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  const box = document.getElementById('safetyCodeBox');
+  const peerLabel = document.getElementById('safetyCodePeer');
+  box.textContent = 'Загружаю…';
+  peerLabel.textContent = '';
+  if (!myPub){
+    box.innerHTML = '<span style="color:#fda4af;font-size:14px;">Сначала загрузите свой ключ — без него код считать нельзя.</span>';
+    return;
+  }
+  try {
+    let peerPub = pubCache.get(peerUsername);
+    if (!peerPub){
+      const r = await chat(`/keys/${encodeURIComponent(peerUsername)}`);
+      if (!r.x25519_pub) throw new Error('У собеседника нет ключей');
+      peerPub = r.x25519_pub;
+    }
+    const parts = await _computeSafetyCode(myPub, peerPub);
+    // Красивый формат: 12 цифр — две группы по 3+3+3+3
+    const fmt = s => s.match(/.{1,3}/g).join(' ');
+    box.innerHTML = parts.map(p => `<div>${fmt(p)}</div>`).join('');
+    peerLabel.textContent = `Между вами и @${peerUsername}. Совпадает с тем что видит собеседник у себя.`;
+  } catch(e){
+    box.innerHTML = `<span style="color:#fda4af;font-size:14px;">Не удалось рассчитать: ${esc(e.message || e)}</span>`;
+  }
+}
+
+function closeSafetyCode(){
+  document.getElementById('safetyCodeModal').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+function copySafetyCode(){
+  const text = document.getElementById('safetyCodeBox').innerText.trim();
+  if (!text || text.startsWith('Загружаю') || text.startsWith('Не удалось')) return;
+  navigator.clipboard.writeText(text.replace(/\s+/g, ' ')).then(() => {
+    _notify ? _notify('Код скопирован', 'ok')
+            : (window.showToast && showToast('Скопировано'));
+  }, () => {});
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ПЕРЕСОЗДАНИЕ КЛЮЧА: генерируем новую пару, аплоадим, чистим IDB.
+// Старые собеседники получат предупреждение (TOFU pin не совпадёт)
+// и должны будут подтвердить смену.
+// ════════════════════════════════════════════════════════════════════
+
+async function rotateMyKey(){
+  // Сначала узнаём текущий mode чтобы решить: нужен пароль или нет.
+  let modeRes;
+  try { modeRes = await chat('/keys/storage_mode'); }
+  catch(_){ modeRes = { mode: 'server' }; }
+  const mode = modeRes.mode || 'server';
+
+  const warning =
+    'ВНИМАНИЕ. Пересоздание ключа:\n\n' +
+    '• Сгенерируется НОВАЯ пара ключей.\n' +
+    '• Все собеседники увидят предупреждение «ключ изменился» при следующем сообщении.\n' +
+    '• Сообщения, зашифрованные под СТАРЫЙ ключ, перестанут открываться на этом устройстве (если они ещё в /pending).\n' +
+    '• Старая локальная история (расшифрованная и сохранённая в IDB) останется читаемой.\n\n' +
+    'Продолжить?';
+  if (!confirm(warning)) return;
+
+  let password = null;
+  if (mode === 'server'){
+    password = prompt('Введите пароль аккаунта — им будет зашифрован новый приватный ключ для сервера:');
+    if (!password) return;
+    if (password.length < 1){ alert('Пустой пароль'); return; }
+  }
+
+  try {
+    // Чистим IDB полностью — и keys, и peerkeys (старые TOFU пины уже не валидны
+    // относительно новых публичных ключей собеседников; но это про наш ключ,
+    // peerkeys мы не трогаем, чужие ключи валидны как были).
+    await wipeKeysIDB();
+    myPriv = null; myPub = null;
+    pubCache.clear();
+
+    // Генерируем новую пару (extractable=true чтобы можно было pkcs8-байты получить).
+    const pair = await crypto.subtle.generateKey(ECDH_ALGO, true, ['deriveBits']);
+    const pubBytes = await crypto.subtle.exportKey('raw', pair.publicKey);
+    myPub = b64e(pubBytes);
+    const privBytes = await crypto.subtle.exportKey('pkcs8', pair.privateKey);
+
+    if (mode === 'server'){
+      // Шифруем приватник паролем (та же схема что в _ensureKeysServer)
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const master = await deriveMasterKey(password, salt);
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, master, privBytes);
+      const enc = new Uint8Array(12 + ct.byteLength);
+      enc.set(iv); enc.set(new Uint8Array(ct), 12);
+      await chat('/keys/upload', 'POST', {
+        x25519_pub: myPub,
+        encrypted_private_key: b64e(enc),
+        key_salt: b64e(salt),
+        storage_mode: 'server',
+      });
+    } else {
+      // local — только pub
+      await chat('/keys/upload', 'POST', {
+        x25519_pub: myPub,
+        storage_mode: 'local',
+      });
+    }
+
+    // Импортируем как non-extractable для рабочего использования
+    myPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
+    await saveKeysToIDB(privBytes);
+
+    alert('Готово. Ключ обновлён. Сообщения с этого момента будут идти под новый ключ.');
+    // Обновим состояние storage_mode-строки в settings
+    refreshStorageModeRow && refreshStorageModeRow();
+  } catch(e){
+    alert('Ошибка пересоздания: ' + (e.message || e));
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -4478,6 +4658,7 @@ function renderChat(){
         <div class="chat-status" id="chatStatus">@${esc(p.username)}</div>
       </div>
       <button class="chat-menu" id="chatContactBtn" onclick="toggleContact(${jsAttr(p.username)})" title="Добавить в контакты"><i class="fa-solid fa-user-plus"></i></button>
+      <button class="chat-menu" onclick="openSafetyCode(${jsAttr(p.username)})" title="Код безопасности — сверить ключ собеседника"><i class="fa-solid fa-shield-halved"></i></button>
       <button class="chat-menu" onclick="openPeerProfile(${jsAttr(p.username)})" title="Профиль"><i class="fa-solid fa-user"></i></button>
       <button class="chat-menu" onclick="openChatActionsMenu(event,${jsAttr(p.username)})" title="Ещё"><i class="fa-solid fa-ellipsis-vertical"></i></button>
     </div>
