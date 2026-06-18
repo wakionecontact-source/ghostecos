@@ -590,6 +590,24 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 .qr-status.ok{color:#86efac;}
 .qr-status.err{color:#fda4af;}
 
+/* Key-missing banner */
+#_keyMissingBanner{position:fixed;top:0;left:0;right:0;z-index:300;background:linear-gradient(95deg,rgba(244,63,94,0.95),rgba(236,72,153,0.95));color:#fff;display:flex;align-items:center;gap:12px;padding:10px 14px;box-shadow:0 6px 18px rgba(0,0,0,0.35);animation:fadeUp .3s ease-out;}
+#_keyMissingBanner .km-ico{width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,0.18);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;}
+#_keyMissingBanner .km-text{flex:1;min-width:0;}
+#_keyMissingBanner .km-title{font-size:13.5px;font-weight:800;line-height:1.2;}
+#_keyMissingBanner .km-sub{font-size:11.5px;opacity:0.9;margin-top:2px;line-height:1.35;}
+#_keyMissingBanner .km-acts{display:flex;gap:6px;flex-shrink:0;}
+#_keyMissingBanner .km-btn{background:rgba(255,255,255,0.18);color:#fff;border:none;border-radius:8px;padding:7px 11px;font-size:12px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:5px;transition:background .15s;}
+#_keyMissingBanner .km-btn:hover{background:rgba(255,255,255,0.30);}
+#_keyMissingBanner .km-btn.alt{background:transparent;border:1px solid rgba(255,255,255,0.4);}
+#_keyMissingBanner .km-close{background:transparent;border:none;color:#fff;font-size:14px;cursor:pointer;opacity:0.7;padding:6px;}
+#_keyMissingBanner .km-close:hover{opacity:1;}
+@media (max-width:680px){
+  #_keyMissingBanner{flex-wrap:wrap;}
+  #_keyMissingBanner .km-text{flex-basis:100%;order:-1;}
+  #_keyMissingBanner .km-acts{margin-left:auto;}
+}
+
 /* TDA toggle */
 .tda-toggle{position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0;}
 .tda-toggle input{opacity:0;width:0;height:0;}
@@ -1210,6 +1228,9 @@ async function decryptText(aesKey, b64){
 // Зашифровать сообщение для конкретного получателя по username
 // payload: либо строка (legacy plain text), либо объект {type, ...} для нового формата
 async function encryptForPeer(peerUsername, payload){
+  if (!myPriv){
+    throw new Error('Приватный ключ не загружен на этом устройстве. Откройте «Настройки → Мои устройства → Получить» чтобы синхронизироваться, или «Импорт» — чтобы подгрузить из файла.');
+  }
   let pub = pubCache.get(peerUsername);
   if (!pub) {
     const r = await chat(`/keys/${encodeURIComponent(peerUsername)}`);
@@ -1293,6 +1314,9 @@ async function decryptSealed(cipherB64) {
 }
 
 async function decryptFromPeer(peerUsername, cipherB64){
+  if (!myPriv){
+    throw new Error('Приватный ключ не загружен на этом устройстве — не могу расшифровать. Откройте «Настройки → Мои устройства» и подгрузите ключ через QR или файл.');
+  }
   let pub = pubCache.get(peerUsername);
   if (!pub) {
     const r = await chat(`/keys/${encodeURIComponent(peerUsername)}`);
@@ -1530,15 +1554,22 @@ async function _ensureKeysLocal(password, modeRes){
     console.warn('[E2E] mode=local — IDB load failed:', e);
   }
   // (c) На сервере есть pubkey, но локально приватника нет — новое устройство.
+  // НЕ блокируем вход: пускаем в чат, ставим флаг и показываем persistent banner
+  // с кнопками «Получить ключ через QR / файл / Сменить режим». Без приватника
+  // отправка/расшифровка будет давать понятную ошибку до синхронизации.
   if (modeRes.has_pub){
-    showBoot(
-      'Нужна синхронизация устройств',
-      'Вы выбрали режим «только на устройстве». На этом устройстве приватного ключа ещё нет. ' +
-      'Откройте чат на другом своём устройстве и воспользуйтесь QR-синхронизацией ' +
-      '(функция скоро будет добавлена). Если другого устройства нет — временно ' +
-      'переключитесь на режим «На сервере» в настройках аккаунта.'
-    );
-    throw new Error('Local-only: приватный ключ отсутствует, QR-синхронизация пока недоступна');
+    myPub = (modeRes && modeRes.x25519_pub) || null;
+    // myPub попробуем подтянуть отдельным запросом — modeRes его может не дать.
+    try {
+      if (!myPub){
+        const km = await chat('/keys/me');
+        myPub = km.x25519_pub || null;
+      }
+    } catch(_){}
+    myPriv = null;
+    window._keyMissing = true;
+    console.warn('[E2E] local-mode без приватника на этом устройстве — войдём без ключа');
+    return;
   }
   // (d) Новый юзер — генерируем пару и публикуем только публичный ключ.
   console.log('[E2E] mode=local — generating new ECDH pair (P-256)...');
@@ -1554,6 +1585,51 @@ async function _ensureKeysLocal(password, modeRes){
     storage_mode: 'local',
   });
   console.log('[E2E] mode=local — pub uploaded, priv stays on device only');
+}
+
+// ════════════════════════════════════════════════════════════════════
+// KEY-MISSING BANNER: persistent плашка сверху чата, если на этом
+// устройстве нет приватного ключа (например, инкогнито Firefox или
+// новый браузер при mode='local').
+// ════════════════════════════════════════════════════════════════════
+
+function showKeyMissingBanner(){
+  if (document.getElementById('_keyMissingBanner')) return;
+  const b = document.createElement('div');
+  b.id = '_keyMissingBanner';
+  b.innerHTML = `
+    <div class="km-ico"><i class="fa-solid fa-key"></i></div>
+    <div class="km-text">
+      <div class="km-title">Приватный ключ не загружен</div>
+      <div class="km-sub">Сообщения не расшифровываются и не отправляются. Получите ключ с другого вашего устройства.</div>
+    </div>
+    <div class="km-acts">
+      <button class="km-btn" onclick="openKeysyncReceive()"><i class="fa-solid fa-qrcode"></i> QR</button>
+      <button class="km-btn" onclick="openKeyFileImport()"><i class="fa-solid fa-file-arrow-up"></i> Файл</button>
+      <button class="km-btn alt" onclick="kmSwitchToServerMode()" title="Переключиться на режим «На сервере»">Сервер</button>
+    </div>
+    <button class="km-close" onclick="document.getElementById('_keyMissingBanner').remove()" title="Скрыть"><i class="fa-solid fa-xmark"></i></button>
+  `;
+  document.body.appendChild(b);
+}
+
+function hideKeyMissingBanner(){
+  const el = document.getElementById('_keyMissingBanner');
+  if (el) el.remove();
+  window._keyMissing = false;
+}
+
+async function kmSwitchToServerMode(){
+  if (!confirm('Сменить режим на «На сервере»?\n\n' +
+               'Это позволит зайти с любого устройства паролем без QR-сихронизации, ' +
+               'но снизит уровень защиты. Старая переписка останется зашифрованной ' +
+               'и расшифровать её на этом устройстве вы не сможете (если ключа здесь нет).')) return;
+  try {
+    await chat('/keys/storage_mode', 'POST', { mode: 'server' });
+    alert('Режим переключён. Выйдите и зайдите заново — система перезальёт ключ.');
+  } catch(e){
+    alert('Не удалось: ' + (e.message || e));
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -2732,6 +2808,7 @@ window.addEventListener('storage',e=>{
 async function onReady(){
   console.log('[onReady] start');
   showApp();
+  if (window._keyMissing) showKeyMissingBanner();
   applyLeftBtn();
   try { maybeShowInstallPrompt(); } catch(e) { console.warn('[onReady] install prompt err', e); }
   console.log('[onReady] opening IDB');
