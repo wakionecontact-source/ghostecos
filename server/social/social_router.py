@@ -961,6 +961,13 @@ def init():
     try: c.execute("ALTER TABLE users ADD COLUMN eternal_status_purchased_at INTEGER")
     except sqlite3.OperationalError: pass
 
+    # ── Хранение приватного ключа: явный выбор юзера ──
+    # NULL = выбор ещё не сделан (показать экран при следующем входе)
+    # 'server' = приватник лежит в users.encrypted_private_key (зашифрован паролем юзера)
+    # 'local'  = приватника на сервере нет, только на устройствах юзера (синхр. через QR)
+    try: c.execute("ALTER TABLE users ADD COLUMN key_storage_mode TEXT DEFAULT NULL")
+    except sqlite3.OperationalError: pass
+
     # ── Sealed Sender (DM без sender_id в БД) ──
     # Sender виден ТОЛЬКО внутри зашифрованного envelope ciphertext.
     # Сервер хранит только receiver_id + ciphertext.
@@ -1627,6 +1634,30 @@ def login(body: LoginBody, request: Request):
 
 # ── Media upload ───────────────────────────────────────────────────────────────
 
+# Запуск ffmpeg БЕЗ блокировки event loop: отдельный процесс + низкий приоритет (nice).
+# Семафор ограничивает число одновременных сжатий, чтобы не перегружать CPU.
+_FFMPEG_SEM = asyncio.Semaphore(2)
+
+async def _run_ffmpeg(cmd: list, timeout: int = 600) -> int:
+    """Асинхронно запускает ffmpeg, не блокируя event loop. 0 = успех."""
+    async with _FFMPEG_SEM:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                return 1
+            return proc.returncode if proc.returncode is not None else 1
+        except Exception:
+            return 1
+
+
 @router.post("/upload")
 async def upload_media(request: Request, file: UploadFile = File(...), authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
@@ -1688,10 +1719,14 @@ async def upload_media(request: Request, file: UploadFile = File(...), authoriza
         with open(filepath, "wb") as f:
             f.write(data)
         compressed = os.path.join(MEDIA_DIR, f"{uuid.uuid4()}.mp4")
-        ret = os.system(
-            f'ffmpeg -i "{filepath}" -vcodec libx264 -crf 28 -preset fast '
-            f'-acodec aac -b:a 128k -movflags +faststart "{compressed}" -y -loglevel error'
-        )
+        ret = await _run_ffmpeg([
+            "nice", "-n", "19", "ffmpeg", "-i", filepath,
+            "-vf", "scale=-2:720",
+            "-vcodec", "libx264", "-crf", "28", "-preset", "ultrafast",
+            "-maxrate", "2500k", "-bufsize", "5M",
+            "-acodec", "aac", "-b:a", "128k", "-movflags", "+faststart",
+            compressed, "-y", "-loglevel", "error"
+        ])
         if ret == 0 and os.path.exists(compressed):
             os.remove(filepath)
             filepath, filename = compressed, os.path.basename(compressed)
@@ -1699,9 +1734,10 @@ async def upload_media(request: Request, file: UploadFile = File(...), authoriza
         with open(filepath, "wb") as f:
             f.write(data)
         compressed = os.path.join(MEDIA_DIR, f"{uuid.uuid4()}.mp3")
-        ret = os.system(
-            f'ffmpeg -i "{filepath}" -acodec libmp3lame -b:a 128k "{compressed}" -y -loglevel error'
-        )
+        ret = await _run_ffmpeg([
+            "nice", "-n", "19", "ffmpeg", "-i", filepath,
+            "-acodec", "libmp3lame", "-b:a", "128k", compressed, "-y", "-loglevel", "error"
+        ])
         if ret == 0 and os.path.exists(compressed):
             os.remove(filepath)
             filepath, filename = compressed, os.path.basename(compressed)
@@ -3236,7 +3272,7 @@ async def link_preview(url: str = Query(..., max_length=2000), authorization: Op
     from bs4 import BeautifulSoup
     try:
         async with httpx.AsyncClient(
-            timeout=5.0, follow_redirects=True, max_redirects=4,
+            timeout=3.0, follow_redirects=True, max_redirects=4,
             headers={"User-Agent": "GhostSocialPreview/1.0 (+https://ghostecos.duckdns.org)"}
         ) as client:
             r = await client.get(safe)
@@ -3303,6 +3339,9 @@ def mark_viewed(body: ViewBody, authorization: Optional[str] = Header(None)):
     """Клиент шлёт сюда id постов которые юзер увидел на экране.
     Используется feed-ом для сортировки 'не показывать уже видённое сверху'.
     Batch — до 50 за раз."""
+    # Гости (guest_-токен) — тихо 200, без 403-спама в ленте
+    if authorization and "guest_" in authorization:
+        return {"recorded": 0, "guest": True}
     user = auth_member(authorization)
     if not body.ids or not isinstance(body.ids, list):
         return {"recorded": 0}
@@ -3635,6 +3674,38 @@ def og_channel_png(username: str):
     png = _og_render(title=title, subtitle=sub,
                      footer=f"ghostecos.duckdns.org/c/{uname}", accent=accent)
     _og_save(f"ch_{uname}", png)
+    return _og_response(png)
+
+
+@router.get("/og/giveaway/{gid}.png")
+def og_giveaway_png(gid: int):
+    """OG/share-картинка розыгрыша. Title — название, subtitle — приз + winners.
+    Используется в bottom-sheet «Поделиться» на /bank/giveaway/."""
+    cached = _og_cached(f"gv_{gid}")
+    if cached:
+        with open(cached, "rb") as f:
+            return _og_response(f.read())
+    c = db()
+    g = c.execute(
+        "SELECT id, title, description, prize_gost, winners_count, status, ends_at, drawn_at "
+        "FROM soc_giveaways WHERE id=?", (gid,)
+    ).fetchone()
+    if not g:
+        c.close(); raise HTTPException(404, "Giveaway not found")
+    entries = c.execute(
+        "SELECT COUNT(*) FROM soc_giveaway_entries WHERE giveaway_id=?", (gid,)
+    ).fetchone()[0] or 0
+    c.close()
+    title = g["title"] or f"Розыгрыш #{gid}"
+    win_word = "победителю" if g["winners_count"] == 1 else "победителям"
+    status_word = {
+        "active": "Сейчас идёт", "finished": "Завершён",
+        "cancelled": "Отменён",
+    }.get(g["status"], "Розыгрыш")
+    sub = f"{status_word} · приз {g['prize_gost']} Gost {win_word} · {entries} участ."
+    png = _og_render(title=title, subtitle=sub,
+                     footer=f"ghostecos.duckdns.org/bank/giveaway/", accent="GIVEAWAY")
+    _og_save(f"gv_{gid}", png)
     return _og_response(png)
 
 
@@ -7114,3 +7185,207 @@ def giveaway_delete(gid: int, token: str = Query(...)):
     c.execute("DELETE FROM soc_giveaways WHERE id=?", (gid,))
     c.commit(); c.close()
     return {"status": "ok"}
+
+
+# ============================================================
+# v10b — Сохранённое (сервер) + Отреагированное
+# Дописано в КОНЕЦ social_router.py. Ничего выше не меняется.
+# Приватность: только свои данные (auth_member, нет /user/{name}/saved).
+# Таблица soc_saved создаётся лениво — не трогаем блок миграций.
+# ============================================================
+
+def _ensure_saved_table():
+    c = db()
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS soc_saved (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                UNIQUE(post_id, user_id)
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_saved_user ON soc_saved(user_id, created_at DESC)")
+        c.commit()
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        c.close()
+
+
+@router.get("/me/saved/ids")
+def my_saved_ids(authorization: Optional[str] = Header(None)):
+    """Список post_id, которые я сохранил — для подсветки кнопки на фронте."""
+    user = auth_member(authorization)
+    _ensure_saved_table()
+    c = db()
+    rows = c.execute("SELECT post_id FROM soc_saved WHERE user_id=?", (user["id"],)).fetchall()
+    c.close()
+    return [r["post_id"] for r in rows]
+
+
+@router.post("/me/saved/{post_id}")
+def save_post(post_id: int, authorization: Optional[str] = Header(None)):
+    """Сохранить пост к себе (приватно). Идемпотентно."""
+    user = auth_member(authorization)
+    _ensure_saved_table()
+    c = db()
+    p = c.execute("SELECT id FROM soc_posts WHERE id=?", (post_id,)).fetchone()
+    if not p:
+        c.close()
+        raise HTTPException(404, "Post not found")
+    c.execute(
+        "INSERT OR IGNORE INTO soc_saved (post_id, user_id, created_at) VALUES (?,?,?)",
+        (post_id, user["id"], int(time.time())),
+    )
+    c.commit()
+    c.close()
+    return {"status": "ok", "saved": True}
+
+
+@router.delete("/me/saved/{post_id}")
+def unsave_post(post_id: int, authorization: Optional[str] = Header(None)):
+    """Убрать пост из сохранённого."""
+    user = auth_member(authorization)
+    _ensure_saved_table()
+    c = db()
+    c.execute("DELETE FROM soc_saved WHERE post_id=? AND user_id=?", (post_id, user["id"]))
+    c.commit()
+    c.close()
+    return {"status": "ok", "saved": False}
+
+
+@router.get("/me/saved")
+def my_saved(offset: int = Query(0), limit: int = Query(20), authorization: Optional[str] = Header(None)):
+    """Мои сохранённые посты (только свои)."""
+    user = auth_member(authorization)
+    _ensure_saved_table()
+    c = db()
+    rows = c.execute("""
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
+               p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+               u2.username, u2.display_name,
+               (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count,
+               s.created_at as saved_at
+        FROM soc_saved s
+        JOIN soc_posts p ON s.post_id=p.id
+        JOIN users u2 ON p.user_id=u2.id
+        WHERE s.user_id=?
+        ORDER BY s.created_at DESC
+        LIMIT ? OFFSET ?
+    """, (user["id"], max(1, min(50, limit)), max(0, offset))).fetchall()
+    out = _hydrate_posts(c, rows, user["id"])
+    c.close()
+    return out
+
+
+@router.get("/me/reacted")
+def my_reacted(offset: int = Query(0), limit: int = Query(20), authorization: Optional[str] = Header(None)):
+    """Посты, на которые я ставил реакцию (только свои, приватно)."""
+    user = auth_member(authorization)
+    c = db()
+    rows = c.execute("""
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
+               p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+               u2.username, u2.display_name,
+               (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
+        FROM soc_reactions rx
+        JOIN soc_posts p ON rx.post_id=p.id
+        JOIN users u2 ON p.user_id=u2.id
+        WHERE rx.user_id=?
+        ORDER BY p.created_at DESC
+        LIMIT ? OFFSET ?
+    """, (user["id"], max(1, min(50, limit)), max(0, offset))).fetchall()
+    out = _hydrate_posts(c, rows, user["id"])
+    c.close()
+    return out
+
+# ============================================================================
+#  GhostSocial v11b — миниска-карусель (массив медиа: фото + ≤1 видео, ≤5)
+#  Дописывается В КОНЕЦ /opt/ghostchat/social_router.py (append-only).
+#  Старая /miniska/new остаётся для совместимости со старыми APK.
+#  После добавления: systemctl restart ghostsocial.service
+# ============================================================================
+
+class MiniskaV2Item(BaseModel):
+    url: str
+    type: str = "image"   # "image" | "video"
+
+
+class MiniskaV2Body(BaseModel):
+    caption: str = ""
+    media: list = []       # список MiniskaV2Item-подобных dict'ов
+    is_nsfw: bool = False
+
+
+@router.post("/miniska/new_v2")
+def v11_create_miniska_carousel(body: MiniskaV2Body,
+                                authorization: Optional[str] = Header(None)):
+    """Создать миниску-карусель из массива медиа.
+    Правила: 1..5 вложений, максимум 1 видео, видео ≤ MINISKA_MAX_DURATION сек.
+    Каждый url должен быть уже загружен (через обычный аплоад) и существовать.
+    """
+    user = auth_member(authorization)
+    _rate_limit(f"miniska:{user['id']}", limit=10, window=3600)
+
+    caption = (body.caption or "").strip()
+    if len(caption) > MINISKA_MAX_TEXT:
+        raise HTTPException(400, f"Текст до {MINISKA_MAX_TEXT} символов")
+
+    items = body.media or []
+    if not isinstance(items, list) or len(items) < 1:
+        raise HTTPException(400, "Нужно хотя бы одно вложение")
+    if len(items) > 5:
+        raise HTTPException(400, "Максимум 5 вложений")
+
+    video_count = 0
+    media = []
+    for it in items:
+        # it может быть dict или модель — берём поля аккуратно
+        url = (it.get("url") if isinstance(it, dict) else getattr(it, "url", "")) or ""
+        mtype = (it.get("type") if isinstance(it, dict) else getattr(it, "type", "image")) or "image"
+        mtype = "video" if mtype == "video" else "image"
+
+        if not _MEDIA_URL_RE.match(url):
+            raise HTTPException(400, "Некорректный URL вложения")
+        fname = url.split("/")[-1]
+        fpath = os.path.join(MEDIA_DIR, fname)
+        if not os.path.exists(fpath):
+            raise HTTPException(404, "Файл не найден")
+
+        if mtype == "video":
+            video_count += 1
+            if video_count > 1:
+                raise HTTPException(400, "Максимум одно видео в миниске")
+            # длительность через ffprobe (как в старой ручке)
+            try:
+                import subprocess
+                out = subprocess.run(
+                    ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=noprint_wrappers=1:nokey=1", fpath],
+                    capture_output=True, text=True, timeout=10
+                )
+                dur = float((out.stdout or "0").strip() or 0)
+                if dur > MINISKA_MAX_DURATION + 1:
+                    raise HTTPException(400, f"Видео слишком длинное. Максимум {MINISKA_MAX_DURATION} сек")
+            except HTTPException:
+                raise
+            except Exception:
+                pass
+
+        media.append({"url": url, "type": mtype, "name": fname})
+
+    media_json = json.dumps(media, ensure_ascii=False)
+    nsfw = 1 if body.is_nsfw else 0
+    c = db()
+    try:
+        c.execute(
+            "INSERT INTO soc_posts (user_id, content, media, kind, is_nsfw) VALUES (?,?,?,'miniska',?)",
+            (user["id"], caption or " ", media_json, nsfw),
+        )
+        post_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
+        c.commit()
+    finally:
+        c.close()
+    return {"status": "ok", "id": post_id, "count": len(media)}
