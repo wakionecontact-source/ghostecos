@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GhostEcos — набор иконок</title>
+<style>
+:root{--ge:#3B0C93;--ge2:#7C3AED;--ge3:#A855F7}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:radial-gradient(1200px 600px at 50% -10%,#3a1196,#1c0750 72%);color:#fff;font-family:-apple-system,Segoe UI,Roboto,Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:940px;margin:0 auto;padding:34px 22px 70px}
+.hero{display:flex;align-items:center;gap:18px;margin-bottom:6px}
+.hchip{width:88px;height:88px;background:var(--ge);border-radius:22px;display:grid;place-items:center;flex:0 0 auto}
+.hghost{width:60px;height:60px;overflow:visible;animation:float 3s ease-in-out infinite}
+.hname{font-size:30px;font-weight:700;letter-spacing:.2px}
+.htag{color:rgba(255,255,255,.62);font-size:14px;margin-top:5px;max-width:520px}
+.sec{font-size:12px;text-transform:uppercase;letter-spacing:1.6px;color:rgba(255,255,255,.5);margin:32px 2px 13px;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:12px}
+.tile{background:var(--ge);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:20px 8px 13px;display:flex;flex-direction:column;align-items:center;gap:11px;cursor:pointer;transition:transform .18s ease,background .18s ease}
+.tile:hover{transform:translateY(-3px);background:#46149e}
+.tile span{color:rgba(255,255,255,.8);font-size:12px;text-align:center}
+.icon{width:32px;height:32px;color:#fff;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;overflow:visible}
+.icon .fill{fill:currentColor;stroke:none}
+.heart,.bm{transition:fill .25s ease}
+.foot{color:rgba(255,255,255,.42);font-size:12px;margin-top:36px;line-height:1.8}
+.door,.phead,.sn1,.sn2,.pv,.ph,.bm,.lens,.shackle,.lid,.l1,.l2,.l3{transform-box:fill-box}
+.door{transform-origin:left center}
+.phead{transform-origin:center bottom}
+.pv,.ph,.sn1,.sn2,.lens,.shackle,.lid{transform-origin:center}
+.bm{transform-origin:center top}
+.i-bell{transform-origin:top center}
+.i-comment{transform-origin:left bottom}
+.ghost-eyes{transform-box:fill-box;transform-origin:center;animation:blink 4.5s ease-in-out infinite}
+.dots circle,.mdots circle{transform-box:fill-box;transform-origin:center}
+.dots circle{animation:dotp 1.2s ease-in-out infinite}
+.dots circle:nth-child(2){animation-delay:.18s}.dots circle:nth-child(3){animation-delay:.36s}
+.mdots circle{animation:mbounce 1.3s ease-in-out infinite}
+.mdots circle:nth-child(2){animation-delay:.16s}.mdots circle:nth-child(3){animation-delay:.32s}
+.tile.play .i-home .door{animation:doorOpen .7s ease}
+.tile.play .i-search{animation:scan2 .9s ease}
+.tile.play .i-bell{animation:swing .9s ease}
+.tile.play .i-profile .phead{animation:nod .7s ease}
+.tile.play .i-gear{animation:spin .9s linear}
+.tile.play .i-send{animation:fly .75s ease}
+.tile.play .i-heart{animation:beat .7s ease}
+.tile.play .i-heart .heart{fill:#fff}
+.tile.play .i-comment{animation:speak .55s ease}
+.tile.play .i-share .sn1{animation:nodePop .6s ease}
+.tile.play .i-share .sn2{animation:nodePop .6s ease .15s}
+.tile.play .i-plus .pv{animation:growY .5s ease}
+.tile.play .i-plus .ph{animation:growX .5s ease .12s}
+.tile.play .i-cam .lens{animation:shutter .5s ease}
+.tile.play .i-bm .bm{animation:tuck .6s ease;fill:#fff}
+.tile.play .i-lock .shackle{animation:shackle .55s ease}
+.tile.play .i-back{animation:slideBack .65s ease}
+.tile.play .i-close{animation:dismiss .55s ease}
+.tile.play .i-menu .l1{animation:mslide .45s ease}
+.tile.play .i-menu .l2{animation:mslide .45s ease .08s}
+.tile.play .i-menu .l3{animation:mslide .45s ease .16s}
+.tile.play .i-check .chk{animation:draw .7s ease}
+.tile.play .i-trash .lid{animation:lidLift .6s ease}
+.tile.play .i-refresh{animation:spin .9s linear}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+@keyframes blink{0%,92%,100%{transform:scaleY(1)}96%{transform:scaleY(.08)}}
+@keyframes doorOpen{0%,100%{transform:scaleX(1)}55%{transform:scaleX(.12)}}
+@keyframes scan2{0%{transform:translate(1.5px,0)}25%{transform:translate(0,1.5px)}50%{transform:translate(-1.5px,0)}75%{transform:translate(0,-1.5px)}100%{transform:translate(1.5px,0)}}
+@keyframes swing{0%,100%{transform:rotate(0)}15%{transform:rotate(13deg)}35%{transform:rotate(-9deg)}55%{transform:rotate(6deg)}75%{transform:rotate(-3deg)}}
+@keyframes nod{0%,100%{transform:rotate(0)}30%{transform:rotate(-8deg)}65%{transform:rotate(8deg)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fly{0%{transform:translate(0,0);opacity:1}45%{transform:translate(10px,-10px);opacity:0}46%{transform:translate(-9px,9px);opacity:0}100%{transform:translate(0,0);opacity:1}}
+@keyframes beat{0%,100%{transform:scale(1)}25%{transform:scale(1.22)}40%{transform:scale(.96)}60%{transform:scale(1.12)}}
+@keyframes speak{0%{transform:scale(0)}70%{transform:scale(1.08)}100%{transform:scale(1)}}
+@keyframes nodePop{0%,100%{transform:scale(1)}45%{transform:scale(1.5)}}
+@keyframes growY{0%{transform:scaleY(0)}100%{transform:scaleY(1)}}
+@keyframes growX{0%{transform:scaleX(0)}100%{transform:scaleX(1)}}
+@keyframes shutter{0%,100%{transform:scale(1)}45%{transform:scale(.6)}}
+@keyframes tuck{0%,100%{transform:scaleY(1)}45%{transform:scaleY(.86)}}
+@keyframes shackle{0%{transform:translateY(-3px)}55%,100%{transform:translateY(0)}}
+@keyframes slideBack{0%{transform:translateX(0);opacity:1}45%{transform:translateX(-7px);opacity:0}46%{transform:translateX(7px);opacity:0}100%{transform:translateX(0);opacity:1}}
+@keyframes dismiss{0%{transform:rotate(0) scale(1)}50%{transform:rotate(90deg) scale(.78)}100%{transform:rotate(0) scale(1)}}
+@keyframes mslide{0%{transform:translateX(-7px);opacity:.2}100%{transform:translateX(0);opacity:1}}
+@keyframes draw{from{stroke-dashoffset:22}to{stroke-dashoffset:0}}
+@keyframes lidLift{0%,100%{transform:rotate(0)}40%{transform:rotate(-22deg) translateY(-1px)}}
+@keyframes dotp{0%,100%{transform:translateY(0);opacity:.45}50%{transform:translateY(-2.5px);opacity:1}}
+@keyframes mbounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script>
+const GHOST='<path fill="#fff" stroke="none" d="M4 11C4 6.6 7.6 3 12 3C16.4 3 20 6.6 20 11V20.2C20 21 19.3 21.4 18.7 21L17 19.8L15.1 21.1C14.8 21.3 14.4 21.3 14.1 21.1L12 19.7L9.9 21.1C9.6 21.3 9.2 21.3 8.9 21.1L7 19.8L5.3 21C4.7 21.4 4 21 4 20.2Z"/><g class="ghost-eyes"><circle cx="9.4" cy="11" r="1.3" fill="#3B0C93" stroke="none"/><circle cx="14.6" cy="11" r="1.3" fill="#3B0C93" stroke="none"/></g><circle cx="12" cy="14" r="1.05" fill="#3B0C93" stroke="none"/>';
+const ICONS=[
+{g:'Навигация',n:'home',cls:'i-home',l:'Дом',fa:'house',mi:'home',svg:'<path d="M3 11 12 4l9 7"/><path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5"/><path class="door" d="M10 21v-6h4v6"/>'},
+{g:'Навигация',n:'search',cls:'i-search',l:'Поиск',fa:'magnifying-glass',mi:'search',svg:'<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>'},
+{g:'Навигация',n:'chat',cls:'i-chat',l:'Чат',fa:'comment',mi:'chat_bubble_outline',svg:'<rect x="3" y="4" width="18" height="13" rx="3.5"/><path d="M8.5 17 8.5 20.5 12.5 17"/><g class="dots"><circle class="fill" cx="8.5" cy="10.5" r="1.05"/><circle class="fill" cx="12" cy="10.5" r="1.05"/><circle class="fill" cx="15.5" cy="10.5" r="1.05"/></g>'},
+{g:'Навигация',n:'bell',cls:'i-bell',l:'Уведомл.',fa:'bell',mi:'notifications_none',svg:'<path d="M6 9a6 6 0 0 1 12 0c0 4.5 1.5 5.5 2 6H4c.5-.5 2-1.5 2-6Z"/><path d="M9.5 20a2.5 2.5 0 0 0 5 0"/>'},
+{g:'Навигация',n:'profile',cls:'i-profile',l:'Профиль',fa:'user',mi:'person_outline',svg:'<circle class="phead" cx="12" cy="8.5" r="4"/><path d="M5 20a7 7 0 0 1 14 0"/>'},
+{g:'Навигация',n:'settings',cls:'i-gear',l:'Настройки',fa:'gear',mi:'settings_outlined',svg:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'},
+{g:'Действия',n:'send',cls:'i-send',l:'Отправить',fa:'send',mi:'send',svg:'<path d="M21 3 10.5 13.5"/><path d="M21 3 14.5 21 10.5 13.5 3 9.5 21 3Z"/>'},
+{g:'Действия',n:'like',cls:'i-heart',l:'Нравится',fa:'heart',mi:'favorite_border',svg:'<path class="heart" d="M12 20s-7-4.7-7-10A4 4 0 0 1 12 7 4 4 0 0 1 19 10c0 5.3-7 10-7 10Z"/>'},
+{g:'Действия',n:'comment',cls:'i-comment',l:'Коммент.',fa:'comments',mi:'mode_comment_outlined',svg:'<path d="M20.5 12a8 8 0 0 1-11.5 7.2L4 20.5l1.4-4.8A8 8 0 1 1 20.5 12Z"/>'},
+{g:'Действия',n:'share',cls:'i-share',l:'Поделиться',fa:'share-nodes',mi:'share_outlined',svg:'<circle class="sn1" cx="17.5" cy="6" r="2.5"/><circle cx="6.5" cy="12" r="2.5"/><circle class="sn2" cx="17.5" cy="18" r="2.5"/><path d="M8.7 10.8 15.3 7.2M8.7 13.2 15.3 16.8"/>'},
+{g:'Действия',n:'add',cls:'i-plus',l:'Добавить',fa:'pen-to-square',mi:'add',svg:'<path class="pv" d="M12 5v14"/><path class="ph" d="M5 12h14"/>'},
+{g:'Действия',n:'camera',cls:'i-cam',l:'Камера',fa:'image',mi:'camera_alt',svg:'<path d="M3 8.5A1.5 1.5 0 0 1 4.5 7H7l1.4-2h7.2L17 7h2.5A1.5 1.5 0 0 1 21 8.5V18a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18Z"/><circle class="lens" cx="12" cy="12.5" r="3.2"/>'},
+{g:'Действия',n:'bookmark',cls:'i-bm',l:'Закладка',fa:'bookmark',mi:'bookmark_border',svg:'<path class="bm" d="M6.5 4h11a1 1 0 0 1 1 1v15l-6.5-4.2L5.5 20V5a1 1 0 0 1 1-1Z"/>'},
+{g:'Утилиты',n:'lock',cls:'i-lock',l:'Шифрование',fa:'lock',mi:'lock_outline',svg:'<rect x="4.5" y="10" width="15" height="11" rx="2.5"/><path class="shackle" d="M8 10V7a4 4 0 0 1 8 0v3"/><circle class="fill" cx="12" cy="15" r="1.3"/><path d="M12 16v2.3"/>'},
+{g:'Утилиты',n:'back',cls:'i-back',l:'Назад',fa:'arrow-left',mi:'arrow_back',svg:'<path d="M19 12H5M11 18 5 12 11 6"/>'},
+{g:'Утилиты',n:'close',cls:'i-close',l:'Закрыть',fa:'xmark',mi:'close',svg:'<path d="M6 6 18 18M18 6 6 18"/>'},
+{g:'Утилиты',n:'menu',cls:'i-menu',l:'Меню',fa:'bars',mi:'menu',svg:'<path class="l1" d="M4 7h16"/><path class="l2" d="M4 12h16"/><path class="l3" d="M4 17h16"/>'},
+{g:'Утилиты',n:'more',cls:'i-more',l:'Ещё',fa:'ellipsis',mi:'more_horiz',svg:'<g class="mdots"><circle class="fill" cx="5" cy="12" r="1.6"/><circle class="fill" cx="12" cy="12" r="1.6"/><circle class="fill" cx="19" cy="12" r="1.6"/></g>'},
+{g:'Утилиты',n:'done',cls:'i-check',l:'Готово',fa:'check',mi:'done',svg:'<path class="chk" style="stroke-dasharray:22" d="M5 12.5 10 17.5 19.5 7"/>'},
+{g:'Утилиты',n:'delete',cls:'i-trash',l:'Удалить',fa:'trash',mi:'delete_outline',svg:'<path d="M4 7h16"/><path class="lid" d="M9.5 7V5.2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V7"/><path d="M6.5 7l.9 12.5a1.5 1.5 0 0 0 1.5 1.4h6.2a1.5 1.5 0 0 0 1.5-1.4L18.5 7"/>'},
+{g:'Утилиты',n:'refresh',cls:'i-refresh',l:'Обновить',fa:'rotate-left',mi:'refresh',svg:'<path d="M20 11a8 8 0 0 0-14-4.5L4 9"/><path d="M4 4v5h5"/><path d="M4 13a8 8 0 0 0 14 4.5L20 15"/><path d="M20 20v-5h-5"/>'}
+];
+const GROUPS=['Навигация','Действия','Утилиты'];
+const app=document.getElementById('app');
+let html='<div class="hero"><div class="hchip"><svg class="hghost" viewBox="0 0 24 24" aria-hidden="true">'+GHOST+'</svg></div><div><div class="hname">GhostEcos</div><div class="htag">фирменный набор иконок · '+ICONS.length+' из ~165 · у каждой — своя анимация по её элементам</div></div></div>';
+GROUPS.forEach(function(g){
+  html+='<div class="sec">'+g+'</div><div class="grid">';
+  ICONS.filter(function(i){return i.g===g}).forEach(function(i){
+    html+='<div class="tile" data-n="'+i.n+'" title="fa: '+i.fa+' · mi: '+i.mi+'"><svg class="icon '+i.cls+'" viewBox="0 0 24 24">'+i.svg+'</svg><span>'+i.l+'</span></div>';
+  });
+  html+='</div>';
+});
+html+='<div class="foot">Наведи курсор на иконку — повтор анимации. На загрузке прокатывается волна.<br>Источник правды для набора. Веб-интеграция — через инлайн-SVG/спрайт; Flutter — через иконочный шрифт + анимации виджетами.</div>';
+app.innerHTML=html;
+[].slice.call(document.querySelectorAll('.tile')).forEach(function(t,idx){
+  function play(){t.classList.remove('play');void t.offsetWidth;t.classList.add('play');clearTimeout(t._to);t._to=setTimeout(function(){t.classList.remove('play')},1200);}
+  setTimeout(play,300+idx*70);
+  t.addEventListener('mouseenter',play);
+});
+</script>
+</body>
+</html>
