@@ -437,6 +437,26 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 @media (min-width:600px){.modal-sheet{border-radius:22px;transform:scale(0.92);}.modal-overlay.open .modal-sheet{transform:scale(1);}}
 .modal-overlay.open .modal-sheet{transform:translateY(0);}
 @media (min-width:600px){.modal-overlay.open .modal-sheet{transform:scale(1);}}
+
+/* ── Модалка обязательного выбора хранения приватного ключа ── */
+#keyStorageModal .modal-sheet{max-width:540px;max-height:92vh;overflow-y:auto;}
+.ks-head{padding:6px 0 14px;text-align:center;}
+.ks-icon{width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#a855f7,#ec4899);display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:20px;margin-bottom:10px;}
+.ks-title{font-size:17px;font-weight:800;line-height:1.25;}
+.ks-sub{font-size:12.5px;color:var(--muted);line-height:1.5;margin-top:7px;padding:0 6px;}
+.ks-note{background:rgba(168,85,247,0.10);border:1px solid rgba(168,85,247,0.30);border-radius:11px;padding:11px 13px;font-size:12px;color:var(--sub);margin-bottom:14px;line-height:1.55;}
+.ks-options{display:flex;flex-direction:column;gap:10px;margin-bottom:16px;}
+.ks-card{background:var(--surface);border:1.5px solid var(--border);border-radius:14px;padding:14px;text-align:left;cursor:pointer;color:inherit;font-family:inherit;transition:border-color .15s,background .15s;width:100%;display:block;}
+.ks-card:hover{border-color:var(--border-strong);}
+.ks-card.selected{border-color:#a855f7;background:rgba(168,85,247,0.10);}
+.ks-card-h{display:flex;align-items:center;gap:10px;margin-bottom:9px;font-weight:700;font-size:14.5px;color:var(--text);}
+.ks-card-h i{font-size:17px;color:#a855f7;width:22px;text-align:center;}
+.ks-card-text{font-size:12.5px;color:var(--text);line-height:1.5;margin-bottom:9px;}
+.ks-pro,.ks-con{font-size:11.5px;line-height:1.5;color:var(--sub);margin-bottom:6px;}
+.ks-pro b{color:#86efac;font-weight:700;}
+.ks-con b{color:#fda4af;font-weight:700;}
+.ks-submit{width:100%;background:linear-gradient(95deg,#a855f7,#ec4899);color:#fff;border:none;border-radius:12px;padding:13px;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:opacity .15s;}
+.ks-submit:disabled{opacity:0.45;cursor:not-allowed;}
 .m-handle{width:36px;height:4px;background:#1e293b;border-radius:2px;margin:0 auto 16px;}
 @media (min-width:600px){.m-handle{display:none;}}
 .m-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
@@ -607,6 +627,38 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
     <div class="m-results" id="newChatResults">
       <div style="padding:30px;text-align:center;color:var(--muted);font-size:13px;">Начните вводить имя</div>
     </div>
+  </div>
+</div>
+
+<!-- Обязательный выбор: где хранить приватный ключ (открывается, если key_storage_mode на сервере == null) -->
+<div class="modal-overlay" id="keyStorageModal" style="z-index:560;">
+  <div class="modal-sheet">
+    <div class="m-handle"></div>
+    <div class="ks-head">
+      <div class="ks-icon"><i class="fa-solid fa-key"></i></div>
+      <div class="ks-title">Хранение приватного ключа</div>
+      <div class="ks-sub">Приватный ключ — это код, без которого расшифровать ваши сообщения невозможно. Выберите, где он будет храниться. Этот выбор можно изменить позже в настройках аккаунта.</div>
+    </div>
+    <div class="ks-note">
+      История переписки в любом режиме хранится <b>локально на каждом устройстве</b>. Сервер хранит только сообщения, ещё не доставленные ни одному из ваших устройств — после доставки они удаляются.
+    </div>
+    <div class="ks-options">
+      <button type="button" class="ks-card" data-mode="server" onclick="ksPickCard(this)">
+        <div class="ks-card-h"><i class="fa-solid fa-cloud"></i>На сервере</div>
+        <div class="ks-card-text">Приватный ключ хранится на сервере GhostChat в зашифрованном виде. Расшифровать его может только ваш пароль.</div>
+        <div class="ks-pro"><b>Преимущество:</b> при входе с нового устройства приватный ключ автоматически становится доступен, и устройство сразу начинает принимать и читать новые сообщения. Без QR-кодов и ручного переноса.</div>
+        <div class="ks-con"><b>Риск:</b> при компрометации сервера и подборе вашего пароля третье лицо получит приватный ключ и сможет читать все ваши будущие сообщения, а также те, что ещё не были доставлены. Технически доступ к зашифрованному ключу имеет администрация сервера.</div>
+      </button>
+      <button type="button" class="ks-card" data-mode="local" onclick="ksPickCard(this)">
+        <div class="ks-card-h"><i class="fa-solid fa-mobile-screen-button"></i>Только на устройстве</div>
+        <div class="ks-card-text">Приватный ключ создаётся и остаётся исключительно на ваших устройствах. На сервер он не передаётся ни в каком виде.</div>
+        <div class="ks-pro"><b>Преимущество:</b> даже при полной компрометации сервера никто, кроме вас, не сможет читать ваши новые сообщения. Включая администрацию проекта.</div>
+        <div class="ks-con"><b>Риск:</b> при входе с нового устройства приватный ключ необходимо перенести вручную — через QR-код с устройства, где он уже сохранён. Если ни на одном устройстве ключа не осталось (например, телефон утерян), новые сообщения расшифровать не получится; вход в аккаунт по паролю возможен, но придётся создать новый ключ — отправители увидят это и должны будут подтвердить новый код безопасности.</div>
+      </button>
+    </div>
+    <button class="ks-submit" id="ksSubmitBtn" disabled onclick="ksSubmitChoice()">
+      <i class="fa-solid fa-check"></i> Продолжить
+    </button>
   </div>
 </div>
 
@@ -1022,9 +1074,75 @@ async function wipeKeysIDB(){
   } catch(_) {}
 }
 
+// ── Модалка обязательного выбора хранения приватного ключа ──
+// Возвращает Promise<'server'|'local'>, открывает экран выбора, ждёт пока
+// юзер выберет карточку и нажмёт «Продолжить». Не позволяет закрыть без выбора.
+let _ksResolve = null;
+function ksPickCard(btn){
+  document.querySelectorAll('#keyStorageModal .ks-card').forEach(c => c.classList.remove('selected'));
+  btn.classList.add('selected');
+  document.getElementById('ksSubmitBtn').disabled = false;
+}
+function ksSubmitChoice(){
+  const sel = document.querySelector('#keyStorageModal .ks-card.selected');
+  if (!sel) return;
+  const mode = sel.dataset.mode;
+  document.getElementById('keyStorageModal').classList.remove('open');
+  if (_ksResolve){ _ksResolve(mode); _ksResolve = null; }
+}
+function pickKeyStorageMode(){
+  return new Promise(resolve => {
+    _ksResolve = resolve;
+    document.querySelectorAll('#keyStorageModal .ks-card').forEach(c => c.classList.remove('selected'));
+    document.getElementById('ksSubmitBtn').disabled = true;
+    // boot-оверлей мог быть открыт ("Подготовка чата...") — закрываем чтобы модалка была сверху
+    document.getElementById('boot').classList.remove('open');
+    document.getElementById('keyStorageModal').classList.add('open');
+  });
+}
+
 // ── Init / restore keys ──
+// Двухветочный поток в зависимости от выбора юзера (см. модалку выше):
+//   storage_mode='server' — старое поведение: приватник зашифрован паролем
+//                           и лежит в users.encrypted_private_key.
+//   storage_mode='local'  — приватник никогда не покидает устройство;
+//                           на сервер уходит только x25519_pub. На новом
+//                           устройстве — требуется синхронизация через QR.
 async function ensureKeys(password){
-  console.log('[E2E] checking remote keys...');
+  console.log('[E2E] checking storage mode...');
+  let modeRes;
+  try {
+    modeRes = await chat('/keys/storage_mode');
+  } catch(e){
+    // Сетевая ошибка или старый сервер — старое поведение (server-режим).
+    console.warn('[E2E] /storage_mode unreachable, fallback to server-mode:', e);
+    modeRes = { mode: 'server', has_pub: false, has_server_priv: false };
+  }
+  let mode = modeRes.mode;
+
+  // Юзер ещё не сделал выбор — показываем обязательную модалку.
+  if (!mode){
+    console.log('[E2E] no mode chosen yet — showing modal');
+    mode = await pickKeyStorageMode();
+    try {
+      const r = await chat('/keys/storage_mode', 'POST', { mode });
+      console.log('[E2E] storage_mode saved:', r);
+    } catch(e){
+      console.error('[E2E] failed to save storage_mode:', e);
+      throw new Error('Не удалось сохранить выбор хранения ключа: ' + (e.message || e));
+    }
+    modeRes.mode = mode;
+  }
+
+  if (mode === 'local'){
+    return await _ensureKeysLocal(password, modeRes);
+  }
+  return await _ensureKeysServer(password);
+}
+
+// Режим «На сервере»: приватник зашифрован паролем, лежит в users.encrypted_private_key.
+async function _ensureKeysServer(password){
+  console.log('[E2E] mode=server — checking remote keys...');
   const remote = await chat('/keys/me');
   // Если сервер вернул ДРУГОЙ pubkey чем в IDB — пароль/устройство менялись.
   // Чистим локальный priv и peerkey-pins (последние более-менее устаревают,
@@ -1077,12 +1195,68 @@ async function ensureKeys(password){
     x25519_pub: myPub,
     encrypted_private_key: b64e(enc),
     key_salt: b64e(salt),
+    storage_mode: 'server',
   });
   // Переимпортируем priv как non-extractable.
   myPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
   // Сохраним pkcs8 в IDB для следующих заходов (БЕЗ пароля).
   await saveKeysToIDB(privBytes);
   console.log('[E2E] upload OK, priv is non-extractable, saved to IDB');
+}
+
+// Режим «Только на устройстве»: приватник никогда не уходит на сервер.
+//   (a) Уже в памяти — продолжаем, синхронизируем pubkey на сервер на всякий случай.
+//   (b) Есть в IDB — поднимаем оттуда.
+//   (c) На сервере есть pub юзера, в IDB пусто — это новое устройство, нужен QR
+//       (Фаза 3, пока не готова — честно сообщаем и блокируем вход).
+//   (d) Новый юзер — генерим пару, аплоадим только pubkey.
+async function _ensureKeysLocal(password, modeRes){
+  // (a) Ключи уже в памяти (например, init-путь подтянул их из IDB до doLogin).
+  if (myPriv && myPub){
+    console.log('[E2E] mode=local — keys already in memory');
+    try {
+      await chat('/keys/upload', 'POST', { x25519_pub: myPub, storage_mode: 'local' });
+    } catch(_){}
+    return;
+  }
+  // (b) Попробовать IDB.
+  try {
+    await openIDB();
+    if (await loadKeysFromIDB()){
+      console.log('[E2E] mode=local — keys loaded from IDB');
+      try {
+        await chat('/keys/upload', 'POST', { x25519_pub: myPub, storage_mode: 'local' });
+      } catch(_){}
+      return;
+    }
+  } catch(e){
+    console.warn('[E2E] mode=local — IDB load failed:', e);
+  }
+  // (c) На сервере есть pubkey, но локально приватника нет — новое устройство.
+  if (modeRes.has_pub){
+    showBoot(
+      'Нужна синхронизация устройств',
+      'Вы выбрали режим «только на устройстве». На этом устройстве приватного ключа ещё нет. ' +
+      'Откройте чат на другом своём устройстве и воспользуйтесь QR-синхронизацией ' +
+      '(функция скоро будет добавлена). Если другого устройства нет — временно ' +
+      'переключитесь на режим «На сервере» в настройках аккаунта.'
+    );
+    throw new Error('Local-only: приватный ключ отсутствует, QR-синхронизация пока недоступна');
+  }
+  // (d) Новый юзер — генерируем пару и публикуем только публичный ключ.
+  console.log('[E2E] mode=local — generating new ECDH pair (P-256)...');
+  const pair = await crypto.subtle.generateKey(ECDH_ALGO, true, ['deriveBits']);
+  const pubBytes = await crypto.subtle.exportKey('raw', pair.publicKey);
+  myPub = b64e(pubBytes);
+  const privBytes = await crypto.subtle.exportKey('pkcs8', pair.privateKey);
+  myPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
+  await saveKeysToIDB(privBytes);
+  // На сервер уходит ТОЛЬКО pubkey + режим — приватник остаётся только в IDB.
+  await chat('/keys/upload', 'POST', {
+    x25519_pub: myPub,
+    storage_mode: 'local',
+  });
+  console.log('[E2E] mode=local — pub uploaded, priv stays on device only');
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -4205,7 +4379,20 @@ async function init(){
     return;
   }
   if (loaded) {
-    // SSO + ключи готовы → сразу в чат, без пароля
+    // SSO + ключи готовы → проверяем, выбрал ли юзер режим хранения ключа.
+    // Существующие юзеры впервые видят этот экран после миграции — обязательно.
+    try {
+      const modeRes = await chat('/keys/storage_mode');
+      if (!modeRes.mode){
+        const chosen = await pickKeyStorageMode();
+        await chat('/keys/storage_mode', 'POST', { mode: chosen });
+        // При выборе local — приватник в IDB уже есть; серверная копия зануляется
+        // на стороне сервера (POST /storage_mode сам это делает в ветке local).
+      }
+    } catch(e){
+      // Старый сервер без endpoint'а или сетевая ошибка — не блокируем вход.
+      console.warn('[E2E] storage_mode check failed on init:', e);
+    }
     await onReady();
     return;
   }
