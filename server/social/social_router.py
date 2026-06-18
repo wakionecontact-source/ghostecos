@@ -968,6 +968,15 @@ def init():
     try: c.execute("ALTER TABLE users ADD COLUMN key_storage_mode TEXT DEFAULT NULL")
     except sqlite3.OperationalError: pass
 
+    # ── TDA: требование подтверждения новых устройств с уже доверенного ──
+    # 0 = выключено (по умолчанию, любой логин с паролем создаёт активное устройство)
+    # 1 = новые устройства попадают в pending_logins и ждут одобрения
+    try: c.execute("ALTER TABLE users ADD COLUMN tda_enabled INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError: pass
+    # Токен, выдаваемый новому устройству после одобрения. NULL до approve.
+    try: c.execute("ALTER TABLE pending_logins ADD COLUMN granted_token TEXT NULL")
+    except sqlite3.OperationalError: pass
+
     # ── Sealed Sender (DM без sender_id в БД) ──
     # Sender виден ТОЛЬКО внутри зашифрованного envelope ciphertext.
     # Сервер хранит только receiver_id + ciphertext.
@@ -1609,10 +1618,62 @@ def login(body: LoginBody, request: Request):
     # device-уровневый токен. Если нет — legacy fallback на soc_tokens.
     import device_auth as _da
     if getattr(body, 'device_id', None):
-        existing_devs = c.execute(
-            "SELECT id FROM user_devices WHERE user_id=? LIMIT 1", (u["id"],)
+        # Уже зарегистрированное устройство — обычный путь (без TDA).
+        already = c.execute(
+            "SELECT id FROM user_devices WHERE user_id=? AND device_id=? LIMIT 1",
+            (u["id"], body.device_id),
         ).fetchone()
-        is_first_dev = not existing_devs
+        # Сколько есть подтверждённых устройств у юзера.
+        trusted_count = c.execute(
+            "SELECT COUNT(*) AS n FROM user_devices "
+            "WHERE user_id=? AND is_active=1 AND is_blocked=0",
+            (u["id"],),
+        ).fetchone()["n"]
+        # Включена ли у юзера TDA (требование подтверждения новых устройств).
+        tda_row = c.execute("SELECT tda_enabled FROM users WHERE id=?", (u["id"],)).fetchone()
+        tda_on = bool(tda_row and tda_row["tda_enabled"])
+
+        # Pending-путь: TDA включена И новое устройство И уже есть хотя бы одно
+        # подтверждённое (первое устройство всегда становится trusted без подтверждения).
+        if tda_on and (not already) and trusted_count > 0:
+            now_ = int(time.time())
+            # 6-значный код. Argon2-хэш в БД, plaintext возвращаем только новому устройству.
+            login_code = "".join(secrets.choice("0123456789") for _ in range(6))
+            code_hash = hash_argon2(login_code)
+            request_id = uuid.uuid4().hex
+            c.execute(
+                "INSERT INTO pending_logins "
+                "(request_id, username, device_id, device_name, phase, code_hash, "
+                " created_at, expires_at) "
+                "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)",
+                (request_id, u["username"], body.device_id,
+                 (body.device_name or "")[:120], code_hash, now_, now_ + 300),
+            )
+            c.commit()
+            # WS-уведомление trusted-устройствам этого юзера.
+            try:
+                ws_hub.send_to(u["id"], "login.pending", {
+                    "request_id": request_id,
+                    "device_name": body.device_name or "Новое устройство",
+                    "platform": getattr(body, 'platform', None) or "unknown",
+                    "ip": _client_ip(request),
+                    "ts": now_,
+                })
+            except Exception:
+                pass
+            c.close()
+            # Новому устройству: показывает экран ожидания с кодом, long-polling статуса.
+            return {
+                "requires_approval": True,
+                "request_id": request_id,
+                "code": login_code,
+                "username": u["username"],
+                "display_name": u["display_name"],
+                "expires_in": 300,
+            }
+
+        # Обычный путь: первое устройство, TDA выключена или уже подтверждено.
+        is_first_dev = (trusted_count == 0)
         d = _da.register_device(
             c, u["id"], body.device_id, body.device_name,
             getattr(body, 'platform', None), is_owner=is_first_dev

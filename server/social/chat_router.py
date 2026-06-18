@@ -377,6 +377,161 @@ def revoke_my_device(device_pk: int, authorization: Optional[str] = Header(None)
         c.close()
 
 
+# ── TDA: Trust Device Authorization ─────────────────────────────────
+# Юзер включает требование подтверждать новые устройства с уже доверенного.
+# Новое устройство при логине вместо токена получает request_id + 6-значный
+# код, и ждёт пока юзер с доверенного устройства этот код введёт.
+
+class TdaToggleBody(BaseModel):
+    enabled: bool
+
+
+class TdaApproveBody(BaseModel):
+    code: str
+
+
+@router.get("/tda")
+def get_tda(authorization: Optional[str] = Header(None)):
+    user = auth_member(authorization)
+    c = db()
+    try:
+        r = c.execute("SELECT tda_enabled FROM users WHERE id=?", (user["id"],)).fetchone()
+        return {"enabled": bool(r and r["tda_enabled"])}
+    finally:
+        c.close()
+
+
+@router.post("/tda")
+def set_tda(body: TdaToggleBody, authorization: Optional[str] = Header(None)):
+    user = auth_member(authorization)
+    _rate_limit(f"tda:{user['id']}", limit=10, window=3600)
+    c = db()
+    try:
+        c.execute("UPDATE users SET tda_enabled=? WHERE id=?",
+                  (1 if body.enabled else 0, user["id"]))
+        c.commit()
+        return {"status": "ok", "enabled": bool(body.enabled)}
+    finally:
+        c.close()
+
+
+@router.get("/devices/pending")
+def list_pending_logins(authorization: Optional[str] = Header(None)):
+    """Список pending-логинов текущего юзера (для UI на trusted устройстве)."""
+    user = auth_member(authorization)
+    now_ = int(time.time())
+    c = db()
+    try:
+        rows = c.execute(
+            "SELECT request_id, device_id, device_name, phase, "
+            "       created_at, expires_at "
+            "FROM pending_logins "
+            "WHERE username=? AND phase='pending' AND expires_at > ? "
+            "ORDER BY created_at DESC",
+            (user["username"], now_),
+        ).fetchall()
+        return {"pending": [dict(r) for r in rows]}
+    finally:
+        c.close()
+
+
+@router.post("/devices/pending/{request_id}/approve")
+def approve_pending(request_id: str, body: TdaApproveBody,
+                    authorization: Optional[str] = Header(None)):
+    """С доверенного устройства: ввести 6-значный код, чтобы одобрить новое."""
+    user = auth_member(authorization)
+    _rate_limit(f"tda_appr:{user['id']}", limit=30, window=3600)
+    import device_auth as _da
+    # Импортируем verify_argon2 из social_router/security
+    try:
+        from security import verify_argon2
+    except Exception:
+        from social_router import verify_argon2
+    code = (body.code or "").strip()
+    if not code:
+        raise HTTPException(422, "Введите код")
+    c = db()
+    try:
+        r = c.execute(
+            "SELECT * FROM pending_logins WHERE request_id=? AND username=? LIMIT 1",
+            (request_id, user["username"]),
+        ).fetchone()
+        if not r:
+            raise HTTPException(404, "Запрос не найден")
+        if r["phase"] != "pending":
+            raise HTTPException(409, "Запрос уже обработан")
+        if int(r["expires_at"]) < int(time.time()):
+            raise HTTPException(410, "Срок запроса истёк")
+        # Лимит попыток
+        if int(r["attempt_count"]) >= 5:
+            c.execute("UPDATE pending_logins SET phase='denied' WHERE id=?", (r["id"],))
+            c.commit()
+            raise HTTPException(429, "Превышен лимит попыток — запрос отклонён")
+        if not verify_argon2(code, r["code_hash"]):
+            c.execute(
+                "UPDATE pending_logins SET attempt_count=attempt_count+1 WHERE id=?",
+                (r["id"],),
+            )
+            c.commit()
+            raise HTTPException(401, "Неверный код")
+        # Код верный: создаём device для нового устройства, выдаём token.
+        d = _da.register_device(c, user["id"], r["device_id"], r["device_name"], None, is_owner=False)
+        c.execute(
+            "UPDATE pending_logins SET phase='approved', granted_token=? WHERE id=?",
+            (d["token"], r["id"]),
+        )
+        c.commit()
+        return {"status": "ok"}
+    finally:
+        c.close()
+
+
+@router.post("/devices/pending/{request_id}/deny")
+def deny_pending(request_id: str, authorization: Optional[str] = Header(None)):
+    """С доверенного устройства: явно отклонить новый логин."""
+    user = auth_member(authorization)
+    _rate_limit(f"tda_deny:{user['id']}", limit=30, window=3600)
+    c = db()
+    try:
+        r = c.execute(
+            "SELECT id, phase FROM pending_logins WHERE request_id=? AND username=? LIMIT 1",
+            (request_id, user["username"]),
+        ).fetchone()
+        if not r:
+            raise HTTPException(404, "Запрос не найден")
+        if r["phase"] != "pending":
+            raise HTTPException(409, "Запрос уже обработан")
+        c.execute("UPDATE pending_logins SET phase='denied' WHERE id=?", (r["id"],))
+        c.commit()
+        return {"status": "ok"}
+    finally:
+        c.close()
+
+
+@router.get("/devices/pending/{request_id}/status")
+def pending_status(request_id: str):
+    """Новое устройство долбит этот эндпойнт раз в 1.5-2 сек.
+    Без auth — потому что у нового устройства ещё нет токена.
+    Защита: request_id — 32 hex, угадать невозможно."""
+    c = db()
+    try:
+        r = c.execute(
+            "SELECT phase, granted_token, expires_at FROM pending_logins WHERE request_id=? LIMIT 1",
+            (request_id,),
+        ).fetchone()
+        if not r:
+            raise HTTPException(404, "Запрос не найден")
+        if r["phase"] == "approved":
+            return {"phase": "approved", "token": r["granted_token"]}
+        if r["phase"] == "denied":
+            return {"phase": "denied"}
+        if int(r["expires_at"]) < int(time.time()):
+            return {"phase": "expired"}
+        return {"phase": "pending"}
+    finally:
+        c.close()
+
+
 # ── QR-синхронизация устройств (слепой прокси) ──────────────────────
 # Используется когда юзер выбрал режим 'local' и хочет добавить новое
 # устройство (или восстановиться после потери приватника на одном из них).
