@@ -4561,10 +4561,9 @@ let _supportAdmin = null;
 async function loadSupportAdmin(){
   try {
     const r = await chat('/support_admin');
-    if (r.username && !r.is_me){
-      _supportAdmin = r;
-      if (r.x25519_pub) pubCache.set(r.username, r.x25519_pub);
-      // Если уже рендерили список — перерисуем чтобы pinned появился.
+    if (r.username){
+      _supportAdmin = r;  // сохраняем и для админа — pinned карточка нужна обоим
+      if (r.x25519_pub && !r.is_me) pubCache.set(r.username, r.x25519_pub);
       try { renderDialogs(); } catch(_){}
     } else {
       _supportAdmin = null;
@@ -4574,21 +4573,42 @@ async function loadSupportAdmin(){
 
 function renderDialogs(filter=''){
   const list = document.getElementById('sbList');
-  // Если у нас есть support_admin — оборачиваем массив, чтобы pinned
-  // всегда был сверху и не зависел от истории.
-  const supportPinned = (!filter && _supportAdmin) ? [{
-    username: _supportAdmin.username,
-    display_name: 'Поддержка GhostChat',
+  // Pinned-карточка «Поддержка GhostChat» — сверху списка.
+  // У админа карточка показывает «Inbox поддержки» (свой угол куда летят
+  // вопросы), у обычного юзера — «Сюда — вопросы и одобрение входов».
+  // Раньше у админа было скрыто, но waki справедливо заметил что без
+  // карточки непонятно куда смотреть.
+  const isAdmin = _supportAdmin && _supportAdmin.is_me;
+  const supportPinned = (!filter && (_supportAdmin || isAdmin)) ? [{
+    username: _supportAdmin ? _supportAdmin.username : (me && me.username),
+    display_name: isAdmin ? 'Inbox поддержки' : 'Поддержка GhostChat',
     is_support: true,
+    is_admin_inbox: !!isAdmin,
     pinned: true,
-    last_text: 'Сюда — вопросы и одобрение входов',
+    last_text: isAdmin ? 'Сообщения от юзеров приходят сюда' : 'Сюда — вопросы и одобрение входов',
     last_at: 0,
     unread: 0,
   }] : [];
   let arr = supportPinned.concat(dialogs.filter(d => !_supportAdmin || d.username !== _supportAdmin.username));
   if (filter) {
-    const f = filter.toLowerCase().replace(/^@/, '');
-    arr = dialogs.filter(d => (d.username && d.username.toLowerCase().includes(f)) || (d.display_name && d.display_name.toLowerCase().includes(f)));
+    const f = filter.toLowerCase().replace(/^@+/, '');
+    // 1) substring match (как было)
+    let primary = dialogs.filter(d => (d.username && d.username.toLowerCase().includes(f)) || (d.display_name && d.display_name.toLowerCase().includes(f)));
+    // 2) fuzzy fallback: если substring мало (≤2) — подмешиваем по Левенштейну ≤ 2
+    if (primary.length <= 2 && f.length >= 2){
+      const have = new Set(primary.map(p => (p.username || '').toLowerCase()));
+      const fuzzy = [];
+      for (const d of dialogs){
+        const u = (d.username || '').toLowerCase();
+        const dn = (d.display_name || '').toLowerCase();
+        if (have.has(u)) continue;
+        const dist = Math.min(_levenshtein(u, f), dn ? _levenshtein(dn, f) : 99);
+        if (dist <= 2) fuzzy.push({...d, _dist: dist});
+      }
+      fuzzy.sort((a, b) => a._dist - b._dist);
+      primary = primary.concat(fuzzy.slice(0, 5));
+    }
+    arr = primary;
   }
   if (!arr.length) {
     if (filter) {
