@@ -18,8 +18,8 @@
 <style>
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 :root{--bg:#020617;--bg-deep:#060a1a;--surface:rgba(15,23,42,0.5);--border:rgba(255,255,255,0.08);--border-strong:rgba(255,255,255,0.13);--primary:#a855f7;--primary2:#7c3aed;--text:#f1f5f9;--sub:#94a3b8;--muted:#475569;--red:#f43f5e;--blue:#3b82f6;--green:#4ade80;--bubble-mine:linear-gradient(135deg,#7c3aed,#a855f7);--bubble-theirs:rgba(30,41,59,0.85);}
-html{background:var(--bg);position:fixed;inset:0;overflow:hidden;}
-body{background:transparent;color:var(--text);font-family:'Inter',sans-serif;overflow:hidden;height:100%;width:100%;position:fixed;inset:0;}
+html{background:var(--bg);overflow:hidden;height:100%;}
+body{background:transparent;color:var(--text);font-family:'Inter',sans-serif;overflow:hidden;height:100vh;height:100dvh;position:relative;margin:0;}
 body::before{content:"";position:fixed;inset:0;z-index:-2;background:radial-gradient(80% 60% at 20% 0%,rgba(124,58,237,0.13),transparent 60%),radial-gradient(70% 60% at 100% 100%,rgba(168,85,247,0.08),transparent 60%),linear-gradient(180deg,var(--bg-deep),var(--bg));}
 #mesh-bg{position:fixed;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none}
 button,input,textarea{font-family:inherit;}
@@ -3086,8 +3086,6 @@ window.addEventListener('storage',e=>{
 // когда Chrome пытается автоматически проскроллить к фокусируемому input —
 // он сдвигает documentElement.scrollTop, шапка уезжает вверх. preventScroll
 // заставляет браузер не пытаться скроллить вообще.
-// (Если код где-то явно хочет проскроллить — он это делает .scrollIntoView,
-// а не через побочный эффект focus.)
 (function(){
   const orig = HTMLElement.prototype.focus;
   if (!orig._gcPatched){
@@ -3096,6 +3094,32 @@ window.addEventListener('storage',e=>{
       catch(_) { return orig.call(this); }
     };
     HTMLElement.prototype.focus._gcPatched = true;
+  }
+})();
+
+// Scroll-guard: чат — single-viewport SPA, внешний scroll невозможен по дизайну.
+// Если что-то всё-таки сдвинет window/documentElement scrollTop —
+// тут же возвращаем в 0. Защищает от любых неучтённых focus/animation/resize.
+(function(){
+  const lock = () => {
+    if (window.scrollY !== 0 || document.documentElement.scrollTop !== 0){
+      try { window.scrollTo(0, 0); } catch(_){}
+      try { document.documentElement.scrollTop = 0; } catch(_){}
+      try { document.body.scrollTop = 0; } catch(_){}
+    }
+  };
+  window.addEventListener('scroll', lock, {passive: true, capture: true});
+  // Также реактивно — на каждый animation frame в первые 2 секунды после загрузки,
+  // чтобы поймать асинхронный сдвиг сразу после onReady.
+  let frames = 120;
+  const tick = () => {
+    lock();
+    if (--frames > 0) requestAnimationFrame(tick);
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => requestAnimationFrame(tick));
+  } else {
+    requestAnimationFrame(tick);
   }
 })();
 
