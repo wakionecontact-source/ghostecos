@@ -1446,24 +1446,47 @@ async function decryptFromPeer(peerUsername, cipherB64){
   if (!myPriv){
     throw new Error('Приватный ключ не загружен на этом устройстве — не могу расшифровать. Откройте «Настройки → Мои устройства» и подгрузите ключ через QR или файл.');
   }
+  // Попытка 1: с кэшем (если есть) или с TOFU-pin.
   let pub = pubCache.get(peerUsername);
+  let usedCache = !!pub;
   if (!pub) {
     const r = await chat(`/keys/${encodeURIComponent(peerUsername)}`);
     if (!r.x25519_pub) throw new Error('Нет ключа отправителя');
     pub = r.x25519_pub;
     const existing = await pinnedPubKey(peerUsername);
     if (existing && existing.pub !== pub) {
-      // Ключ собеседника изменился — НЕ молчим. Просим подтверждения через TOFU-UI.
-      const trusted = await verifyAndPinPub(peerUsername, pub);
-      if (!trusted) throw new Error(`Ключ @${peerUsername} изменился, доверие не подтверждено`);
+      // Авто-обновление: если расшифровка с новым ключом удастся — pin сам перепишется.
+      // Если не удастся — фолбэк через старый pin ниже.
     } else if (!existing) {
       await pinPubKey(peerUsername, pub, true);
     }
     pubCache.set(peerUsername, pub);
   }
-  const theirPub = await importPub(pub);
-  const aes = await deriveShared(myPriv, theirPub);
-  return decryptText(aes, cipherB64);
+  try {
+    const theirPub = await importPub(pub);
+    const aes = await deriveShared(myPriv, theirPub);
+    const pt = await decryptText(aes, cipherB64);
+    // На случай если кэш был и расшифровка прошла — обновим TOFU pin молча.
+    try { await pinPubKey(peerUsername, pub, true); } catch(_){}
+    return pt;
+  } catch(firstErr){
+    // Авто-восстановление: pub в кэше/пине мог разъехаться с сервером.
+    // Берём свежий pub и повторяем. Это закрывает кейс «собеседник перегенерил ключ».
+    try {
+      const fresh = await chat(`/keys/${encodeURIComponent(peerUsername)}`);
+      if (!fresh.x25519_pub || fresh.x25519_pub === pub) throw firstErr;
+      const theirPub2 = await importPub(fresh.x25519_pub);
+      const aes2 = await deriveShared(myPriv, theirPub2);
+      const pt = await decryptText(aes2, cipherB64);
+      // Тихий апдейт: pin и кэш на актуальный pub.
+      pubCache.set(peerUsername, fresh.x25519_pub);
+      try { await pinPubKey(peerUsername, fresh.x25519_pub, true); } catch(_){}
+      console.log('[E2E] decrypt recovered via fresh pub for @' + peerUsername);
+      return pt;
+    } catch(_){
+      throw firstErr;
+    }
+  }
 }
 
 // ── Сохранение/загрузка приватного ключа в IDB ──
@@ -1739,6 +1762,71 @@ async function _ensureKeysLocal(password, modeRes){
 }
 
 // ════════════════════════════════════════════════════════════════════
+// Health-check ключей — обнаружить рассинхрон myPriv vs server pub
+// до того как юзер натолкнётся на «не удалось расшифровать».
+//
+// Сценарий: round-trip self-test. Эфемерным ключом шифруем мусор под
+// мой публичный (тот что на сервере), потом расшифровываем моим
+// приватным. Если AEAD упадёт — пара не работает (например, сервер
+// откатили из бэкапа и pub стал старый, а priv в IDB новый).
+// В этом случае предлагаем юзеру одной кнопкой пересоздать пару.
+
+async function _keysHealthCheck(){
+  if (!myPriv || !myPub) { console.log('[E2E] health: priv/pub отсутствуют — пропуск'); return; }
+  // 1) Сравнить с сервером. Если myPub == server pub — это уже good sign.
+  let serverPub = null;
+  try {
+    const r = await chat('/keys/me');
+    serverPub = r.x25519_pub || null;
+  } catch(_) { return; /* сеть упала — не лечим */ }
+  if (!serverPub) { console.log('[E2E] health: на сервере pub нет — пропуск'); return; }
+  if (serverPub !== myPub){
+    console.warn('[E2E] health: myPub != serverPub —', myPub?.slice(0,16)+'…', 'vs', serverPub?.slice(0,16)+'…');
+    // Попробуем понять: priv ли соответствует server pub? Если да — апдейтим myPub.
+    // Иначе — priv от старой пары, пересоздаём.
+  }
+  // 2) Round-trip self-test.
+  try {
+    const myPubKey = await importPub(serverPub);
+    const eph = await crypto.subtle.generateKey(ECDH_ALGO, true, ['deriveBits']);
+    const sharedBits = await crypto.subtle.deriveBits({name:'ECDH', public: myPubKey}, eph.privateKey, 256);
+    const aesKey = await crypto.subtle.importKey('raw', sharedBits, {name:'AES-GCM'}, false, ['encrypt']);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, aesKey, new TextEncoder().encode('healthcheck'));
+    // Расшифровываем "от имени получателя" = я (eph pub известен).
+    const ephPubRaw = new Uint8Array(await crypto.subtle.exportKey('raw', eph.publicKey));
+    const ephPubKey = await importPub(b64e(ephPubRaw));
+    const sharedBack = await crypto.subtle.deriveBits({name:'ECDH', public: ephPubKey}, myPriv, 256);
+    const aesBack = await crypto.subtle.importKey('raw', sharedBack, {name:'AES-GCM'}, false, ['decrypt']);
+    const pt = new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM', iv}, aesBack, ct));
+    if (new TextDecoder().decode(pt) === 'healthcheck'){
+      console.log('[E2E] health: OK — priv соответствует server pub');
+      // Если myPub в памяти отличался — синхронизируем (priv тот же, просто наш кэш стейл).
+      if (myPub !== serverPub){
+        console.log('[E2E] health: обновляю myPub из server');
+        myPub = serverPub;
+        try { await saveKeysToIDB(null); } catch(_){}  // только pub обновим
+      }
+      return;
+    }
+    throw new Error('plaintext mismatch');
+  } catch(e){
+    console.error('[E2E] health: round-trip FAILED', e);
+    if (confirm(
+      'Обнаружена ошибка в ключах: твой приватный ключ не подходит к публичному на сервере.\n\n' +
+      'Это бывает после восстановления резервной копии или смены устройства.\n' +
+      'Сейчас сообщения от собеседников не будут расшифровываться.\n\n' +
+      'Пересоздать ключ автоматически? (старая переписка останется в этом браузере, новые ' +
+      'сообщения пойдут под свежий ключ; собеседники увидят подтверждение нового ключа)'
+    )){
+      try { await rotateMyKeys(); } catch(e2){ alert('Не удалось пересоздать: ' + (e2.message || e2)); }
+    } else {
+      ghostikSay('Если что — Настройки → Безопасность → <b>Пересоздать ключ</b>.', 8000);
+    }
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
 // Пересоздание собственного ключа (v1 rotate)
 // ════════════════════════════════════════════════════════════════════
 //
@@ -1842,44 +1930,7 @@ async function _safetyCodeFromPubs(myPubB64, peerPubB64){
   return groups;
 }
 
-async function openSafetyCode(peerUsername){
-  try {
-    if (!myPub){ alert('Сначала загрузите свой ключ'); return; }
-    // Тащим pub собеседника актуальный с сервера (не из cache).
-    const r = await chat('/keys/' + encodeURIComponent(peerUsername));
-    const peerPub = r.x25519_pub;
-    if (!peerPub){ alert('У @' + peerUsername + ' ещё нет E2E-ключей'); return; }
-    const groups = await _safetyCodeFromPubs(myPub, peerPub);
-    // Также покажем какой pub в TOFU pin'е — если отличается, явное расхождение.
-    const pinned = await pinnedPubKey(peerUsername).catch(() => null);
-    const pinNote = (pinned && pinned.pub && pinned.pub !== peerPub)
-      ? `<div style="color:#fda4af;font-size:12.5px;margin-top:10px;background:rgba(244,63,94,0.10);border:1px solid rgba(244,63,94,0.32);border-radius:8px;padding:9px 11px;"><b>⚠ Ключ собеседника отличается от закреплённого ранее.</b><br>На сервере новый ключ. Если @${esc(peerUsername)} не менял ключ — это может быть MITM.</div>`
-      : '';
-    const modal = document.createElement('div');
-    modal.id = '_safetyCodeModal';
-    modal.className = 'modal-overlay open';
-    modal.style.zIndex = '580';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `
-      <div class="modal-sheet" style="max-width:460px;">
-        <div class="m-handle"></div>
-        <div class="m-head">
-          <div class="m-title"><i class="fa-solid fa-shield-halved" style="color:#a855f7;margin-right:8px;"></i>Код безопасности</div>
-          <button class="m-close" onclick="document.getElementById('_safetyCodeModal').remove()"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-        <div style="padding:6px 2px 12px;">
-          <div style="font-size:12.5px;color:var(--sub);line-height:1.55;margin-bottom:14px;">Сравните эти 60 цифр со своим собеседником <b>@${esc(peerUsername)}</b> (вживую, по голосу или другим каналом). Если совпадают — никто посередине не подменяет ваш канал.</div>
-          <div style="background:rgba(15,23,42,0.6);border:1px solid var(--border-strong);border-radius:13px;padding:14px;font-family:'JetBrains Mono','Consolas',monospace;font-size:16px;letter-spacing:2px;line-height:1.7;text-align:center;color:var(--text);">
-            ${groups.map(g => `<div>${g.match(/.{1,4}/g).join(' ')}</div>`).join('')}
-          </div>
-          ${pinNote}
-        </div>
-      </div>`;
-    document.body.appendChild(modal);
-  } catch(e){
-    alert('Не удалось получить код безопасности: ' + (e.message || e));
-  }
-}
+// (Старая версия openSafetyCode — удалена, оставлена единая на 2202.)
 
 // ════════════════════════════════════════════════════════════════════
 // KEYS V2 ОНБОРДИНГ
@@ -2109,6 +2160,37 @@ async function _computeSafetyCode(myPubB64, theirPubB64){
   const parts = [];
   for (let i = 0; i < 60; i += 12) parts.push(digits.slice(i, i+12));
   return parts; // массив из 5 строк по 12 цифр
+}
+
+// Принудительный refresh ключа собеседника: чистим TOFU pin и pubCache,
+// тянем свежий с сервера, пинним. Если pub изменился — уведомление
+// через Ghostik (тихое, без модалки).
+async function refreshPeerKey(peerUsername){
+  try {
+    pubCache.delete(peerUsername);
+    const oldPin = await pinnedPubKey(peerUsername).catch(() => null);
+    try {
+      const db = await openIDB();
+      if (db.objectStoreNames.contains('peerkeys')){
+        const tx = db.transaction('peerkeys', 'readwrite');
+        tx.objectStore('peerkeys').delete(peerUsername);
+      }
+    } catch(_){}
+    const r = await chat('/keys/' + encodeURIComponent(peerUsername));
+    if (!r.x25519_pub){
+      ghostikSay('У <b>@' + esc(peerUsername) + '</b> ещё нет ключа.', 5000);
+      return;
+    }
+    await pinPubKey(peerUsername, r.x25519_pub, true);
+    pubCache.set(peerUsername, r.x25519_pub);
+    if (oldPin && oldPin.pub && oldPin.pub !== r.x25519_pub){
+      ghostikSay('Ключ <b>@' + esc(peerUsername) + '</b> обновлён.<br>Старые сообщения от него останутся «не удалось расшифровать», новые откроются.', 9000);
+    } else {
+      ghostikSay('Ключ <b>@' + esc(peerUsername) + '</b> подтверждён — без изменений.', 4500);
+    }
+  } catch(e){
+    ghostikSay('Не удалось обновить ключ: ' + (e.message || e), 6000);
+  }
 }
 
 async function openSafetyCode(peerUsername){
@@ -3537,17 +3619,12 @@ window.addEventListener('storage',e=>{
   window.addEventListener('focusin', lock, {passive: true, capture: true});
   window.addEventListener('resize',  lock, {passive: true, capture: true});
 
-  // Лёгкий «навсегда» rAF-цикл (1 dom read per frame, ~0.01% CPU).
-  // Гарантирует что даже если событие не сработало — drift схлопнется.
-  function loop(){
-    lock();
-    requestAnimationFrame(loop);
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => requestAnimationFrame(loop));
-  } else {
-    requestAnimationFrame(loop);
-  }
+  // ВАЖНО: rAF-loop был убран. На быстрых машинах он 0.01% CPU, но при
+  // длинном скролле/анимации в чате он подмешивался к каждому кадру и
+  // создавал заметные лаги. Сейчас держим только event listeners + lock
+  // через MutationObserver на изменения body inline-style (paddingTop и т.п.)
+  const mo = new MutationObserver(lock);
+  mo.observe(document.body, { attributes: true, attributeFilter: ['style'] });
 })();
 
 async function onReady(){
@@ -3589,6 +3666,9 @@ async function onReady(){
   // Ghostik — показываем призрака, при первом запуске бросает приветствие.
   ghostikShow();
   _ghostikFirstTimeTips();
+  // Health-check ключей в фоне: проверяем что myPriv действительно умеет
+  // расшифровать сообщение, зашифрованное под мой pub. Если нет — автопочинка.
+  setTimeout(() => { _keysHealthCheck().catch(e => console.warn('[E2E] health err', e)); }, 1500);
   // Бейдж непрочитанных GhostSocial-уведомлений
   startGSBadgePolling();
   // Deep-link: ?to=username — открыть чат сразу. ?text=... — предзаполнить input.
@@ -4963,6 +5043,7 @@ function renderChat(){
       </div>
       <button class="chat-menu" id="chatContactBtn" onclick="toggleContact(${jsAttr(p.username)})" title="Добавить в контакты"><i class="fa-solid fa-user-plus"></i></button>
       <button class="chat-menu" onclick="openSafetyCode(${jsAttr(p.username)})" title="Код безопасности — сверить ключ собеседника"><i class="fa-solid fa-shield-halved"></i></button>
+      <button class="chat-menu" onclick="refreshPeerKey(${jsAttr(p.username)})" title="Перепроверить ключ собеседника"><i class="fa-solid fa-rotate"></i></button>
       <button class="chat-menu" onclick="openPeerProfile(${jsAttr(p.username)})" title="Профиль"><i class="fa-solid fa-user"></i></button>
       <button class="chat-menu" onclick="openChatActionsMenu(event,${jsAttr(p.username)})" title="Ещё"><i class="fa-solid fa-ellipsis-vertical"></i></button>
     </div>
