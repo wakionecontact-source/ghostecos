@@ -523,6 +523,72 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 .ks-submit:hover:not(:disabled){box-shadow:0 10px 28px rgba(168,85,247,0.55);}
 .ks-submit:active:not(:disabled){transform:scale(0.98);}
 .ks-submit:disabled{opacity:0.45;cursor:not-allowed;}
+
+/* ── Settings modal ── */
+#settingsModal .modal-sheet, #keysyncShowModal .modal-sheet, #keysyncReceiveModal .modal-sheet{max-width:520px;max-height:92vh;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(168,85,247,0.55) transparent;}
+#settingsModal .modal-sheet::-webkit-scrollbar,
+#keysyncShowModal .modal-sheet::-webkit-scrollbar,
+#keysyncReceiveModal .modal-sheet::-webkit-scrollbar{width:7px;}
+#settingsModal .modal-sheet::-webkit-scrollbar-track,
+#keysyncShowModal .modal-sheet::-webkit-scrollbar-track,
+#keysyncReceiveModal .modal-sheet::-webkit-scrollbar-track{background:transparent;margin:6px 0;}
+#settingsModal .modal-sheet::-webkit-scrollbar-thumb,
+#keysyncShowModal .modal-sheet::-webkit-scrollbar-thumb,
+#keysyncReceiveModal .modal-sheet::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(168,85,247,0.55),rgba(236,72,153,0.55));border-radius:99px;border:1px solid rgba(0,0,0,0.2);}
+
+.set-section{margin-bottom:20px;}
+.set-section-title{font-size:11px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;padding:0 4px;display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.set-add-btn{background:transparent;border:1px solid var(--border-strong);color:var(--text);border-radius:8px;padding:5px 9px;font-size:11.5px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:5px;letter-spacing:0;text-transform:none;transition:border-color .15s,background .15s;}
+.set-add-btn:hover{border-color:#a855f7;background:rgba(168,85,247,0.10);}
+
+.set-row{display:flex;align-items:center;gap:12px;padding:13px 14px;background:rgba(15,23,42,0.5);border:1px solid var(--border);border-radius:13px;margin-bottom:10px;}
+.set-row-main{flex:1;min-width:0;}
+.set-row-title{font-size:14px;font-weight:700;color:var(--text);margin-bottom:3px;}
+.set-row-sub{font-size:12px;color:var(--sub);line-height:1.4;}
+.set-btn{background:transparent;border:1px solid var(--border-strong);color:var(--text);border-radius:9px;padding:7px 13px;font-size:12.5px;font-weight:700;cursor:pointer;transition:border-color .15s, background .15s;flex-shrink:0;}
+.set-btn:hover{border-color:#a855f7;background:rgba(168,85,247,0.10);}
+.set-btn.danger{color:#fda4af;border-color:rgba(244,63,94,0.32);}
+.set-btn.danger:hover{border-color:#f43f5e;background:rgba(244,63,94,0.10);}
+
+/* Список устройств */
+.set-dev-list{display:flex;flex-direction:column;gap:10px;}
+.set-dev-loading{text-align:center;padding:24px;color:var(--sub);font-size:13px;}
+.set-dev-empty{text-align:center;padding:18px;color:var(--sub);font-size:13px;border:1px dashed var(--border);border-radius:12px;}
+.dev-card{padding:13px 14px;background:rgba(15,23,42,0.5);border:1px solid var(--border);border-radius:13px;transition:border-color .15s;}
+.dev-card.current{border-color:rgba(168,85,247,0.45);background:linear-gradient(180deg,rgba(168,85,247,0.08),rgba(168,85,247,0.02));}
+.dev-card-h{display:flex;align-items:center;gap:11px;margin-bottom:5px;}
+.dev-card-icon{width:34px;height:34px;border-radius:10px;background:rgba(168,85,247,0.15);display:flex;align-items:center;justify-content:center;color:#c4b5fd;font-size:14px;flex-shrink:0;}
+.dev-card-name{font-size:14px;font-weight:700;color:var(--text);flex:1;min-width:0;word-break:break-word;}
+.dev-card.current .dev-badge{background:#a855f7;color:#fff;}
+.dev-badge{font-size:10px;font-weight:700;padding:3px 7px;border-radius:99px;background:rgba(255,255,255,0.07);color:var(--sub);text-transform:uppercase;letter-spacing:.4px;flex-shrink:0;}
+.dev-badge.owner{background:rgba(236,72,153,0.18);color:#f9a8d4;}
+.dev-card-meta{font-size:11.5px;color:var(--sub);padding-left:45px;line-height:1.45;}
+.dev-card-actions{display:flex;gap:6px;margin-top:9px;padding-left:45px;flex-wrap:wrap;}
+.dev-mini-btn{background:transparent;border:1px solid var(--border);color:var(--sub);border-radius:7px;padding:5px 9px;font-size:11.5px;font-weight:600;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:5px;}
+.dev-mini-btn:hover{color:var(--text);border-color:var(--border-strong);}
+.dev-mini-btn.danger:hover{color:#fda4af;border-color:#f43f5e;background:rgba(244,63,94,0.08);}
+
+/* QR-sync модалки */
+.qr-body{padding:6px 0 14px;display:flex;flex-direction:column;gap:14px;}
+.qr-note{font-size:12.5px;color:var(--sub);line-height:1.55;background:rgba(168,85,247,0.07);border:1px solid rgba(168,85,247,0.22);border-radius:10px;padding:10px 12px;}
+.qr-canvas{background:#fff;border-radius:14px;padding:14px;display:flex;align-items:center;justify-content:center;min-height:240px;}
+.qr-canvas img, .qr-canvas canvas, .qr-canvas table{display:block;margin:0 auto;max-width:100%;}
+.qr-code-row{display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(15,23,42,0.6);border:1px solid var(--border);border-radius:11px;}
+.qr-code-label{font-size:11px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;}
+.qr-code-value{flex:1;font-family:'JetBrains Mono','Consolas',monospace;font-size:18px;font-weight:800;color:var(--text);letter-spacing:2px;text-align:center;}
+.qr-copy-btn,.qr-paste-btn{background:transparent;border:1px solid var(--border-strong);color:var(--sub);border-radius:8px;padding:7px 11px;font-size:13px;cursor:pointer;transition:all .15s;}
+.qr-copy-btn:hover,.qr-paste-btn:hover{color:#a855f7;border-color:#a855f7;}
+.qr-ttl{font-size:11.5px;color:var(--sub);text-align:center;}
+.qr-input-row{display:flex;gap:8px;}
+.qr-input{flex:1;background:rgba(15,23,42,0.6);border:1px solid var(--border-strong);border-radius:11px;padding:13px 16px;color:var(--text);font-size:17px;font-weight:800;font-family:'JetBrains Mono','Consolas',monospace;letter-spacing:3px;text-align:center;text-transform:uppercase;outline:none;}
+.qr-input:focus{border-color:#a855f7;}
+.qr-go-btn{width:100%;background:linear-gradient(95deg,#a855f7,#ec4899);color:#fff;border:none;border-radius:12px;padding:13px;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 8px 22px rgba(168,85,247,0.4);transition:transform .1s, box-shadow .18s;}
+.qr-go-btn:hover:not(:disabled){box-shadow:0 10px 28px rgba(168,85,247,0.55);}
+.qr-go-btn:active:not(:disabled){transform:scale(0.98);}
+.qr-go-btn:disabled{opacity:0.55;cursor:wait;}
+.qr-status{font-size:12.5px;text-align:center;color:var(--sub);min-height:18px;line-height:1.5;}
+.qr-status.ok{color:#86efac;}
+.qr-status.err{color:#fda4af;}
 .m-handle{width:36px;height:4px;background:#1e293b;border-radius:2px;margin:0 auto 16px;}
 @media (min-width:600px){.m-handle{display:none;}}
 .m-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
@@ -643,6 +709,7 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
           <div class="sb-popup-item" onclick="window.location.href='/social'"><i class="fa-solid fa-hashtag"></i> GhostSocial</div>
           <div class="sb-popup-item" onclick="window.location.href='/bank/?from=/chat/'"><i class="fa-solid fa-wallet"></i> GhostBank</div>
           <div class="sb-popup-item" id="sbInstallItem" onclick="openInstall()" style="display:none;"><i class="fa-solid fa-mobile-screen"></i> Установить как приложение</div>
+          <div class="sb-popup-item" onclick="openSettings()"><i class="fa-solid fa-gear"></i> Настройки</div>
           <div class="sb-popup-item danger" onclick="doLogout()"><i class="fa-solid fa-right-from-bracket"></i> Выйти</div>
         </div>
       </div>
@@ -735,6 +802,85 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
     <button class="ks-submit" id="ksSubmitBtn" disabled onclick="ksSubmitChoice()">
       <i class="fa-solid fa-check"></i> Продолжить
     </button>
+  </div>
+</div>
+
+<!-- Настройки аккаунта -->
+<div class="modal-overlay" id="settingsModal" onclick="if(event.target===this)closeSettings()">
+  <div class="modal-sheet set-sheet">
+    <div class="m-handle"></div>
+    <div class="m-head">
+      <div class="m-title"><i class="fa-solid fa-gear" style="margin-right:8px;color:var(--sub)"></i>Настройки</div>
+      <button class="m-close" onclick="closeSettings()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <div class="set-section">
+      <div class="set-section-title">Безопасность</div>
+
+      <div class="set-row">
+        <div class="set-row-main">
+          <div class="set-row-title">Хранение приватного ключа</div>
+          <div class="set-row-sub" id="setStorageModeText">—</div>
+        </div>
+        <button class="set-btn" onclick="changeStorageMode()">Изменить</button>
+      </div>
+    </div>
+
+    <div class="set-section">
+      <div class="set-section-title">
+        Мои устройства
+        <button class="set-add-btn" onclick="openKeysyncShow()" title="Подключить новое устройство">
+          <i class="fa-solid fa-plus"></i> Подключить
+        </button>
+      </div>
+      <div id="setDevList" class="set-dev-list">
+        <div class="set-dev-loading"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Синхронизация устройств: дать ключ -->
+<div class="modal-overlay" id="keysyncShowModal" onclick="if(event.target===this)closeKeysyncShow()">
+  <div class="modal-sheet">
+    <div class="m-handle"></div>
+    <div class="m-head">
+      <div class="m-title"><i class="fa-solid fa-qrcode" style="margin-right:8px;color:var(--sub)"></i>Подключить устройство</div>
+      <button class="m-close" onclick="closeKeysyncShow()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div id="qrShowBody" class="qr-body">
+      <div class="qr-note">На новом устройстве откройте чат, войдите в аккаунт и нажмите «Получить ключ с другого устройства». Затем отсканируйте QR-код или введите код вручную.</div>
+      <div class="qr-canvas" id="qrCanvas"></div>
+      <div class="qr-code-row">
+        <div class="qr-code-label">Код вручную</div>
+        <div class="qr-code-value" id="qrCodeValue">—</div>
+        <button class="qr-copy-btn" id="qrCopyBtn" onclick="qrCopyCode()" title="Скопировать"><i class="fa-solid fa-copy"></i></button>
+      </div>
+      <div class="qr-ttl" id="qrTtl">Код действует 3 минуты</div>
+      <div class="qr-status" id="qrStatus"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Синхронизация устройств: получить ключ -->
+<div class="modal-overlay" id="keysyncReceiveModal" onclick="if(event.target===this)closeKeysyncReceive()">
+  <div class="modal-sheet">
+    <div class="m-handle"></div>
+    <div class="m-head">
+      <div class="m-title"><i class="fa-solid fa-key" style="margin-right:8px;color:var(--sub)"></i>Получить ключ</div>
+      <button class="m-close" onclick="closeKeysyncReceive()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="qr-body">
+      <div class="qr-note">Откройте на другом устройстве «Настройки → Подключить устройство» и введите показанный там код.</div>
+      <div class="qr-input-row">
+        <input type="text" id="qrInputCode" class="qr-input" placeholder="XXXX-XXXX" maxlength="9" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        <button class="qr-paste-btn" onclick="qrPasteCode()" title="Вставить"><i class="fa-solid fa-paste"></i></button>
+      </div>
+      <button class="qr-go-btn" id="qrGoBtn" onclick="qrReceiveByCode()">
+        <i class="fa-solid fa-arrow-right"></i> Получить ключ
+      </button>
+      <div class="qr-status" id="qrRecvStatus"></div>
+    </div>
   </div>
 </div>
 
@@ -875,6 +1021,8 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 
 <script src="/mesh.js"></script>
 <script src="/dialog.js"></script>
+<!-- QR-генератор для синхронизации устройств. ~10kb, defer чтобы не блокировать boot. -->
+<script defer src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
 <script>
 // ════════════════════════════════════════════════════════════════════
 // GhostChat web — E2E-зашифрованный мессенджер
@@ -1338,6 +1486,419 @@ async function _ensureKeysLocal(password, modeRes){
   });
   console.log('[E2E] mode=local — pub uploaded, priv stays on device only');
 }
+
+// ════════════════════════════════════════════════════════════════════
+// SETTINGS: модалка с разделами «Безопасность» и «Мои устройства»
+// ════════════════════════════════════════════════════════════════════
+
+function openSettings(){
+  // Закрываем popup-меню sb если открыт (имя функции в коде не унифицировано — пробуем оба)
+  try {
+    const p = document.getElementById('sbPopup');
+    if (p) p.classList.remove('open');
+  } catch(_){}
+  document.getElementById('settingsModal').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  refreshStorageModeRow();
+  loadDevicesIntoSettings();
+}
+function closeSettings(){
+  document.getElementById('settingsModal').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+async function refreshStorageModeRow(){
+  const el = document.getElementById('setStorageModeText');
+  try {
+    const r = await chat('/keys/storage_mode');
+    if (r.mode === 'server')      el.textContent = 'На сервере (зашифровано вашим паролем)';
+    else if (r.mode === 'local')  el.textContent = 'Только на этом устройстве';
+    else                          el.textContent = 'Не выбрано';
+  } catch(e){
+    el.textContent = 'Не удалось загрузить';
+  }
+}
+
+async function changeStorageMode(){
+  const newMode = await pickKeyStorageMode();
+  try {
+    if (newMode === 'local'){
+      // Проверяем что приватник реально есть локально, иначе после нуления на сервере
+      // юзер останется без ключа.
+      if (!myPriv || !myPub){
+        alert('Приватный ключ не загружен в этом сеансе. Сначала зайдите в чат через пароль, потом возвращайтесь сюда.');
+        return;
+      }
+      if (!confirm('После переключения серверная копия вашего приватного ключа будет удалена. ' +
+                   'Если этот браузер потеряет данные и вы не успеете подключить второе устройство — переписка станет нечитаемой. Продолжить?')){
+        return;
+      }
+    }
+    await chat('/keys/storage_mode', 'POST', { mode: newMode });
+    // Если перешли на 'server' и серверной копии нет — клиент должен повторно её залить.
+    if (newMode === 'server' && myPriv && myPub){
+      // Перешифруем приватник под пароль и зашлём. Пароль не известен — попросим.
+      const pwd = prompt('Введите пароль аккаунта — им будет зашифрован ключ для сервера:');
+      if (!pwd) return;
+      try {
+        // exportKey не работает для non-extractable myPriv. Нужен новый pair или другой механизм.
+        // Прагматичный путь: повторный логин через doLogin перезальёт приватник.
+        alert('Чтобы загрузить ключ на сервер, выйдите из аккаунта и зайдите снова — система перезальёт ключ автоматически.');
+      } catch(_){}
+    }
+    refreshStorageModeRow();
+  } catch(e){
+    alert('Не удалось сменить режим: ' + (e.message || e));
+  }
+}
+
+// ── Устройства ──
+async function loadDevicesIntoSettings(){
+  const cont = document.getElementById('setDevList');
+  cont.innerHTML = '<div class="set-dev-loading"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</div>';
+  try {
+    const r = await chat('/devices');
+    renderDevicesList(r.devices || [], r.current_id);
+  } catch(e){
+    cont.innerHTML = '<div class="set-dev-empty">Не удалось загрузить устройства: ' + esc(e.message||'ошибка') + '</div>';
+  }
+}
+
+function _devIcon(platform){
+  const p = (platform || '').toLowerCase();
+  if (p.includes('android') || p.includes('ios')) return 'fa-mobile-screen-button';
+  if (p.includes('mac')) return 'fa-laptop';
+  if (p.includes('win')) return 'fa-desktop';
+  if (p.includes('linux')) return 'fa-terminal';
+  if (p.includes('web')) return 'fa-globe';
+  return 'fa-circle-question';
+}
+
+function _devRelTime(unix){
+  if (!unix) return '—';
+  const diff = (Date.now()/1000 - unix);
+  if (diff < 3600) return 'недавно';
+  if (diff < 86400) return Math.floor(diff/3600) + 'ч назад';
+  if (diff < 86400*30) return Math.floor(diff/86400) + 'д назад';
+  return new Date(unix*1000).toLocaleDateString('ru-RU');
+}
+
+function renderDevicesList(devs, currentId){
+  const cont = document.getElementById('setDevList');
+  if (!devs.length){
+    cont.innerHTML = '<div class="set-dev-empty">Устройств не найдено</div>';
+    return;
+  }
+  cont.innerHTML = devs.map(d => {
+    const name = esc(d.device_name || ('Устройство ' + d.id));
+    const plat = esc(d.platform || '');
+    const ico = _devIcon(d.platform);
+    const cur = d.is_current ? '<span class="dev-badge">текущее</span>' : '';
+    const own = d.is_owner ? '<span class="dev-badge owner">владелец</span>' : '';
+    const inactive = !d.is_active ? '<span class="dev-badge" style="background:rgba(244,63,94,0.18);color:#fda4af;">отключено</span>' : '';
+    const seen = _devRelTime(d.last_seen);
+    const created = d.created_at ? new Date(d.created_at*1000).toLocaleDateString('ru-RU') : '—';
+    const canRename = d.is_active ? `<button class="dev-mini-btn" onclick="renameDevicePrompt(${d.id}, ${JSON.stringify(d.device_name||'')})"><i class="fa-solid fa-pen"></i> Переименовать</button>` : '';
+    const canRevoke = (d.is_active && !d.is_owner && !d.is_current) ? `<button class="dev-mini-btn danger" onclick="revokeDeviceConfirm(${d.id}, ${JSON.stringify(d.device_name||'')})"><i class="fa-solid fa-power-off"></i> Отключить</button>` : '';
+    return `
+      <div class="dev-card ${d.is_current?'current':''}">
+        <div class="dev-card-h">
+          <div class="dev-card-icon"><i class="fa-solid ${ico}"></i></div>
+          <div class="dev-card-name">${name}</div>
+          ${cur}${own}${inactive}
+        </div>
+        <div class="dev-card-meta">${plat || 'неизвестно'} · активность ${seen} · с ${created}</div>
+        <div class="dev-card-actions">${canRename}${canRevoke}</div>
+      </div>`;
+  }).join('');
+}
+
+async function renameDevicePrompt(pk, current){
+  const v = prompt('Новое имя устройства:', current || '');
+  if (!v || v.trim() === current) return;
+  try {
+    await chat('/devices/' + pk + '/rename', 'POST', { name: v.trim() });
+    loadDevicesIntoSettings();
+  } catch(e){ alert('Ошибка: ' + (e.message || e)); }
+}
+
+async function revokeDeviceConfirm(pk, name){
+  if (!confirm('Отключить устройство «' + (name || ('#'+pk)) + '»?\n\nЕго токен перестанет работать сразу. Юзер на этом устройстве выйдет из чата при следующем действии.')) return;
+  try {
+    await chat('/devices/' + pk + '/revoke', 'POST', {});
+    loadDevicesIntoSettings();
+  } catch(e){ alert('Ошибка: ' + (e.message || e)); }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// QR-SYNC: старое устройство (А) → отдаёт приватный ключ новому (Б)
+// Сервер видит только ephemeral pubkey'и и зашифрованный мусор.
+// ════════════════════════════════════════════════════════════════════
+
+let _qrSession = null;          // {sid, short_code, ephPair (CryptoKeyPair), pollTimer}
+let _qrPollIdx = 0;
+
+async function openKeysyncShow(){
+  if (!myPriv || !myPub){
+    alert('Приватный ключ ещё не загружен в этом сеансе. Зайдите в чат и попробуйте ещё раз.');
+    return;
+  }
+  document.getElementById('keysyncShowModal').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  document.getElementById('qrCanvas').innerHTML = '<div style="color:#94a3b8;padding:40px 0;text-align:center;">Генерация QR…</div>';
+  document.getElementById('qrCodeValue').textContent = '…';
+  document.getElementById('qrStatus').textContent = '';
+  document.getElementById('qrStatus').className = 'qr-status';
+  try {
+    // 1) Генерим ephemeral пару (extractable=true только для приватной части операции,
+    // но deriveBits сам не требует extractable).
+    const ephPair = await crypto.subtle.generateKey(ECDH_ALGO, true, ['deriveBits']);
+    const ephPubRaw = await crypto.subtle.exportKey('raw', ephPair.publicKey);
+    const ephPubB64 = b64e(ephPubRaw);
+    // 2) Стартуем сессию на сервере
+    const r = await chat('/keysync/start', 'POST', { eph_pub: ephPubB64 });
+    _qrSession = { sid: r.sid, short_code: r.short_code, ephPair, ephPubB64, pollTimer: 0 };
+    _qrPollIdx = 0;
+    // 3) Рендерим QR с компактным payload: {s:sid, e:eph_pub}
+    const payload = JSON.stringify({ s: r.sid, e: ephPubB64 });
+    _renderQR(payload);
+    document.getElementById('qrCodeValue').textContent = r.short_code;
+    // 4) Стартуем поллинг ответа от Б
+    _qrPollLoop();
+  } catch(e){
+    document.getElementById('qrCanvas').innerHTML = '';
+    const s = document.getElementById('qrStatus');
+    s.textContent = 'Не удалось создать сессию: ' + (e.message || e);
+    s.className = 'qr-status err';
+  }
+}
+
+function _renderQR(text){
+  const wrap = document.getElementById('qrCanvas');
+  wrap.innerHTML = '';
+  if (typeof qrcode !== 'function'){
+    wrap.innerHTML = '<div style="color:#94a3b8;padding:40px 0;text-align:center;">QR-библиотека не загрузилась. Используйте код вручную.</div>';
+    return;
+  }
+  const qr = qrcode(0, 'M');
+  qr.addData(text);
+  qr.make();
+  // imgTag(cellSize, margin) → <img> с base64-png
+  wrap.innerHTML = qr.createImgTag(5, 10);
+  const img = wrap.querySelector('img');
+  if (img) img.style.cssText = 'width:240px;height:240px;image-rendering:pixelated;';
+}
+
+function qrCopyCode(){
+  const code = document.getElementById('qrCodeValue').textContent;
+  if (!code || code === '…') return;
+  navigator.clipboard.writeText(code).then(() => {
+    document.getElementById('qrCopyBtn').innerHTML = '<i class="fa-solid fa-check"></i>';
+    setTimeout(() => { document.getElementById('qrCopyBtn').innerHTML = '<i class="fa-solid fa-copy"></i>'; }, 1500);
+  }, () => {});
+}
+
+async function _qrPollLoop(){
+  if (!_qrSession) return;
+  try {
+    const r = await chat('/keysync/' + encodeURIComponent(_qrSession.sid) + '/poll?for_role=A&after=' + _qrPollIdx);
+    for (const post of (r.posts || [])){
+      _qrPollIdx = Math.max(_qrPollIdx, post.index);
+      await _qrHandlePostFromB(post.payload);
+    }
+    if (r.ttl_left <= 0){
+      const s = document.getElementById('qrStatus');
+      s.textContent = 'Срок кода истёк. Закройте окно и попробуйте заново.';
+      s.className = 'qr-status err';
+      return;
+    }
+  } catch(e){
+    if (e.status === 404){
+      const s = document.getElementById('qrStatus');
+      s.textContent = 'Сессия закрыта.';
+      s.className = 'qr-status';
+      return;
+    }
+    // прочая ошибка — продолжаем
+  }
+  if (_qrSession) _qrSession.pollTimer = setTimeout(_qrPollLoop, 1800);
+}
+
+async function _qrHandlePostFromB(b64){
+  // Б присылает только ephB_pub (RAW base64). Получаем его → ECDH → шифруем
+  // настоящий приватник и шлём обратно.
+  try {
+    const ephB_raw = b64d(b64);
+    const ephB_pub = await crypto.subtle.importKey('raw', ephB_raw, ECDH_ALGO, false, []);
+    // Общий секрет
+    const sharedBits = await crypto.subtle.deriveBits({ name: 'ECDH', public: ephB_pub }, _qrSession.ephPair.privateKey, 256);
+    const aesKey = await _hkdfToAesKey(sharedBits);
+    // Экспортируем настоящий приватник из IDB (pkcs8 байты лежат там).
+    const db = await openIDB();
+    const tx = db.transaction('keys', 'readonly');
+    const priv = await new Promise(r => { const q = tx.objectStore('keys').get('priv'); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
+    if (!priv || !priv.data){
+      throw new Error('Приватный ключ не найден в локальном хранилище');
+    }
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aesKey, priv.data);
+    const enc = new Uint8Array(12 + ct.byteLength);
+    enc.set(iv); enc.set(new Uint8Array(ct), 12);
+    // Заворачиваем pub_key и enc_priv в JSON, чтобы Б знал что есть что
+    const wrap = JSON.stringify({ pub: myPub, enc: b64e(enc) });
+    const wrapB64 = btoa(unescape(encodeURIComponent(wrap)));
+    await chat('/keysync/' + encodeURIComponent(_qrSession.sid) + '/post', 'POST', {
+      from_role: 'A', payload: wrapB64
+    });
+    const s = document.getElementById('qrStatus');
+    s.textContent = 'Ключ передан! Новое устройство должно сейчас войти в чат.';
+    s.className = 'qr-status ok';
+    setTimeout(() => { closeKeysyncShow(); loadDevicesIntoSettings(); }, 2500);
+  } catch(e){
+    const s = document.getElementById('qrStatus');
+    s.textContent = 'Ошибка передачи ключа: ' + (e.message || e);
+    s.className = 'qr-status err';
+  }
+}
+
+async function _hkdfToAesKey(sharedBits){
+  // HKDF-SHA256 с фиксированным info, чтобы оба устройства получили одинаковый AES-ключ.
+  const base = await crypto.subtle.importKey('raw', sharedBits, 'HKDF', false, ['deriveKey']);
+  return await crypto.subtle.deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(16), info: new TextEncoder().encode('ghostchat-keysync-v1') },
+    base,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+function closeKeysyncShow(){
+  document.getElementById('keysyncShowModal').classList.remove('open');
+  document.body.style.overflow = '';
+  if (_qrSession){
+    if (_qrSession.pollTimer) clearTimeout(_qrSession.pollTimer);
+    // Закрываем сессию на сервере (best-effort)
+    try { chat('/keysync/' + encodeURIComponent(_qrSession.sid), 'DELETE'); } catch(_){}
+  }
+  _qrSession = null;
+}
+
+// ── Б: приёмник ключа ──
+let _qrRecvSid = null;
+let _qrRecvEphPair = null;
+let _qrRecvPollIdx = 0;
+let _qrRecvPollTimer = 0;
+
+async function openKeysyncReceive(){
+  document.getElementById('keysyncReceiveModal').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  document.getElementById('qrInputCode').value = '';
+  document.getElementById('qrRecvStatus').textContent = '';
+  document.getElementById('qrRecvStatus').className = 'qr-status';
+  setTimeout(() => document.getElementById('qrInputCode').focus(), 100);
+}
+
+async function qrPasteCode(){
+  try {
+    const t = await navigator.clipboard.readText();
+    if (t) document.getElementById('qrInputCode').value = t.trim();
+  } catch(_){}
+}
+
+function closeKeysyncReceive(){
+  document.getElementById('keysyncReceiveModal').classList.remove('open');
+  document.body.style.overflow = '';
+  if (_qrRecvPollTimer) clearTimeout(_qrRecvPollTimer);
+  _qrRecvSid = null; _qrRecvEphPair = null; _qrRecvPollIdx = 0; _qrRecvPollTimer = 0;
+}
+
+async function qrReceiveByCode(){
+  const code = (document.getElementById('qrInputCode').value || '').trim().toUpperCase();
+  if (!code){ return; }
+  const btn = document.getElementById('qrGoBtn');
+  btn.disabled = true;
+  const st = document.getElementById('qrRecvStatus');
+  st.className = 'qr-status'; st.textContent = 'Ищу сессию…';
+  try {
+    const lk = await chat('/keysync/lookup', 'POST', { short_code: code });
+    _qrRecvSid = lk.sid;
+    st.textContent = 'Генерирую свою пару ключей…';
+    // Б: своя ephemeral пара
+    _qrRecvEphPair = await crypto.subtle.generateKey(ECDH_ALGO, true, ['deriveBits']);
+    const ephB_raw = await crypto.subtle.exportKey('raw', _qrRecvEphPair.publicKey);
+    const ephB_b64 = b64e(ephB_raw);
+    // А: его pub из lookup
+    const ephA_raw = b64d(lk.eph_pub_A);
+    const ephA_pub = await crypto.subtle.importKey('raw', ephA_raw, ECDH_ALGO, false, []);
+    // Общий ECDH-секрет (Б).
+    const sharedBits = await crypto.subtle.deriveBits({ name: 'ECDH', public: ephA_pub }, _qrRecvEphPair.privateKey, 256);
+    const aesKey = await _hkdfToAesKey(sharedBits);
+    // Отдаём А наш ephB_pub
+    await chat('/keysync/' + encodeURIComponent(_qrRecvSid) + '/post', 'POST', {
+      from_role: 'B', payload: ephB_b64
+    });
+    st.textContent = 'Жду ключ от другого устройства…';
+    // Ждём пока А пришлёт enc_priv
+    _qrRecvPollIdx = 0;
+    _qrRecvPollLoop(aesKey, st, btn);
+  } catch(e){
+    btn.disabled = false;
+    st.textContent = 'Ошибка: ' + (e.message || e);
+    st.className = 'qr-status err';
+  }
+}
+
+async function _qrRecvPollLoop(aesKey, st, btn){
+  if (!_qrRecvSid) return;
+  try {
+    const r = await chat('/keysync/' + encodeURIComponent(_qrRecvSid) + '/poll?for_role=B&after=' + _qrRecvPollIdx);
+    for (const post of (r.posts || [])){
+      _qrRecvPollIdx = Math.max(_qrRecvPollIdx, post.index);
+      // Это завернутый JSON {pub, enc} (b64 от UTF-8 строки)
+      try {
+        const wrapJson = decodeURIComponent(escape(atob(post.payload)));
+        const wrap = JSON.parse(wrapJson);
+        const enc = b64d(wrap.enc);
+        const iv = enc.slice(0, 12);
+        const ct = enc.slice(12);
+        const privBytes = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, aesKey, ct);
+        // Импортируем priv non-extractable, сохраняем в IDB, аплоадим pub в режиме local.
+        myPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
+        myPub = wrap.pub;
+        await saveKeysToIDB(privBytes);
+        await chat('/keys/upload', 'POST', { x25519_pub: myPub, storage_mode: 'local' });
+        st.textContent = 'Ключ получен! Перезагружаю…';
+        st.className = 'qr-status ok';
+        setTimeout(() => location.reload(), 1500);
+        return;
+      } catch(e){
+        st.textContent = 'Не удалось расшифровать пакет: ' + (e.message || e);
+        st.className = 'qr-status err';
+        btn.disabled = false;
+        return;
+      }
+    }
+    if (r.ttl_left <= 0){
+      st.textContent = 'Срок кода истёк. Получите новый на другом устройстве.';
+      st.className = 'qr-status err';
+      btn.disabled = false;
+      return;
+    }
+  } catch(e){
+    if (e.status === 404){
+      st.textContent = 'Сессия закрыта на другом устройстве.';
+      st.className = 'qr-status err';
+      btn.disabled = false;
+      return;
+    }
+  }
+  _qrRecvPollTimer = setTimeout(() => _qrRecvPollLoop(aesKey, st, btn), 1800);
+}
+
+// Слушаем ws-уведомление об отзыве устройства — если отозвали наше, force-logout.
+// (Если loadDevicesIntoSettings уже знает свой current_id, можно сравнивать.)
+// Этот обработчик регистрируется ниже в общем ws-роутинге, не здесь.
 
 // ════════════════════════════════════════════════════════════════════
 // INDEXED DB: история и метаданные диалогов
