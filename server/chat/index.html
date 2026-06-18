@@ -440,22 +440,88 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 
 /* ── Модалка обязательного выбора хранения приватного ключа ── */
 #keyStorageModal .modal-sheet{max-width:540px;max-height:92vh;overflow-y:auto;}
+/* Кастомный скроллбар — узкий фиолетовый, в духе остального UI */
+#keyStorageModal .modal-sheet{scrollbar-width:thin;scrollbar-color:rgba(168,85,247,0.55) transparent;}
+#keyStorageModal .modal-sheet::-webkit-scrollbar{width:7px;}
+#keyStorageModal .modal-sheet::-webkit-scrollbar-track{background:transparent;margin:6px 0;}
+#keyStorageModal .modal-sheet::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(168,85,247,0.55),rgba(236,72,153,0.55));border-radius:99px;border:1px solid rgba(0,0,0,0.2);}
+#keyStorageModal .modal-sheet::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,#a855f7,#ec4899);}
+
 .ks-head{padding:6px 0 14px;text-align:center;}
-.ks-icon{width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#a855f7,#ec4899);display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:20px;margin-bottom:10px;}
+.ks-icon{width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#a855f7,#ec4899);display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:20px;margin-bottom:10px;box-shadow:0 8px 22px rgba(168,85,247,0.45);}
 .ks-title{font-size:17px;font-weight:800;line-height:1.25;}
 .ks-sub{font-size:12.5px;color:var(--muted);line-height:1.5;margin-top:7px;padding:0 6px;}
-.ks-note{background:rgba(168,85,247,0.10);border:1px solid rgba(168,85,247,0.30);border-radius:11px;padding:11px 13px;font-size:12px;color:var(--sub);margin-bottom:14px;line-height:1.55;}
-.ks-options{display:flex;flex-direction:column;gap:10px;margin-bottom:16px;}
-.ks-card{background:var(--surface);border:1.5px solid var(--border);border-radius:14px;padding:14px;text-align:left;cursor:pointer;color:inherit;font-family:inherit;transition:border-color .15s,background .15s;width:100%;display:block;}
-.ks-card:hover{border-color:var(--border-strong);}
-.ks-card.selected{border-color:#a855f7;background:rgba(168,85,247,0.10);}
-.ks-card-h{display:flex;align-items:center;gap:10px;margin-bottom:9px;font-weight:700;font-size:14.5px;color:var(--text);}
-.ks-card-h i{font-size:17px;color:#a855f7;width:22px;text-align:center;}
-.ks-card-text{font-size:12.5px;color:var(--text);line-height:1.5;margin-bottom:9px;}
-.ks-pro,.ks-con{font-size:11.5px;line-height:1.5;color:var(--sub);margin-bottom:6px;}
+.ks-note{background:rgba(168,85,247,0.10);border:1px solid rgba(168,85,247,0.30);border-radius:11px;padding:11px 13px;font-size:12px;color:var(--sub);margin-bottom:16px;line-height:1.55;}
+
+.ks-options{display:flex;flex-direction:column;gap:11px;margin-bottom:16px;}
+
+/* Карточка — явно «кнопка»: лёгкая тень, hover-подъём, нажатие. */
+.ks-card{
+  background:linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.01));
+  border:1.5px solid var(--border);
+  border-radius:14px;
+  padding:0;
+  text-align:left;
+  cursor:pointer;
+  color:inherit;
+  font-family:inherit;
+  width:100%;
+  display:block;
+  box-shadow:0 4px 12px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04);
+  transition:border-color .18s, transform .12s, box-shadow .18s, background .18s;
+  overflow:hidden;
+}
+.ks-card:hover{
+  border-color:var(--border-strong);
+  transform:translateY(-1px);
+  box-shadow:0 8px 22px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+.ks-card:active{ transform:translateY(0) scale(0.995); }
+.ks-card.selected{
+  border-color:#a855f7;
+  background:linear-gradient(180deg,rgba(168,85,247,0.13),rgba(168,85,247,0.05));
+  box-shadow:0 10px 26px rgba(168,85,247,0.30), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+/* Шапка карточки — название + chevron. Всегда видна. */
+.ks-card-h{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 16px;
+  font-weight:700;font-size:15px;color:var(--text);
+}
+.ks-card-h-left{display:flex;align-items:center;gap:11px;}
+.ks-card-h-left i{
+  font-size:16px;color:#a855f7;width:22px;text-align:center;
+  flex-shrink:0;
+}
+.ks-card.selected .ks-card-h-left i{color:#c4b5fd;}
+.ks-chev{
+  font-size:12px;color:var(--sub);
+  transition:transform .25s cubic-bezier(.34,1.3,.64,1), color .15s;
+}
+.ks-card.expanded .ks-chev{ transform:rotate(180deg); color:#a855f7; }
+
+/* Тело карточки — скрыто по умолчанию, раскрывается через max-height. */
+.ks-card-body{
+  max-height:0;
+  opacity:0;
+  overflow:hidden;
+  padding:0 16px;
+  transition:max-height .35s cubic-bezier(.34,1.2,.64,1), opacity .22s ease-out, padding .25s;
+}
+.ks-card.expanded .ks-card-body{
+  max-height:520px;
+  opacity:1;
+  padding:0 16px 14px;
+}
+.ks-card-text{font-size:12.5px;color:var(--text);line-height:1.55;margin-bottom:10px;}
+.ks-pro,.ks-con{font-size:11.5px;line-height:1.55;color:var(--sub);margin-bottom:7px;}
 .ks-pro b{color:#86efac;font-weight:700;}
 .ks-con b{color:#fda4af;font-weight:700;}
-.ks-submit{width:100%;background:linear-gradient(95deg,#a855f7,#ec4899);color:#fff;border:none;border-radius:12px;padding:13px;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:opacity .15s;}
+
+.ks-submit{width:100%;background:linear-gradient(95deg,#a855f7,#ec4899);color:#fff;border:none;border-radius:12px;padding:13px;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 8px 22px rgba(168,85,247,0.42);transition:opacity .15s, transform .1s, box-shadow .18s;}
+.ks-submit:hover:not(:disabled){box-shadow:0 10px 28px rgba(168,85,247,0.55);}
+.ks-submit:active:not(:disabled){transform:scale(0.98);}
 .ks-submit:disabled{opacity:0.45;cursor:not-allowed;}
 .m-handle{width:36px;height:4px;background:#1e293b;border-radius:2px;margin:0 auto 16px;}
 @media (min-width:600px){.m-handle{display:none;}}
@@ -643,17 +709,27 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
       История переписки в любом режиме хранится <b>локально на каждом устройстве</b>. Сервер хранит только сообщения, ещё не доставленные ни одному из ваших устройств — после доставки они удаляются.
     </div>
     <div class="ks-options">
-      <button type="button" class="ks-card" data-mode="server" onclick="ksPickCard(this)">
-        <div class="ks-card-h"><i class="fa-solid fa-cloud"></i>На сервере</div>
-        <div class="ks-card-text">Приватный ключ хранится на сервере GhostChat в зашифрованном виде. Расшифровать его может только ваш пароль.</div>
-        <div class="ks-pro"><b>Преимущество:</b> при входе с нового устройства приватный ключ автоматически становится доступен, и устройство сразу начинает принимать и читать новые сообщения. Без QR-кодов и ручного переноса.</div>
-        <div class="ks-con"><b>Риск:</b> при компрометации сервера и подборе вашего пароля третье лицо получит приватный ключ и сможет читать все ваши будущие сообщения, а также те, что ещё не были доставлены. Технически доступ к зашифрованному ключу имеет администрация сервера.</div>
+      <button type="button" class="ks-card" data-mode="server" onclick="ksTogglePick(this)">
+        <div class="ks-card-h">
+          <div class="ks-card-h-left"><i class="fa-solid fa-cloud"></i><span>На сервере</span></div>
+          <i class="fa-solid fa-chevron-down ks-chev"></i>
+        </div>
+        <div class="ks-card-body">
+          <div class="ks-card-text">Приватный ключ хранится на сервере GhostChat в зашифрованном виде. Расшифровать его может только ваш пароль.</div>
+          <div class="ks-pro"><b>Преимущество:</b> при входе с нового устройства приватный ключ автоматически становится доступен, и устройство сразу начинает принимать и читать новые сообщения. Без QR-кодов и ручного переноса.</div>
+          <div class="ks-con"><b>Риск:</b> при компрометации сервера и подборе вашего пароля третье лицо получит приватный ключ и сможет читать все ваши будущие сообщения, а также те, что ещё не были доставлены. Технически доступ к зашифрованному ключу имеет администрация сервера.</div>
+        </div>
       </button>
-      <button type="button" class="ks-card" data-mode="local" onclick="ksPickCard(this)">
-        <div class="ks-card-h"><i class="fa-solid fa-mobile-screen-button"></i>Только на устройстве</div>
-        <div class="ks-card-text">Приватный ключ создаётся и остаётся исключительно на ваших устройствах. На сервер он не передаётся ни в каком виде.</div>
-        <div class="ks-pro"><b>Преимущество:</b> даже при полной компрометации сервера никто, кроме вас, не сможет читать ваши новые сообщения. Включая администрацию проекта.</div>
-        <div class="ks-con"><b>Риск:</b> при входе с нового устройства приватный ключ необходимо перенести вручную — через QR-код с устройства, где он уже сохранён. Если ни на одном устройстве ключа не осталось (например, телефон утерян), новые сообщения расшифровать не получится; вход в аккаунт по паролю возможен, но придётся создать новый ключ — отправители увидят это и должны будут подтвердить новый код безопасности.</div>
+      <button type="button" class="ks-card" data-mode="local" onclick="ksTogglePick(this)">
+        <div class="ks-card-h">
+          <div class="ks-card-h-left"><i class="fa-solid fa-mobile-screen-button"></i><span>Только на устройстве</span></div>
+          <i class="fa-solid fa-chevron-down ks-chev"></i>
+        </div>
+        <div class="ks-card-body">
+          <div class="ks-card-text">Приватный ключ создаётся и остаётся исключительно на ваших устройствах. На сервер он не передаётся ни в каком виде.</div>
+          <div class="ks-pro"><b>Преимущество:</b> даже при полной компрометации сервера никто, кроме вас, не сможет читать ваши новые сообщения. Включая администрацию проекта.</div>
+          <div class="ks-con"><b>Риск:</b> при входе с нового устройства приватный ключ необходимо перенести вручную — через QR-код с устройства, где он уже сохранён. Если ни на одном устройстве ключа не осталось (например, телефон утерян), новые сообщения расшифровать не получится; вход в аккаунт по паролю возможен, но придётся создать новый ключ — отправители увидят это и должны будут подтвердить новый код безопасности.</div>
+        </div>
       </button>
     </div>
     <button class="ks-submit" id="ksSubmitBtn" disabled onclick="ksSubmitChoice()">
@@ -1076,11 +1152,15 @@ async function wipeKeysIDB(){
 
 // ── Модалка обязательного выбора хранения приватного ключа ──
 // Возвращает Promise<'server'|'local'>, открывает экран выбора, ждёт пока
-// юзер выберет карточку и нажмёт «Продолжить». Не позволяет закрыть без выбора.
+// юзер раскроет карточку (это же = выбор) и нажмёт «Продолжить».
+// Аккордеон-логика: открыта всегда только одна. Повторный клик не закрывает,
+// чтобы юзер случайно не снял выбор.
 let _ksResolve = null;
-function ksPickCard(btn){
-  document.querySelectorAll('#keyStorageModal .ks-card').forEach(c => c.classList.remove('selected'));
-  btn.classList.add('selected');
+function ksTogglePick(btn){
+  document.querySelectorAll('#keyStorageModal .ks-card').forEach(c => {
+    if (c !== btn){ c.classList.remove('expanded', 'selected'); }
+  });
+  btn.classList.add('expanded', 'selected');
   document.getElementById('ksSubmitBtn').disabled = false;
 }
 function ksSubmitChoice(){
@@ -1093,9 +1173,9 @@ function ksSubmitChoice(){
 function pickKeyStorageMode(){
   return new Promise(resolve => {
     _ksResolve = resolve;
-    document.querySelectorAll('#keyStorageModal .ks-card').forEach(c => c.classList.remove('selected'));
+    document.querySelectorAll('#keyStorageModal .ks-card').forEach(c => c.classList.remove('expanded', 'selected'));
     document.getElementById('ksSubmitBtn').disabled = true;
-    // boot-оверлей мог быть открыт ("Подготовка чата...") — закрываем чтобы модалка была сверху
+    // boot-оверлей мог быть открыт ("Подготовка чата...") — закрываем, чтобы модалка была сверху
     document.getElementById('boot').classList.remove('open');
     document.getElementById('keyStorageModal').classList.add('open');
   });
