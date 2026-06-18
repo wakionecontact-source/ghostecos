@@ -291,6 +291,262 @@ def delete_server_key_copy(authorization: Optional[str] = Header(None)):
     return {"status": "ok"}
 
 
+# ── Управление устройствами ─────────────────────────────────────────
+# Логика хранения уже есть в device_auth.py (list_user_devices, revoke_device),
+# rename пишется здесь. Эндпойнты — под префиксом /api/chat/devices/...
+
+class RenameDeviceBody(BaseModel):
+    name: str
+
+
+@router.get("/devices")
+def list_my_devices(authorization: Optional[str] = Header(None)):
+    """Все устройства текущего юзера. Поле is_current отмечает, с какого
+    именно сейчас сделан запрос — по совпадению токена."""
+    user = auth_member(authorization)
+    import device_auth as _da
+    c = db()
+    try:
+        devs = _da.list_user_devices(c, user["id"])
+        tok = (authorization or "").split(" ", 1)[-1] if authorization else ""
+        cur = c.execute(
+            "SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1",
+            (tok, user["id"]),
+        ).fetchone()
+        cur_id = cur["id"] if cur else None
+        for d in devs:
+            d["is_current"] = (d["id"] == cur_id)
+        return {"devices": devs, "current_id": cur_id}
+    finally:
+        c.close()
+
+
+@router.post("/devices/{device_pk}/rename")
+def rename_my_device(device_pk: int, body: RenameDeviceBody,
+                     authorization: Optional[str] = Header(None)):
+    user = auth_member(authorization)
+    _rate_limit(f"devrename:{user['id']}", limit=20, window=3600)
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(422, "Имя не может быть пустым")
+    if len(name) > 60:
+        raise HTTPException(422, "Имя не длиннее 60 символов")
+    c = db()
+    try:
+        r = c.execute(
+            "SELECT id FROM user_devices WHERE id=? AND user_id=? LIMIT 1",
+            (device_pk, user["id"]),
+        ).fetchone()
+        if not r:
+            raise HTTPException(404, "Устройство не найдено")
+        c.execute("UPDATE user_devices SET device_name=? WHERE id=?", (name, r["id"]))
+        c.commit()
+        return {"status": "ok", "name": name}
+    finally:
+        c.close()
+
+
+@router.post("/devices/{device_pk}/revoke")
+def revoke_my_device(device_pk: int, authorization: Optional[str] = Header(None)):
+    """Отзыв устройства. Защищено в device_auth: owner-устройство не отзывается."""
+    user = auth_member(authorization)
+    _rate_limit(f"devrevoke:{user['id']}", limit=20, window=3600)
+    import device_auth as _da
+    c = db()
+    try:
+        # Защита: текущее устройство не отзываем (юзер сам себя выкинет посреди сессии)
+        tok = (authorization or "").split(" ", 1)[-1] if authorization else ""
+        cur = c.execute(
+            "SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1",
+            (tok, user["id"]),
+        ).fetchone()
+        if cur and cur["id"] == device_pk:
+            raise HTTPException(400, "Нельзя отозвать текущее устройство — выйдите через «Выход»")
+        ok = _da.revoke_device(c, user["id"], device_pk)
+        if not ok:
+            raise HTTPException(404, "Устройство не найдено")
+        # WS-уведомление всем устройствам юзера. Клиент сравнит device_pk
+        # со своим текущим (через GET /devices is_current) и решит, что делать:
+        # отозванное устройство — force-logout, остальные — обновить список.
+        try:
+            ws_hub.send_to(user["id"], "device.revoked", {"device_pk": device_pk})
+        except Exception:
+            pass
+        return {"status": "ok"}
+    finally:
+        c.close()
+
+
+# ── QR-синхронизация устройств (слепой прокси) ──────────────────────
+# Используется когда юзер выбрал режим 'local' и хочет добавить новое
+# устройство (или восстановиться после потери приватника на одном из них).
+#
+# Сервер видит ТОЛЬКО:
+#   - короткоживущие ephemeral pubkey'и обоих устройств (для ECDH),
+#   - зашифрованный мусор (приватник, упакованный под общий ECDH-секрет),
+#   - 8-значный short_code (нужен для ручного ввода).
+# Никаких записей в БД — всё в RAM, TTL 3 минуты. После poll-а или TTL —
+# сессия удаляется.
+
+import secrets as _secrets
+import time as _time
+import string as _string
+import threading as _threading
+
+_KEYSYNC_TTL = 180  # секунды
+_KEYSYNC_MAX_POSTS_PER_SESSION = 6   # 1 ephB_pub + 1 enc_priv + резерв на повтор
+_KEYSYNC_MAX_PAYLOAD_LEN = 2000      # base64 chars
+_keysync_sessions: dict = {}         # sid -> {ephA_pub, short_code, posts, created_at}
+_keysync_by_code: dict = {}          # short_code -> sid
+_keysync_lock = _threading.Lock()
+
+
+def _keysync_gc():
+    """Сборка протухших сессий. Зовётся лениво при каждом обращении."""
+    now = _time.time()
+    expired = []
+    for sid, s in list(_keysync_sessions.items()):
+        if now - s["created_at"] > _KEYSYNC_TTL:
+            expired.append((sid, s.get("short_code")))
+    for sid, code in expired:
+        _keysync_sessions.pop(sid, None)
+        if code:
+            _keysync_by_code.pop(code, None)
+
+
+def _make_short_code() -> str:
+    """8 символов из непохожих букв и цифр — без 0/O/1/I/l для разборчивости."""
+    alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+    code = "".join(_secrets.choice(alphabet) for _ in range(8))
+    return code[:4] + "-" + code[4:]  # формат XXXX-XXXX
+
+
+class KeysyncStartBody(BaseModel):
+    eph_pub: str  # base64; ephemeral X25519/P-256 pubkey старого устройства
+
+
+class KeysyncLookupBody(BaseModel):
+    short_code: str
+
+
+class KeysyncPostBody(BaseModel):
+    from_role: str   # 'A' (старое) или 'B' (новое)
+    payload: str     # base64 — либо ephB_pub, либо enc_priv, либо служебка
+
+
+@router.post("/keysync/start")
+def keysync_start(body: KeysyncStartBody, authorization: Optional[str] = Header(None)):
+    """Старое устройство (А) создаёт канал. Возвращает sid + short_code."""
+    user = auth_member(authorization)
+    _rate_limit(f"ks_start:{user['id']}", limit=8, window=3600)
+    if not _is_b64(body.eph_pub):
+        raise HTTPException(400, "eph_pub: ожидается base64")
+    raw = base64.b64decode(body.eph_pub)
+    if len(raw) not in (32, 65):
+        raise HTTPException(400, "eph_pub: ожидается 32 или 65 байт")
+    with _keysync_lock:
+        _keysync_gc()
+        # Чтобы short_code не повторился среди активных сессий
+        for _ in range(20):
+            code = _make_short_code()
+            if code not in _keysync_by_code:
+                break
+        else:
+            raise HTTPException(503, "Не удалось сгенерировать код, попробуйте ещё раз")
+        sid = _secrets.token_urlsafe(18)
+        _keysync_sessions[sid] = {
+            "owner_user_id": user["id"],   # привязка к юзеру — чужой sid в poll не вытянет ничего
+            "eph_pub_A": body.eph_pub,
+            "short_code": code,
+            "posts": [],                   # [{from_role, payload, ts}]
+            "created_at": _time.time(),
+        }
+        _keysync_by_code[code] = sid
+    return {"sid": sid, "short_code": code, "ttl": _KEYSYNC_TTL}
+
+
+@router.post("/keysync/lookup")
+def keysync_lookup(body: KeysyncLookupBody, authorization: Optional[str] = Header(None)):
+    """Новое устройство (Б) вводит short_code вручную — узнаёт sid и eph_pub_A.
+    Не требует чтобы Б был тем же юзером — это намеренно: код для синхронизации
+    может быть введён до полноценного логина."""
+    auth_member(authorization)  # любой залогиненный (в т.ч. гость) может смотреть
+    code = (body.short_code or "").strip().upper().replace(" ", "")
+    if "-" not in code and len(code) == 8:
+        code = code[:4] + "-" + code[4:]
+    with _keysync_lock:
+        _keysync_gc()
+        sid = _keysync_by_code.get(code)
+        if not sid:
+            raise HTTPException(404, "Код не найден или истёк")
+        s = _keysync_sessions.get(sid)
+        if not s:
+            raise HTTPException(404, "Сессия не найдена")
+        return {"sid": sid, "eph_pub_A": s["eph_pub_A"], "ttl": _KEYSYNC_TTL - int(_time.time() - s["created_at"])}
+
+
+@router.post("/keysync/{sid}/post")
+def keysync_post(sid: str, body: KeysyncPostBody, authorization: Optional[str] = Header(None)):
+    """Положить зашифрованный фрагмент в канал. Серверу содержимое непрозрачно."""
+    auth_member(authorization)
+    if body.from_role not in ("A", "B"):
+        raise HTTPException(400, "from_role: ожидается 'A' или 'B'")
+    if not body.payload or len(body.payload) > _KEYSYNC_MAX_PAYLOAD_LEN:
+        raise HTTPException(400, "payload: пусто или слишком большое")
+    if not _is_b64(body.payload):
+        raise HTTPException(400, "payload: ожидается base64")
+    with _keysync_lock:
+        _keysync_gc()
+        s = _keysync_sessions.get(sid)
+        if not s:
+            raise HTTPException(404, "Сессия не найдена или истекла")
+        if len(s["posts"]) >= _KEYSYNC_MAX_POSTS_PER_SESSION:
+            raise HTTPException(429, "Слишком много фрагментов в сессии")
+        s["posts"].append({
+            "from_role": body.from_role,
+            "payload": body.payload,
+            "ts": _time.time(),
+        })
+        idx = len(s["posts"])
+    return {"status": "ok", "index": idx}
+
+
+@router.get("/keysync/{sid}/poll")
+def keysync_poll(sid: str, for_role: str = Query(...), after: int = Query(0),
+                 authorization: Optional[str] = Header(None)):
+    """Забрать сообщения от другой роли с индексом > after.
+    Не long-poll (uvicorn-sync, чтобы не блокировать воркер): клиент сам
+    повторяет каждые 1.5-2 секунды. TTL сессии короткий, нагрузка ок."""
+    auth_member(authorization)
+    if for_role not in ("A", "B"):
+        raise HTTPException(400, "for_role: ожидается 'A' или 'B'")
+    other = "B" if for_role == "A" else "A"
+    with _keysync_lock:
+        _keysync_gc()
+        s = _keysync_sessions.get(sid)
+        if not s:
+            raise HTTPException(404, "Сессия не найдена или истекла")
+        posts = []
+        for i, p in enumerate(s["posts"], start=1):
+            if i <= after:
+                continue
+            if p["from_role"] == other:
+                posts.append({"index": i, "payload": p["payload"]})
+        ttl_left = _KEYSYNC_TTL - int(_time.time() - s["created_at"])
+    return {"posts": posts, "ttl_left": max(0, ttl_left)}
+
+
+@router.delete("/keysync/{sid}")
+def keysync_close(sid: str, authorization: Optional[str] = Header(None)):
+    """Явное завершение сессии (юзер закрыл QR-окно)."""
+    auth_member(authorization)
+    with _keysync_lock:
+        s = _keysync_sessions.pop(sid, None)
+        if s and s.get("short_code"):
+            _keysync_by_code.pop(s["short_code"], None)
+    return {"status": "ok"}
+
+
 @router.get("/keys/{username}")
 def get_user_pub_key(username: str, authorization: Optional[str] = Header(None)):
     auth_member(authorization)
