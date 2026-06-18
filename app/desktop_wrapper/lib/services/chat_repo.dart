@@ -20,6 +20,13 @@ import 'crypto_service.dart';
 import 'db_service.dart';
 import 'ws_client.dart';
 
+/// Итог синхронизации ключей — UI (KeyGate) реагирует:
+///   ok             — всё синхронизировано, показывать ничего не надо;
+///   needChooseMode — режим хранения не выбран, показать выбор server/local;
+///   needPassword   — server-режим, нужен пароль для приватника с сервера;
+///   error          — сетевой/иной сбой (вход не блокируем).
+enum KeySyncOutcome { ok, needChooseMode, needPassword, error }
+
 class ChatRepo {
   ChatRepo._();
   static final ChatRepo instance = ChatRepo._();
@@ -31,6 +38,10 @@ class ChatRepo {
 
   /// Список диалогов для главного списка.
   final ValueNotifier<List<StoredDialog>> dialogsNotifier = ValueNotifier([]);
+
+  /// Состояние синхронизации E2E-ключей. UI (KeyGate) подписывается: при
+  /// needChooseMode показывает выбор режима, при needPassword запрашивает пароль.
+  final ValueNotifier<KeySyncOutcome> keySyncNotifier = ValueNotifier(KeySyncOutcome.ok);
 
   /// Online/offline статус пиров. Подписка через `watchPresence(username)`.
   /// Запрашивается через WS `presence.ask`, обновляется через WS `presence`.
@@ -81,9 +92,11 @@ class ChatRepo {
     _initialized = true;
     _myUsername = await AuthService.username();
 
-    // Зальём свой публичный ключ на сервер (других схема не требует —
-    // приватный храним только локально в SecureStorage).
-    await _publishMyPubKey();
+    // Синхронизация E2E-ключей (storage_mode-aware). Без пароля: если режим не
+    // выбран или server-режим требует приватник с сервера — выставим состояние в
+    // keySyncNotifier, а UI (KeyGate) дозапросит выбор/пароль. Никаких заглушек.
+    keySyncNotifier.value = await syncKeys();
+    if (kDebugMode) print('[ChatRepo] init keySync → ${keySyncNotifier.value}');
 
     // Загрузить локальный список диалогов сразу.
     final dialogs = await _db.getDialogs();
@@ -154,52 +167,114 @@ class ChatRepo {
     }
   }
 
-  // ─── Публикация моего публичного ключа ───────────────────────────────
-  /// Сравниваем серверный pubkey с моим локальным. Если на сервере другой
-  /// (или его нет) — публикуем мой (т.к. **приват только у нас**, мы единственный
-  /// источник истины для этого аккаунта на данном устройстве). Если совпадают —
-  /// ничего не делаем (экономим rate-limit 5/час).
+  // ─── Синхронизация E2E-ключей (storage_mode-aware, зеркало web ensureKeys) ──
+  /// Безопасная замена старого _publishMyPubKey. Порядок (как договорились):
+  ///   1) ПУБЛИЧНЫЙ: локальный pub ↔ серверный — НЕ затираем сервер своим в чужом
+  ///      режиме и НЕ шлём заглушку-приватник;
+  ///   2) ПРИВАТНЫЙ: трогаем только в server-режиме (там приватник под паролем
+  ///      лежит на сервере) — сверяем / восстанавливаем / публикуем.
   ///
-  /// Бонус: если на сервере был чужой pubkey (например веб-клиент с другим
-  /// приватом) и мы его перезаписываем — пиры увидят rotation и должны
-  /// подтвердить новый ключ через TOFU. До того их зашифрованные сообщения
-  /// не расшифровать (приват другой).
-  Future<void> _publishMyPubKey() async {
+  /// [password]   — пароль аккаунта (нужен только server-режиму).
+  /// [chosenMode] — выбор из модалки, если режим ещё не выбран.
+  Future<KeySyncOutcome> syncKeys({String? password, String? chosenMode}) async {
     try {
-      final pubRaw = await _crypto.myPublicKeyRaw();
-      final myPubB64 = base64Encode(pubRaw);
-      // 1. Сравнить с сервером
-      String? serverPub;
+      final myPubB64 = base64Encode(await _crypto.myPublicKeyRaw());
+
+      // Режим хранения приватника.
+      String? mode;
       try {
-        final mine = await _api.chatGet('/keys/me');
-        if (mine is Map) serverPub = mine['x25519_pub'] as String?;
-      } catch (_) {/* если /keys/me провалился — попробуем upload */}
-      if (serverPub == myPubB64) {
-        if (kDebugMode) print('[ChatRepo] pubkey уже актуален');
-        return;
+        final sm = await _api.chatGet('/keys/storage_mode');
+        if (sm is Map) mode = sm['mode'] as String?;
+      } catch (_) {}
+      // Пользователь только что выбрал режим — зафиксировать на сервере.
+      if (chosenMode != null && chosenMode != mode) {
+        try {
+          await _api.chatPost('/keys/storage_mode', {'mode': chosenMode});
+          mode = chosenMode;
+        } catch (e) {
+          if (kDebugMode) print('[ChatRepo] set storage_mode failed: $e');
+        }
       }
-      if (kDebugMode) {
-        print('[ChatRepo] pubkey mismatch: '
-            'server=${serverPub?.substring(0, 16) ?? "null"}... '
-            'mine=${myPubB64.substring(0, 16)}... → залить мой');
-      }
-      // 2. Заливаем мой. encrypted_private_key — 48 байт placeholder (приват
-      // в SecureStorage локально, sync приватников через seed/QR — отдельная фаза).
-      final dummyEncPriv = base64Encode(List<int>.filled(48, 0));
-      final dummySalt = base64Encode(List<int>.filled(16, 0));
-      await _api.chatPost('/keys/upload', {
-        'x25519_pub': myPubB64,
-        'encrypted_private_key': dummyEncPriv,
-        'key_salt': dummySalt,
-      });
-      if (kDebugMode) print('[ChatRepo] pubkey опубликован успешно');
-      // 3. Чистим локальный кэш peer-ов: если у меня кэширован их pubkey
-      // отдельно — он остаётся валидным; чистка нужна если пиры тоже сменили
-      // ключи (TOFU re-pin при ошибке расшифровки).
-      _peerPubCache.clear();
+      if (mode == null) return KeySyncOutcome.needChooseMode;
+
+      // Текущее состояние ключей на сервере.
+      String? serverPub, encPriv, keySalt;
+      try {
+        final me = await _api.chatGet('/keys/me');
+        if (me is Map) {
+          serverPub = me['x25519_pub'] as String?;
+          encPriv = me['encrypted_private_key'] as String?;
+          keySalt = me['key_salt'] as String?;
+        }
+      } catch (_) {}
+
+      return mode == 'server'
+          ? await _syncServerMode(myPubB64, serverPub, encPriv, keySalt, password)
+          : await _syncLocalMode(myPubB64, serverPub);
     } catch (e) {
-      if (kDebugMode) print('[ChatRepo] publish pub failed: $e');
+      if (kDebugMode) print('[ChatRepo] syncKeys error: $e');
+      return KeySyncOutcome.error;
     }
+  }
+
+  /// server-режим: одна identity на всех устройствах, приватник под паролем
+  /// лежит на сервере. Сверяем pub → восстанавливаем/публикуем приватник.
+  Future<KeySyncOutcome> _syncServerMode(String myPubB64, String? serverPub,
+      String? encPriv, String? keySalt, String? password) async {
+    final hasServerPub = serverPub != null && serverPub.isNotEmpty;
+
+    // Публичный совпал → локальный приватник и есть серверный. Готово.
+    if (hasServerPub && serverPub == myPubB64) return KeySyncOutcome.ok;
+
+    // На сервере ДРУГАЯ identity с восстановимым приватником → принимаем серверную.
+    if (hasServerPub &&
+        encPriv != null && encPriv.isNotEmpty &&
+        keySalt != null && keySalt.isNotEmpty) {
+      if (password == null) return KeySyncOutcome.needPassword;
+      try {
+        final recovered =
+            base64Encode(await _crypto.importServerPriv(encPriv, keySalt, password));
+        _peerPubCache.clear();
+        if (recovered != serverPub) {
+          // Восстановленный приватник не даёт серверный pub — битый блоб
+          // (например наша же старая заглушка). Нужен ручной перезалив.
+          if (kDebugMode) print('[ChatRepo] recovered pub != server pub (битый блоб?)');
+          return KeySyncOutcome.needPassword;
+        }
+        if (kDebugMode) print('[ChatRepo] server-режим: приватник восстановлен с сервера');
+        return KeySyncOutcome.ok;
+      } catch (e) {
+        if (kDebugMode) print('[ChatRepo] importServerPriv failed (пароль?): $e');
+        return KeySyncOutcome.needPassword;
+      }
+    }
+
+    // Сервер пуст / без приватника → публикуем НАШ приватник зашифрованным паролем.
+    if (password == null) return KeySyncOutcome.needPassword;
+    final blob = await _crypto.exportEncryptedPrivForServer(password);
+    await _api.chatPost('/keys/upload', {
+      'x25519_pub': myPubB64,
+      'encrypted_private_key': blob['encrypted_private_key'],
+      'key_salt': blob['key_salt'],
+      'storage_mode': 'server',
+    });
+    _peerPubCache.clear();
+    if (kDebugMode) print('[ChatRepo] server-режим: приватник опубликован на сервер');
+    return KeySyncOutcome.ok;
+  }
+
+  /// local-режим: приватник НИКОГДА не уходит с устройства. На сервер — только
+  /// pub. Бэкенд сам решает: owner-device обновит users.x25519_pub, доп.устройство
+  /// зарегистрирует свой device-pub, НЕ трогая owner-pub. Заглушек нет.
+  Future<KeySyncOutcome> _syncLocalMode(String myPubB64, String? serverPub) async {
+    if (serverPub == myPubB64) return KeySyncOutcome.ok; // уже в синхроне
+    await _api.chatPost('/keys/upload', {
+      'x25519_pub': myPubB64,
+      'storage_mode': 'local',
+    });
+    _peerPubCache.clear();
+    if (kDebugMode) print('[ChatRepo] local-режим: pub опубликован (без приватника)');
+    return KeySyncOutcome.ok;
   }
 
   /// При получении envelope, которую не можем расшифровать (InvalidCipherText),

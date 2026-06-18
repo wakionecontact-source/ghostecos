@@ -89,6 +89,124 @@ class CryptoService {
     await _secure.delete(key: _kPubRaw);
   }
 
+  // ════════════════════════════════════════════════════════════════════
+  // SERVER-режим хранения приватника: приватник, зашифрованный паролем,
+  // лежит на сервере (users.encrypted_private_key). Формат БАЙТ-В-БАЙТ
+  // совместим с веб-GhostChat (WebCrypto subtle):
+  //   PKCS8(P-256 priv) → AES-GCM( PBKDF2(pwd, salt16, 260000, SHA-256), iv12 )
+  //   encrypted_private_key = base64( iv(12) || ct||tag ),  key_salt = base64(salt16)
+  // Проверено кросс-тестом против WebCrypto: tool/key_interop_check.{dart,js}.
+  // ════════════════════════════════════════════════════════════════════
+
+  // Фикс-шаблон PKCS8 для P-256 до 32-байтного D (OID ecPublicKey + prime256v1,
+  // далее [1] BIT STRING с pub65). Длины фиксированы → можно вставлять D и pub.
+  static final List<int> _pkcs8Head = [
+    0x30, 0x81, 0x87, 0x02, 0x01, 0x00, //
+    0x30, 0x13, 0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01, //
+    0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, //
+    0x04, 0x6D, 0x30, 0x6B, 0x02, 0x01, 0x01, 0x04, 0x20, //
+  ];
+  static final List<int> _pkcs8PubTag = [0xA1, 0x44, 0x03, 0x42, 0x00];
+
+  Uint8List _dToPkcs8(Uint8List d32, Uint8List pubRaw65) {
+    final b = BytesBuilder()
+      ..add(_pkcs8Head)
+      ..add(d32)
+      ..add(_pkcs8PubTag)
+      ..add(pubRaw65);
+    return b.toBytes();
+  }
+
+  // Минимальный TLV-парсер: [tag, contentStart, contentLen, next].
+  List<int> _tlv(Uint8List b, int pos) {
+    final tag = b[pos];
+    var len = b[pos + 1];
+    var hdr = 2;
+    if (len & 0x80 != 0) {
+      final n = len & 0x7F;
+      len = 0;
+      for (var i = 0; i < n; i++) {
+        len = (len << 8) | b[pos + 2 + i];
+      }
+      hdr = 2 + n;
+    }
+    return [tag, pos + hdr, len, pos + hdr + len];
+  }
+
+  // Извлечь сырой 32-байтный D из ЛЮБОГО валидного PKCS8 EC-приватника
+  // (в т.ч. из экспорта WebCrypto, где есть опциональный public key).
+  Uint8List _pkcs8ToD(Uint8List pkcs8) {
+    final outer = _tlv(pkcs8, 0); // SEQUENCE
+    var p = outer[1];
+    final ver = _tlv(pkcs8, p); p = ver[3]; // INTEGER version
+    final alg = _tlv(pkcs8, p); p = alg[3]; // SEQUENCE alg
+    final pk = _tlv(pkcs8, p); // OCTET STRING privateKey
+    final inner = _tlv(pkcs8, pk[1]); // SEQUENCE ECPrivateKey
+    var q = inner[1];
+    final iv = _tlv(pkcs8, q); q = iv[3]; // INTEGER 1
+    final dOct = _tlv(pkcs8, q); // OCTET STRING D
+    var d = pkcs8.sublist(dOct[1], dOct[1] + dOct[2]);
+    if (d.length > 32) d = d.sublist(d.length - 32);
+    if (d.length < 32) {
+      final padded = Uint8List(32);
+      padded.setRange(32 - d.length, 32, d);
+      d = padded;
+    }
+    return Uint8List.fromList(d);
+  }
+
+  // PBKDF2(password, salt, 260000, SHA-256) → 32-байтный AES-ключ (как веб).
+  Uint8List _deriveMasterKey(String password, Uint8List salt) {
+    final kd = PBKDF2KeyDerivator(HMac(SHA256Digest(), 64))
+      ..init(Pbkdf2Parameters(salt, 260000, 32));
+    return kd.process(Uint8List.fromList(utf8.encode(password)));
+  }
+
+  Uint8List _pubRawFromD(BigInt d) => _pubToRaw(ECPublicKey((_curve.G * d)!, _curve));
+
+  /// SERVER-режим: экспортировать локальный приватник зашифрованным паролем,
+  /// в формате веба. Возвращает {encrypted_private_key, key_salt} (base64) для
+  /// POST /keys/upload.
+  Future<Map<String, String>> exportEncryptedPrivForServer(String password) async {
+    await ensureKeys();
+    final d32 = _encodeBigInt(_privD!, 32);
+    final pkcs8 = _dToPkcs8(d32, _myPubRaw!);
+    final salt = _randomBytes(16);
+    final master = _deriveMasterKey(password, salt);
+    final iv = _randomBytes(12);
+    final gcm = GCMBlockCipher(AESEngine())
+      ..init(true, AEADParameters(KeyParameter(master), 128, iv, Uint8List(0)));
+    final ct = gcm.process(pkcs8);
+    final enc = (BytesBuilder()..add(iv)..add(ct)).toBytes();
+    return {
+      'encrypted_private_key': base64Encode(enc),
+      'key_salt': base64Encode(salt),
+    };
+  }
+
+  /// SERVER-режим: восстановить приватник, скачанный с сервера (расшифровать
+  /// паролем), и сохранить локально. Возвращает свой pub raw (65 байт). Бросает
+  /// при неверном пароле / битом блобе. После вызова identity устройства =
+  /// серверная (совпадает с серверным x25519_pub).
+  Future<Uint8List> importServerPriv(String encB64, String saltB64, String password) async {
+    final enc = base64Decode(encB64);
+    if (enc.length < 12 + 16) throw Exception('encrypted_private_key слишком короткий');
+    final iv = Uint8List.fromList(enc.sublist(0, 12));
+    final ct = Uint8List.fromList(enc.sublist(12));
+    final master = _deriveMasterKey(password, Uint8List.fromList(base64Decode(saltB64)));
+    final gcm = GCMBlockCipher(AESEngine())
+      ..init(false, AEADParameters(KeyParameter(master), 128, iv, Uint8List(0)));
+    final pkcs8 = gcm.process(ct); // бросит InvalidCipherText при неверном пароле
+    final d = _decodeBigInt(_pkcs8ToD(pkcs8));
+    final pubRaw = _pubRawFromD(d);
+    _privD = d;
+    _myPubRaw = pubRaw;
+    _myPub = _rawToPub(pubRaw);
+    await _secure.write(key: _kPrivD, value: base64Encode(_encodeBigInt(d, 32)));
+    await _secure.write(key: _kPubRaw, value: base64Encode(pubRaw));
+    return pubRaw;
+  }
+
   /// Зашифровать payload для конкретного peer-а (raw 65-byte pubkey).
   /// Возвращает base64(iv(12) || ct || tag(16)).
   Future<String> encryptFor({
