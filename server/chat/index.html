@@ -589,6 +589,24 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 .qr-status{font-size:12.5px;text-align:center;color:var(--sub);min-height:18px;line-height:1.5;}
 .qr-status.ok{color:#86efac;}
 .qr-status.err{color:#fda4af;}
+
+/* TDA toggle */
+.tda-toggle{position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0;}
+.tda-toggle input{opacity:0;width:0;height:0;}
+.tda-slider{position:absolute;inset:0;background:rgba(255,255,255,0.12);border-radius:99px;cursor:pointer;transition:background .2s;}
+.tda-slider::before{content:'';position:absolute;left:3px;top:3px;width:18px;height:18px;background:#cbd5e1;border-radius:50%;transition:transform .2s, background .2s;}
+.tda-toggle input:checked + .tda-slider{background:linear-gradient(95deg,#a855f7,#ec4899);}
+.tda-toggle input:checked + .tda-slider::before{transform:translateX(20px);background:#fff;}
+
+/* TDA pending карточка */
+.pend-card{background:linear-gradient(180deg,rgba(244,63,94,0.10),rgba(244,63,94,0.03));border:1px solid rgba(244,63,94,0.34);border-radius:13px;padding:12px 14px;margin-bottom:10px;}
+.pend-card-h{display:flex;align-items:center;gap:10px;margin-bottom:8px;font-weight:700;font-size:14px;color:var(--text);}
+.pend-card-h i{color:#fb7185;font-size:14px;}
+.pend-card-meta{font-size:11.5px;color:var(--sub);margin-bottom:9px;}
+.pend-card-row{display:flex;gap:8px;}
+.pend-card-row input{flex:2;background:rgba(15,23,42,0.7);border:1px solid var(--border-strong);border-radius:9px;padding:9px;color:var(--text);font-size:15px;font-weight:700;font-family:'JetBrains Mono','Consolas',monospace;letter-spacing:4px;text-align:center;outline:none;}
+.pend-card-row button{flex:1;background:linear-gradient(95deg,#a855f7,#ec4899);color:#fff;border:none;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;padding:9px;}
+.pend-card-row button.danger{background:transparent;border:1px solid rgba(244,63,94,0.4);color:#fda4af;flex:0.7;}
 .m-handle{width:36px;height:4px;background:#1e293b;border-radius:2px;margin:0 auto 16px;}
 @media (min-width:600px){.m-handle{display:none;}}
 .m-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
@@ -824,17 +842,40 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
         </div>
         <button class="set-btn" onclick="changeStorageMode()">Изменить</button>
       </div>
+
+      <div class="set-row">
+        <div class="set-row-main">
+          <div class="set-row-title">Подтверждение новых устройств</div>
+          <div class="set-row-sub" id="setTdaText">При входе с нового устройства потребуется одобрить его с этого — кодом из 6 цифр.</div>
+        </div>
+        <label class="tda-toggle">
+          <input type="checkbox" id="setTdaCheck" onchange="toggleTda()">
+          <span class="tda-slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Секция «Ожидающие одобрения» (показывается только если есть pending) -->
+    <div class="set-section" id="setPendingSection" style="display:none;">
+      <div class="set-section-title">Ожидают одобрения</div>
+      <div id="setPendingList"></div>
     </div>
 
     <div class="set-section">
       <div class="set-section-title">
         Мои устройства
-        <span style="display:flex;gap:6px;align-items:center;">
-          <button class="set-add-btn" onclick="openKeysyncReceive()" title="Получить ключ с другого моего устройства">
-            <i class="fa-solid fa-arrow-down-to-bracket"></i> Получить
+        <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+          <button class="set-add-btn" onclick="openKeyFileImport()" title="Импортировать ключ из файла">
+            <i class="fa-solid fa-file-arrow-up"></i> Импорт
           </button>
-          <button class="set-add-btn" onclick="openKeysyncShow()" title="Дать ключ новому устройству">
-            <i class="fa-solid fa-plus"></i> Подключить
+          <button class="set-add-btn" onclick="openKeyFileExport()" title="Сохранить ключ в зашифрованный файл">
+            <i class="fa-solid fa-file-arrow-down"></i> Экспорт
+          </button>
+          <button class="set-add-btn" onclick="openKeysyncReceive()" title="Получить ключ через QR-код">
+            <i class="fa-solid fa-arrow-down-to-bracket"></i> QR-получить
+          </button>
+          <button class="set-add-btn" onclick="openKeysyncShow()" title="Дать ключ через QR-код">
+            <i class="fa-solid fa-plus"></i> QR-показать
           </button>
         </span>
       </div>
@@ -885,6 +926,29 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
         <i class="fa-solid fa-arrow-right"></i> Получить ключ
       </button>
       <div class="qr-status" id="qrRecvStatus"></div>
+    </div>
+  </div>
+</div>
+
+<!-- TDA: модалка одобрения нового устройства (открывается по WS login.pending) -->
+<div class="modal-overlay" id="approveLoginModal" style="z-index:570;" onclick="if(event.target===this)closeApproveLogin()">
+  <div class="modal-sheet">
+    <div class="m-handle"></div>
+    <div class="m-head">
+      <div class="m-title"><i class="fa-solid fa-shield-halved" style="margin-right:8px;color:var(--sub)"></i>Запрос на вход</div>
+      <button class="m-close" onclick="closeApproveLogin()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div style="padding:6px 0 18px;">
+      <div class="qr-note" id="appReqInfo">…</div>
+      <div style="margin-top:14px;">
+        <div style="font-size:11px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Введите код, показанный на новом устройстве</div>
+        <input id="appReqCode" type="text" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="000000" style="width:100%;background:rgba(15,23,42,0.6);border:1px solid var(--border-strong);border-radius:11px;padding:14px;color:var(--text);font-size:22px;font-weight:800;font-family:'JetBrains Mono','Consolas',monospace;letter-spacing:8px;text-align:center;outline:none;">
+        <div id="appReqStatus" class="qr-status" style="min-height:18px;margin-top:8px;"></div>
+        <div style="display:flex;gap:8px;margin-top:14px;">
+          <button id="appReqDeny" class="set-btn danger" style="flex:1;padding:12px;" onclick="doDenyPending()">Отклонить</button>
+          <button id="appReqApprove" class="qr-go-btn" style="flex:2;margin:0;" onclick="doApprovePending()"><i class="fa-solid fa-check"></i> Одобрить</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -1522,6 +1586,124 @@ async function refreshStorageModeRow(){
   } catch(e){
     el.textContent = 'Не удалось загрузить';
   }
+  // Заодно подтянуть TDA-флажок и pending-секцию.
+  refreshTdaRow();
+  loadPendingLoginsIntoSettings();
+}
+
+// ── TDA: тумблер и pending в настройках ──
+async function refreshTdaRow(){
+  try {
+    const r = await chat('/tda');
+    document.getElementById('setTdaCheck').checked = !!r.enabled;
+  } catch(e){
+    // ignore
+  }
+}
+async function toggleTda(){
+  const checked = document.getElementById('setTdaCheck').checked;
+  try {
+    await chat('/tda', 'POST', { enabled: checked });
+  } catch(e){
+    document.getElementById('setTdaCheck').checked = !checked;
+    alert('Не удалось сохранить: ' + (e.message || e));
+  }
+}
+
+async function loadPendingLoginsIntoSettings(){
+  const section = document.getElementById('setPendingSection');
+  const list = document.getElementById('setPendingList');
+  try {
+    const r = await chat('/devices/pending');
+    const pend = r.pending || [];
+    if (!pend.length){
+      section.style.display = 'none';
+      list.innerHTML = '';
+      return;
+    }
+    section.style.display = 'block';
+    list.innerHTML = pend.map(p => `
+      <div class="pend-card" data-rid="${esc(p.request_id)}">
+        <div class="pend-card-h"><i class="fa-solid fa-shield-halved"></i>${esc(p.device_name || 'Новое устройство')}</div>
+        <div class="pend-card-meta">Запрос: ${new Date((p.created_at||0)*1000).toLocaleString('ru-RU')} · действует до ${new Date((p.expires_at||0)*1000).toLocaleTimeString('ru-RU')}</div>
+        <div class="pend-card-row">
+          <input type="text" inputmode="numeric" maxlength="6" placeholder="000000" id="pendCode_${esc(p.request_id)}">
+          <button class="danger" onclick="quickDenyPending('${esc(p.request_id)}')">Отклонить</button>
+          <button onclick="quickApprovePending('${esc(p.request_id)}')">Одобрить</button>
+        </div>
+      </div>`).join('');
+  } catch(e){
+    section.style.display = 'none';
+  }
+}
+
+async function quickApprovePending(rid){
+  const code = (document.getElementById('pendCode_'+rid)?.value || '').trim();
+  if (!code){ alert('Введите код'); return; }
+  try {
+    await chat('/devices/pending/' + encodeURIComponent(rid) + '/approve', 'POST', { code });
+    loadPendingLoginsIntoSettings();
+    if (typeof loadDevicesIntoSettings === 'function') loadDevicesIntoSettings();
+  } catch(e){
+    alert('Не удалось одобрить: ' + (e.message || e));
+  }
+}
+async function quickDenyPending(rid){
+  if (!confirm('Отклонить запрос на вход?')) return;
+  try {
+    await chat('/devices/pending/' + encodeURIComponent(rid) + '/deny', 'POST', {});
+    loadPendingLoginsIntoSettings();
+  } catch(e){
+    alert('Не удалось: ' + (e.message || e));
+  }
+}
+
+// ── TDA: WS-уведомление и модалка одобрения на trusted устройстве ──
+let _approveRid = null;
+function showLoginApprovalToast(d){
+  // d = {request_id, device_name, platform, ip, ts}
+  _approveRid = d.request_id;
+  document.getElementById('appReqInfo').innerHTML =
+    `Кто-то пытается войти в ваш аккаунт. ` +
+    `<br><b>${esc(d.device_name || 'Новое устройство')}</b> (${esc(d.platform || '?')}, IP ${esc(d.ip || '?')}).` +
+    `<br>Если это вы — введите 6-значный код, который видите на новом устройстве. ` +
+    `Если не вы — отклоните и смените пароль.`;
+  document.getElementById('appReqCode').value = '';
+  document.getElementById('appReqStatus').textContent = '';
+  document.getElementById('appReqStatus').className = 'qr-status';
+  document.getElementById('approveLoginModal').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  setTimeout(() => document.getElementById('appReqCode').focus(), 100);
+}
+function closeApproveLogin(){
+  document.getElementById('approveLoginModal').classList.remove('open');
+  document.body.style.overflow = '';
+  _approveRid = null;
+}
+async function doApprovePending(){
+  if (!_approveRid) return;
+  const code = (document.getElementById('appReqCode').value || '').trim();
+  if (!code){ return; }
+  const st = document.getElementById('appReqStatus');
+  st.className = 'qr-status'; st.textContent = 'Проверяю код…';
+  try {
+    await chat('/devices/pending/' + encodeURIComponent(_approveRid) + '/approve', 'POST', { code });
+    st.textContent = 'Одобрено!'; st.className = 'qr-status ok';
+    setTimeout(closeApproveLogin, 900);
+  } catch(e){
+    st.textContent = e.message || 'Не удалось одобрить';
+    st.className = 'qr-status err';
+  }
+}
+async function doDenyPending(){
+  if (!_approveRid) return;
+  if (!confirm('Отклонить вход?')) return;
+  try {
+    await chat('/devices/pending/' + encodeURIComponent(_approveRid) + '/deny', 'POST', {});
+    closeApproveLogin();
+  } catch(e){
+    alert('Не удалось: ' + (e.message || e));
+  }
 }
 
 async function changeStorageMode(){
@@ -1633,6 +1815,123 @@ async function revokeDeviceConfirm(pk, name){
     await chat('/devices/' + pk + '/revoke', 'POST', {});
     loadDevicesIntoSettings();
   } catch(e){ alert('Ошибка: ' + (e.message || e)); }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// KEY FILE: экспорт/импорт зашифрованного ключа в файл .gcsk
+// ════════════════════════════════════════════════════════════════════
+// Файл формат — JSON:
+//   {magic:"GCSKv1", kdf:"pbkdf2-sha256-260000", cipher:"aes-256-gcm",
+//    salt:base64(16), iv:base64(12), ct:base64,
+//    pub:base64, user:"username", exported_at: ISO8601}
+// Зашифровано отдельным паролем для файла (не аккаунтным).
+
+async function openKeyFileExport(){
+  if (!myPriv || !myPub){
+    alert('Приватный ключ не загружен в этом сеансе. Зайдите в чат и попробуйте ещё раз.');
+    return;
+  }
+  const pwd = prompt('Придумайте пароль для файла-ключа (минимум 8 символов). Этот пароль понадобится при импорте — запомните его отдельно от пароля аккаунта.');
+  if (!pwd) return;
+  if (pwd.length < 8){ alert('Пароль слишком короткий'); return; }
+  const pwd2 = prompt('Введите пароль ещё раз для проверки:');
+  if (pwd !== pwd2){ alert('Пароли не совпадают'); return; }
+  try {
+    // Достаём pkcs8-байты приватника из IDB.
+    const db = await openIDB();
+    const tx = db.transaction('keys', 'readonly');
+    const priv = await new Promise(r => { const q = tx.objectStore('keys').get('priv'); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
+    if (!priv || !priv.data){
+      alert('Приватный ключ не найден в локальном хранилище');
+      return;
+    }
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const master = await deriveMasterKey(pwd, salt);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, master, priv.data);
+    const blob = {
+      magic: 'GCSKv1',
+      kdf: 'pbkdf2-sha256-260000',
+      cipher: 'aes-256-gcm',
+      salt: b64e(salt),
+      iv: b64e(iv),
+      ct: b64e(new Uint8Array(ct)),
+      pub: myPub,
+      user: (me && me.username) || '',
+      exported_at: new Date().toISOString(),
+    };
+    const fname = `ghostchat-key-${(me && me.username) || 'me'}-${new Date().toISOString().slice(0,10)}.gcsk`;
+    const a = document.createElement('a');
+    const blobObj = new Blob([JSON.stringify(blob, null, 2)], {type:'application/json'});
+    a.href = URL.createObjectURL(blobObj);
+    a.download = fname;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  } catch(e){
+    alert('Не удалось экспортировать: ' + (e.message || e));
+  }
+}
+
+async function openKeyFileImport(){
+  // Защита: импорт работает только если ты залогинен (проверяем что есть me).
+  if (!me || !token){
+    alert('Сначала войдите в аккаунт. Файл-ключ проверит, что pubkey в нём совпадает с вашим аккаунтом.');
+    return;
+  }
+  // Создаём file picker динамически.
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.gcsk,application/json,.json';
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      let blob;
+      try { blob = JSON.parse(text); }
+      catch(_){ alert('Это не валидный JSON-файл'); return; }
+      if (blob.magic !== 'GCSKv1'){ alert('Файл повреждён или не является ключом GhostChat (нет magic-заголовка GCSKv1)'); return; }
+      // Сверяем pub с pub аккаунта.
+      let myAccountPub;
+      try {
+        const r = await chat('/keys/me');
+        myAccountPub = r.x25519_pub;
+      } catch(e){
+        alert('Не удалось получить ваш аккаунтный pubkey: ' + (e.message || e));
+        return;
+      }
+      if (myAccountPub && blob.pub && myAccountPub !== blob.pub){
+        if (!confirm('Pubkey в файле НЕ совпадает с pubkey вашего аккаунта.\n\n' +
+                     'Файл: ' + (blob.user || '?') + ' (pub: ' + blob.pub.slice(0,16) + '…)\n' +
+                     'Аккаунт: ' + me.username + ' (pub: ' + myAccountPub.slice(0,16) + '…)\n\n' +
+                     'Если вы продолжите, ключ из файла станет вашим (старая переписка под аккаунтным ключом расшифровываться не будет). Продолжить?')){
+          return;
+        }
+      }
+      const pwd = prompt('Введите пароль файла-ключа:');
+      if (!pwd) return;
+      try {
+        const salt = b64d(blob.salt);
+        const master = await deriveMasterKey(pwd, salt);
+        const iv = b64d(blob.iv);
+        const ct = b64d(blob.ct);
+        const privBytes = await crypto.subtle.decrypt({name:'AES-GCM', iv}, master, ct);
+        myPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
+        myPub = blob.pub;
+        await saveKeysToIDB(privBytes);
+        // Аплоадим pub на сервер в режиме local (а если уже там что-то было —
+        // upload сохраняет storage_mode который уже выставлен).
+        await chat('/keys/upload', 'POST', { x25519_pub: myPub, storage_mode: 'local' });
+        alert('Ключ импортирован. Перезагружаю чат…');
+        location.reload();
+      } catch(e){
+        alert('Неверный пароль или повреждённый файл: ' + (e.message || e));
+      }
+    } catch(e){
+      alert('Ошибка: ' + (e.message || e));
+    }
+  };
+  input.click();
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -2197,6 +2496,39 @@ function switchTab(t){
   document.getElementById('tabReg').classList.toggle('active',t==='reg');
   document.getElementById('loginError').textContent='';document.getElementById('regError').textContent='';
 }
+// Постоянный device_id для этого браузера. Один раз — на всю жизнь localStorage.
+function getOrCreateDeviceId(){
+  let did = localStorage.getItem('gs_device_id');
+  if (!did){
+    did = (crypto.randomUUID && crypto.randomUUID()) ||
+          ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+            (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c/4).toString(16));
+    localStorage.setItem('gs_device_id', did);
+  }
+  return did;
+}
+function getDeviceName(){
+  const ua = navigator.userAgent || '';
+  let plat = 'Web';
+  if (/Edg\//.test(ua)) plat = 'Edge';
+  else if (/Chrome\//.test(ua)) plat = 'Chrome';
+  else if (/Firefox\//.test(ua)) plat = 'Firefox';
+  else if (/Safari\//.test(ua) && !/Chrome/.test(ua)) plat = 'Safari';
+  let os = '?';
+  if (/Windows/.test(ua)) os = 'Windows';
+  else if (/Mac OS X/.test(ua)) os = 'macOS';
+  else if (/Android/.test(ua)) os = 'Android';
+  else if (/iPhone|iPad/.test(ua)) os = 'iOS';
+  else if (/Linux/.test(ua)) os = 'Linux';
+  return `${plat} · ${os}`;
+}
+function getDevicePlatform(){
+  const ua = navigator.userAgent || '';
+  if (/Android/.test(ua)) return 'android';
+  if (/iPhone|iPad/.test(ua)) return 'ios';
+  return 'web';
+}
+
 async function doLogin(){
   const btn=document.getElementById('loginBtn'),err=document.getElementById('loginError');
   const u=document.getElementById('loginUsername').value.trim();
@@ -2204,7 +2536,16 @@ async function doLogin(){
   err.textContent='';if(!u||!p){err.textContent='Заполните все поля';return;}
   btn.disabled=true;btn.textContent='...';
   try{
-    const d=await soc('/login','POST',{username:u,password:p});
+    const d=await soc('/login','POST',{
+      username:u, password:p,
+      device_id: getOrCreateDeviceId(),
+      device_name: getDeviceName(),
+      platform: getDevicePlatform(),
+    });
+    // TDA: сервер требует одобрения с уже доверенного устройства.
+    if (d.requires_approval){
+      return showAuthPendingApproval(d, u, p);
+    }
     token=d.token;me=d;
     localStorage.setItem('gs_token',token);localStorage.setItem('gs_me',JSON.stringify(me));setSsoCookie(token);
     showBoot('Подготовка чата', 'Минуточку…');
@@ -2219,6 +2560,94 @@ async function doLogin(){
     }
   }catch(e){console.error('[doLogin FAILED]', e);err.textContent=e.message||'Ошибка входа';showAuth();}
   btn.disabled=false;btn.textContent='Войти';
+}
+
+// ── TDA: экран ожидания одобрения нового устройства ──
+let _tdaPendingTimer = 0;
+let _tdaPendingDeadline = 0;
+
+function showAuthPendingApproval(d, username, password){
+  // d = {requires_approval, request_id, code, username, expires_in}
+  // Показываем фуллскрин-экран в authScreen-зоне.
+  const code = d.code || '';
+  const rid = d.request_id;
+  _tdaPendingDeadline = Date.now() + (d.expires_in || 300) * 1000;
+  // Сохраняем пароль в памяти, чтобы после approve продолжить ensureKeys.
+  const ctx = { rid, username, password };
+  const auth = document.getElementById('authScreen');
+  const pend = document.createElement('div');
+  pend.id = '_tdaPendBox';
+  pend.style.cssText = 'position:fixed;inset:0;background:rgba(2,6,23,0.92);backdrop-filter:blur(10px);z-index:600;display:flex;align-items:center;justify-content:center;padding:18px;';
+  pend.innerHTML = `
+    <div style="max-width:440px;width:100%;background:rgba(11,17,36,0.98);border:1px solid var(--border-strong);border-radius:22px;padding:24px;text-align:center;animation:fadeUp .25s ease-out;">
+      <div style="width:54px;height:54px;border-radius:16px;background:linear-gradient(135deg,#a855f7,#ec4899);display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:22px;margin-bottom:14px;box-shadow:0 10px 26px rgba(168,85,247,0.5);">
+        <i class="fa-solid fa-shield-halved"></i>
+      </div>
+      <div style="font-size:20px;font-weight:800;margin-bottom:8px;">Подтвердите вход</div>
+      <div style="font-size:13px;color:var(--sub);line-height:1.55;margin-bottom:18px;">Вы включили требование подтверждать новые устройства. Откройте чат на доверенном устройстве и введите код, показанный ниже.</div>
+      <div style="background:rgba(168,85,247,0.10);border:1.5px solid rgba(168,85,247,0.42);border-radius:14px;padding:18px;margin-bottom:14px;">
+        <div style="font-size:11px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">Код подтверждения</div>
+        <div style="font-size:36px;font-weight:900;letter-spacing:10px;color:var(--text);font-family:'JetBrains Mono','Consolas',monospace;">${code}</div>
+      </div>
+      <div id="_tdaPendStatus" style="font-size:13px;color:var(--sub);margin-bottom:14px;line-height:1.5;">Ожидание подтверждения…<br><span id="_tdaPendCountdown" style="color:#a855f7;font-weight:700;"></span></div>
+      <button id="_tdaPendCancel" style="background:transparent;border:1px solid var(--border);color:var(--sub);border-radius:11px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;">Отменить и войти заново</button>
+    </div>`;
+  document.body.appendChild(pend);
+  document.getElementById('_tdaPendCancel').onclick = () => {
+    cancelTdaPending();
+    document.getElementById('loginBtn').disabled = false;
+    document.getElementById('loginBtn').textContent = 'Войти';
+  };
+  _tdaPendingPoll(ctx);
+}
+
+function cancelTdaPending(){
+  if (_tdaPendingTimer){ clearTimeout(_tdaPendingTimer); _tdaPendingTimer = 0; }
+  const b = document.getElementById('_tdaPendBox');
+  if (b) b.remove();
+}
+
+async function _tdaPendingPoll(ctx){
+  // Опрашиваем status. Между опросами обновляем countdown.
+  const status = document.getElementById('_tdaPendStatus');
+  const countdown = document.getElementById('_tdaPendCountdown');
+  if (!status) return;  // Экран закрыт.
+  const sec = Math.max(0, Math.ceil((_tdaPendingDeadline - Date.now()) / 1000));
+  if (countdown) countdown.textContent = `осталось ${Math.floor(sec/60)}:${(sec%60).toString().padStart(2,'0')}`;
+  if (sec <= 0){
+    status.innerHTML = '<span style="color:#fda4af;">Срок кода истёк. Войдите заново.</span>';
+    return;
+  }
+  try {
+    const r = await fetch(`/api/chat/devices/pending/${encodeURIComponent(ctx.rid)}/status`).then(x => x.json());
+    if (r.phase === 'approved'){
+      // Получили токен, продолжаем стандартный поток входа.
+      cancelTdaPending();
+      token = r.token; me = { username: ctx.username, display_name: ctx.username };
+      localStorage.setItem('gs_token', token);
+      localStorage.setItem('gs_me', JSON.stringify(me));
+      try { setSsoCookie(token); } catch(_){}
+      showBoot('Подготовка чата', 'Подтверждение получено…');
+      try {
+        await ensureKeys(ctx.password);
+        await onReady();
+      } catch(e){
+        console.error('[TDA→onReady FAILED]', e);
+        document.getElementById('loginError').textContent = 'Не удалось продолжить вход: ' + (e.message || e);
+        showAuth();
+      }
+      return;
+    }
+    if (r.phase === 'denied'){
+      status.innerHTML = '<span style="color:#fda4af;">Отклонено на другом устройстве.</span>';
+      return;
+    }
+    if (r.phase === 'expired'){
+      status.innerHTML = '<span style="color:#fda4af;">Срок кода истёк. Войдите заново.</span>';
+      return;
+    }
+  } catch(_){ /* ignore network jitter */ }
+  _tdaPendingTimer = setTimeout(() => _tdaPendingPoll(ctx), 2000);
 }
 async function doRegister(){
   const btn=document.getElementById('regBtn'),err=document.getElementById('regError');
@@ -2235,8 +2664,17 @@ async function doRegister(){
   let ref = (new URLSearchParams(location.search)).get('ref') || localStorage.getItem('gs_ref') || null;
   if (ref) ref = ref.trim().replace(/^@/, '').toLowerCase();
   try{
-    const d=await soc('/register','POST',{username:u,display_name:n,password:p,ref:ref||undefined,age_18_confirm:age18});
+    const d=await soc('/register','POST',{
+      username:u, display_name:n, password:p,
+      ref: ref || undefined, age_18_confirm: age18,
+      device_id: getOrCreateDeviceId(),
+      device_name: getDeviceName(),
+      platform: getDevicePlatform(),
+    });
     if (ref) localStorage.removeItem('gs_ref');
+    if (d.requires_approval){
+      return showAuthPendingApproval(d, u, p);
+    }
     token=d.token;me=d;
     localStorage.setItem('gs_token',token);localStorage.setItem('gs_me',JSON.stringify(me));setSsoCookie(token);
     showBoot('Настройка профиля', 'Минуточку…');
@@ -4866,6 +5304,32 @@ window.addEventListener('online', _onWakeup);  // вернулся интерн�
 
 async function handleWs(m){
   const t = m.type, d = m.data || {};
+  // TDA: новое устройство хочет войти.
+  if (t === 'login.pending') {
+    showLoginApprovalToast(d);
+    return;
+  }
+  // Кто-то revoke-нул устройство. Если это наше — force logout.
+  if (t === 'device.revoked') {
+    try {
+      const r = await chat('/devices');
+      const cur = (r.devices || []).find(x => x.is_current);
+      if (cur && cur.id === d.device_pk) {
+        // Это нас отключили.
+        localStorage.removeItem('gs_token');
+        localStorage.removeItem('gs_me');
+        clearSsoCookie();
+        alert('Это устройство было отключено с другого вашего устройства. Войдите заново.');
+        location.reload();
+        return;
+      }
+      // Не нас — просто обновить список если открыт.
+      if (document.getElementById('settingsModal').classList.contains('open')) {
+        loadDevicesIntoSettings();
+      }
+    } catch(_){}
+    return;
+  }
   // chat.sealed_new — sealed sender отключён, игнорируем
   if (t === 'chat.sealed_new') return;
   if (t === 'chat.new' || t === 'chat.echo') {
