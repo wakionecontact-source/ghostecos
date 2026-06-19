@@ -527,7 +527,7 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 .ks-submit:disabled{opacity:0.45;cursor:not-allowed;}
 
 /* ── Settings modal ── */
-#settingsModal .modal-sheet, #keysyncShowModal .modal-sheet, #keysyncReceiveModal .modal-sheet{max-width:520px;max-height:92vh;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(168,85,247,0.55) transparent;}
+#settingsModal .modal-sheet, #keysyncShowModal .modal-sheet, #keysyncReceiveModal .modal-sheet{max-width:520px;max-height:92vh;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(168,85,247,0.55) transparent;transform:translateZ(0);}
 #settingsModal .modal-sheet::-webkit-scrollbar,
 #keysyncShowModal .modal-sheet::-webkit-scrollbar,
 #keysyncReceiveModal .modal-sheet::-webkit-scrollbar{width:7px;}
@@ -542,6 +542,16 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 .set-section-title{font-size:11px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;padding:0 4px;display:flex;align-items:center;justify-content:space-between;gap:10px;}
 .set-add-btn{background:transparent;border:1px solid var(--border-strong);color:var(--text);border-radius:8px;padding:5px 9px;font-size:11.5px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:5px;letter-spacing:0;text-transform:none;transition:border-color .15s,background .15s;}
 .set-add-btn:hover{border-color:#a855f7;background:rgba(168,85,247,0.10);}
+
+/* Tabs внутри Settings — два отдела (Безопасность / Устройства). */
+.set-tabs{display:flex;gap:3px;background:rgba(15,23,42,0.55);border:1px solid var(--border);border-radius:13px;padding:4px;margin:0 0 16px;}
+.set-tab{flex:1;background:transparent;border:none;color:var(--sub);font-weight:700;font-size:13px;padding:10px 12px;border-radius:9px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:7px;transition:background .18s ease, color .18s ease, transform .18s ease;font-family:inherit;}
+.set-tab i{font-size:11.5px;}
+.set-tab.active{background:rgba(168,85,247,0.18);color:var(--text);}
+.set-tab:hover:not(.active){background:rgba(255,255,255,0.04);color:var(--text);}
+.set-tab:active{transform:scale(.97);transition:transform 60ms ease-out;}
+.set-page{display:none;}
+.set-page.active{display:block;}
 
 .set-row{display:flex;align-items:center;gap:12px;padding:13px 14px;background:rgba(15,23,42,0.5);border:1px solid var(--border);border-radius:13px;margin-bottom:10px;}
 .set-row-main{flex:1;min-width:0;}
@@ -990,82 +1000,90 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
       <button class="m-close" onclick="closeSettings()"><i class="fa-solid fa-xmark"></i></button>
     </div>
 
-    <!-- ── Ключ шифрования ── -->
-    <div class="set-section">
-      <div class="set-section-title">Ключ шифрования</div>
+    <!-- Табы: Безопасность / Устройства -->
+    <div class="set-tabs">
+      <button class="set-tab active" data-tab="security" onclick="switchSettingsTab('security')"><i class="fa-solid fa-shield-halved"></i>Безопасность</button>
+      <button class="set-tab" data-tab="devices" onclick="switchSettingsTab('devices')"><i class="fa-solid fa-mobile-screen"></i>Устройства</button>
+    </div>
 
-      <div class="set-row">
-        <div class="set-row-main">
-          <div class="set-row-title">Хранение приватного ключа</div>
-          <div class="set-row-sub" id="setStorageModeText">—</div>
+    <!-- ── ВКЛАДКА «Безопасность» ── -->
+    <div class="set-page active" data-page="security">
+      <div class="set-section">
+        <div class="set-section-title">Ключ шифрования</div>
+
+        <div class="set-row">
+          <div class="set-row-main">
+            <div class="set-row-title">Хранение приватного ключа</div>
+            <div class="set-row-sub" id="setStorageModeText">—</div>
+          </div>
+          <button class="set-btn" onclick="changeStorageMode()">Изменить</button>
         </div>
-        <button class="set-btn" onclick="changeStorageMode()">Изменить</button>
+
+        <div class="set-row">
+          <div class="set-row-main">
+            <div class="set-row-title">Пересоздать ключ</div>
+            <div class="set-row-sub">Сгенерировать новую пару ключей. Собеседники автоматически примут новый ключ. Перед заменой спросим, забыть ли локальную историю и нужно ли стереть переписку у собеседников.</div>
+          </div>
+          <button class="set-btn danger" onclick="rotateMyKeys()">Пересоздать</button>
+        </div>
       </div>
 
-      <div class="set-row">
-        <div class="set-row-main">
-          <div class="set-row-title">Пересоздать ключ</div>
-          <div class="set-row-sub">Сгенерировать новую пару ключей. Собеседники автоматически примут новый ключ. Перед заменой спросим, забыть ли локальную историю и нужно ли стереть переписку у собеседников.</div>
+      <div class="set-section">
+        <div class="set-section-title">Защита аккаунта v2 <span style="font-size:10px;font-weight:700;background:linear-gradient(95deg,#a855f7,#ec4899);color:#fff;padding:2px 6px;border-radius:99px;margin-left:6px;letter-spacing:.3px;">BETA</span></div>
+
+        <div class="set-row">
+          <div class="set-row-main">
+            <div class="set-row-title">Новый стек шифрования</div>
+            <div class="set-row-sub" id="setV2Text">Forward secrecy, 12-словная seed-фраза для восстановления, multi-device без передачи приватника.</div>
+          </div>
+          <button class="set-btn" onclick="openV2Onboard()">Настроить</button>
         </div>
-        <button class="set-btn danger" onclick="rotateMyKeys()">Пересоздать</button>
       </div>
     </div>
 
-    <!-- ── Защита аккаунта v2 (BETA) ── -->
-    <div class="set-section">
-      <div class="set-section-title">Защита аккаунта v2 <span style="font-size:10px;font-weight:700;background:linear-gradient(95deg,#a855f7,#ec4899);color:#fff;padding:2px 6px;border-radius:99px;margin-left:6px;letter-spacing:.3px;">BETA</span></div>
+    <!-- ── ВКЛАДКА «Устройства» ── -->
+    <div class="set-page" data-page="devices">
+      <div class="set-section">
+        <div class="set-section-title">Вход с новых устройств</div>
 
-      <div class="set-row">
-        <div class="set-row-main">
-          <div class="set-row-title">Новый стек шифрования</div>
-          <div class="set-row-sub" id="setV2Text">Forward secrecy, 12-словная seed-фраза для восстановления, multi-device без передачи приватника.</div>
+        <div class="set-row">
+          <div class="set-row-main">
+            <div class="set-row-title">Подтверждение новых устройств</div>
+            <div class="set-row-sub" id="setTdaText">При входе с нового устройства потребуется одобрить его с этого — кодом из 6 цифр.</div>
+          </div>
+          <label class="tda-toggle">
+            <input type="checkbox" id="setTdaCheck" onchange="toggleTda()">
+            <span class="tda-slider"></span>
+          </label>
         </div>
-        <button class="set-btn" onclick="openV2Onboard()">Настроить</button>
       </div>
-    </div>
 
-    <!-- ── Подтверждение новых устройств ── -->
-    <div class="set-section">
-      <div class="set-section-title">Вход с новых устройств</div>
+      <div class="set-section" id="setPendingSection" style="display:none;">
+        <div class="set-section-title">Ожидают одобрения</div>
+        <div id="setPendingList"></div>
+      </div>
 
-      <div class="set-row">
-        <div class="set-row-main">
-          <div class="set-row-title">Подтверждение новых устройств</div>
-          <div class="set-row-sub" id="setTdaText">При входе с нового устройства потребуется одобрить его с этого — кодом из 6 цифр.</div>
+      <div class="set-section">
+        <div class="set-section-title">
+          Мои устройства
+          <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+            <button class="set-add-btn" onclick="openKeyFileImport()" title="Импортировать ключ из файла">
+              <i class="fa-solid fa-file-arrow-up"></i> Импорт
+            </button>
+            <button class="set-add-btn" onclick="openKeyFileExport()" title="Сохранить ключ в зашифрованный файл">
+              <i class="fa-solid fa-file-arrow-down"></i> Экспорт
+            </button>
+            <button class="set-add-btn" onclick="openKeysyncReceive()" title="Получить ключ через QR-код">
+              <i class="fa-solid fa-arrow-down-to-bracket"></i> QR-получить
+            </button>
+            <button class="set-add-btn" onclick="openKeysyncShow()" title="Дать ключ через QR-код">
+              <i class="fa-solid fa-plus"></i> QR-показать
+            </button>
+          </span>
         </div>
-        <label class="tda-toggle">
-          <input type="checkbox" id="setTdaCheck" onchange="toggleTda()">
-          <span class="tda-slider"></span>
-        </label>
-      </div>
-    </div>
-
-    <!-- Секция «Ожидающие одобрения» (показывается только если есть pending) -->
-    <div class="set-section" id="setPendingSection" style="display:none;">
-      <div class="set-section-title">Ожидают одобрения</div>
-      <div id="setPendingList"></div>
-    </div>
-
-    <div class="set-section">
-      <div class="set-section-title">
-        Мои устройства
-        <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-          <button class="set-add-btn" onclick="openKeyFileImport()" title="Импортировать ключ из файла">
-            <i class="fa-solid fa-file-arrow-up"></i> Импорт
-          </button>
-          <button class="set-add-btn" onclick="openKeyFileExport()" title="Сохранить ключ в зашифрованный файл">
-            <i class="fa-solid fa-file-arrow-down"></i> Экспорт
-          </button>
-          <button class="set-add-btn" onclick="openKeysyncReceive()" title="Получить ключ через QR-код">
-            <i class="fa-solid fa-arrow-down-to-bracket"></i> QR-получить
-          </button>
-          <button class="set-add-btn" onclick="openKeysyncShow()" title="Дать ключ через QR-код">
-            <i class="fa-solid fa-plus"></i> QR-показать
-          </button>
-        </span>
-      </div>
-      <div id="setDevList" class="set-dev-list">
-        <div class="set-dev-loading"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</div>
+        <div id="setDevList" class="set-dev-list">
+          <div class="set-dev-loading"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</div>
+        </div>
       </div>
     </div>
   </div>
@@ -2520,8 +2538,21 @@ function openSettings(){
   } catch(_){}
   document.getElementById('settingsModal').classList.add('open');
   document.body.style.overflow = 'hidden';
+  // По умолчанию открываем «Безопасность»
+  switchSettingsTab('security');
   refreshStorageModeRow();
   loadDevicesIntoSettings();
+}
+
+// Переключение табов в Settings ('security' | 'devices').
+// Прячет другие .set-page, скроллит modal в начало.
+function switchSettingsTab(tab){
+  const modal = document.getElementById('settingsModal');
+  if (!modal) return;
+  modal.querySelectorAll('.set-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  modal.querySelectorAll('.set-page').forEach(p => p.classList.toggle('active', p.dataset.page === tab));
+  const sheet = modal.querySelector('.modal-sheet');
+  if (sheet) sheet.scrollTop = 0;
 }
 function closeSettings(){
   document.getElementById('settingsModal').classList.remove('open');
