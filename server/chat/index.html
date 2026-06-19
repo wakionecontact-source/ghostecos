@@ -666,7 +666,7 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 /* ── Ghostik — призрак-маскот, парит в правом нижнем углу. ── */
 #ghostik{position:fixed;right:18px;bottom:18px;z-index:520;display:flex;flex-direction:column;align-items:flex-end;gap:8px;pointer-events:none;}
 #ghostik > *{pointer-events:auto;}
-.g-body{background:transparent;border:none;cursor:pointer;padding:0;transition:transform .15s;}
+.g-body{background:transparent;border:none;cursor:pointer;padding:0;transition:transform .15s;animation:gFloat 4s ease-in-out infinite;}
 .g-body:hover{transform:scale(1.08);}
 .g-body:active{transform:scale(0.94);}
 @keyframes gFloat{0%,100%{transform:translateY(0);}50%{transform:translateY(-7px);}}
@@ -717,6 +717,62 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 @media (max-width:799px){
   .pd-drawer{width:100vw;max-width:100vw;}
   .pd-ava{width:88px;height:88px;font-size:36px;}
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Микроанимации на действия. Все только transform/opacity (GPU),
+   короткие 150-250мс. Чтобы на UHD не лагать — никаких filter/shadow.
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Появление нового сообщения — fade + rise. Класс ставится JS-сом на
+   последний bubble в appendMessage(), чтобы не анимировать все 50
+   при первом рендере. */
+@keyframes msgIn { from{opacity:0;transform:translateY(8px);} to{opacity:1;transform:translateY(0);} }
+.msg.msg-new { animation: msgIn 220ms ease-out; }
+
+/* Pop +1 (для счётчика реакций, badge'ей, бэйджей). */
+@keyframes uiPop { 0%{transform:scale(1);} 45%{transform:scale(1.22);} 100%{transform:scale(1);} }
+.pop-anim { animation: uiPop 260ms cubic-bezier(.34,1.56,.64,1); }
+
+/* Wiggle (для ошибок ввода). */
+@keyframes uiShake { 0%,100%{transform:translateX(0);} 25%{transform:translateX(-6px);} 50%{transform:translateX(6px);} 75%{transform:translateX(-3px);} }
+.shake-anim { animation: uiShake 320ms cubic-bezier(.36,.07,.19,.97); }
+
+/* Press-feedback на интерактивных элементах. transition коротко (60мс)
+   на нажатие, длиннее (200мс) на отпускание — даёт ощущение «вернулось». */
+.dialog{transition:transform 180ms ease-out, background 150ms ease;}
+.dialog:active{transform:scale(.985);transition:transform 60ms ease-out;}
+
+.foot-btn,.set-btn,.set-add-btn{transition:transform 180ms ease-out, background 150ms ease, opacity 150ms ease;}
+.foot-btn:active:not(:disabled),.set-btn:active:not(:disabled),.set-add-btn:active:not(:disabled){transform:scale(.94);transition:transform 60ms ease-out;}
+
+.pd-item{transition:background 150ms ease, transform 180ms ease-out;}
+.pd-item:active{transform:scale(.98);transition:transform 60ms ease-out;}
+
+.sb-new,.sb-avatar,.sb-back{transition:transform 220ms cubic-bezier(.34,1.56,.64,1), box-shadow 200ms ease;}
+.sb-new:active,.sb-avatar:active,.sb-back:active{transform:scale(.9);transition:transform 80ms ease-out;}
+
+/* Реакции chip — pop +1 при нажатии. */
+.msg-react-chip{transition:transform 150ms ease-out, background 150ms ease;}
+.msg-react-chip:hover{transform:translateY(-1px);}
+
+/* Поиск — мягкое свечение при фокусе. */
+.sb-search{transition:box-shadow .25s ease, background .25s ease;}
+.sb-search:focus-within{box-shadow:0 0 0 3px rgba(168,85,247,0.18);background:rgba(168,85,247,0.05);}
+
+/* Unread badge появляется с pop'ом. */
+.d-badge{animation:uiPop 320ms cubic-bezier(.34,1.56,.64,1);}
+
+/* Slide-in нового чата на мобиле — когда .app-grid получает .in-chat. */
+@media (max-width:799px){
+  .app-grid .chat{transition:transform 240ms cubic-bezier(.4,0,.2,1);}
+  .app-grid:not(.in-chat) .chat{transform:translateX(100%);}
+  .app-grid.in-chat .chat{transform:translateX(0);}
+}
+
+/* Уважаем prefers-reduced-motion — выключаем всё, кроме fade. */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:0.01ms !important;animation-iteration-count:1 !important;transition-duration:0.01ms !important;scroll-behavior:auto !important;}
 }
 </style>
 </head>
@@ -5433,7 +5489,7 @@ function renderReactions(m) {
   return '<div class="msg-reactions">' + entries.map(([emo, users]) => {
     const mine = (users || []).includes(me.username);
     const cnt = (users || []).length;
-    return `<button class="msg-react-chip${mine?' mine':''}" onclick="toggleReaction(${sidArg}, ${JSON.stringify(emo)})">
+    return `<button class="msg-react-chip${mine?' mine':''}" data-sid="${esc(String(m.sid))}" data-emoji="${esc(emo)}" onclick="toggleReaction(${sidArg}, ${JSON.stringify(emo)})">
       <span class="emo">${esc(emo)}</span>${cnt > 1 ? `<span class="cnt">${cnt}</span>` : ''}
     </button>`;
   }).join('') + '</div>';
@@ -6082,6 +6138,13 @@ async function toggleReaction(sid, emoji) {
   m.reactions = reactions;
   await idbUpdateMessage(sid, { reactions });
   if (activeGroup) renderGroupMessages(); else renderMessages();
+  // Pop-анимация на свежепоявившейся chip-кнопке реакции.
+  if (newEmoji){
+    requestAnimationFrame(() => {
+      const chip = document.querySelector(`.msg-react-chip[data-sid="${CSS.escape(String(sid))}"][data-emoji="${CSS.escape(newEmoji)}"]`);
+      if (chip){ chip.classList.add('pop-anim'); setTimeout(() => chip.classList.remove('pop-anim'), 320); }
+    });
+  }
   // Отправляем react-payload по тому же пути что edit/delete
   try {
     const payload = { type: 'react', target_sid: sid, emoji: newEmoji };
@@ -6102,6 +6165,15 @@ function appendMessage(m){
   if (!body) return;
   renderMessages();
   scrollChatBottom(true);
+  // Микро-анимация: только последний (новый) bubble fade-in'ится через CSS.
+  // Класс снимаем чтобы при следующем appendMessage CSS-анимация перезапустилась.
+  requestAnimationFrame(() => {
+    const last = body.querySelector('.msg:last-of-type');
+    if (last){
+      last.classList.add('msg-new');
+      setTimeout(() => last.classList.remove('msg-new'), 280);
+    }
+  });
 }
 function updateLastBubble(failed){renderMessages();scrollChatBottom(false);}
 
