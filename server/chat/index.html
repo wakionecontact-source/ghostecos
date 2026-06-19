@@ -5215,7 +5215,7 @@ function renderDialogs(filter=''){
   const isAdmin = _supportAdmin && _supportAdmin.is_me;
   const supportPinned = (!filter && (_supportAdmin || isAdmin)) ? [{
     username: _supportAdmin ? _supportAdmin.username : (me && me.username),
-    display_name: isAdmin ? 'Inbox поддержки' : 'Поддержка GhostChat',
+    display_name: 'Поддержка GhostChat',
     is_support: true,
     is_admin_inbox: !!isAdmin,
     pinned: true,
@@ -8019,7 +8019,7 @@ renderDialogs = function(filter=''){
   if (showSupport) {
     const supportUsername = _supportAdmin ? _supportAdmin.username : (me && me.username);
     const isAdminInbox = !!isAdmin;
-    const supportName = isAdminInbox ? 'Inbox поддержки' : 'Поддержка GhostChat';
+    const supportName = 'Поддержка GhostChat';
     const supportSub  = isAdminInbox ? 'Сообщения от юзеров приходят сюда'
                                      : 'Сюда — вопросы, баги, идеи. Отвечают живые люди.';
     const isActiveSupport = activePeer && activePeer.username === supportUsername;
