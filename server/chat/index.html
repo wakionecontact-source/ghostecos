@@ -1489,21 +1489,23 @@ async function decryptFromPeer(peerUsername, cipherB64){
 // pkcs8-в-IDB совместимо со всеми браузерами (Safari/iOS не поддерживает
 // structured-clone CryptoKey-объектов — было причиной вечного спиннера).
 async function saveKeysToIDB(pkcs8Bytes){
+  // ВАЖНО: оба put'а в ОДНОЙ синхронной транзакции, ждём tx.oncomplete.
+  // Раньше было два последовательных `await new Promise(...)` в одной tx —
+  // между ними JS уходит в microtask и tx автокоммитится. На некоторых
+  // браузерах второй put для 'pub' попадает в уже-закрытую транзакцию,
+  // и IDB остаётся с priv но без pub → reload → loadKeysFromIDB→false →
+  // _ensureKeysLocal ветка (c) → banner «Приватный ключ не загружен».
   const db = await openIDB();
   if (!db.objectStoreNames.contains('keys')) return;
-  const tx = db.transaction('keys', 'readwrite');
-  if (pkcs8Bytes) {
-    await new Promise((res, rej) => {
-      const r = tx.objectStore('keys').put({ id: 'priv', data: pkcs8Bytes });
-      r.onsuccess = () => res(); r.onerror = () => rej(r.error);
-    });
-  }
-  if (myPub) {
-    await new Promise((res, rej) => {
-      const r = tx.objectStore('keys').put({ id: 'pub', data: myPub });
-      r.onsuccess = () => res(); r.onerror = () => rej(r.error);
-    });
-  }
+  await new Promise((res, rej) => {
+    const tx = db.transaction('keys', 'readwrite');
+    const store = tx.objectStore('keys');
+    if (pkcs8Bytes) store.put({ id: 'priv', data: pkcs8Bytes });
+    if (myPub)      store.put({ id: 'pub',  data: myPub });
+    tx.oncomplete = () => res();
+    tx.onerror    = () => rej(tx.error || new Error('keys-save tx error'));
+    tx.onabort    = () => rej(tx.error || new Error('keys-save tx abort'));
+  });
 }
 async function loadKeysFromIDB(){
   const db = await openIDB();
