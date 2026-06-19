@@ -5372,11 +5372,34 @@ async function openChat(username, display_name){
       _voiceAudios.clear();
     }
   } catch(_) {}
-  activePeer = { username, display_name: display_name || username };
+  // Флаг: это чат поддержки (открыт с pinned-карточки или с диалога с
+  // support_admin). Используется в шапке/профиле/Ghostик'е чтобы скрыть
+  // личность администратора и показать чат как «официальный канал».
+  const isSupport = !!(_supportAdmin && username === _supportAdmin.username);
+  const isAdminInbox = isSupport && _supportAdmin.is_me;
+  activePeer = {
+    username,
+    display_name: isSupport ? 'Поддержка GhostChat' : (display_name || username),
+    is_support: isSupport,
+    is_admin_inbox: isAdminInbox,
+  };
   activeGroup = null;
   _peerTyping = false; _peerOnline = false;
   clearTimeout(_peerTypingTimer);
   document.getElementById('appGrid').classList.add('in-chat');
+  // Ghostик-туториал: когда заходишь в чат поддержки впервые в сессии —
+  // он говорит что это и как использовать. Один раз на сессию, чтобы не бесил.
+  if (isSupport && !window._supportTutShown){
+    window._supportTutShown = true;
+    setTimeout(() => {
+      if (typeof ghostikSay === 'function'){
+        const txt = isAdminInbox
+          ? 'Это твой Inbox поддержки. Сюда приходят сообщения от юзеров — отвечай как обычно в чате.'
+          : 'Это официальный чат поддержки GhostChat. Задай тут любой вопрос про мессенджер, опиши баг или предложи идею — отвечают живые люди, а не бот.';
+        ghostikSay(txt, 9000);
+      }
+    }, 600);
+  }
   activeMessages = await idbGetMessages(username);
   // ВАЖНО: created_at может быть ISO-строкой (legacy chat_dm) или unix-int
   // (sealed/новые). localeCompare работает только на строках → роняет openChat
@@ -5615,17 +5638,28 @@ function backToList(){
 function renderChat(){
   const p = activePeer;
   const main = document.getElementById('chatMain');
+  // Для чата поддержки: аватарка-щит, подзаголовок без @username,
+  // кнопки «контакты / код безопасности / ключ» скрываем — это
+  // официальный канал, не личный собеседник.
+  const avHtml = p.is_support
+    ? `<div class="chat-av" onclick="openPeerProfile(${jsAttr(p.username)})" style="background:linear-gradient(135deg,#a855f7,#ec4899);"><i class="fa-solid fa-shield-halved" style="color:#fff;font-size:15px;"></i></div>`
+    : `<div class="chat-av" onclick="openPeerProfile(${jsAttr(p.username)})">${ini(p.display_name)}</div>`;
+  const subLine = p.is_support
+    ? (p.is_admin_inbox ? 'Inbox сообщений от юзеров' : 'Официальный канал · отвечают живые люди')
+    : `@${esc(p.username)}`;
+  const peerOnlyBtns = p.is_support ? '' : `
+      <button class="chat-menu" id="chatContactBtn" onclick="toggleContact(${jsAttr(p.username)})" title="Добавить в контакты"><i class="fa-solid fa-user-plus"></i></button>
+      <button class="chat-menu" onclick="openSafetyCode(${jsAttr(p.username)})" title="Код безопасности — сверить ключ собеседника"><i class="fa-solid fa-shield-halved"></i></button>
+      <button class="chat-menu" onclick="refreshPeerKey(${jsAttr(p.username)})" title="Перепроверить ключ собеседника"><i class="fa-solid fa-rotate"></i></button>`;
   main.innerHTML = `
     <div class="chat-head">
       <button class="chat-back" onclick="backToList()"><i class="fa-solid fa-arrow-left"></i></button>
-      <div class="chat-av" onclick="openPeerProfile(${jsAttr(p.username)})">${ini(p.display_name)}</div>
+      ${avHtml}
       <div class="chat-info" onclick="openPeerProfile(${jsAttr(p.username)})">
         <div class="chat-name">${esc(p.display_name)}</div>
-        <div class="chat-status" id="chatStatus">@${esc(p.username)}</div>
+        <div class="chat-status" id="chatStatus">${p.is_support ? subLine : subLine}</div>
       </div>
-      <button class="chat-menu" id="chatContactBtn" onclick="toggleContact(${jsAttr(p.username)})" title="Добавить в контакты"><i class="fa-solid fa-user-plus"></i></button>
-      <button class="chat-menu" onclick="openSafetyCode(${jsAttr(p.username)})" title="Код безопасности — сверить ключ собеседника"><i class="fa-solid fa-shield-halved"></i></button>
-      <button class="chat-menu" onclick="refreshPeerKey(${jsAttr(p.username)})" title="Перепроверить ключ собеседника"><i class="fa-solid fa-rotate"></i></button>
+      ${peerOnlyBtns}
       <button class="chat-menu" onclick="openPeerProfile(${jsAttr(p.username)})" title="Профиль"><i class="fa-solid fa-user"></i></button>
       <button class="chat-menu" onclick="openChatActionsMenu(event,${jsAttr(p.username)})" title="Ещё"><i class="fa-solid fa-ellipsis-vertical"></i></button>
     </div>
@@ -6593,6 +6627,32 @@ async function openPeerProfile(username){
   main.style.display = 'none';
   prof.style.display = 'flex';
   document.getElementById('appGrid').classList.add('in-chat');
+  // Профиль чата поддержки — спецстраница, не идём в /prof/{admin}.
+  // Скрываем личность администратора, показываем что это за чат.
+  if (_supportAdmin && username === _supportAdmin.username){
+    const isAdminInbox = !!_supportAdmin.is_me;
+    prof.innerHTML = `
+      <div class="chat-head">
+        <button class="chat-back" onclick="closePeerProfile()" style="display:flex"><i class="fa-solid fa-arrow-left"></i></button>
+        <div style="flex:1;font-size:15px;font-weight:700;">Профиль</div>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:34px 20px;">
+        <div style="text-align:center;margin-bottom:26px;">
+          <div style="width:88px;height:88px;border-radius:50%;background:linear-gradient(135deg,#a855f7,#ec4899);margin:0 auto 16px;display:flex;align-items:center;justify-content:center;font-size:34px;color:#fff;box-shadow:0 10px 28px rgba(168,85,247,0.45);"><i class="fa-solid fa-shield-halved"></i></div>
+          <div style="font-size:22px;font-weight:800;margin-bottom:4px;">Поддержка GhostChat</div>
+          <div style="display:inline-block;font-size:10px;font-weight:800;background:linear-gradient(95deg,#a855f7,#ec4899);color:#fff;padding:3px 9px;border-radius:99px;letter-spacing:.5px;">ОФИЦИАЛЬНЫЙ КАНАЛ</div>
+        </div>
+        <div style="max-width:480px;margin:0 auto 22px;padding:18px 18px;background:var(--gl-grad), var(--gl-bg);border:1px solid var(--gl-border);border-radius:16px;box-shadow:var(--gl-inset);font-size:14px;line-height:1.55;color:var(--text);">
+          ${isAdminInbox
+            ? 'Это твой <b>Inbox поддержки</b>. Сюда приходят сообщения от пользователей GhostChat — отвечай прямо в чате, как обычно. Каждое сообщение зашифровано E2E.'
+            : 'Это <b>официальный канал поддержки GhostChat</b>. Тут можно задать вопрос про мессенджер, сообщить о баге или предложить идею. Отвечают живые люди, а не бот. Сообщения зашифрованы E2E как обычный чат.'}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px;max-width:480px;margin:0 auto;">
+          <button onclick="closePeerProfile()" style="padding:13px;border-radius:12px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;"><i class="fa-solid fa-comment"></i> Вернуться к чату</button>
+        </div>
+      </div>`;
+    return;
+  }
   prof.innerHTML = `
     <div class="chat-head">
       <button class="chat-back" onclick="closePeerProfile()" style="display:flex"><i class="fa-solid fa-arrow-left"></i></button>
