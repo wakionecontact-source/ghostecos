@@ -62,7 +62,7 @@ button,input,textarea{font-family:inherit;}
 .sb-search input::placeholder{color:#334155;}
 .sb-search input:focus{border-color:rgba(168,85,247,0.4);}
 .sb-search i{position:absolute;left:25px;top:50%;transform:translateY(-50%);color:#475569;font-size:13px;pointer-events:none;}
-.sb-list{flex:1;overflow-y:auto;padding:4px 6px 12px;scrollbar-width:thin;}
+.sb-list{flex:1;overflow-y:auto;padding:4px 6px 12px;scrollbar-width:thin;contain:layout paint;overscroll-behavior:contain;}
 .sb-list::-webkit-scrollbar{width:6px;}
 .sb-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.07);border-radius:3px;}
 .sb-empty{padding:60px 20px;text-align:center;color:var(--muted);font-size:13px;}
@@ -94,7 +94,7 @@ button,input,textarea{font-family:inherit;}
 .install-overlay.open .install-arrow{display:block;}
 /* старый общий селектор удалён, см. .sb-empty > i ниже */
 
-.dialog{display:flex;gap:11px;padding:10px;border-radius:12px;cursor:pointer;align-items:center;}
+.dialog{display:flex;gap:11px;padding:10px;border-radius:12px;cursor:pointer;align-items:center;content-visibility:auto;contain-intrinsic-size:0 64px;}
 .dialog:hover{background:rgba(255,255,255,0.04);}
 .dialog.active{background:rgba(168,85,247,0.14);}
 .dialog.pinned-support{background:linear-gradient(95deg,rgba(168,85,247,0.10),rgba(236,72,153,0.05));border:1px solid rgba(168,85,247,0.25);margin-bottom:6px;}
@@ -139,7 +139,7 @@ button,input,textarea{font-family:inherit;}
 }
 
 /* ── TG-style кастомный скроллбар ───────────────────────────────────── */
-.chat-body{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 14px 6px;display:flex;flex-direction:column;gap:2px;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(168,85,247,0.2) transparent;transition:scrollbar-color 0.3s;}
+.chat-body{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 14px 6px;display:flex;flex-direction:column;gap:2px;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(168,85,247,0.2) transparent;transition:scrollbar-color 0.3s;contain:layout paint;}
 .chat-body:hover, .chat-body.scrolling{scrollbar-color:rgba(168,85,247,0.55) transparent;}
 .chat-body::-webkit-scrollbar{width:10px;}
 .chat-body::-webkit-scrollbar-track{background:transparent;}
