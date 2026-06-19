@@ -3,7 +3,7 @@ import asyncio
 from typing import Optional, List
 from pydantic import BaseModel
 from collections import defaultdict
-import sqlite3, secrets, os, uuid, json, io, hashlib, hmac, re, time, random
+import sqlite3, secrets, os, uuid, json, io, hashlib, hmac, re, time, random, base64
 
 router = APIRouter(prefix="/api/soc", tags=["GhostSocial"])
 
@@ -1052,6 +1052,412 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     "daily_status_mood": status_mood,
                     "daily_status_eternal": status_eternal,
                     **stats,
+                    "posts": posts,
+                }})
+
+            # ── keys.me: возвращает свои ключи + список pub_key чужих устройств ──
+            elif t == "keys.me" and uid:
+                rid = data.get("request_id")
+                c = db()
+                row = c.execute(
+                    "SELECT x25519_pub, encrypted_private_key, key_salt, key_storage_mode FROM users WHERE id=?",
+                    (uid,),
+                ).fetchone()
+                # Token этой сессии — чтобы исключить self-device из other_device_pubkeys.
+                # WS не передаёт authorization, но у нас есть текущая token-переменная из handshake.
+                ws_token = token  # из ?token=… handshake-параметра
+                other_devs = c.execute(
+                    "SELECT pub_key FROM user_devices WHERE user_id=? AND is_active=1 AND is_blocked=0 AND pub_key IS NOT NULL AND token != ?",
+                    (uid, ws_token),
+                ).fetchall()
+                c.close()
+                storage_mode = row["key_storage_mode"] if row else None
+                is_local = (storage_mode == "local")
+                await websocket.send_json({"type": "keys.me.ok", "data": {
+                    "request_id": rid,
+                    "x25519_pub": row["x25519_pub"] if row else None,
+                    "encrypted_private_key": None if is_local else (row["encrypted_private_key"] if row else None),
+                    "key_salt": None if is_local else (row["key_salt"] if row else None),
+                    "other_device_pubkeys": [d["pub_key"] for d in other_devs],
+                    "storage_mode": storage_mode,
+                }})
+
+            # ── keys.storage_mode.get ──
+            elif t == "keys.storage_mode.get" and uid:
+                rid = data.get("request_id")
+                c = db()
+                row = c.execute(
+                    "SELECT key_storage_mode, x25519_pub, (encrypted_private_key IS NOT NULL) AS has_server_priv FROM users WHERE id=?",
+                    (uid,),
+                ).fetchone()
+                c.close()
+                await websocket.send_json({"type": "keys.storage_mode.get.ok", "data": {
+                    "request_id": rid,
+                    "mode": row["key_storage_mode"] if row else None,
+                    "has_pub": bool(row and row["x25519_pub"]),
+                    "has_server_priv": bool(row and row["has_server_priv"]),
+                }})
+
+            # ── keys.storage_mode.set ──
+            elif t == "keys.storage_mode.set" and uid:
+                rid = data.get("request_id")
+                mode = (data.get("mode") or "").lower()
+                if mode not in ("server", "local"):
+                    await websocket.send_json({"type": "keys.storage_mode.set.err", "data": {"request_id": rid, "error": "mode: ожидается 'server' или 'local'"}})
+                    continue
+                try:
+                    from .chat_router import _rate_limit as _rl
+                    _rl(f"keymode:{uid}", limit=10, window=3600)
+                except HTTPException as he:
+                    await websocket.send_json({"type": "keys.storage_mode.set.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    continue
+                c = db()
+                if mode == "local":
+                    c.execute(
+                        "UPDATE users SET key_storage_mode='local', encrypted_private_key=NULL, key_salt=NULL WHERE id=?",
+                        (uid,),
+                    )
+                    c.commit(); c.close()
+                    await websocket.send_json({"type": "keys.storage_mode.set.ok", "data": {"request_id": rid, "mode": "local"}})
+                else:
+                    has_priv_row = c.execute(
+                        "SELECT (encrypted_private_key IS NOT NULL) AS has_priv FROM users WHERE id=?", (uid,)
+                    ).fetchone()
+                    c.execute("UPDATE users SET key_storage_mode='server' WHERE id=?", (uid,))
+                    c.commit(); c.close()
+                    await websocket.send_json({"type": "keys.storage_mode.set.ok", "data": {
+                        "request_id": rid,
+                        "mode": "server",
+                        "needs_upload": not bool(has_priv_row and has_priv_row["has_priv"]),
+                    }})
+
+            # ── devices.list ──
+            elif t == "devices.list" and uid:
+                rid = data.get("request_id")
+                import device_auth as _da
+                c = db()
+                try:
+                    devs = _da.list_user_devices(c, uid)
+                    ws_token = token  # из ?token=… handshake-параметра
+                    cur = c.execute("SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1", (ws_token, uid)).fetchone()
+                    cur_id = cur["id"] if cur else None
+                    for d_ in devs:
+                        d_["is_current"] = (d_["id"] == cur_id)
+                    await websocket.send_json({"type": "devices.list.ok", "data": {"request_id": rid, "devices": devs, "current_id": cur_id}})
+                finally:
+                    c.close()
+
+            # ── devices.rename: {device_pk, name} ──
+            elif t == "devices.rename" and uid:
+                rid = data.get("request_id")
+                pk = data.get("device_pk")
+                name = (data.get("name") or "").strip()
+                if not isinstance(pk, int) or not name or len(name) > 60:
+                    await websocket.send_json({"type": "devices.rename.err", "data": {"request_id": rid, "error": "invalid params"}})
+                    continue
+                try:
+                    from .chat_router import _rate_limit as _rl
+                    _rl(f"devrename:{uid}", limit=20, window=3600)
+                except HTTPException as he:
+                    await websocket.send_json({"type": "devices.rename.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    continue
+                c = db()
+                try:
+                    r = c.execute("SELECT id FROM user_devices WHERE id=? AND user_id=? LIMIT 1", (pk, uid)).fetchone()
+                    if not r:
+                        await websocket.send_json({"type": "devices.rename.err", "data": {"request_id": rid, "error": "Устройство не найдено"}})
+                    else:
+                        c.execute("UPDATE user_devices SET device_name=? WHERE id=?", (name, r["id"]))
+                        c.commit()
+                        await websocket.send_json({"type": "devices.rename.ok", "data": {"request_id": rid, "name": name}})
+                finally:
+                    c.close()
+
+            # ── devices.revoke: {device_pk} ──
+            elif t == "devices.revoke" and uid:
+                rid = data.get("request_id")
+                pk = data.get("device_pk")
+                if not isinstance(pk, int):
+                    await websocket.send_json({"type": "devices.revoke.err", "data": {"request_id": rid, "error": "device_pk required"}})
+                    continue
+                try:
+                    from .chat_router import _rate_limit as _rl
+                    _rl(f"devrevoke:{uid}", limit=20, window=3600)
+                except HTTPException as he:
+                    await websocket.send_json({"type": "devices.revoke.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    continue
+                import device_auth as _da
+                c = db()
+                try:
+                    ws_token = token  # из ?token=… handshake-параметра
+                    cur = c.execute("SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1", (ws_token, uid)).fetchone()
+                    if cur and cur["id"] == pk:
+                        await websocket.send_json({"type": "devices.revoke.err", "data": {"request_id": rid, "error": "Нельзя отозвать текущее устройство — выйдите через «Выход»"}})
+                    else:
+                        ok = _da.revoke_device(c, uid, pk)
+                        if not ok:
+                            await websocket.send_json({"type": "devices.revoke.err", "data": {"request_id": rid, "error": "Устройство не найдено"}})
+                        else:
+                            try: ws_hub.send_to(uid, "device.revoked", {"device_pk": pk})
+                            except Exception: pass
+                            await websocket.send_json({"type": "devices.revoke.ok", "data": {"request_id": rid}})
+                finally:
+                    c.close()
+
+            # ── contacts.list ──
+            elif t == "contacts.list" and uid:
+                rid = data.get("request_id")
+                c = db()
+                rows = c.execute("""
+                    SELECT u.username, u.display_name, cc.added_at
+                    FROM chat_contacts cc JOIN users u ON cc.contact_id = u.id
+                    WHERE cc.owner_id = ?
+                    ORDER BY u.display_name COLLATE NOCASE
+                """, (uid,)).fetchall()
+                c.close()
+                await websocket.send_json({"type": "contacts.list.ok", "data": {
+                    "request_id": rid,
+                    "contacts": [{"username": r["username"], "display_name": r["display_name"], "added_at": r["added_at"]} for r in rows],
+                }})
+
+            # ── contacts.add: {username} ──
+            elif t == "contacts.add" and uid:
+                rid = data.get("request_id")
+                target = (data.get("username") or "").lower().strip().lstrip("@")
+                if not target:
+                    await websocket.send_json({"type": "contacts.add.err", "data": {"request_id": rid, "error": "username required"}})
+                    continue
+                try:
+                    from .chat_router import _rate_limit as _rl, _get_user_by_username as _gu
+                    _rl(f"contactadd:{uid}", limit=60, window=3600)
+                except HTTPException as he:
+                    await websocket.send_json({"type": "contacts.add.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    continue
+                c = db()
+                peer = _gu(c, target)
+                if not peer:
+                    c.close()
+                    await websocket.send_json({"type": "contacts.add.err", "data": {"request_id": rid, "error": "Юзер не найден"}})
+                    continue
+                if peer["id"] == uid:
+                    c.close()
+                    await websocket.send_json({"type": "contacts.add.err", "data": {"request_id": rid, "error": "Нельзя добавить себя"}})
+                    continue
+                c.execute("INSERT OR IGNORE INTO chat_contacts (owner_id, contact_id) VALUES (?,?)", (uid, peer["id"]))
+                c.commit(); c.close()
+                await websocket.send_json({"type": "contacts.add.ok", "data": {"request_id": rid, "username": peer["username"], "display_name": peer["display_name"]}})
+
+            # ── contacts.remove: {username} ──
+            elif t == "contacts.remove" and uid:
+                rid = data.get("request_id")
+                target = (data.get("username") or "").lower().strip().lstrip("@")
+                if not target:
+                    await websocket.send_json({"type": "contacts.remove.err", "data": {"request_id": rid, "error": "username required"}})
+                    continue
+                try:
+                    from .chat_router import _rate_limit as _rl, _get_user_by_username as _gu
+                    _rl(f"contactdel:{uid}", limit=60, window=3600)
+                except HTTPException as he:
+                    await websocket.send_json({"type": "contacts.remove.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    continue
+                c = db()
+                peer = _gu(c, target)
+                if not peer:
+                    c.close()
+                    await websocket.send_json({"type": "contacts.remove.err", "data": {"request_id": rid, "error": "Юзер не найден"}})
+                    continue
+                c.execute("DELETE FROM chat_contacts WHERE owner_id=? AND contact_id=?", (uid, peer["id"]))
+                c.commit(); c.close()
+                await websocket.send_json({"type": "contacts.remove.ok", "data": {"request_id": rid}})
+
+            # ── contacts.check: {username} → {in_contacts} ──
+            elif t == "contacts.check" and uid:
+                rid = data.get("request_id")
+                target = (data.get("username") or "").lower().strip().lstrip("@")
+                if not target:
+                    await websocket.send_json({"type": "contacts.check.ok", "data": {"request_id": rid, "in_contacts": False}})
+                    continue
+                from .chat_router import _get_user_by_username as _gu
+                c = db()
+                peer = _gu(c, target)
+                if not peer:
+                    c.close()
+                    await websocket.send_json({"type": "contacts.check.ok", "data": {"request_id": rid, "in_contacts": False}})
+                    continue
+                r = c.execute("SELECT 1 FROM chat_contacts WHERE owner_id=? AND contact_id=?", (uid, peer["id"])).fetchone()
+                c.close()
+                await websocket.send_json({"type": "contacts.check.ok", "data": {"request_id": rid, "in_contacts": r is not None}})
+
+            # ── support_admin: данные о support-юзере для PINNED-карточки ──
+            elif t == "support_admin" and uid:
+                rid = data.get("request_id")
+                from .chat_router import SUPPORT_ADMIN_USERNAME as _SUP
+                c = db()
+                r = c.execute(
+                    "SELECT id, username, display_name, x25519_pub FROM users WHERE username=?",
+                    (_SUP,),
+                ).fetchone()
+                c.close()
+                if not r:
+                    await websocket.send_json({"type": "support_admin.ok", "data": {"request_id": rid, "username": None, "display_name": None, "is_me": False, "x25519_pub": None}})
+                else:
+                    await websocket.send_json({"type": "support_admin.ok", "data": {
+                        "request_id": rid,
+                        "username": r["username"],
+                        "display_name": r["display_name"],
+                        "x25519_pub": r["x25519_pub"],
+                        "is_me": username == r["username"],
+                    }})
+
+            # ── keys.upload: публикация pub + (опц.) encrypted_priv + salt + mode ──
+            elif t == "keys.upload" and uid:
+                rid = data.get("request_id")
+                try:
+                    from .chat_router import _rate_limit as _rl, _is_b64
+                    _rl(f"keys:{uid}", limit=5, window=3600)
+                except HTTPException as he:
+                    await websocket.send_json({"type": "keys.upload.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    continue
+                x25519_pub = data.get("x25519_pub") or ""
+                enc_priv = data.get("encrypted_private_key")
+                key_salt = data.get("key_salt")
+                req_mode = (data.get("storage_mode") or "").lower() or None
+                # Длина raw pub: 32 (X25519) или 65 (P-256)
+                try:
+                    raw_pub = base64.b64decode(x25519_pub) if _is_b64(x25519_pub) else b""
+                except Exception:
+                    raw_pub = b""
+                if len(raw_pub) not in (32, 65):
+                    await websocket.send_json({"type": "keys.upload.err", "data": {"request_id": rid, "error": "x25519_pub: ожидается 32 (X25519) или 65 (P-256) байт в base64"}})
+                    continue
+                c = db()
+                current_mode_row = c.execute("SELECT key_storage_mode FROM users WHERE id=?", (uid,)).fetchone()
+                saved_mode = current_mode_row["key_storage_mode"] if current_mode_row else None
+                mode = req_mode or saved_mode or "server"
+                if mode not in ("server", "local"):
+                    c.close()
+                    await websocket.send_json({"type": "keys.upload.err", "data": {"request_id": rid, "error": "storage_mode: ожидается 'server' или 'local'"}})
+                    continue
+                if mode == "server":
+                    if not enc_priv or not key_salt:
+                        c.close()
+                        await websocket.send_json({"type": "keys.upload.err", "data": {"request_id": rid, "error": "В режиме 'server' encrypted_private_key и key_salt обязательны"}})
+                        continue
+                    try:
+                        raw_priv = base64.b64decode(enc_priv)
+                    except Exception:
+                        raw_priv = b""
+                    if not _is_b64(enc_priv) or len(raw_priv) < 40 or len(raw_priv) > 500:
+                        c.close()
+                        await websocket.send_json({"type": "keys.upload.err", "data": {"request_id": rid, "error": "encrypted_private_key: некорректный формат"}})
+                        continue
+                    if not _is_b64(key_salt, 16):
+                        c.close()
+                        await websocket.send_json({"type": "keys.upload.err", "data": {"request_id": rid, "error": "key_salt: ожидается 16 байт в base64"}})
+                        continue
+                    priv_to_store = enc_priv
+                    salt_to_store = key_salt
+                else:
+                    priv_to_store = None
+                    salt_to_store = None
+                dev = c.execute("SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1", (token, uid)).fetchone()
+                if dev:
+                    c.execute("UPDATE user_devices SET pub_key=? WHERE id=?", (x25519_pub, dev["id"]))
+                # users.x25519_pub перезаписывается любым устройством — multi-device
+                # для v1 невозможен через единый pub; v2 решает через envelope-per-device.
+                c.execute(
+                    "UPDATE users SET x25519_pub=?, encrypted_private_key=?, key_salt=?, in_ghostchat=1, key_storage_mode=? WHERE id=?",
+                    (x25519_pub, priv_to_store, salt_to_store, mode, uid),
+                )
+                c.commit(); c.close()
+                await websocket.send_json({"type": "keys.upload.ok", "data": {"request_id": rid, "status": "ok", "storage_mode": mode}})
+
+            # ── keys.server_copy.delete: убрать серверную копию приватника (mode=local) ──
+            elif t == "keys.server_copy.delete" and uid:
+                rid = data.get("request_id")
+                c = db()
+                c.execute(
+                    "UPDATE users SET encrypted_private_key=NULL, key_salt=NULL WHERE id=?",
+                    (uid,),
+                )
+                c.commit(); c.close()
+                await websocket.send_json({"type": "keys.server_copy.delete.ok", "data": {"request_id": rid, "status": "ok"}})
+
+            # ── delivery_status: {ids:[int]} → {id:'pending'|'delivered'|'read'} ──
+            elif t == "delivery_status" and uid:
+                rid = data.get("request_id")
+                ids = data.get("ids") or []
+                ids = [int(x) for x in ids if isinstance(x, (int, str)) and str(x).isdigit()][:500]
+                if not ids:
+                    await websocket.send_json({"type": "delivery_status.ok", "data": {"request_id": rid, "status": {}}})
+                    continue
+                try:
+                    from .chat_router import _rate_limit as _rl
+                    _rl(f"delivstat:{uid}", limit=60, window=60)
+                except HTTPException as he:
+                    await websocket.send_json({"type": "delivery_status.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    continue
+                c = db()
+                ph = ",".join("?" * len(ids))
+                rows = c.execute(f"SELECT id FROM chat_dm WHERE sender_id=? AND id IN ({ph})", [uid] + ids).fetchall()
+                still_pending = {r["id"] for r in rows}
+                read_rows = c.execute(f"SELECT msg_id FROM chat_dm_read_marks WHERE sender_id=? AND msg_id IN ({ph})", [uid] + ids).fetchall()
+                read_ids = {r["msg_id"] for r in read_rows}
+                c.close()
+                def _st(i):
+                    if i in still_pending: return "pending"
+                    if i in read_ids: return "read"
+                    return "delivered"
+                await websocket.send_json({"type": "delivery_status.ok", "data": {"request_id": rid, "status": {str(i): _st(i) for i in ids}}})
+
+            # ── prof.get: {username, offset?} → профиль социалки + posts ──
+            elif t == "prof.get" and uid:
+                rid = data.get("request_id")
+                target = (data.get("username") or "").lower().strip()
+                offset = int(data.get("offset") or 0)
+                if not target:
+                    await websocket.send_json({"type": "prof.get.err", "data": {"request_id": rid, "error": "username required"}})
+                    continue
+                c = db()
+                u_row = c.execute("SELECT * FROM users WHERE username=?", (target,)).fetchone()
+                if not u_row:
+                    c.close()
+                    await websocket.send_json({"type": "prof.get.err", "data": {"request_id": rid, "error": "User not found"}})
+                    continue
+                u_dict = dict(u_row)
+                stats_p = get_user_stats(c, u_dict["id"])
+                am_following = c.execute(
+                    "SELECT 1 FROM soc_follows WHERE follower_id=? AND followee_id=?", (uid, u_dict["id"])
+                ).fetchone() is not None
+                rows = c.execute("""
+                    SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+                           u.username, u.display_name,
+                           (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
+                    FROM soc_posts p JOIN users u ON p.user_id=u.id
+                    WHERE p.user_id=? ORDER BY p.created_at DESC LIMIT 15 OFFSET ?
+                """, (u_dict["id"], offset)).fetchall()
+                posts = _hydrate_posts(c, rows, uid)
+                c.close()
+                rep_score = int(u_dict.get("reputation_score") if u_dict.get("reputation_score") is not None else 100)
+                if u_dict.get("eternal_status_text"):
+                    status_text = u_dict.get("eternal_status_text"); status_mood = u_dict.get("eternal_status_mood"); status_eternal = True
+                elif _status_active(u_dict.get("daily_status_set_at")):
+                    status_text = u_dict.get("daily_status_text"); status_mood = u_dict.get("daily_status_mood"); status_eternal = False
+                else:
+                    status_text = None; status_mood = None; status_eternal = False
+                await websocket.send_json({"type": "prof.get.ok", "data": {
+                    "request_id": rid,
+                    "user_id": u_dict["id"],
+                    "username": u_dict["username"],
+                    "display_name": u_dict["display_name"],
+                    "am_following": am_following,
+                    "is_me": uid == u_dict["id"],
+                    "reputation_score": rep_score,
+                    "reputation_band": "low" if rep_score < 30 else ("mid" if rep_score < 70 else "good"),
+                    "daily_status": status_text,
+                    "daily_status_mood": status_mood,
+                    "daily_status_eternal": status_eternal,
+                    **stats_p,
                     "posts": posts,
                 }})
 

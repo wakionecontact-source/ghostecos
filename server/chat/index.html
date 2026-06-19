@@ -6988,20 +6988,6 @@ function wsRpc(type, data, timeoutMs){
     wsSendEnc(payload).catch(e => { clearTimeout(timer); _wsRpcPending.delete(rid); reject(e); });
   });
 }
-// Универсальный WS RPC хелпер: пробует action через WS, при ошибке —
-// вызывает httpFallback (если задан). Без fallback — пробрасывает ошибку.
-async function wsCall(action, data, httpFallback){
-  if (ws && ws.readyState === 1){
-    try { return await wsRpc(action, data || {}, 8000); }
-    catch(e) {
-      if (!httpFallback) throw e;
-      console.warn('[wsCall] ' + action + ' RPC fail, HTTP fallback:', e.message);
-    }
-  }
-  if (httpFallback) return await httpFallback();
-  throw new Error('WS не подключён, нет fallback для ' + action);
-}
-
 // Хелперы для ack/read через WS RPC. Если WS не подключён или RPC падает —
 // fallback на старый POST. Так что вызовы безопасны даже на flaky-WS.
 async function wsAck(ids){
@@ -7044,7 +7030,9 @@ async function wsContactsCheck(username){ return wsCall('contacts.check', {usern
 async function wsSupportAdmin(){ return wsCall('support_admin', null, () => chat('/support_admin')); }
 async function wsDeliveryStatus(ids){
   const r = await wsCall('delivery_status', {ids}, () => chat('/delivery_status', 'POST', {ids}));
-  return r && r.result ? r.result : (r || {});
+  // WS-ответ: {request_id, status:{...}}; HTTP-ответ: {...} напрямую.
+  if (r && r.status) return r.status;
+  return r || {};
 }
 async function wsProfGet(username, offset){ return wsCall('prof.get', {username, offset:offset||0}, () => soc('/prof/'+encodeURIComponent(username))); }
 
