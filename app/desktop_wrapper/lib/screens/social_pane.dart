@@ -176,10 +176,16 @@ class _SocialPaneState extends State<SocialPane> {
                   ],
                   const SizedBox(height: 10),
                   Row(children: [
-                    IconButton(
-                      icon: Icon(Icons.image_outlined, color: GE.primary),
-                      onPressed: publishing ? null : pickImage,
+                    InkWell(
+                      onTap: publishing ? null : pickImage,
+                      borderRadius: BorderRadius.circular(8),
+                      child: Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Icon(Icons.image_outlined,
+                            color: GE.primary, size: 22),
+                      ),
                     ),
+                    const SizedBox(width: 4),
                     InkWell(
                       onTap: () => setSheet(() => nsfw = !nsfw),
                       borderRadius: BorderRadius.circular(8),
@@ -214,7 +220,6 @@ class _SocialPaneState extends State<SocialPane> {
                     const SizedBox(width: 6),
                     GlassButton(
                       label: 'Опубликовать',
-                      icon: Icons.send,
                       primary: true,
                       loading: publishing,
                       onTap: publishing ? null : publish,
