@@ -1480,8 +1480,8 @@ def register(body: RegisterBody, request: Request):
         raise HTTPException(422, "Для регистрации необходимо подтвердить, что вам исполнилось 18 лет")
     try:
         c.execute(
-            "INSERT INTO users (username, display_name, argon2_hash, in_ghostchat, seed_hash, referrer_id, confirmed_18_at) "
-            "VALUES (?,?,?,0,?,?,?)",
+            "INSERT INTO users (username, display_name, argon2_hash, in_ghostchat, seed_hash, referrer_id, confirmed_18_at, key_storage_mode) "
+            "VALUES (?,?,?,0,?,?,?,'local')",
             (username, display_name, argon2, seed_hash, referrer_id, confirmed_18_ts),
         )
         uid = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]

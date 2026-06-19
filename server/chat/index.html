@@ -1832,34 +1832,67 @@ async function _keysHealthCheck(){
 //   • Локально wipe IDB ключей + pubCache.clear() — иначе стейл-пинов.
 
 async function rotateMyKeys(){
+  // Шаг 1: подтверждение + (server-mode) пароль.
   const ok1 = await appConfirm(
     'Пересоздать ключ?',
-    'Собеседники увидят «ключ изменился» и должны будут подтвердить новый. Сообщения, отправленные тебе до ротации с других устройств и ещё не доставленные, могут пропасть. На этом устройстве сгенерится новая пара.',
-    'Пересоздать'
+    'Собеседники автоматически примут новый ключ. Сообщения, ещё не доставленные тебе (в /pending), могут пропасть.',
+    'Дальше'
   );
   if (!ok1) return;
 
-  // Узнаём текущий режим хранения.
   let mode = 'server';
-  try {
-    const r = await chat('/keys/storage_mode');
-    if (r.mode) mode = r.mode;
-  } catch(_){}
+  try { const r = await chat('/keys/storage_mode'); if (r.mode) mode = r.mode; } catch(_){}
 
   let password = null;
   if (mode === 'server'){
-    password = await appPrompt('Пароль для шифрования', 'Им будет зашифрован новый приватный ключ для сервера.', {password: true, placeholder: 'Пароль аккаунта'});
+    password = await appPrompt('Пароль аккаунта', 'Им зашифруется новый приватный ключ перед отправкой на сервер.', {password: true, placeholder: 'Пароль'});
     if (!password) return;
   }
 
+  // Шаг 2: забыть свою историю?
+  const wipeMine = await appConfirm(
+    'Забыть всю историю на этом устройстве?',
+    'Будут удалены все локальные сообщения во всех чатах с этого браузера. Сами чаты в списке останутся. Это необратимо.',
+    'Да, забыть'
+  );
+
+  // Шаг 3: если да — стереть и у собеседников?
+  let wipePeers = false;
+  if (wipeMine){
+    wipePeers = await appConfirm(
+      'Стереть переписку и у собеседников?',
+      'Каждому, с кем у тебя есть чат, отправится зашифрованное системное сообщение «удалить нашу переписку». Их клиент удалит историю с тобой автоматически. Старые сообщения, которые уже у них — никуда не уйдут с сервера, но из их IDB пропадут.',
+      'Да, стереть'
+    );
+  }
+
   try {
-    // Генерим новую пару P-256.
+    // Шаг A: ДО смены ключа — рассылаем wipe_history тем с кем были чаты.
+    // Делаем под ТЕКУЩИМ ключом, чтобы собеседники могли расшифровать.
+    if (wipePeers && Array.isArray(dialogs)){
+      const peers = dialogs.map(d => d.username).filter(Boolean);
+      const payload = { type: 'wipe_history' };
+      const tasks = peers.map(async (u) => {
+        try {
+          const ct = await encryptForPeer(u, payload);
+          await chat('/send', 'POST', { to_username: u, ciphertext: ct });
+        } catch(e){ console.warn('[wipe-peers] failed for', u, e); }
+      });
+      // Не блокируем: даём 5 сек чтобы успели отправиться, потом всё равно идём дальше.
+      await Promise.race([
+        Promise.allSettled(tasks),
+        new Promise(r => setTimeout(r, 5000)),
+      ]);
+    }
+
+    // Шаг B: генерим новую пару.
     const pair = await crypto.subtle.generateKey(ECDH_ALGO, true, ['deriveBits']);
     const pubBytes = await crypto.subtle.exportKey('raw', pair.publicKey);
     const privBytes = await crypto.subtle.exportKey('pkcs8', pair.privateKey);
     const newPub = b64e(pubBytes);
     const newPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
 
+    // Шаг C: аплоадим новый pub (+ encrypted_private_key для server-mode).
     if (mode === 'server'){
       const salt = crypto.getRandomValues(new Uint8Array(16));
       const master = await deriveMasterKey(password, salt);
@@ -1880,9 +1913,12 @@ async function rotateMyKeys(){
       });
     }
 
-    // Локально: wipe IDB ключей + cache, потом записать новые.
+    // Шаг D: локально — wipe IDB ключей + cache + (опц.) wipe messages у себя.
     try { await wipeKeysIDB(); } catch(_){}
     try { pubCache.clear(); } catch(_){}
+    if (wipeMine){
+      try { await wipeAllMyMessages(); } catch(e){ console.warn('[wipe-mine] err', e); }
+    }
     myPriv = newPriv;
     myPub = newPub;
     await saveKeysToIDB(privBytes);
@@ -1891,6 +1927,56 @@ async function rotateMyKeys(){
     setTimeout(() => location.reload(), 1500);
   } catch(e){
     await appAlert('Ошибка', 'Не удалось пересоздать ключ: ' + (e.message || e));
+  }
+}
+
+// Удаляет все сообщения из IDB store 'messages' (всю переписку на устройстве).
+// Сами диалоги (last_at, peer_username) не трогает — список чатов остаётся.
+async function wipeAllMyMessages(){
+  const db = await openIDB();
+  if (db.objectStoreNames.contains('messages')){
+    await new Promise((res, rej) => {
+      const tx = db.transaction('messages', 'readwrite');
+      const r = tx.objectStore('messages').clear();
+      r.onsuccess = res; r.onerror = () => rej(r.error);
+    });
+  }
+  // Активный экран чата тоже обновим.
+  if (Array.isArray(activeMessages)) activeMessages.length = 0;
+  if (typeof renderMessages === 'function') try { renderMessages(); } catch(_){}
+}
+
+// Удаляет переписку именно с одним собеседником (для входящего wipe_history).
+async function wipeMessagesWithPeer(peerUsername){
+  const db = await openIDB();
+  if (!db.objectStoreNames.contains('messages')) return;
+  await new Promise((res, rej) => {
+    const tx = db.transaction('messages', 'readwrite');
+    const store = tx.objectStore('messages');
+    const idx = store.index ? (() => { try { return store.index('peer'); } catch(_){ return null; }})() : null;
+    if (idx){
+      const req = idx.openCursor(IDBKeyRange.only(peerUsername));
+      req.onsuccess = e => {
+        const c = e.target.result;
+        if (c){ c.delete(); c.continue(); }
+        else res();
+      };
+      req.onerror = () => rej(req.error);
+    } else {
+      // Нет индекса по peer — пробегаем все, удаляем те где peer совпал.
+      const req = store.openCursor();
+      req.onsuccess = e => {
+        const c = e.target.result;
+        if (!c){ res(); return; }
+        if (c.value && c.value.peer === peerUsername) c.delete();
+        c.continue();
+      };
+      req.onerror = () => rej(req.error);
+    }
+  });
+  if (activePeer && activePeer.username === peerUsername){
+    activeMessages.length = 0;
+    if (typeof renderMessages === 'function') try { renderMessages(); } catch(_){}
   }
 }
 
@@ -2464,29 +2550,77 @@ async function doDenyPending(){
   }
 }
 
+// Смена режима хранения БЕЗ пересоздания ключа.
+//   server → local: сервер обнуляет encrypted_private_key/key_salt, mode='local'.
+//                   Локальный priv в IDB остаётся как есть.
+//   local  → server: спрашиваем пароль, зашифровываем pkcs8-байты priv из IDB,
+//                    отправляем upload {x25519_pub, encrypted_private_key, key_salt, mode='server'}.
+//                    Ключ НЕ пересоздаётся — отправляется тот же что и был.
 async function changeStorageMode(){
   const newMode = await pickKeyStorageMode();
+  if (!newMode) return;
   try {
     if (newMode === 'local'){
-      // Проверяем что приватник реально есть локально, иначе после нуления на сервере
-      // юзер останется без ключа.
       if (!myPriv || !myPub){
-        await appAlert('Подождите', 'Приватный ключ не загружен в этом сеансе. Сначала зайдите в чат через пароль, потом возвращайтесь сюда.');
+        await appAlert('Подождите', 'Приватный ключ не загружен в этом сеансе. Зайдите в чат и попробуйте ещё раз.');
         return;
       }
       const ok = await appConfirm(
         'Перейти на «только устройство»?',
-        'Серверная копия приватного ключа будет удалена. Если этот браузер потеряет данные и второе устройство не подключено — переписка станет нечитаемой.',
+        'Серверная копия приватного ключа будет удалена. Если этот браузер потеряет данные и второго устройства нет — переписка станет нечитаемой. Ключ останется тот же.',
         'Переключить'
       );
       if (!ok) return;
-    }
-    await chat('/keys/storage_mode', 'POST', { mode: newMode });
-    // Если перешли на 'server' и серверной копии нет — клиент должен повторно её залить.
-    if (newMode === 'server' && myPriv && myPub){
-      await appAlert('Готово', 'Чтобы загрузить ключ на сервер, выйдите из аккаунта и зайдите снова — система перезальёт ключ автоматически.');
+      await chat('/keys/storage_mode', 'POST', { mode: 'local' });
+    } else {
+      // local → server
+      if (!myPub){
+        await appAlert('Подождите', 'Свой ключ ещё не загружен.');
+        return;
+      }
+      // Берём pkcs8-байты priv из IDB (они там в .data поле raw, не CryptoKey).
+      let pkcs8Bytes = null;
+      try {
+        const db = await openIDB();
+        const tx = db.transaction('keys', 'readonly');
+        const priv = await new Promise(r => {
+          const q = tx.objectStore('keys').get('priv');
+          q.onsuccess = () => r(q.result);
+          q.onerror = () => r(null);
+        });
+        if (priv && priv.data) pkcs8Bytes = priv.data;
+      } catch(_){}
+      if (!pkcs8Bytes){
+        await appAlert('Нет ключа', 'Не нашёл приватный ключ в локальном хранилище.');
+        return;
+      }
+      const password = await appPrompt(
+        'Пароль аккаунта',
+        'Им зашифруется ваш приватный ключ перед отправкой на сервер. Это тот же пароль, которым вы входите.',
+        {password: true, placeholder: 'Пароль'}
+      );
+      if (!password) return;
+      const ok = await appConfirm(
+        'Перейти на «На сервере»?',
+        'Текущий приватный ключ будет зашифрован паролем и загружен на сервер. Ключ останется тот же, переписка по-прежнему откроется.',
+        'Переключить'
+      );
+      if (!ok) return;
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const master = await deriveMasterKey(password, salt);
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, master, pkcs8Bytes);
+      const enc = new Uint8Array(12 + ct.byteLength);
+      enc.set(iv); enc.set(new Uint8Array(ct), 12);
+      await chat('/keys/upload', 'POST', {
+        x25519_pub: myPub,
+        encrypted_private_key: b64e(enc),
+        key_salt: b64e(salt),
+        storage_mode: 'server',
+      });
     }
     refreshStorageModeRow();
+    ghostikSay('Режим хранения ключа обновлён.', 4000);
   } catch(e){
     await appAlert('Ошибка', 'Не удалось сменить режим: ' + (e.message || e));
   }
@@ -3931,6 +4065,17 @@ async function ingestIncoming(m){
       raw = '[не удалось расшифровать]';
     }
     payload = parsePayload(raw);
+  }
+
+  // Системка от ротации ключа: собеседник попросил стереть всю историю.
+  // Только от чужих сообщений (isMine == false), молча. Лог в консоль.
+  if (payload.type === 'wipe_history' && !isMine) {
+    console.log('[wipe-history] incoming request from @' + peerUsername);
+    try { await wipeMessagesWithPeer(peerUsername); } catch(e){ console.warn('[wipe-history] failed', e); }
+    const d = dialogs.find(x => x.username === peerUsername);
+    if (d) { d.last_text = '(история очищена)'; d.last_from_me = false; try { await idbPutDialog(d); } catch(_){} renderDialogs(document.getElementById('sbSearch').value); }
+    ghostikSay('@' + esc(peerUsername) + ' пересоздал ключ и попросил стереть переписку — выполнено.', 7000);
+    return true;
   }
 
   // ── Операционные сообщения: edit / delete — применяем к существующему по sid ──
