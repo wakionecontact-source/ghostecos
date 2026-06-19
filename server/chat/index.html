@@ -1812,14 +1812,14 @@ async function _keysHealthCheck(){
     throw new Error('plaintext mismatch');
   } catch(e){
     console.error('[E2E] health: round-trip FAILED', e);
-    if (confirm(
-      'Обнаружена ошибка в ключах: твой приватный ключ не подходит к публичному на сервере.\n\n' +
-      'Это бывает после восстановления резервной копии или смены устройства.\n' +
-      'Сейчас сообщения от собеседников не будут расшифровываться.\n\n' +
-      'Пересоздать ключ автоматически? (старая переписка останется в этом браузере, новые ' +
-      'сообщения пойдут под свежий ключ; собеседники увидят подтверждение нового ключа)'
-    )){
-      try { await rotateMyKeys(); } catch(e2){ alert('Не удалось пересоздать: ' + (e2.message || e2)); }
+    const ok = await appConfirm(
+      'Ключи не сходятся',
+      'Твой приватный ключ не подходит к публичному на сервере. Это бывает после восстановления бэкапа или смены устройства. Пересоздать ключ? Старые сообщения останутся локально, новые пойдут под свежий ключ.',
+      'Пересоздать'
+    );
+    if (ok){
+      try { await rotateMyKeys(); }
+      catch(e2){ await appAlert('Ошибка', 'Не удалось пересоздать: ' + (e2.message || e2)); }
     } else {
       ghostikSay('Если что — Настройки → Безопасность → <b>Пересоздать ключ</b>.', 8000);
     }
@@ -1839,15 +1839,12 @@ async function _keysHealthCheck(){
 //   • Локально wipe IDB ключей + pubCache.clear() — иначе стейл-пинов.
 
 async function rotateMyKeys(){
-  if (!confirm(
-    'Пересоздать ключ?\n\n' +
-    '• Все собеседники увидят предупреждение «ключ собеседника изменился»\n' +
-    '  и должны будут подтвердить новый.\n' +
-    '• Сообщения, отправленные тебе ДО ротации с других устройств,\n' +
-    '  которые ещё не успели придти, могут пропасть.\n' +
-    '• На этом устройстве сгенерится новая пара локально.\n\n' +
-    'Продолжить?'
-  )) return;
+  const ok1 = await appConfirm(
+    'Пересоздать ключ?',
+    'Собеседники увидят «ключ изменился» и должны будут подтвердить новый. Сообщения, отправленные тебе до ротации с других устройств и ещё не доставленные, могут пропасть. На этом устройстве сгенерится новая пара.',
+    'Пересоздать'
+  );
+  if (!ok1) return;
 
   // Узнаём текущий режим хранения.
   let mode = 'server';
@@ -1858,7 +1855,7 @@ async function rotateMyKeys(){
 
   let password = null;
   if (mode === 'server'){
-    password = prompt('Введите пароль аккаунта — им будет зашифрован новый приватный ключ для сервера:');
+    password = await appPrompt('Пароль для шифрования', 'Им будет зашифрован новый приватный ключ для сервера.', {password: true, placeholder: 'Пароль аккаунта'});
     if (!password) return;
   }
 
@@ -1897,10 +1894,10 @@ async function rotateMyKeys(){
     myPub = newPub;
     await saveKeysToIDB(privBytes);
 
-    alert('Ключ пересоздан. Перезагружаю чат…');
-    location.reload();
+    ghostikSay('Ключ пересоздан. Перезагружаю…', 2500);
+    setTimeout(() => location.reload(), 1500);
   } catch(e){
-    alert('Не удалось пересоздать ключ: ' + (e.message || e));
+    await appAlert('Ошибка', 'Не удалось пересоздать ключ: ' + (e.message || e));
   }
 }
 
@@ -1958,7 +1955,7 @@ function closeV2Onboard(){
 
 async function v2StartCreate(){
   if (!window.GhostKeysV2 || !window.nacl){
-    alert('Криптомодуль ещё загружается, попробуйте через секунду');
+    await appAlert('Подождите', 'Криптомодуль ещё загружается, попробуйте через секунду');
     return;
   }
   document.getElementById('v2Stage1').style.display = 'none';
@@ -1980,7 +1977,7 @@ async function v2StartCreate(){
 }
 
 async function v2ConfirmAndPublish(){
-  if (!_v2NewMnemonic){ alert('Mnemonic не сгенерирован'); return; }
+  if (!_v2NewMnemonic){ await appAlert('Ошибка', 'Mnemonic не сгенерирован'); return; }
   const status = document.getElementById('v2CreateStatus');
   const btn = document.getElementById('v2ConfirmBtn');
   btn.disabled = true;
@@ -2286,13 +2283,13 @@ async function rotateMyKey(){
     '• Сообщения, зашифрованные под СТАРЫЙ ключ, перестанут открываться на этом устройстве (если они ещё в /pending).\n' +
     '• Старая локальная история (расшифрованная и сохранённая в IDB) останется читаемой.\n\n' +
     'Продолжить?';
-  if (!confirm(warning)) return;
+  if (!(await appConfirm('Пересоздать ключ?', warning, 'Пересоздать'))) return;
 
   let password = null;
   if (mode === 'server'){
-    password = prompt('Введите пароль аккаунта — им будет зашифрован новый приватный ключ для сервера:');
+    password = await appPrompt('Пароль для шифрования', 'Им будет зашифрован новый приватный ключ для сервера.', {password: true, placeholder: 'Пароль аккаунта'});
     if (!password) return;
-    if (password.length < 1){ alert('Пустой пароль'); return; }
+    if (password.length < 1){ await appAlert('Ошибка', 'Пустой пароль'); return; }
   }
 
   try {
@@ -2335,11 +2332,11 @@ async function rotateMyKey(){
     myPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
     await saveKeysToIDB(privBytes);
 
-    alert('Готово. Ключ обновлён. Сообщения с этого момента будут идти под новый ключ.');
+    ghostikSay('Ключ обновлён. Сообщения с этого момента идут под новый ключ.', 6000);
     // Обновим состояние storage_mode-строки в settings
     refreshStorageModeRow && refreshStorageModeRow();
   } catch(e){
-    alert('Ошибка пересоздания: ' + (e.message || e));
+    await appAlert('Ошибка', 'Ошибка пересоздания: ' + (e.message || e));
   }
 }
 
@@ -2385,15 +2382,17 @@ function hideKeyMissingBanner(){
 }
 
 async function kmSwitchToServerMode(){
-  if (!confirm('Сменить режим на «На сервере»?\n\n' +
-               'Это позволит зайти с любого устройства паролем без QR-сихронизации, ' +
-               'но снизит уровень защиты. Старая переписка останется зашифрованной ' +
-               'и расшифровать её на этом устройстве вы не сможете (если ключа здесь нет).')) return;
+  const ok = await appConfirm(
+    'Сменить режим на «На сервере»?',
+    'Это позволит зайти с любого устройства паролем без QR-синхронизации, но снизит уровень защиты. Старая переписка останется зашифрованной и расшифровать её на этом устройстве вы не сможете (если ключа здесь нет).',
+    'Сменить'
+  );
+  if (!ok) return;
   try {
     await chat('/keys/storage_mode', 'POST', { mode: 'server' });
-    alert('Режим переключён. Выйдите и зайдите заново — система перезальёт ключ.');
+    await appAlert('Готово', 'Режим переключён. Выйдите и зайдите заново — система перезальёт ключ.');
   } catch(e){
-    alert('Не удалось: ' + (e.message || e));
+    await appAlert('Ошибка', 'Не удалось: ' + (e.message || e));
   }
 }
 
@@ -2447,7 +2446,7 @@ async function toggleTda(){
     await chat('/tda', 'POST', { enabled: checked });
   } catch(e){
     document.getElementById('setTdaCheck').checked = !checked;
-    alert('Не удалось сохранить: ' + (e.message || e));
+    await appAlert('Ошибка', 'Не удалось сохранить: ' + (e.message || e));
   }
 }
 
@@ -2480,22 +2479,22 @@ async function loadPendingLoginsIntoSettings(){
 
 async function quickApprovePending(rid){
   const code = (document.getElementById('pendCode_'+rid)?.value || '').trim();
-  if (!code){ alert('Введите код'); return; }
+  if (!code){ await appAlert('Подтверждение', 'Введите код'); return; }
   try {
     await chat('/devices/pending/' + encodeURIComponent(rid) + '/approve', 'POST', { code });
     loadPendingLoginsIntoSettings();
     if (typeof loadDevicesIntoSettings === 'function') loadDevicesIntoSettings();
   } catch(e){
-    alert('Не удалось одобрить: ' + (e.message || e));
+    await appAlert('Ошибка', 'Не удалось одобрить: ' + (e.message || e));
   }
 }
 async function quickDenyPending(rid){
-  if (!confirm('Отклонить запрос на вход?')) return;
+  if (!(await appConfirm('Отклонить запрос на вход?', '', 'Отклонить'))) return;
   try {
     await chat('/devices/pending/' + encodeURIComponent(rid) + '/deny', 'POST', {});
     loadPendingLoginsIntoSettings();
   } catch(e){
-    alert('Не удалось: ' + (e.message || e));
+    await appAlert('Ошибка', 'Не удалось: ' + (e.message || e));
   }
 }
 
@@ -2538,12 +2537,12 @@ async function doApprovePending(){
 }
 async function doDenyPending(){
   if (!_approveRid) return;
-  if (!confirm('Отклонить вход?')) return;
+  if (!(await appConfirm('Отклонить вход?', '', 'Отклонить'))) return;
   try {
     await chat('/devices/pending/' + encodeURIComponent(_approveRid) + '/deny', 'POST', {});
     closeApproveLogin();
   } catch(e){
-    alert('Не удалось: ' + (e.message || e));
+    await appAlert('Ошибка', 'Не удалось: ' + (e.message || e));
   }
 }
 
@@ -2554,29 +2553,24 @@ async function changeStorageMode(){
       // Проверяем что приватник реально есть локально, иначе после нуления на сервере
       // юзер останется без ключа.
       if (!myPriv || !myPub){
-        alert('Приватный ключ не загружен в этом сеансе. Сначала зайдите в чат через пароль, потом возвращайтесь сюда.');
+        await appAlert('Подождите', 'Приватный ключ не загружен в этом сеансе. Сначала зайдите в чат через пароль, потом возвращайтесь сюда.');
         return;
       }
-      if (!confirm('После переключения серверная копия вашего приватного ключа будет удалена. ' +
-                   'Если этот браузер потеряет данные и вы не успеете подключить второе устройство — переписка станет нечитаемой. Продолжить?')){
-        return;
-      }
+      const ok = await appConfirm(
+        'Перейти на «только устройство»?',
+        'Серверная копия приватного ключа будет удалена. Если этот браузер потеряет данные и второе устройство не подключено — переписка станет нечитаемой.',
+        'Переключить'
+      );
+      if (!ok) return;
     }
     await chat('/keys/storage_mode', 'POST', { mode: newMode });
     // Если перешли на 'server' и серверной копии нет — клиент должен повторно её залить.
     if (newMode === 'server' && myPriv && myPub){
-      // Перешифруем приватник под пароль и зашлём. Пароль не известен — попросим.
-      const pwd = prompt('Введите пароль аккаунта — им будет зашифрован ключ для сервера:');
-      if (!pwd) return;
-      try {
-        // exportKey не работает для non-extractable myPriv. Нужен новый pair или другой механизм.
-        // Прагматичный путь: повторный логин через doLogin перезальёт приватник.
-        alert('Чтобы загрузить ключ на сервер, выйдите из аккаунта и зайдите снова — система перезальёт ключ автоматически.');
-      } catch(_){}
+      await appAlert('Готово', 'Чтобы загрузить ключ на сервер, выйдите из аккаунта и зайдите снова — система перезальёт ключ автоматически.');
     }
     refreshStorageModeRow();
   } catch(e){
-    alert('Не удалось сменить режим: ' + (e.message || e));
+    await appAlert('Ошибка', 'Не удалось сменить режим: ' + (e.message || e));
   }
 }
 
@@ -2642,20 +2636,25 @@ function renderDevicesList(devs, currentId){
 }
 
 async function renameDevicePrompt(pk, current){
-  const v = prompt('Новое имя устройства:', current || '');
+  const v = await appPrompt('Новое имя устройства', '', {defaultValue: current || ''});
   if (!v || v.trim() === current) return;
   try {
     await chat('/devices/' + pk + '/rename', 'POST', { name: v.trim() });
     loadDevicesIntoSettings();
-  } catch(e){ alert('Ошибка: ' + (e.message || e)); }
+  } catch(e){ await appAlert('Ошибка', e.message || String(e)); }
 }
 
 async function revokeDeviceConfirm(pk, name){
-  if (!confirm('Отключить устройство «' + (name || ('#'+pk)) + '»?\n\nЕго токен перестанет работать сразу. Юзер на этом устройстве выйдет из чата при следующем действии.')) return;
+  const ok = await appConfirm(
+    'Отключить устройство?',
+    '«' + (name || ('#'+pk)) + '» — токен перестанет работать сразу, юзер на нём выйдет из чата.',
+    'Отключить'
+  );
+  if (!ok) return;
   try {
     await chat('/devices/' + pk + '/revoke', 'POST', {});
     loadDevicesIntoSettings();
-  } catch(e){ alert('Ошибка: ' + (e.message || e)); }
+  } catch(e){ await appAlert('Ошибка', e.message || String(e)); }
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -2669,21 +2668,21 @@ async function revokeDeviceConfirm(pk, name){
 
 async function openKeyFileExport(){
   if (!myPriv || !myPub){
-    alert('Приватный ключ не загружен в этом сеансе. Зайдите в чат и попробуйте ещё раз.');
+    await appAlert('Подождите', 'Приватный ключ не загружен в этом сеансе. Зайдите в чат и попробуйте ещё раз.');
     return;
   }
-  const pwd = prompt('Придумайте пароль для файла-ключа (минимум 8 символов). Этот пароль понадобится при импорте — запомните его отдельно от пароля аккаунта.');
+  const pwd = await appPrompt('Пароль для файла-ключа', 'Минимум 8 символов. Этот пароль понадобится при импорте — запомните его отдельно от пароля аккаунта.', {password: true, placeholder: 'Придумайте пароль'});
   if (!pwd) return;
-  if (pwd.length < 8){ alert('Пароль слишком короткий'); return; }
-  const pwd2 = prompt('Введите пароль ещё раз для проверки:');
-  if (pwd !== pwd2){ alert('Пароли не совпадают'); return; }
+  if (pwd.length < 8){ await appAlert('Пароль слишком короткий', 'Минимум 8 символов.'); return; }
+  const pwd2 = await appPrompt('Повторите пароль', 'Введите ещё раз для проверки.', {password: true, placeholder: 'Тот же пароль'});
+  if (pwd !== pwd2){ await appAlert('Не совпадают', 'Пароли не совпадают'); return; }
   try {
     // Достаём pkcs8-байты приватника из IDB.
     const db = await openIDB();
     const tx = db.transaction('keys', 'readonly');
     const priv = await new Promise(r => { const q = tx.objectStore('keys').get('priv'); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
     if (!priv || !priv.data){
-      alert('Приватный ключ не найден в локальном хранилище');
+      await appAlert('Не найден', 'Приватный ключ не найден в локальном хранилище');
       return;
     }
     const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -2709,14 +2708,14 @@ async function openKeyFileExport(){
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   } catch(e){
-    alert('Не удалось экспортировать: ' + (e.message || e));
+    await appAlert('Ошибка экспорта', e.message || String(e));
   }
 }
 
 async function openKeyFileImport(){
   // Защита: импорт работает только если ты залогинен (проверяем что есть me).
   if (!me || !token){
-    alert('Сначала войдите в аккаунт. Файл-ключ проверит, что pubkey в нём совпадает с вашим аккаунтом.');
+    await appAlert('Войдите', 'Сначала войдите в аккаунт. Файл-ключ проверит, что pubkey в нём совпадает с вашим аккаунтом.');
     return;
   }
   // Создаём file picker динамически.
@@ -2730,26 +2729,26 @@ async function openKeyFileImport(){
       const text = await file.text();
       let blob;
       try { blob = JSON.parse(text); }
-      catch(_){ alert('Это не валидный JSON-файл'); return; }
-      if (blob.magic !== 'GCSKv1'){ alert('Файл повреждён или не является ключом GhostChat (нет magic-заголовка GCSKv1)'); return; }
+      catch(_){ await appAlert('Не файл', 'Это не валидный JSON-файл'); return; }
+      if (blob.magic !== 'GCSKv1'){ await appAlert('Не файл-ключ', 'Файл повреждён или не является ключом GhostChat (нет magic-заголовка GCSKv1)'); return; }
       // Сверяем pub с pub аккаунта.
       let myAccountPub;
       try {
         const r = await chat('/keys/me');
         myAccountPub = r.x25519_pub;
       } catch(e){
-        alert('Не удалось получить ваш аккаунтный pubkey: ' + (e.message || e));
+        await appAlert('Ошибка', 'Не удалось получить ваш аккаунтный pubkey: ' + (e.message || e));
         return;
       }
       if (myAccountPub && blob.pub && myAccountPub !== blob.pub){
-        if (!confirm('Pubkey в файле НЕ совпадает с pubkey вашего аккаунта.\n\n' +
-                     'Файл: ' + (blob.user || '?') + ' (pub: ' + blob.pub.slice(0,16) + '…)\n' +
-                     'Аккаунт: ' + me.username + ' (pub: ' + myAccountPub.slice(0,16) + '…)\n\n' +
-                     'Если вы продолжите, ключ из файла станет вашим (старая переписка под аккаунтным ключом расшифровываться не будет). Продолжить?')){
-          return;
-        }
+        const ok = await appConfirm(
+          'Ключ из файла не совпадает с аккаунтом',
+          'Файл: ' + (blob.user || '?') + ' (pub: ' + blob.pub.slice(0,16) + '…). Аккаунт: ' + me.username + ' (pub: ' + myAccountPub.slice(0,16) + '…). Если продолжите, ключ из файла станет вашим — старая переписка под аккаунтным ключом не расшифруется.',
+          'Импортировать'
+        );
+        if (!ok) return;
       }
-      const pwd = prompt('Введите пароль файла-ключа:');
+      const pwd = await appPrompt('Пароль файла-ключа', '', {password: true, placeholder: 'Введите пароль файла'});
       if (!pwd) return;
       try {
         const salt = b64d(blob.salt);
@@ -2763,13 +2762,13 @@ async function openKeyFileImport(){
         // Аплоадим pub на сервер в режиме local (а если уже там что-то было —
         // upload сохраняет storage_mode который уже выставлен).
         await chat('/keys/upload', 'POST', { x25519_pub: myPub, storage_mode: 'local' });
-        alert('Ключ импортирован. Перезагружаю чат…');
-        location.reload();
+        ghostikSay('Ключ импортирован. Перезагружаю…', 2500);
+        setTimeout(() => location.reload(), 1500);
       } catch(e){
-        alert('Неверный пароль или повреждённый файл: ' + (e.message || e));
+        await appAlert('Не подходит', 'Неверный пароль или повреждённый файл: ' + (e.message || e));
       }
     } catch(e){
-      alert('Ошибка: ' + (e.message || e));
+      await appAlert('Ошибка', e.message || String(e));
     }
   };
   input.click();
@@ -2785,7 +2784,7 @@ let _qrPollIdx = 0;
 
 async function openKeysyncShow(){
   if (!myPriv || !myPub){
-    alert('Приватный ключ ещё не загружен в этом сеансе. Зайдите в чат и попробуйте ещё раз.');
+    await appAlert('Подождите', 'Приватный ключ ещё не загружен в этом сеансе. Зайдите в чат и попробуйте ещё раз.');
     return;
   }
   document.getElementById('keysyncShowModal').classList.add('open');
@@ -3591,6 +3590,72 @@ function showConfirm({title='Подтвердите',msg='',okText='Ок',onOk})
   ok.onclick=()=>{close();onOk&&onOk();};
   document.getElementById('confirmCancel').onclick=close;
   ov.onclick=e=>{if(e.target===ov)close();};
+}
+
+// ── Promise-обёртки. БЕЗ нативных alert/confirm/prompt — только наши модалки. ──
+function appConfirm(title, msg, okText='Ок'){
+  return new Promise(resolve => {
+    const ov = document.getElementById('confirmModal');
+    document.getElementById('confirmTitle').textContent = title || 'Подтвердите';
+    document.getElementById('confirmMsg').textContent = msg || '';
+    const ok = document.getElementById('confirmOk');
+    ok.textContent = okText;
+    ov.classList.add('open');
+    let done = false;
+    const finish = (v) => { if (done) return; done = true; ov.classList.remove('open'); resolve(v); };
+    ok.onclick = () => finish(true);
+    document.getElementById('confirmCancel').onclick = () => finish(false);
+    ov.onclick = e => { if (e.target === ov) finish(false); };
+  });
+}
+function appAlert(title, msg){
+  return new Promise(resolve => {
+    const ov = document.getElementById('confirmModal');
+    document.getElementById('confirmTitle').textContent = title || 'Уведомление';
+    document.getElementById('confirmMsg').textContent = msg || '';
+    const ok = document.getElementById('confirmOk');
+    ok.textContent = 'Ок';
+    const cancel = document.getElementById('confirmCancel');
+    cancel.style.display = 'none';
+    ov.classList.add('open');
+    let done = false;
+    const finish = () => { if (done) return; done = true; ov.classList.remove('open'); cancel.style.display = ''; resolve(); };
+    ok.onclick = finish;
+    ov.onclick = e => { if (e.target === ov) finish(); };
+  });
+}
+function appPrompt(title, msg, opts){
+  opts = opts || {};
+  const isPassword = !!opts.password;
+  const placeholder = opts.placeholder || '';
+  const defVal = opts.defaultValue || '';
+  return new Promise(resolve => {
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay open';
+    ov.style.zIndex = '590';
+    ov.innerHTML = `
+      <div class="modal-sheet" style="max-width:440px;">
+        <div class="m-handle"></div>
+        <div class="m-head"><div class="m-title">${esc(title || '')}</div></div>
+        <div style="padding:6px 2px 14px;">
+          ${msg ? `<div style="font-size:13px;color:var(--sub);line-height:1.5;margin-bottom:14px;">${esc(msg)}</div>` : ''}
+          <input id="_appPromptInp" type="${isPassword?'password':'text'}" placeholder="${esc(placeholder)}" value="${esc(defVal)}" style="width:100%;background:rgba(15,23,42,0.6);border:1px solid var(--border-strong);border-radius:11px;padding:11px 13px;color:var(--text);font-size:14px;font-family:inherit;outline:none;margin-bottom:14px;">
+          <div style="display:flex;gap:8px;">
+            <button id="_appPromptCancel" style="flex:1;background:transparent;border:1px solid var(--border-strong);color:var(--text);border-radius:11px;padding:11px;font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit;">Отмена</button>
+            <button id="_appPromptOk" style="flex:1;background:linear-gradient(95deg,var(--primary),var(--primary2));color:#fff;border:none;border-radius:11px;padding:11px;font-size:13.5px;font-weight:800;cursor:pointer;font-family:inherit;">Ок</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+    const inp = ov.querySelector('#_appPromptInp');
+    let done = false;
+    const finish = (v) => { if (done) return; done = true; ov.remove(); resolve(v); };
+    ov.querySelector('#_appPromptOk').onclick = () => finish(inp.value);
+    ov.querySelector('#_appPromptCancel').onclick = () => finish(null);
+    ov.onclick = e => { if (e.target === ov) finish(null); };
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') finish(inp.value); else if (e.key === 'Escape') finish(null); });
+    setTimeout(() => inp.focus(), 50);
+  });
 }
 function doLogout(){
   showConfirm({
@@ -6393,7 +6458,7 @@ async function handleWs(m){
         localStorage.removeItem('gs_token');
         localStorage.removeItem('gs_me');
         clearSsoCookie();
-        alert('Это устройство было отключено с другого вашего устройства. Войдите заново.');
+        await appAlert('Устройство отключено', 'Это устройство было отключено с другого вашего устройства. Войдите заново.');
         location.reload();
         return;
       }
