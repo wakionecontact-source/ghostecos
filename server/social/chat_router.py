@@ -377,6 +377,35 @@ def revoke_my_device(device_pk: int, authorization: Optional[str] = Header(None)
         c.close()
 
 
+# ── Support admin (закреплённый чат поддержки) ──────────────────────
+# Юзер, который получает все сообщения «в поддержку». Хардкодим в коде —
+# при необходимости вынесем в config / БД-флаг users.is_support_admin.
+SUPPORT_ADMIN_USERNAME = "waki"
+
+
+@router.get("/support_admin")
+def get_support_admin(authorization: Optional[str] = Header(None)):
+    """Клиент по этому ответу решает, показывать ли pinned-диалог
+    «Поддержка GhostChat» сверху списка чатов."""
+    user = auth_member(authorization)
+    c = db()
+    try:
+        r = c.execute(
+            "SELECT id, username, display_name, x25519_pub FROM users WHERE username=?",
+            (SUPPORT_ADMIN_USERNAME,),
+        ).fetchone()
+        if not r:
+            return {"username": None, "display_name": None, "is_me": False, "pub": None}
+        return {
+            "username": r["username"],
+            "display_name": r["display_name"],
+            "x25519_pub": r["x25519_pub"],
+            "is_me": user["username"] == r["username"],
+        }
+    finally:
+        c.close()
+
+
 # ── TDA: Trust Device Authorization ─────────────────────────────────
 # Юзер включает требование подтверждать новые устройства с уже доверенного.
 # Новое устройство при логине вместо токена получает request_id + 6-значный
