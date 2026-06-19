@@ -2042,9 +2042,13 @@ async function _checkLocalPubMatchesServer(){
     const r = await chat('/keys/me');
     if (!r.x25519_pub) return true;  // на сервере pub нет — ничего сравнивать.
     if (myPub && r.x25519_pub !== myPub){
-      console.warn('[E2E] local pub != server pub → wiping IDB');
-      try { await wipeKeysIDB(); } catch(_){}
-      myPriv = null; myPub = null;
+      // !!! НЕ wipe IDB !!! Раньше тут было wipeKeysIDB() — оно убивало priv
+      // навсегда без предупреждения, когда юзер заходил с другого устройства
+      // и оно перезаписывало server pub. Это уничтожило ключ waki 2026-06-19.
+      // Сейчас: priv остаётся в IDB, banner показывает что pub не совпадает.
+      console.warn('[E2E] local pub != server pub — priv остаётся, banner покажет mismatch');
+      window._keyMissing = true;
+      window._keyMismatch = true;  // флаг для banner-текста: "ключ перезаписан"
       return false;
     }
     return true;
@@ -2058,17 +2062,17 @@ async function _checkLocalPubMatchesServer(){
 //       (Фаза 3, пока не готова — честно сообщаем и блокируем вход).
 //   (d) Новый юзер — генерим пару, аплоадим только pubkey.
 async function _ensureKeysLocal(password, modeRes){
-  // (a) Ключи уже в памяти (например, init-путь подтянул их из IDB до doLogin).
+  // (a) Ключи уже в памяти (init подтянул их из IDB до doLogin).
   if (myPriv && myPub){
     console.log('[E2E] mode=local — keys already in memory');
-    // Сверяем с сервером — если pub разъехались, wipe и идём дальше как
-    // «новое устройство» (есть has_pub → banner).
     if (!(await _checkLocalPubMatchesServer())){
-      // myPriv/myPub теперь null, продолжаем в ветке (c).
-    } else {
-      try { await chat('/keys/upload', 'POST', { x25519_pub: myPub, storage_mode: 'local' }); } catch(_){}
+      // mismatch: server pub перезаписали с другого устройства. Раньше тут
+      // wipe-ало priv → потеря ключа. Сейчас priv ОСТАЁТСЯ — расшифровывать
+      // старые сообщения сможем; banner покажет mismatch.
       return;
     }
+    try { await chat('/keys/upload', 'POST', { x25519_pub: myPub, storage_mode: 'local' }); } catch(_){}
+    return;
   }
   // (b) Попробовать IDB.
   try {
@@ -2076,22 +2080,21 @@ async function _ensureKeysLocal(password, modeRes){
     if (await loadKeysFromIDB()){
       console.log('[E2E] mode=local — keys loaded from IDB');
       if (!(await _checkLocalPubMatchesServer())){
-        // wipe прошёл внутри, идём в ветку (c)
-      } else {
-        try { await chat('/keys/upload', 'POST', { x25519_pub: myPub, storage_mode: 'local' }); } catch(_){}
+        // mismatch — priv остался в памяти и IDB, banner покажет это.
         return;
       }
+      try { await chat('/keys/upload', 'POST', { x25519_pub: myPub, storage_mode: 'local' }); } catch(_){}
+      return;
     }
   } catch(e){
     console.warn('[E2E] mode=local — IDB load failed:', e);
   }
-  // (c) На сервере есть pubkey, но локально приватника нет — новое устройство.
-  // НЕ блокируем вход: пускаем в чат, ставим флаг и показываем persistent banner
-  // с кнопками «Получить ключ через QR / файл / Сменить режим». Без приватника
-  // отправка/расшифровка будет давать понятную ошибку до синхронизации.
+  // (c) Нет priv нигде — новое устройство. Если на сервере pub есть — НЕ
+  // генерируем автоматом (это перезаписало бы pub другого устройства и убило
+  // его ключ через стрелку из _checkLocalPubMatchesServer). Показываем banner,
+  // юзер сам решит: QR с другого устройства / файл / rotate.
   if (modeRes.has_pub){
     myPub = (modeRes && modeRes.x25519_pub) || null;
-    // myPub попробуем подтянуть отдельным запросом — modeRes его может не дать.
     try {
       if (!myPub){
         const km = await chat('/keys/me');
@@ -2100,7 +2103,7 @@ async function _ensureKeysLocal(password, modeRes){
     } catch(_){}
     myPriv = null;
     window._keyMissing = true;
-    console.warn('[E2E] local-mode без приватника на этом устройстве — войдём без ключа');
+    console.warn('[E2E] local-mode: на сервере pub есть, локально priv нет — banner');
     return;
   }
   // (d) Новый юзер — генерируем пару и публикуем только публичный ключ.
