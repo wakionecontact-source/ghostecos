@@ -934,8 +934,9 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
       <button class="m-close" onclick="closeSettings()"><i class="fa-solid fa-xmark"></i></button>
     </div>
 
+    <!-- ── Ключ шифрования ── -->
     <div class="set-section">
-      <div class="set-section-title">Безопасность</div>
+      <div class="set-section-title">Ключ шифрования</div>
 
       <div class="set-row">
         <div class="set-row-main">
@@ -948,10 +949,28 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
       <div class="set-row">
         <div class="set-row-main">
           <div class="set-row-title">Пересоздать ключ</div>
-          <div class="set-row-sub">Сгенерировать новую пару ключей. Старая переписка под старый ключ станет нечитаемой; собеседники увидят предупреждение «ключ изменился» и должны будут подтвердить новый.</div>
+          <div class="set-row-sub">Сгенерировать новую пару ключей. Собеседники автоматически примут новый ключ. Перед заменой спросим, забыть ли локальную историю и нужно ли стереть переписку у собеседников.</div>
         </div>
         <button class="set-btn danger" onclick="rotateMyKeys()">Пересоздать</button>
       </div>
+    </div>
+
+    <!-- ── Защита аккаунта v2 (BETA) ── -->
+    <div class="set-section">
+      <div class="set-section-title">Защита аккаунта v2 <span style="font-size:10px;font-weight:700;background:linear-gradient(95deg,#a855f7,#ec4899);color:#fff;padding:2px 6px;border-radius:99px;margin-left:6px;letter-spacing:.3px;">BETA</span></div>
+
+      <div class="set-row">
+        <div class="set-row-main">
+          <div class="set-row-title">Новый стек шифрования</div>
+          <div class="set-row-sub" id="setV2Text">Forward secrecy, 12-словная seed-фраза для восстановления, multi-device без передачи приватника.</div>
+        </div>
+        <button class="set-btn" onclick="openV2Onboard()">Настроить</button>
+      </div>
+    </div>
+
+    <!-- ── Подтверждение новых устройств ── -->
+    <div class="set-section">
+      <div class="set-section-title">Вход с новых устройств</div>
 
       <div class="set-row">
         <div class="set-row-main">
@@ -963,15 +982,6 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
           <span class="tda-slider"></span>
         </label>
       </div>
-
-      <div class="set-row">
-        <div class="set-row-main">
-          <div class="set-row-title">Защита аккаунта v2 <span style="font-size:10px;font-weight:700;background:linear-gradient(95deg,#a855f7,#ec4899);color:#fff;padding:2px 6px;border-radius:99px;margin-left:6px;">BETA</span></div>
-          <div class="set-row-sub" id="setV2Text">Новый стек: forward secrecy, 12-словная seed-фраза для восстановления, multi-device без передачи приватника.</div>
-        </div>
-        <button class="set-btn" onclick="openV2Onboard()">Настроить</button>
-      </div>
-
     </div>
 
     <!-- Секция «Ожидающие одобрения» (показывается только если есть pending) -->
