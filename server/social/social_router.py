@@ -386,6 +386,73 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                         "from_username": username,
                         "is_typing": bool(data.get("is_typing", True)),
                     })
+            # ── chat.send: отправка DM через WS (вместо POST /send) ──
+            # data: {to_username, ciphertext, request_id}
+            # Ответ: {type:'chat.send.ok', data:{request_id, id, created_at, recipient_online}}
+            #        или {type:'chat.send.err', data:{request_id, error}}
+            elif t == "chat.send" and uid:
+                rid = data.get("request_id")
+                to_username = (data.get("to_username") or "").lower().strip().lstrip("@")
+                ciphertext = data.get("ciphertext") or ""
+                err = None
+                if not to_username:
+                    err = "to_username обязателен"
+                elif not isinstance(ciphertext, str) or len(ciphertext) > 8000:
+                    err = "ciphertext: некорректный формат"
+                # rate-limit на WS-send такой же как на POST: 120/мин
+                if err is None:
+                    try:
+                        from .chat_router import _rate_limit as _rl
+                        _rl(f"chatsend:{uid}", limit=120, window=60)
+                    except HTTPException as he:
+                        err = he.detail
+                if err is None:
+                    c = db()
+                    to_user = c.execute(
+                        "SELECT id, username, display_name, x25519_pub FROM users WHERE username=?",
+                        (to_username,),
+                    ).fetchone()
+                    if not to_user:
+                        err = "Получатель не найден"
+                    elif to_user["id"] == uid:
+                        err = "Нельзя отправить себе"
+                    elif not to_user["x25519_pub"]:
+                        err = "У получателя ещё нет E2E-ключей"
+                    else:
+                        c.execute(
+                            "INSERT INTO chat_dm (sender_id, receiver_id, text) VALUES (?,?,?)",
+                            (uid, to_user["id"], ciphertext),
+                        )
+                        msg_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
+                        row = c.execute("SELECT created_at FROM chat_dm WHERE id=?", (msg_id,)).fetchone()
+                        c.commit()
+                        # Sender username для payload — берём из соединения (username переменная закрытия)
+                        sender_row = c.execute("SELECT display_name FROM users WHERE id=?", (uid,)).fetchone()
+                        payload = {
+                            "id": msg_id,
+                            "from_username": username,
+                            "from_display_name": sender_row["display_name"] if sender_row else username,
+                            "to_username": to_user["username"],
+                            "ciphertext": ciphertext,
+                            "created_at": row["created_at"],
+                        }
+                        sockets_recv = list(ws_hub._by_uid.get(to_user["id"], ()))
+                        ws_hub.send_to(to_user["id"], "chat.new", payload)
+                        ws_hub.send_to(uid, "chat.echo", payload)
+                        c.close()
+                        await websocket.send_json({"type": "chat.send.ok", "data": {
+                            "request_id": rid,
+                            "id": msg_id,
+                            "created_at": row["created_at"],
+                            "recipient_online": bool(sockets_recv),
+                        }})
+                        continue
+                    c.close()
+                if err is not None:
+                    await websocket.send_json({"type": "chat.send.err", "data": {
+                        "request_id": rid,
+                        "error": str(err),
+                    }})
             # Клиент сообщает кому он "присутствует" — запрос статуса
             elif t == "presence.ask":
                 target = (data.get("username") or "").lower()

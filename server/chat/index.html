@@ -5117,10 +5117,20 @@ async function sendMessage(){
       payload.reply_to = currentReply.sid;
       payload.reply_preview = optimistic.reply_preview;
     }
-    // Legacy /send (sealed sender временно отключён — было слишком много багов,
-    // вернёмся когда отладим schema совместимости).
     const ct = await encryptForPeer(activePeer.username, payload);
-    const r = await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: ct });
+    // Главный путь — отправка через WS RPC (быстрее, не открывает новое TCP).
+    // Если WS не подключён или RPC падает — fallback на POST /send (HTTP).
+    let r;
+    if (ws && ws.readyState === 1){
+      try {
+        r = await wsRpc('chat.send', { to_username: activePeer.username, ciphertext: ct });
+      } catch(wsErr) {
+        console.warn('[send] WS RPC failed, fallback to POST:', wsErr.message);
+        r = await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: ct });
+      }
+    } else {
+      r = await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: ct });
+    }
     optimistic.sid = r.id;
     optimistic.created_at = r.created_at;
     optimistic.pending = false;
@@ -6864,6 +6874,40 @@ function _killStaleWs(reason) {
   // ws.onclose сам триггернёт reconnect
 }
 
+// ── WS RPC: request-response поверх websocket ──
+// Клиент шлёт {type, data:{...args, request_id}}, ждёт ответа с тем же
+// request_id (type обычно type+'.ok'/'.err'). Возвращает Promise.
+const _wsRpcPending = new Map(); // request_id → {resolve, reject, timer}
+let _wsRpcNextId = 1;
+function wsRpc(type, data, timeoutMs){
+  return new Promise((resolve, reject) => {
+    if (!ws || ws.readyState !== 1) { reject(new Error('WS не подключён')); return; }
+    const rid = (_wsRpcNextId++).toString(36) + Date.now().toString(36);
+    const timer = setTimeout(() => {
+      _wsRpcPending.delete(rid);
+      reject(new Error('WS timeout: ' + type));
+    }, timeoutMs || 10000);
+    _wsRpcPending.set(rid, { resolve, reject, timer });
+    try {
+      ws.send(JSON.stringify({ type, data: Object.assign({ request_id: rid }, data || {}) }));
+    } catch(e) {
+      clearTimeout(timer); _wsRpcPending.delete(rid); reject(e);
+    }
+  });
+}
+// Резолвит ожидающий RPC по request_id из incoming WS-сообщения.
+// Возвращает true если сообщение было RPC-ответом.
+function _wsRpcResolve(m){
+  const d = m && m.data; if (!d || !d.request_id) return false;
+  const p = _wsRpcPending.get(d.request_id);
+  if (!p) return false;
+  _wsRpcPending.delete(d.request_id);
+  clearTimeout(p.timer);
+  if (m.type && m.type.endsWith('.err')) p.reject(new Error(d.error || 'WS RPC error'));
+  else p.resolve(d);
+  return true;
+}
+
 function connectWS(){
   if (_wsAuthFail) return;
   if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
@@ -6995,6 +7039,9 @@ window.addEventListener('focus', _onWakeup);
 window.addEventListener('online', _onWakeup);  // вернулся интернет
 
 async function handleWs(m){
+  // RPC-ответы перехватываем первыми — если сообщение адресовано
+  // ожидающему promise'у, не идём дальше в обычный switch.
+  if (_wsRpcResolve(m)) return;
   const t = m.type, d = m.data || {};
   // TDA: новое устройство хочет войти.
   if (t === 'login.pending') {
