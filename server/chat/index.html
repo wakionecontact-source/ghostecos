@@ -543,17 +543,72 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 .set-add-btn{background:transparent;border:1px solid var(--border-strong);color:var(--text);border-radius:8px;padding:5px 9px;font-size:11.5px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:5px;letter-spacing:0;text-transform:none;transition:border-color .15s,background .15s;}
 .set-add-btn:hover{border-color:#a855f7;background:rgba(168,85,247,0.10);}
 
-/* Tabs внутри Settings — два отдела (Безопасность / Устройства). */
-.set-tabs{display:flex;gap:3px;background:rgba(15,23,42,0.55);border:1px solid var(--border);border-radius:13px;padding:4px;margin:0 0 16px;}
-.set-tab{flex:1;background:transparent;border:none;color:var(--sub);font-weight:700;font-size:13px;padding:10px 12px;border-radius:9px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:7px;transition:background .18s ease, color .18s ease, transform .18s ease;font-family:inherit;}
+/* Tabs внутри Settings — стеклянный контейнер, активный таб с liquid-highlight. */
+.set-tabs{
+  display:flex;gap:4px;padding:5px;margin:0 0 18px;border-radius:14px;
+  background:
+    linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.015) 100%),
+    rgba(15,15,30,0.55);
+  border:1px solid rgba(255,255,255,0.08);
+  box-shadow:
+    inset 1px 1px 0 rgba(255,255,255,0.10),
+    inset -1px -1px 0 rgba(0,0,0,0.18);
+}
+.set-tab{
+  flex:1;background:transparent;border:none;color:var(--sub);font-weight:700;font-size:13px;
+  padding:11px 12px;border-radius:10px;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  transition:background .22s ease, color .22s ease, transform .18s ease, box-shadow .22s ease;
+  font-family:inherit;position:relative;
+}
 .set-tab i{font-size:11.5px;}
-.set-tab.active{background:rgba(168,85,247,0.18);color:var(--text);}
-.set-tab:hover:not(.active){background:rgba(255,255,255,0.04);color:var(--text);}
+.set-tab.active{
+  color:#fff;
+  background:
+    linear-gradient(135deg, rgba(168,85,247,0.30) 0%, rgba(236,72,153,0.18) 100%),
+    rgba(168,85,247,0.10);
+  box-shadow:
+    inset 1px 1px 0 rgba(255,255,255,0.22),
+    inset -1px -1px 0 rgba(0,0,0,0.22),
+    0 6px 18px -6px rgba(168,85,247,0.55);
+}
+.set-tab:hover:not(.active){background:rgba(255,255,255,0.05);color:var(--text);}
 .set-tab:active{transform:scale(.97);transition:transform 60ms ease-out;}
 .set-page{display:none;}
 .set-page.active{display:block;}
 
-.set-row{display:flex;align-items:center;gap:12px;padding:13px 14px;background:rgba(15,23,42,0.5);border:1px solid var(--border);border-radius:13px;margin-bottom:10px;}
+/* Liquid-glass карточка: имитируем frosted glass БЕЗ backdrop-filter
+   (он лагает на Intel UHD). Слой 1 — лёгкий диагональный градиент
+   создаёт «глубину» как у настоящего полупрозрачного стекла.
+   Слой 2 — inset highlight белым по верх-лево + тёмный по низ-право
+   изображает преломление света на гранях.
+   Слой 3 — radial-glow следует за мышью (псевдо-параллакс), управляется
+   из JS через --mx/--my CSS-переменные. */
+.set-row{
+  display:flex;align-items:center;gap:12px;padding:14px 16px;
+  background:
+    linear-gradient(135deg, rgba(255,255,255,0.075) 0%, rgba(255,255,255,0.020) 55%, rgba(255,255,255,0.010) 100%),
+    rgba(20,18,42,0.55);
+  border:1px solid rgba(255,255,255,0.10);
+  border-radius:16px;
+  margin-bottom:11px;
+  box-shadow:
+    inset 1px 1px 0 rgba(255,255,255,0.14),
+    inset -1px -1px 0 rgba(0,0,0,0.20),
+    0 10px 28px -10px rgba(0,0,0,0.45);
+  position:relative;
+  overflow:hidden;
+  isolation:isolate;
+  transition:transform .25s cubic-bezier(.4,0,.2,1), border-color .25s ease;
+}
+.set-row::before{
+  content:'';position:absolute;inset:0;
+  background:radial-gradient(180px 180px at var(--mx,50%) var(--my,50%), rgba(168,85,247,0.22), rgba(168,85,247,0.06) 35%, transparent 70%);
+  opacity:0;transition:opacity .35s ease;pointer-events:none;z-index:-1;
+}
+.set-row:hover{border-color:rgba(168,85,247,0.35);}
+.set-row:hover::before{opacity:1;}
+.set-row > *{position:relative;z-index:1;}
 .set-row-main{flex:1;min-width:0;}
 .set-row-title{font-size:14px;font-weight:700;color:var(--text);margin-bottom:3px;}
 .set-row-sub{font-size:12px;color:var(--sub);line-height:1.4;}
@@ -2558,6 +2613,29 @@ function closeSettings(){
   document.getElementById('settingsModal').classList.remove('open');
   document.body.style.overflow = '';
 }
+
+// Параллакс-glow: радиальная подсветка следует за курсором в liquid-glass
+// карточках. Один listener на document — рассчёт только если hover внутри
+// .set-row (cheap). Координаты пишутся в CSS-переменные --mx/--my, дальше
+// чисто GPU-композит через radial-gradient.
+(function _liquidGlassParallax(){
+  let _rafQueued = false, _lastEv = null;
+  document.addEventListener('mousemove', (e) => {
+    _lastEv = e;
+    if (_rafQueued) return;
+    _rafQueued = true;
+    requestAnimationFrame(() => {
+      _rafQueued = false;
+      const t = _lastEv && _lastEv.target && _lastEv.target.closest ? _lastEv.target.closest('.set-row') : null;
+      if (!t) return;
+      const r = t.getBoundingClientRect();
+      const mx = ((_lastEv.clientX - r.left) / r.width  * 100).toFixed(1);
+      const my = ((_lastEv.clientY - r.top)  / r.height * 100).toFixed(1);
+      t.style.setProperty('--mx', mx + '%');
+      t.style.setProperty('--my', my + '%');
+    });
+  }, { passive: true });
+})();
 
 async function refreshStorageModeRow(){
   const el = document.getElementById('setStorageModeText');
