@@ -285,20 +285,52 @@ class _SocialPaneState extends State<SocialPane> {
               duration: const Duration(milliseconds: 200),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                color: active ? GE.primary.withValues(alpha: 0.2) : GE.glassFill,
+                gradient: active
+                    ? LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          GE.primary.withValues(alpha: 0.30),
+                          GE.primary2.withValues(alpha: 0.18),
+                        ],
+                      )
+                    : LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Color.alphaBlend(
+                              Colors.white.withValues(alpha: 0.08), GE.glassFill),
+                          GE.glassFill,
+                        ],
+                      ),
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
-                  color: active ? GE.primary : GE.glassBorder,
-                  width: active ? 1.2 : 0.6,
+                  color: active
+                      ? GE.primary.withValues(alpha: 0.75)
+                      : Colors.white.withValues(alpha: 0.14),
+                  width: active ? 1.2 : 0.8,
                 ),
+                boxShadow: [
+                  active
+                      ? BoxShadow(
+                          color: GE.primary.withValues(alpha: 0.32),
+                          blurRadius: 14,
+                          offset: const Offset(0, 4),
+                        )
+                      : BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.20),
+                          blurRadius: 8,
+                          offset: const Offset(0, 3),
+                        ),
+                ],
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(active ? iconFill : iconOut,
-                    size: 14, color: active ? GE.primary : GE.sub),
+                    size: 14, color: active ? Colors.white : GE.sub),
                 const SizedBox(width: 4),
                 Text(label,
                     style: TextStyle(
-                      color: active ? GE.primary : GE.sub,
+                      color: active ? Colors.white : GE.sub,
                       fontSize: 12,
                       fontWeight: active ? FontWeight.w700 : FontWeight.w500,
                     )),

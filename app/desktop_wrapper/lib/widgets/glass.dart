@@ -44,50 +44,62 @@ class GlassCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final radiusObj = BorderRadius.circular(radius);
-    final box = BoxDecoration(
-      color: fillOverride ??
-          (lite ? GE.glassFill.withValues(alpha: 0.6) : GE.glassFill),
+    final base = fillOverride ??
+        (lite ? GE.glassFill.withValues(alpha: 0.55) : GE.glassFill);
+    // Заливка-стекло: диагональный блик (свет сверху-слева) → база → лёгкое
+    // затемнение снизу. Светлая кромка сверху даёт specular-объём. Всё — дёшево
+    // (никаких лишних GPU-проходов), блюр опционален (lite=без блюра).
+    final fillDeco = BoxDecoration(
       borderRadius: radiusObj,
-      border: Border.all(color: GE.glassBorder, width: GE.glassStroke),
-      boxShadow: glow
-          ? [
-              BoxShadow(
-                color: GE.glowFill,
-                blurRadius: 26,
-                spreadRadius: 1,
-              ),
-            ]
-          : null,
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          Color.alphaBlend(Colors.white.withValues(alpha: 0.10), base),
+          base,
+          Color.alphaBlend(Colors.black.withValues(alpha: 0.05), base),
+        ],
+        stops: const [0.0, 0.55, 1.0],
+      ),
+      border: Border.all(
+        color: Colors.white.withValues(alpha: 0.16),
+        width: GE.glassStroke,
+      ),
     );
-    Widget content;
-    if (lite) {
-      // Без BackdropFilter — никакого GPU-blur, дёшево.
-      content = Container(
-        decoration: box,
-        padding: padding,
-        child: child,
-      );
-    } else {
-      content = ClipRRect(
+    Widget fill = Container(decoration: fillDeco, padding: padding, child: child);
+    if (!lite) {
+      fill = ClipRRect(
         borderRadius: radiusObj,
         child: BackdropFilter(
           filter: ImageFilter.blur(
             sigmaX: blurOverride ?? GE.glassBlur,
             sigmaY: blurOverride ?? GE.glassBlur,
           ),
-          child: Container(
-            decoration: box,
-            padding: padding,
-            child: child,
-          ),
+          child: fill,
         ),
       );
     }
-    if (onTap == null) return content;
-    return InkWell(
-      borderRadius: radiusObj,
-      onTap: onTap,
-      child: content,
+    if (onTap != null) {
+      fill = Material(
+        color: Colors.transparent,
+        child: InkWell(borderRadius: radiusObj, onTap: onTap, child: fill),
+      );
+    }
+    // Тень — СНАРУЖИ ClipRRect (иначе блюр её срезает). Отрывает карточку от
+    // фона → объём вместо «плоско».
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: radiusObj,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.28),
+            blurRadius: 22,
+            offset: const Offset(0, 9),
+          ),
+          if (glow) BoxShadow(color: GE.glowFill, blurRadius: 30, spreadRadius: 1),
+        ],
+      ),
+      child: fill,
     );
   }
 }
@@ -135,19 +147,30 @@ class GlassButton extends StatelessWidget {
       duration: const Duration(milliseconds: 140),
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
       decoration: BoxDecoration(
-        gradient: gradient,
-        color: isCta ? null : GE.glassFill,
+        // Не-CTA получает sheen-градиент стекла вместо плоской заливки.
+        gradient: gradient ??
+            LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color.alphaBlend(
+                    Colors.white.withValues(alpha: 0.10), GE.glassFill),
+                GE.glassFill,
+              ],
+            ),
         borderRadius: radius,
-        border: isCta
-            ? null
-            : Border.all(color: GE.glassBorder, width: GE.glassStroke),
+        // Светлая верхняя кромка — у CTA ярче (specular-блик на цветной кнопке).
+        border: Border.all(
+          color: Colors.white.withValues(alpha: isCta ? 0.24 : 0.16),
+          width: GE.glassStroke,
+        ),
         boxShadow: isCta
             ? [
                 BoxShadow(
                   color: (primary ? GE.primary : const Color(0xFFE11D48))
-                      .withValues(alpha: 0.35),
-                  blurRadius: 18,
-                  offset: const Offset(0, 6),
+                      .withValues(alpha: 0.38),
+                  blurRadius: 20,
+                  offset: const Offset(0, 7),
                 ),
               ]
             : null,
