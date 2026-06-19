@@ -116,27 +116,52 @@ button,input,textarea{font-family:inherit;}
 .install-overlay.open .install-arrow{display:block;}
 /* старый общий селектор удалён, см. .sb-empty > i ниже */
 
+/* iOS-like list: тонкий разделитель между чатами, slide-right на hover,
+   accent-stripe слева растёт + цветным на active. */
 .dialog{
-  display:flex;gap:11px;padding:11px 12px;border-radius:14px;cursor:pointer;align-items:center;
+  display:flex;gap:11px;
+  padding:12px 12px 12px 18px;  /* +6px слева под accent-стрип */
+  border-radius:12px;cursor:pointer;align-items:center;
   position:relative;isolation:isolate;
   border:1px solid transparent;
-  transition:background .2s ease, border-color .2s ease, box-shadow .25s ease;
+  border-bottom:1px solid rgba(255,255,255,0.045);  /* тонкая линия между */
+  transition:transform .26s cubic-bezier(.4,0,.2,1), background .2s ease, border-color .2s ease, box-shadow .25s ease;
 }
+/* Cursor-radial glow (как было) */
 .dialog::before{
   content:'';position:absolute;inset:0;border-radius:inherit;
   background:radial-gradient(220px 220px at var(--mx,50%) var(--my,50%), rgba(168,85,247,0.18), rgba(168,85,247,0.05) 35%, transparent 70%);
   opacity:0;transition:opacity .3s ease;pointer-events:none;z-index:-1;
 }
+/* Левая accent-полоска: на покое скрыта (height:0), на hover растёт
+   белёсая, на active — большая фиолетово-розовая с glow. */
+.dialog::after{
+  content:'';position:absolute;left:5px;top:50%;
+  width:3px;height:0;border-radius:99px;
+  background:rgba(255,255,255,0.45);
+  transform:translateY(-50%);
+  transition:height .26s cubic-bezier(.4,1.5,.6,1), background .25s ease, box-shadow .25s ease, width .25s ease;
+  pointer-events:none;z-index:2;
+}
 .dialog:hover{
+  transform:translateX(6px);
   background:var(--gl-grad);
-  border-color:var(--gl-border);
+  border-bottom-color:rgba(255,255,255,0.07);
   box-shadow:var(--gl-inset);
 }
 .dialog:hover::before{opacity:1;}
+.dialog:hover::after{height:62%;}
 .dialog.active{
+  transform:translateX(9px);
   background:linear-gradient(135deg, rgba(168,85,247,0.22) 0%, rgba(236,72,153,0.08) 100%), rgba(168,85,247,0.06);
   border-color:rgba(168,85,247,0.30);
-  box-shadow:inset 1px 1px 0 rgba(255,255,255,0.18), inset -1px -1px 0 rgba(0,0,0,0.22), 0 8px 22px -10px rgba(168,85,247,0.45);
+  border-bottom-color:rgba(168,85,247,0.20);
+  box-shadow:inset 1px 1px 0 rgba(255,255,255,0.18), inset -1px -1px 0 rgba(0,0,0,0.22), 0 10px 24px -10px rgba(168,85,247,0.50);
+}
+.dialog.active::after{
+  height:72%;width:4px;
+  background:linear-gradient(180deg, var(--primary) 0%, #ec4899 100%);
+  box-shadow:0 0 14px rgba(168,85,247,0.6), 0 0 4px rgba(236,72,153,0.45);
 }
 .dialog > *{position:relative;z-index:1;}
 .dialog.pinned-support{background:linear-gradient(95deg,rgba(168,85,247,0.10),rgba(236,72,153,0.05));border:1px solid rgba(168,85,247,0.25);margin-bottom:6px;}
