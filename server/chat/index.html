@@ -721,7 +721,8 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 </style>
 </head>
 <body>
-<canvas id="mesh-bg"></canvas>
+<!-- <canvas id="mesh-bg"> удалён вместе с mesh.js — был просто пустым контейнером без скрипта. -->
+
 
 <div id="authScreen">
   <div class="auth-card">
@@ -1274,7 +1275,9 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 
 <div class="toast" id="toast"></div>
 
-<script src="/mesh.js"></script>
+<!-- mesh.js удалён в чате: rAF с O(n²) проверками жёг CPU и держал
+     INP > 600мс. Если когда-то захочется фон — статичный SVG/gradient. -->
+
 <script src="/dialog.js"></script>
 <!-- QR-генератор для синхронизации устройств. ~10kb, defer чтобы не блокировать boot. -->
 <script defer src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
