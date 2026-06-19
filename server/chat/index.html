@@ -6960,6 +6960,15 @@ async function _wsDecryptFrame(data){
   }
 }
 
+// ── Hello promise: сервер шлёт hello с полным профилем сразу после accept.
+// init() ждёт это вместо HTTP /me. Resolve через handleWs() ниже.
+let _helloResolve = null, _helloReject = null;
+let _helloPromise = null;
+function _newHelloPromise(){
+  _helloPromise = new Promise((res, rej) => { _helloResolve = res; _helloReject = rej; });
+  return _helloPromise;
+}
+
 // ── WS RPC: request-response поверх websocket ──
 // Клиент шлёт {type, data:{...args, request_id}}, ждёт ответа с тем же
 // request_id (type обычно type+'.ok'/'.err'). Возвращает Promise.
@@ -7081,7 +7090,12 @@ function connectWS(){
   if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
   const base = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/soc/ws';
   const u = token ? `${base}?token=${encodeURIComponent(token)}` : base;
-  try { ws = new WebSocket(u); } catch(e) { setTimeout(connectWS, wsReconnect); wsReconnect = Math.min(wsReconnect*2, 30000); return; }
+  // Готовим новый hello-promise — init() ждёт его как ответ от сервера.
+  _newHelloPromise();
+  try { ws = new WebSocket(u); } catch(e) {
+    if (_helloReject) { try { _helloReject(e); } catch(_){} _helloReject = null; }
+    setTimeout(connectWS, wsReconnect); wsReconnect = Math.min(wsReconnect*2, 30000); return;
+  }
   _resetWsCrypto();
   ws.onopen = async () => {
     wsReconnect = 1000;
@@ -7234,6 +7248,12 @@ async function handleWs(m){
   // ожидающему promise'у, не идём дальше в обычный switch.
   if (_wsRpcResolve(m)) return;
   const t = m.type, d = m.data || {};
+  // hello: сервер сразу прислал полный профиль — init() ждёт этого
+  // вместо HTTP /me. Resolve промиса с payload'ом.
+  if (t === 'hello') {
+    if (_helloResolve) { try { _helloResolve(d); } catch(_){} _helloResolve = null; _helloReject = null; }
+    return;
+  }
   // TDA: новое устройство хочет войти.
   if (t === 'login.pending') {
     // У не-админа TDA-запрос приходит в его собственный аккаунт — у него
@@ -7402,8 +7422,24 @@ function askPresence(username){
 async function init(){
   if (!token) { showAuth(); return; }
   setSsoCookie(token);
+  // Открываем WS первым — сервер пришлёт hello с полным профилем
+  // → не нужен HTTP /me. Если за 4с не получили hello, fallback на HTTP.
+  connectWS();
+  let d;
   try {
-    const d = await soc('/me');
+    d = await Promise.race([
+      _helloPromise || Promise.reject(new Error('no hello promise')),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('hello timeout')), 4000)),
+    ]);
+  } catch(_) {
+    try { d = await soc('/me'); }
+    catch(e) {
+      token=null; me=null;
+      localStorage.removeItem('gs_token'); localStorage.removeItem('gs_me'); clearSsoCookie();
+      showAuth(); return;
+    }
+  }
+  try {
     me = { ...me, id: d.id || d.user_id, username: d.username, display_name: d.display_name, is_guest: !!d.is_guest };
     localStorage.setItem('gs_me', JSON.stringify(me));
     if (me.is_guest) { doLogout(); return; }

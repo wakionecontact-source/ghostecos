@@ -358,7 +358,25 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
         return
     await websocket.accept()
     await ws_hub.register(uid, websocket)
-    await websocket.send_json({"type": "hello", "data": {"uid": uid}})
+    # Hello-payload сразу с полным профилем — клиент использует это вместо
+    # HTTP /me на первой загрузке (один rt экономии при boot).
+    _c = db()
+    _stats = get_user_stats(_c, uid)
+    _flags = _c.execute(
+        "SELECT username, display_name, is_admin, is_moderator FROM users WHERE id=?", (uid,)
+    ).fetchone()
+    _c.close()
+    _me_payload = {
+        "uid": uid, "id": uid, "user_id": uid,
+        "username": (_flags["username"] if _flags else username),
+        "display_name": (_flags["display_name"] if _flags else username),
+        "is_guest": False,
+        "is_admin": _is_admin_user({"username": (_flags["username"] if _flags else username),
+                                     "is_admin": (_flags["is_admin"] if _flags else 0)}),
+        "is_moderator": bool(_flags and _flags["is_moderator"]),
+        **_stats,
+    }
+    await websocket.send_json({"type": "hello", "data": _me_payload})
     # Локальный AES-GCM ключ для этого соединения. None пока клиент не сделал
     # cs.hello handshake. Опционально: старые клиенты без шифрования продолжают
     # работать как раньше.
@@ -1036,6 +1054,25 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     **stats,
                     "posts": posts,
                 }})
+
+            # ── me.get: профиль текущего юзера (id, username, display_name, stats, flags) ──
+            elif t == "me.get" and uid:
+                rid = data.get("request_id")
+                c = db()
+                stats = get_user_stats(c, uid)
+                flags_row = c.execute("SELECT username, display_name, is_admin, is_moderator FROM users WHERE id=?", (uid,)).fetchone()
+                c.close()
+                u_username = flags_row["username"] if flags_row else username
+                u_display = flags_row["display_name"] if flags_row else username
+                payload = {
+                    "id": uid, "user_id": uid,
+                    "username": u_username, "display_name": u_display,
+                    "is_guest": False,
+                    "is_admin": _is_admin_user({"username": u_username, "is_admin": (flags_row["is_admin"] if flags_row else 0)}),
+                    "is_moderator": bool(flags_row and flags_row["is_moderator"]),
+                    **stats,
+                }
+                await websocket.send_json({"type": "me.get.ok", "data": {"request_id": rid, **payload}})
 
             # ── notif.unread: количество непрочитанных уведомлений ──
             # data: {request_id?} → {type:'notif.unread.ok', data:{request_id, count}}
