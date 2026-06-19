@@ -293,8 +293,19 @@ class _SideRail extends StatelessWidget {
           ),
           Divider(color: GE.glassBorder, height: 1),
           const SizedBox(height: 8),
-          for (final s in Section.values) _RailItem(s, s == current, () => onTap(s)),
-          const Spacer(),
+          // Прокручиваемый список пунктов — в ландшафте высота мала (~393 lp),
+          // фикс-колонка не влезала (overflow 11px). Теперь пункты скроллятся,
+          // лого-аут остаётся прижат снизу.
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  for (final s in Section.values)
+                    _RailItem(s, s == current, () => onTap(s)),
+                ],
+              ),
+            ),
+          ),
           Divider(color: GE.glassBorder, height: 1),
           InkWell(
             onTap: onLogout,
