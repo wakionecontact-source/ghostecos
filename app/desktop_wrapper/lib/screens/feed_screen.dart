@@ -510,14 +510,22 @@ class _PostCard extends StatefulWidget {
 
 /// Реакции в Ghost: ключи, как в вебе (NOT raw-эмодзи). EMOJI_ORDER + glyph-map.
 const List<String> _reactionKeys = ['heart', 'fire', 'laugh', 'sad', 'clap', 'eyes'];
-const Map<String, String> _reactionGlyph = {
-  'heart': '❤️',
-  'fire': '🔥',
-  'laugh': '😂',
-  'sad': '😢',
-  'clap': '👏',
-  'eyes': '👀',
-  // legacy: если кто-то прислал raw-символ — отрисуем как есть
+// Кастомные Material иконки для каждого ключа (вместо unicode-эмодзи).
+const Map<String, IconData> _reactionIcon = {
+  'heart': Icons.favorite,
+  'fire': Icons.local_fire_department,
+  'laugh': Icons.sentiment_very_satisfied,
+  'sad': Icons.sentiment_dissatisfied,
+  'clap': Icons.front_hand,
+  'eyes': Icons.visibility,
+};
+const Map<String, Color> _reactionColor = {
+  'heart': Color(0xFFef4444),
+  'fire': Color(0xFFf97316),
+  'laugh': Color(0xFFfacc15),
+  'sad': Color(0xFF60a5fa),
+  'clap': Color(0xFFfb923c),
+  'eyes': Color(0xFFa855f7),
 };
 const Map<String, String> _reactionLabel = {
   'heart': 'Сердце',
@@ -528,9 +536,16 @@ const Map<String, String> _reactionLabel = {
   'eyes': 'Глаза',
 };
 
-/// Возвращает символ для отрисовки. Если key — известный ключ → glyph map,
-/// иначе считаем что это уже raw-эмодзи (legacy) и возвращаем как есть.
-String _reactionDisplay(String key) => _reactionGlyph[key] ?? key;
+/// Виджет одной реакции — Material-иконка с фирменным цветом.
+/// Для legacy raw-эмодзи (приходящих с сервера через chat) возвращает Text.
+Widget reactionDisplay(String key, {double size = 14, Color? overrideColor}) {
+  final icon = _reactionIcon[key];
+  if (icon != null) {
+    return Icon(icon, size: size,
+        color: overrideColor ?? _reactionColor[key] ?? const Color(0xFFa855f7));
+  }
+  return Text(key, style: TextStyle(fontSize: size));
+}
 
 /// Сортирует counts по EMOJI_ORDER, оставляя legacy-ключи в конце.
 List<MapEntry<String, int>> _sortedReactions(Map<String, int> counts) {
@@ -572,7 +587,7 @@ class _PostCardState extends State<_PostCard> {
         },
         child: GlassCard(
           lite: true,
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(14),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -914,8 +929,9 @@ class _PostCardState extends State<_PostCard> {
               borderRadius: BorderRadius.circular(20),
               border: hasMine ? Border.all(color: GE.red.withValues(alpha: 0.5)) : null,
             ),
-            child: Text(hasMine ? _reactionDisplay(p.myReaction!) : '🤍',
-                style: const TextStyle(fontSize: 20)),
+            child: hasMine
+                ? reactionDisplay(p.myReaction!, size: 20)
+                : Icon(Icons.favorite_border, size: 20, color: GE.sub),
           ),
         ),
         const SizedBox(width: 4),
@@ -940,20 +956,18 @@ class _PostCardState extends State<_PostCard> {
                         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                         decoration: BoxDecoration(
                           color: p.myReaction == e.key
-                              ? GE.primary.withValues(alpha: 0.22)
-                              : GE.glassFill,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: p.myReaction == e.key
-                                ? GE.primary : GE.glassBorder,
-                            width: p.myReaction == e.key ? 1 : 0.5,
-                          ),
+                              ? GE.primary.withValues(alpha: 0.18)
+                              : Colors.white.withValues(alpha: 0.04),
+                          borderRadius: BorderRadius.circular(99),
+                          border: p.myReaction == e.key
+                              ? Border.all(
+                                  color: GE.primary.withValues(alpha: 0.6))
+                              : null,
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(_reactionDisplay(e.key),
-                                style: const TextStyle(fontSize: 13)),
+                            reactionDisplay(e.key, size: 13),
                             const SizedBox(width: 3),
                             Text('${e.value}',
                                 style: TextStyle(
@@ -1055,8 +1069,7 @@ class _PostCardState extends State<_PostCard> {
                           color: mine ? GE.primary.withValues(alpha: 0.2) : null,
                           borderRadius: BorderRadius.circular(24),
                         ),
-                        child: Text(_reactionGlyph[k] ?? k,
-                            style: const TextStyle(fontSize: 30)),
+                        child: reactionDisplay(k, size: 30),
                       ),
                     ),
                   );

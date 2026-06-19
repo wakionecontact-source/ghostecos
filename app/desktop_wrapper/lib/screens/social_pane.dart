@@ -254,16 +254,23 @@ class _SocialPaneState extends State<SocialPane> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
       child: Row(children: [
-        Icon(Icons.public, color: GE.primary, size: 22),
-        const SizedBox(width: 8),
         Text('GhostSocial',
             style: TextStyle(
-                color: GE.text, fontSize: 20, fontWeight: FontWeight.w800)),
+                color: GE.text,
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.5)),
         const Spacer(),
-        IconButton(
-          icon: Icon(Icons.edit_outlined, color: GE.primary),
-          tooltip: 'Новый пост',
-          onPressed: _openComposer,
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(99),
+            onTap: _openComposer,
+            child: const Padding(
+              padding: EdgeInsets.all(8),
+              child: Icon(Icons.add_rounded, size: 24),
+            ),
+          ),
         ),
       ]),
     );
