@@ -453,6 +453,65 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                         "request_id": rid,
                         "error": str(err),
                     }})
+            # ── chat.ack: получатель подтверждает доставку (вместо POST /ack) ──
+            # data: {ids:[int], request_id?}
+            # ack: {type:'chat.ack.ok', data:{request_id, deleted}}
+            elif t == "chat.ack" and uid:
+                rid = data.get("request_id")
+                ids = data.get("ids") or []
+                ids = [int(x) for x in ids if isinstance(x, (int, str)) and str(x).isdigit()][:200]
+                if not ids:
+                    await websocket.send_json({"type": "chat.ack.ok", "data": {"request_id": rid, "deleted": 0}})
+                    continue
+                c = db()
+                ph = ",".join("?" * len(ids))
+                rows = c.execute(
+                    f"SELECT id, sender_id FROM chat_dm WHERE receiver_id=? AND id IN ({ph})",
+                    [uid] + ids,
+                ).fetchall()
+                c.execute(f"DELETE FROM chat_dm WHERE receiver_id=? AND id IN ({ph})", [uid] + ids)
+                deleted = c.total_changes
+                c.commit()
+                c.close()
+                by_sender = {}
+                for r in rows:
+                    by_sender.setdefault(r["sender_id"], []).append(r["id"])
+                for sender_id, mids in by_sender.items():
+                    ws_hub.send_to(sender_id, "chat.delivered", {"ids": mids, "by_username": username})
+                await websocket.send_json({"type": "chat.ack.ok", "data": {"request_id": rid, "deleted": deleted}})
+
+            # ── chat.read: получатель прочитал — пуш sender'у синие галочки ──
+            # data: {ids:[int], from_username, request_id?}
+            # ack: {type:'chat.read.ok', data:{request_id, sent}}
+            elif t == "chat.read" and uid:
+                rid = data.get("request_id")
+                ids = data.get("ids") or []
+                ids = [int(x) for x in ids if isinstance(x, (int, str)) and str(x).isdigit()][:500]
+                sender_uname = (data.get("from_username") or "").strip().lower()
+                if not ids or not sender_uname:
+                    await websocket.send_json({"type": "chat.read.ok", "data": {"request_id": rid, "sent": 0}})
+                    continue
+                c = db()
+                r = c.execute("SELECT id FROM users WHERE username=?", (sender_uname,)).fetchone()
+                if not r:
+                    c.close()
+                    await websocket.send_json({"type": "chat.read.ok", "data": {"request_id": rid, "sent": 0}})
+                    continue
+                sender_id = r["id"]
+                try:
+                    c.executemany(
+                        "INSERT OR IGNORE INTO chat_dm_read_marks (sender_id, msg_id, recipient_id) VALUES (?,?,?)",
+                        [(sender_id, mid, uid) for mid in ids],
+                    )
+                    c.commit()
+                    c.execute("DELETE FROM chat_dm_read_marks WHERE read_at < datetime('now', '-30 day')")
+                    c.commit()
+                except Exception:
+                    pass
+                c.close()
+                ws_hub.send_to(sender_id, "chat.read", {"ids": ids, "by_username": username})
+                await websocket.send_json({"type": "chat.read.ok", "data": {"request_id": rid, "sent": len(ids)}})
+
             # Клиент сообщает кому он "присутствует" — запрос статуса
             elif t == "presence.ask":
                 target = (data.get("username") or "").lower()

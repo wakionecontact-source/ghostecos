@@ -4314,7 +4314,7 @@ async function fetchPending(){
     ));
     const ackIds = d.messages.filter((_, i) => results[i]).map(m => m.id);
     if (ackIds.length) {
-      try { await chat('/ack', 'POST', { ids: ackIds }); } catch(_) {}
+      try { await wsAck(ackIds); } catch(_) {}
     }
   }catch(e){ /* offline */ }
 }
@@ -5433,7 +5433,7 @@ async function openChat(username, display_name){
     // Legacy /read — sealed-read временно отключён (отладка)
     const unreadIds = unread.map(m => m.sid).filter(x => typeof x === 'number');
     if (unreadIds.length) {
-      chat('/read', 'POST', { ids: unreadIds, from_username: username }).catch(()=>{});
+      wsRead(unreadIds, username).catch(()=>{});
     }
     for (const m of unread) {
       m.read = true;
@@ -6895,6 +6895,23 @@ function wsRpc(type, data, timeoutMs){
     }
   });
 }
+// Хелперы для ack/read через WS RPC. Если WS не подключён или RPC падает —
+// fallback на старый POST. Так что вызовы безопасны даже на flaky-WS.
+async function wsAck(ids){
+  if (!ids || !ids.length) return { deleted: 0 };
+  if (ws && ws.readyState === 1){
+    try { return await wsRpc('chat.ack', { ids }, 8000); } catch(_){}
+  }
+  try { return await chat('/ack', 'POST', { ids }); } catch(_){ return { deleted: 0 }; }
+}
+async function wsRead(ids, fromUsername){
+  if (!ids || !ids.length || !fromUsername) return { sent: 0 };
+  if (ws && ws.readyState === 1){
+    try { return await wsRpc('chat.read', { ids, from_username: fromUsername }, 8000); } catch(_){}
+  }
+  try { return await chat('/read', 'POST', { ids, from_username: fromUsername }); } catch(_){ return { sent: 0 }; }
+}
+
 // Резолвит ожидающий RPC по request_id из incoming WS-сообщения.
 // Возвращает true если сообщение было RPC-ответом.
 function _wsRpcResolve(m){
@@ -7079,10 +7096,10 @@ async function handleWs(m){
   if (t === 'chat.new' || t === 'chat.echo') {
     const ok = await ingestIncoming(d);
     if (ok && t === 'chat.new') {
-      try { await chat('/ack', 'POST', { ids: [d.id] }); } catch(_) {}
+      try { await wsAck([d.id]); } catch(_) {}
       // Если чат с этим юзером открыт ПРЯМО СЕЙЧАС → сразу отправим read
       if (activePeer && activePeer.username === d.from_username) {
-        try { await chat('/read', 'POST', { ids: [d.id], from_username: d.from_username }); } catch(_) {}
+        try { await wsRead([d.id], d.from_username); } catch(_) {}
       }
     }
   }
