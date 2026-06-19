@@ -692,6 +692,32 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 .sb-popup-item.danger{color:var(--red);}
 .sb-popup-item i{font-size:13px;color:var(--primary);width:18px;text-align:center;}
 .sb-popup-item.danger i{color:var(--red);}
+
+/* ───────── Profile drawer (выезжает слева с аватарки) ───────── */
+.pd-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(2px);z-index:9998;opacity:0;pointer-events:none;transition:opacity .22s ease;}
+.pd-backdrop.open{opacity:1;pointer-events:auto;}
+.pd-drawer{position:fixed;left:0;top:0;bottom:0;width:340px;max-width:88vw;background:linear-gradient(180deg, rgba(11,15,30,0.98) 0%, rgba(7,10,22,0.99) 100%);backdrop-filter:blur(24px);border-right:1px solid var(--border-strong);box-shadow:14px 0 40px rgba(0,0,0,0.5);z-index:9999;transform:translateX(-105%);transition:transform .26s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column;overflow:hidden;}
+.pd-drawer.open{transform:translateX(0);}
+.pd-head{position:relative;padding:calc(20px + env(safe-area-inset-top)) 20px 18px;background:linear-gradient(135deg, rgba(168,85,247,0.22), rgba(236,72,153,0.08) 60%, transparent);border-bottom:1px solid var(--border);flex-shrink:0;}
+.pd-close{position:absolute;top:calc(14px + env(safe-area-inset-top));right:12px;width:34px;height:34px;border-radius:50%;border:none;background:rgba(255,255,255,0.06);color:var(--text);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;}
+.pd-close:hover{background:rgba(255,255,255,0.12);}
+.pd-ava{width:78px;height:78px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;color:#fff;font-size:32px;font-weight:700;box-shadow:0 8px 28px rgba(168,85,247,0.35);margin-bottom:12px;overflow:hidden;}
+.pd-ava img{width:100%;height:100%;object-fit:cover;}
+.pd-name{font-size:18px;font-weight:700;color:var(--text);line-height:1.2;margin-bottom:3px;word-break:break-word;}
+.pd-handle{font-size:13px;color:var(--sub);font-weight:500;}
+.pd-list{flex:1;overflow-y:auto;padding:10px 8px 16px;display:flex;flex-direction:column;gap:2px;}
+.pd-item{display:flex;align-items:center;gap:14px;padding:13px 14px;border-radius:10px;cursor:pointer;font-size:14px;font-weight:600;color:var(--text);text-decoration:none;border:none;background:transparent;width:100%;text-align:left;font-family:inherit;}
+.pd-item:hover{background:rgba(255,255,255,0.05);}
+.pd-item i{font-size:15px;color:var(--primary);width:22px;text-align:center;}
+.pd-item.danger{color:var(--red);}
+.pd-item.danger i{color:var(--red);}
+.pd-divider{height:1px;background:var(--border);margin:8px 14px;flex-shrink:0;}
+.pd-section-title{font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:var(--sub);padding:14px 14px 6px;}
+.pd-foot{padding:10px 16px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--border);color:var(--sub);font-size:11px;text-align:center;flex-shrink:0;opacity:0.7;}
+@media (max-width:799px){
+  .pd-drawer{width:100vw;max-width:100vw;}
+  .pd-ava{width:88px;height:88px;font-size:36px;}
+}
 </style>
 </head>
 <body>
@@ -772,6 +798,29 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 </div>
 
 <div id="app">
+  <!-- Profile drawer — выезжает с аватарки слева, перекрывает sidebar. -->
+  <div class="pd-backdrop" id="pdBackdrop" onclick="closeProfileDrawer()"></div>
+  <aside class="pd-drawer" id="pdDrawer" role="dialog" aria-label="Профиль">
+    <div class="pd-head">
+      <button class="pd-close" onclick="closeProfileDrawer()" title="Закрыть"><i class="fa-solid fa-xmark"></i></button>
+      <div class="pd-ava" id="pdAva">?</div>
+      <div class="pd-name" id="pdName">—</div>
+      <div class="pd-handle" id="pdHandle">@—</div>
+    </div>
+    <nav class="pd-list">
+      <button class="pd-item" onclick="closeProfileDrawer();openSettings()"><i class="fa-solid fa-gear"></i> Настройки</button>
+      <button class="pd-item" id="pdInstallItem" onclick="closeProfileDrawer();openInstall()" style="display:none;"><i class="fa-solid fa-mobile-screen"></i> Установить как приложение</button>
+      <div class="pd-divider"></div>
+      <div class="pd-section-title">Экосистема</div>
+      <a class="pd-item" href="/social"><i class="fa-solid fa-hashtag"></i> GhostSocial</a>
+      <a class="pd-item" href="/bank/?from=/chat/"><i class="fa-solid fa-wallet"></i> GhostBank</a>
+      <a class="pd-item" href="/"><i class="fa-solid fa-house"></i> На главную</a>
+      <div class="pd-divider"></div>
+      <button class="pd-item danger" onclick="closeProfileDrawer();doLogout()"><i class="fa-solid fa-right-from-bracket"></i> Выйти</button>
+    </nav>
+    <div class="pd-foot">GhostChat · приватный мессенджер</div>
+  </aside>
+
   <div class="app-grid" id="appGrid">
     <aside class="sb">
       <div class="sb-head">
@@ -782,15 +831,6 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
           <div class="sb-popup-item" onclick="closeNewMenu();openNewChat()"><i class="fa-solid fa-user"></i> Новый чат</div>
           <div class="sb-popup-item" onclick="closeNewMenu();openCreateGroup('group')"><i class="fa-solid fa-users"></i> Создать группу</div>
           <div class="sb-popup-item" onclick="closeNewMenu();openCreateGroup('channel')"><i class="fa-solid fa-bullhorn"></i> Создать канал</div>
-        </div>
-        <div class="sb-popup" id="sbPopup">
-          <div class="sb-popup-item" id="sbMeName" style="cursor:default;color:var(--sub);font-weight:600;padding:8px 12px;border-bottom:1px solid var(--border);margin-bottom:4px;"></div>
-          <div class="sb-popup-item" onclick="window.location.href='/'"><i class="fa-solid fa-house"></i> На главную</div>
-          <div class="sb-popup-item" onclick="window.location.href='/social'"><i class="fa-solid fa-hashtag"></i> GhostSocial</div>
-          <div class="sb-popup-item" onclick="window.location.href='/bank/?from=/chat/'"><i class="fa-solid fa-wallet"></i> GhostBank</div>
-          <div class="sb-popup-item" id="sbInstallItem" onclick="openInstall()" style="display:none;"><i class="fa-solid fa-mobile-screen"></i> Установить как приложение</div>
-          <div class="sb-popup-item" onclick="openSettings()"><i class="fa-solid fa-gear"></i> Настройки</div>
-          <div class="sb-popup-item danger" onclick="doLogout()"><i class="fa-solid fa-right-from-bracket"></i> Выйти</div>
         </div>
       </div>
       <div class="sb-search">
@@ -4901,12 +4941,42 @@ const _backUrl = (() => {
 function onLeftBtn(e){
   e.stopPropagation();
   if (_backUrl) { location.href = _backUrl; return; }
-  // Иначе — меню
-  const p = document.getElementById('sbPopup');
-  p.classList.toggle('open');
-  if (p.classList.contains('open')) setTimeout(() => document.addEventListener('click', closeSbPopupOnce), 0);
+  openProfileDrawer();
 }
-function closeSbPopupOnce(){const p=document.getElementById('sbPopup');if(p)p.classList.remove('open');document.removeEventListener('click', closeSbPopupOnce);}
+
+// ── Profile drawer (выезжающая шторка с аватарки) ──
+function openProfileDrawer(){
+  const d = document.getElementById('pdDrawer');
+  const b = document.getElementById('pdBackdrop');
+  if (!d || !b) return;
+  // Заполняем имя/ник/аватар каждый раз — me может обновиться.
+  const ava = document.getElementById('pdAva');
+  const nm  = document.getElementById('pdName');
+  const hd  = document.getElementById('pdHandle');
+  if (me){
+    nm.textContent = me.display_name || me.username || '—';
+    hd.textContent = '@' + (me.username || '');
+    if (me.avatar_url){
+      ava.innerHTML = '<img src="' + esc(me.avatar_url) + '" alt="">';
+    } else {
+      ava.textContent = ini(me.display_name || me.username || '?');
+    }
+  }
+  // PWA-install пункт показываем только если есть deferred prompt.
+  const ii = document.getElementById('pdInstallItem');
+  if (ii) ii.style.display = (window._deferredInstallPrompt || window._pwaCanInstall) ? '' : 'none';
+  b.classList.add('open');
+  d.classList.add('open');
+  document.addEventListener('keydown', _pdEscClose);
+}
+function closeProfileDrawer(){
+  const d = document.getElementById('pdDrawer');
+  const b = document.getElementById('pdBackdrop');
+  if (d) d.classList.remove('open');
+  if (b) b.classList.remove('open');
+  document.removeEventListener('keydown', _pdEscClose);
+}
+function _pdEscClose(e){ if (e.key === 'Escape') closeProfileDrawer(); }
 
 function applyLeftBtn(){
   const btn = document.getElementById('sbLeftBtn');
@@ -4919,8 +4989,6 @@ function applyLeftBtn(){
     btn.className = 'sb-avatar';
     btn.textContent = ini(me && (me.display_name || me.username));
     btn.title = 'Меню';
-    const n = document.getElementById('sbMeName');
-    if (n && me) n.textContent = (me.display_name || me.username) + ' · @' + me.username;
   }
 }
 
