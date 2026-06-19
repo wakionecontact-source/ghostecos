@@ -932,13 +932,6 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
         <button class="set-btn" onclick="openV2Onboard()">Настроить</button>
       </div>
 
-      <div class="set-row">
-        <div class="set-row-main">
-          <div class="set-row-title">Пересоздать ключ</div>
-          <div class="set-row-sub">Сгенерировать новую пару ключей. Собеседники увидят предупреждение, что ключ изменился, и подтвердят его при следующем сообщении.</div>
-        </div>
-        <button class="set-btn danger" onclick="rotateMyKey()">Пересоздать</button>
-      </div>
     </div>
 
     <!-- Секция «Ожидающие одобрения» (показывается только если есть pending) -->
@@ -2263,82 +2256,7 @@ function copySafetyCode(){
   }, () => {});
 }
 
-// ════════════════════════════════════════════════════════════════════
-// ПЕРЕСОЗДАНИЕ КЛЮЧА: генерируем новую пару, аплоадим, чистим IDB.
-// Старые собеседники получат предупреждение (TOFU pin не совпадёт)
-// и должны будут подтвердить смену.
-// ════════════════════════════════════════════════════════════════════
-
-async function rotateMyKey(){
-  // Сначала узнаём текущий mode чтобы решить: нужен пароль или нет.
-  let modeRes;
-  try { modeRes = await chat('/keys/storage_mode'); }
-  catch(_){ modeRes = { mode: 'server' }; }
-  const mode = modeRes.mode || 'server';
-
-  const warning =
-    'ВНИМАНИЕ. Пересоздание ключа:\n\n' +
-    '• Сгенерируется НОВАЯ пара ключей.\n' +
-    '• Все собеседники увидят предупреждение «ключ изменился» при следующем сообщении.\n' +
-    '• Сообщения, зашифрованные под СТАРЫЙ ключ, перестанут открываться на этом устройстве (если они ещё в /pending).\n' +
-    '• Старая локальная история (расшифрованная и сохранённая в IDB) останется читаемой.\n\n' +
-    'Продолжить?';
-  if (!(await appConfirm('Пересоздать ключ?', warning, 'Пересоздать'))) return;
-
-  let password = null;
-  if (mode === 'server'){
-    password = await appPrompt('Пароль для шифрования', 'Им будет зашифрован новый приватный ключ для сервера.', {password: true, placeholder: 'Пароль аккаунта'});
-    if (!password) return;
-    if (password.length < 1){ await appAlert('Ошибка', 'Пустой пароль'); return; }
-  }
-
-  try {
-    // Чистим IDB полностью — и keys, и peerkeys (старые TOFU пины уже не валидны
-    // относительно новых публичных ключей собеседников; но это про наш ключ,
-    // peerkeys мы не трогаем, чужие ключи валидны как были).
-    await wipeKeysIDB();
-    myPriv = null; myPub = null;
-    pubCache.clear();
-
-    // Генерируем новую пару (extractable=true чтобы можно было pkcs8-байты получить).
-    const pair = await crypto.subtle.generateKey(ECDH_ALGO, true, ['deriveBits']);
-    const pubBytes = await crypto.subtle.exportKey('raw', pair.publicKey);
-    myPub = b64e(pubBytes);
-    const privBytes = await crypto.subtle.exportKey('pkcs8', pair.privateKey);
-
-    if (mode === 'server'){
-      // Шифруем приватник паролем (та же схема что в _ensureKeysServer)
-      const salt = crypto.getRandomValues(new Uint8Array(16));
-      const master = await deriveMasterKey(password, salt);
-      const iv = crypto.getRandomValues(new Uint8Array(12));
-      const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, master, privBytes);
-      const enc = new Uint8Array(12 + ct.byteLength);
-      enc.set(iv); enc.set(new Uint8Array(ct), 12);
-      await chat('/keys/upload', 'POST', {
-        x25519_pub: myPub,
-        encrypted_private_key: b64e(enc),
-        key_salt: b64e(salt),
-        storage_mode: 'server',
-      });
-    } else {
-      // local — только pub
-      await chat('/keys/upload', 'POST', {
-        x25519_pub: myPub,
-        storage_mode: 'local',
-      });
-    }
-
-    // Импортируем как non-extractable для рабочего использования
-    myPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
-    await saveKeysToIDB(privBytes);
-
-    ghostikSay('Ключ обновлён. Сообщения с этого момента идут под новый ключ.', 6000);
-    // Обновим состояние storage_mode-строки в settings
-    refreshStorageModeRow && refreshStorageModeRow();
-  } catch(e){
-    await appAlert('Ошибка', 'Ошибка пересоздания: ' + (e.message || e));
-  }
-}
+// (Дубль rotateMyKey удалён — единая функция rotateMyKeys выше.)
 
 // ════════════════════════════════════════════════════════════════════
 // KEY-MISSING BANNER: persistent плашка сверху чата, если на этом
