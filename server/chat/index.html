@@ -1943,7 +1943,7 @@ async function ensureKeys(password){
   console.log('[E2E] checking storage mode...');
   let modeRes;
   try {
-    modeRes = await chat('/keys/storage_mode');
+    modeRes = await wsStorageModeGet();
   } catch(e){
     // Сетевая ошибка или старый сервер — старое поведение (server-режим).
     console.warn('[E2E] /storage_mode unreachable, fallback to server-mode:', e);
@@ -1956,7 +1956,7 @@ async function ensureKeys(password){
     console.log('[E2E] no mode chosen yet — showing modal');
     mode = await pickKeyStorageMode();
     try {
-      const r = await chat('/keys/storage_mode', 'POST', { mode });
+      const r = await wsStorageModeSet({ mode });
       console.log('[E2E] storage_mode saved:', r);
     } catch(e){
       console.error('[E2E] failed to save storage_mode:', e);
@@ -1974,7 +1974,7 @@ async function ensureKeys(password){
 // Режим «На сервере»: приватник зашифрован паролем, лежит в users.encrypted_private_key.
 async function _ensureKeysServer(password){
   console.log('[E2E] mode=server — checking remote keys...');
-  const remote = await chat('/keys/me');
+  const remote = await wsKeysMe();
   // Если сервер вернул ДРУГОЙ pubkey чем в IDB — пароль/устройство менялись.
   // Чистим локальный priv и peerkey-pins (последние более-менее устаревают,
   // но TOFU перепиннит их по необходимости с подтверждением).
@@ -2022,7 +2022,7 @@ async function _ensureKeysServer(password){
   const enc = new Uint8Array(12 + ct.byteLength);
   enc.set(iv); enc.set(new Uint8Array(ct), 12);
   console.log('[E2E] uploading encrypted keys...');
-  await chat('/keys/upload', 'POST', {
+  await wsKeysUpload({
     x25519_pub: myPub,
     encrypted_private_key: b64e(enc),
     key_salt: b64e(salt),
@@ -2039,7 +2039,7 @@ async function _ensureKeysServer(password){
 // При несоответствии — wipe IDB, отдаёт false (клиент должен показать banner).
 async function _checkLocalPubMatchesServer(){
   try {
-    const r = await chat('/keys/me');
+    const r = await wsKeysMe();
     if (!r.x25519_pub) return true;  // на сервере pub нет — ничего сравнивать.
     if (myPub && r.x25519_pub !== myPub){
       // !!! НЕ wipe IDB !!! Раньше тут было wipeKeysIDB() — оно убивало priv
@@ -2071,7 +2071,7 @@ async function _ensureKeysLocal(password, modeRes){
       // старые сообщения сможем; banner покажет mismatch.
       return;
     }
-    try { await chat('/keys/upload', 'POST', { x25519_pub: myPub, storage_mode: 'local' }); } catch(_){}
+    try { await wsKeysUpload({ x25519_pub: myPub, storage_mode: 'local' }); } catch(_){}
     return;
   }
   // (b) Попробовать IDB.
@@ -2083,7 +2083,7 @@ async function _ensureKeysLocal(password, modeRes){
         // mismatch — priv остался в памяти и IDB, banner покажет это.
         return;
       }
-      try { await chat('/keys/upload', 'POST', { x25519_pub: myPub, storage_mode: 'local' }); } catch(_){}
+      try { await wsKeysUpload({ x25519_pub: myPub, storage_mode: 'local' }); } catch(_){}
       return;
     }
   } catch(e){
@@ -2097,7 +2097,7 @@ async function _ensureKeysLocal(password, modeRes){
     myPub = (modeRes && modeRes.x25519_pub) || null;
     try {
       if (!myPub){
-        const km = await chat('/keys/me');
+        const km = await wsKeysMe();
         myPub = km.x25519_pub || null;
       }
     } catch(_){}
@@ -2115,7 +2115,7 @@ async function _ensureKeysLocal(password, modeRes){
   myPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
   await saveKeysToIDB(privBytes);
   // На сервер уходит ТОЛЬКО pubkey + режим — приватник остаётся только в IDB.
-  await chat('/keys/upload', 'POST', {
+  await wsKeysUpload({
     x25519_pub: myPub,
     storage_mode: 'local',
   });
@@ -2137,7 +2137,7 @@ async function _keysHealthCheck(){
   // 1) Сравнить с сервером. Если myPub == server pub — это уже good sign.
   let serverPub = null;
   try {
-    const r = await chat('/keys/me');
+    const r = await wsKeysMe();
     serverPub = r.x25519_pub || null;
   } catch(_) { return; /* сеть упала — не лечим */ }
   if (!serverPub) { console.log('[E2E] health: на сервере pub нет — пропуск'); return; }
@@ -2209,7 +2209,7 @@ async function rotateMyKeys(){
   if (!ok1) return;
 
   let mode = 'server';
-  try { const r = await chat('/keys/storage_mode'); if (r.mode) mode = r.mode; } catch(_){}
+  try { const r = await wsStorageModeGet(); if (r.mode) mode = r.mode; } catch(_){}
 
   let password = null;
   if (mode === 'server'){
@@ -2268,14 +2268,14 @@ async function rotateMyKeys(){
       const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, master, privBytes);
       const enc = new Uint8Array(12 + ct.byteLength);
       enc.set(iv); enc.set(new Uint8Array(ct), 12);
-      await chat('/keys/upload', 'POST', {
+      await wsKeysUpload({
         x25519_pub: newPub,
         encrypted_private_key: b64e(enc),
         key_salt: b64e(salt),
         storage_mode: 'server',
       });
     } else {
-      await chat('/keys/upload', 'POST', {
+      await wsKeysUpload({
         x25519_pub: newPub,
         storage_mode: 'local',
       });
@@ -2761,7 +2761,7 @@ async function kmSwitchToServerMode(){
   );
   if (!ok) return;
   try {
-    await chat('/keys/storage_mode', 'POST', { mode: 'server' });
+    await wsStorageModeSet({ mode: 'server' });
     await appAlert('Готово', 'Режим переключён. Выйдите и зайдите заново — система перезальёт ключ.');
   } catch(e){
     await appAlert('Ошибка', 'Не удалось: ' + (e.message || e));
@@ -2840,7 +2840,7 @@ function closeSettings(){
 async function refreshStorageModeRow(){
   const el = document.getElementById('setStorageModeText');
   try {
-    const r = await chat('/keys/storage_mode');
+    const r = await wsStorageModeGet();
     if (r.mode === 'server')      el.textContent = 'На сервере (зашифровано вашим паролем)';
     else if (r.mode === 'local')  el.textContent = 'Только на этом устройстве';
     else                          el.textContent = 'Не выбрано';
@@ -2988,7 +2988,7 @@ async function changeStorageMode(){
         'Переключить'
       );
       if (!ok) return;
-      await chat('/keys/storage_mode', 'POST', { mode: 'local' });
+      await wsStorageModeSet({ mode: 'local' });
     } else {
       // local → server
       if (!myPub){
@@ -3029,7 +3029,7 @@ async function changeStorageMode(){
       const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, master, pkcs8Bytes);
       const enc = new Uint8Array(12 + ct.byteLength);
       enc.set(iv); enc.set(new Uint8Array(ct), 12);
-      await chat('/keys/upload', 'POST', {
+      await wsKeysUpload({
         x25519_pub: myPub,
         encrypted_private_key: b64e(enc),
         key_salt: b64e(salt),
@@ -3048,7 +3048,7 @@ async function loadDevicesIntoSettings(){
   const cont = document.getElementById('setDevList');
   cont.innerHTML = '<div class="set-dev-loading"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</div>';
   try {
-    const r = await chat('/devices');
+    const r = await wsDevicesList();
     renderDevicesList(r.devices || [], r.current_id);
   } catch(e){
     cont.innerHTML = '<div class="set-dev-empty">Не удалось загрузить устройства: ' + esc(e.message||'ошибка') + '</div>';
@@ -3108,7 +3108,7 @@ async function renameDevicePrompt(pk, current){
   const v = await appPrompt('Новое имя устройства', '', {defaultValue: current || ''});
   if (!v || v.trim() === current) return;
   try {
-    await chat('/devices/' + pk + '/rename', 'POST', { name: v.trim() });
+    await wsDevicesRename(pk, v.trim());
     loadDevicesIntoSettings();
   } catch(e){ await appAlert('Ошибка', e.message || String(e)); }
 }
@@ -3121,7 +3121,7 @@ async function revokeDeviceConfirm(pk, name){
   );
   if (!ok) return;
   try {
-    await chat('/devices/' + pk + '/revoke', 'POST', {});
+    await wsDevicesRevoke(pk);
     loadDevicesIntoSettings();
   } catch(e){ await appAlert('Ошибка', e.message || String(e)); }
 }
@@ -3203,7 +3203,7 @@ async function openKeyFileImport(){
       // Сверяем pub с pub аккаунта.
       let myAccountPub;
       try {
-        const r = await chat('/keys/me');
+        const r = await wsKeysMe();
         myAccountPub = r.x25519_pub;
       } catch(e){
         await appAlert('Ошибка', 'Не удалось получить ваш аккаунтный pubkey: ' + (e.message || e));
@@ -3230,7 +3230,7 @@ async function openKeyFileImport(){
         await saveKeysToIDB(privBytes);
         // Аплоадим pub на сервер в режиме local (а если уже там что-то было —
         // upload сохраняет storage_mode который уже выставлен).
-        await chat('/keys/upload', 'POST', { x25519_pub: myPub, storage_mode: 'local' });
+        await wsKeysUpload({ x25519_pub: myPub, storage_mode: 'local' });
         ghostikSay('Ключ импортирован. Перезагружаю…', 2500);
         setTimeout(() => location.reload(), 1500);
       } catch(e){
@@ -3480,7 +3480,7 @@ async function _qrRecvPollLoop(aesKey, st, btn){
         myPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
         myPub = wrap.pub;
         await saveKeysToIDB(privBytes);
-        await chat('/keys/upload', 'POST', { x25519_pub: myPub, storage_mode: 'local' });
+        await wsKeysUpload({ x25519_pub: myPub, storage_mode: 'local' });
         st.textContent = 'Ключ получен! Перезагружаю…';
         st.className = 'qr-status ok';
         setTimeout(() => location.reload(), 1500);
@@ -4227,7 +4227,7 @@ async function onReady(){
     } else {
       try {
         console.log('[deeplink] resolving via /prof');
-        const r = await soc(`/prof/${encodeURIComponent(to)}`);
+        const r = await wsProfGet(to);
         await openChat(r.username, r.display_name);
       } catch(e) { console.error('[deeplink] prof failed', e); showToast('Юзер не найден', true); }
     }
@@ -5204,7 +5204,7 @@ async function deleteMessage(sid){
 let _supportAdmin = null;
 async function loadSupportAdmin(){
   try {
-    const r = await chat('/support_admin');
+    const r = await wsSupportAdmin();
     if (r.username){
       _supportAdmin = r;  // сохраняем и для админа — pinned карточка нужна обоим
       if (r.x25519_pub && !r.is_me) pubCache.set(r.username, r.x25519_pub);
@@ -5447,7 +5447,7 @@ async function openChat(username, display_name){
 
 async function refreshContactBtn(username){
   try {
-    const r = await chat(`/contacts/check/${encodeURIComponent(username)}`);
+    const r = await wsContactsCheck(username);
     const btn = document.getElementById('chatContactBtn');
     if (!btn) return;
     if (r.in_contacts) {
@@ -5612,10 +5612,10 @@ async function toggleContact(username){
   const isIn = btn.dataset.in === '1';
   try {
     if (isIn) {
-      await chat(`/contacts/${encodeURIComponent(username)}`, 'DELETE');
+      await wsContactsRemove(username);
       showToast('Удалён из контактов');
     } else {
-      await chat(`/contacts/${encodeURIComponent(username)}`, 'POST');
+      await wsContactsAdd(username);
       showToast('Добавлен в контакты');
     }
     refreshContactBtn(username);
@@ -6672,7 +6672,7 @@ async function openPeerProfile(username){
       <div class="spinner" style="width:40px;height:40px;border:3px solid rgba(168,85,247,0.2);border-top-color:var(--primary);border-radius:50%;animation:spin 0.9s linear infinite;"></div>
     </div>`;
   try {
-    const d = await soc(`/prof/${encodeURIComponent(username)}`);
+    const d = await wsProfGet(username);
     prof.innerHTML = `
       <div class="chat-head">
         <button class="chat-back" onclick="closePeerProfile()" style="display:flex"><i class="fa-solid fa-arrow-left"></i></button>
@@ -6718,7 +6718,7 @@ async function openNewChat(){
   document.getElementById('newChatSearch').value='';
   // Сначала показываем контакты
   try {
-    const r = await chat('/contacts');
+    const r = await wsContactsList();
     if (r && r.length) {
       const html = '<div style="font-size:11px;color:var(--sub);font-weight:600;letter-spacing:0.5px;text-transform:uppercase;padding:4px 8px 8px;">Контакты</div>' +
         r.map(u => `<div class="m-user" onclick="startChat(${jsAttr(u.username)},${jsAttr(u.display_name)})"><div class="av">${ini(u.display_name)}</div><div class="info"><div class="nm">${esc(u.display_name)}</div><div class="un">@${esc(u.username)}</div></div></div>`).join('');
@@ -6904,6 +6904,43 @@ async function wsAck(ids){
   }
   try { return await chat('/ack', 'POST', { ids }); } catch(_){ return { deleted: 0 }; }
 }
+// Универсальный wsCall: пробует WS RPC, при ошибке/закрытом WS — fallback на HTTP.
+// fallbackHttp — функция возвращающая Promise.
+async function wsCall(action, data, fallbackHttp, timeoutMs){
+  if (ws && ws.readyState === 1){
+    try { return await wsRpc(action, data || {}, timeoutMs || 8000); }
+    catch(e){ console.warn('[wsCall]', action, 'fell back to HTTP:', e.message); }
+  }
+  if (typeof fallbackHttp === 'function') return await fallbackHttp();
+  throw new Error('WS не подключён и нет fallback');
+}
+
+// Тонкие обёртки для каждой команды — каждая пробует WS, при падении
+// или закрытом соединении использует HTTP fallback. Контракт ответа
+// совместим с HTTP-ответами; где сервер заворачивает массив/мап —
+// здесь же разворачиваем.
+async function wsKeysMe(){ return wsCall('keys.me', null, () => chat('/keys/me')); }
+async function wsKeysUpload(body){ return wsCall('keys.upload', body, () => chat('/keys/upload', 'POST', body)); }
+async function wsStorageModeGet(){ return wsCall('keys.storage_mode.get', null, () => chat('/keys/storage_mode')); }
+async function wsStorageModeSet(body){ return wsCall('keys.storage_mode.set', body, () => chat('/keys/storage_mode', 'POST', body)); }
+async function wsServerCopyDelete(){ return wsCall('keys.server_copy.delete', null, () => chat('/keys/server_copy', 'DELETE')); }
+async function wsDevicesList(){ return wsCall('devices.list', null, () => chat('/devices')); }
+async function wsDevicesRename(pk, name){ return wsCall('devices.rename', {device_pk:pk, name}, () => chat('/devices/'+pk+'/rename', 'POST', {name})); }
+async function wsDevicesRevoke(pk){ return wsCall('devices.revoke', {device_pk:pk}, () => chat('/devices/'+pk+'/revoke', 'POST', {})); }
+async function wsContactsList(){
+  const r = await wsCall('contacts.list', null, () => chat('/contacts'));
+  return Array.isArray(r) ? r : (r && r.contacts ? r.contacts : []);
+}
+async function wsContactsAdd(username){ return wsCall('contacts.add', {username}, () => chat('/contacts/'+encodeURIComponent(username), 'POST', {})); }
+async function wsContactsRemove(username){ return wsCall('contacts.remove', {username}, () => chat('/contacts/'+encodeURIComponent(username), 'DELETE')); }
+async function wsContactsCheck(username){ return wsCall('contacts.check', {username}, () => chat('/contacts/check/'+encodeURIComponent(username))); }
+async function wsSupportAdmin(){ return wsCall('support_admin', null, () => chat('/support_admin')); }
+async function wsDeliveryStatus(ids){
+  const r = await wsCall('delivery_status', {ids}, () => chat('/delivery_status', 'POST', {ids}));
+  return r && r.result ? r.result : (r || {});
+}
+async function wsProfGet(username, offset){ return wsCall('prof.get', {username, offset:offset||0}, () => soc('/prof/'+encodeURIComponent(username))); }
+
 // Fetch peer pub через WS (вместо GET /keys/{username}). Возвращает объект
 // формы {x25519_pub, device_pubkeys, username} — совместимый с HTTP-ответом.
 async function wsFetchPeerPub(username){
@@ -7048,7 +7085,7 @@ async function syncDeliveryStatus(){
     if (!candidates.length) return;
     const ids = candidates.map(m => +m.sid).filter(Boolean);
     if (!ids.length) return;
-    const r = await chat('/delivery_status', 'POST', { ids });
+    const r = await wsDeliveryStatus(ids);
     let changed = false;
     for (const m of candidates) {
       const s = r[String(m.sid)];
@@ -7089,7 +7126,7 @@ async function handleWs(m){
   // Кто-то revoke-нул устройство. Если это наше — force logout.
   if (t === 'device.revoked') {
     try {
-      const r = await chat('/devices');
+      const r = await wsDevicesList();
       const cur = (r.devices || []).find(x => x.is_current);
       if (cur && cur.id === d.device_pk) {
         // Это нас отключили.
@@ -7269,10 +7306,10 @@ async function init(){
     // SSO + ключи готовы → проверяем, выбрал ли юзер режим хранения ключа.
     // Существующие юзеры впервые видят этот экран после миграции — обязательно.
     try {
-      const modeRes = await chat('/keys/storage_mode');
+      const modeRes = await wsStorageModeGet();
       if (!modeRes.mode){
         const chosen = await pickKeyStorageMode();
-        await chat('/keys/storage_mode', 'POST', { mode: chosen });
+        await wsStorageModeSet({ mode: chosen });
       }
     } catch(e){
       console.warn('[E2E] storage_mode check failed on init:', e);
