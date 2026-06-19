@@ -6874,6 +6874,92 @@ function _killStaleWs(reason) {
   // ws.onclose сам триггернёт reconnect
 }
 
+// ── WSS-over-encryption: дополнительный AES-GCM слой поверх TLS ──
+// При WS connect клиент генерит ephemeral P-256 keypair, шлёт public серверу
+// (cs.hello). Сервер шлёт свой public (cs.hello.ok). ECDH+HKDF → AES-256-GCM
+// key. Дальше все WS-фреймы оборачиваются в cs.enc {data:<base64(iv||ct)>}.
+// Защищает от компрометации TLS (rogue CA в корпсети, государство, MITM).
+let _wsEphPriv = null;   // CryptoKey ECDH P-256 private
+let _wsEphPub = null;    // base64 my public
+let _wsAesKey = null;    // CryptoKey AES-GCM 256
+let _wsHandshakeReady = null;       // Promise resolver — реджектится на отвале
+let _wsHandshakeReadyResolve = null;
+
+function _resetWsCrypto(){
+  _wsEphPriv = _wsEphPub = _wsAesKey = null;
+  _wsHandshakeReady = new Promise(r => { _wsHandshakeReadyResolve = r; });
+}
+_resetWsCrypto();
+
+async function _wsBeginHandshake(){
+  // Генерируем ephemeral P-256 пару и отправляем client_pub серверу.
+  try {
+    const pair = await crypto.subtle.generateKey({name:'ECDH', namedCurve:'P-256'}, true, ['deriveBits']);
+    _wsEphPriv = pair.privateKey;
+    const pubBytes = await crypto.subtle.exportKey('raw', pair.publicKey);
+    _wsEphPub = b64e(pubBytes);
+    ws.send(JSON.stringify({ type: 'cs.hello', data: { client_pub: _wsEphPub } }));
+  } catch(e){
+    console.warn('[ws-crypto] handshake start failed:', e);
+  }
+}
+
+async function _wsCompleteHandshake(serverPubB64){
+  try {
+    const spub = b64d(serverPubB64);
+    const serverPubKey = await crypto.subtle.importKey('raw', spub, {name:'ECDH', namedCurve:'P-256'}, false, []);
+    const shared = await crypto.subtle.deriveBits({name:'ECDH', public: serverPubKey}, _wsEphPriv, 256);
+    const hkdfKey = await crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveBits']);
+    const derived = await crypto.subtle.deriveBits({
+      name:'HKDF', hash:'SHA-256',
+      salt: new Uint8Array(32),
+      info: new TextEncoder().encode('ghostchat-cs-v1'),
+    }, hkdfKey, 256);
+    _wsAesKey = await crypto.subtle.importKey('raw', derived, {name:'AES-GCM'}, false, ['encrypt','decrypt']);
+    if (_wsHandshakeReadyResolve) { _wsHandshakeReadyResolve(true); _wsHandshakeReadyResolve = null; }
+    console.log('[ws-crypto] handshake OK');
+  } catch(e){
+    console.warn('[ws-crypto] handshake completion failed:', e);
+  }
+}
+
+// Шлёт payload зашифрованным cs.enc-фреймом. Если handshake ещё не готов —
+// ждёт максимум 4 сек, потом шлёт plain (fallback на случай старого сервера).
+async function wsSendEnc(payload){
+  if (!_wsAesKey){
+    try { await Promise.race([_wsHandshakeReady, new Promise(r=>setTimeout(()=>r(false), 4000))]); }
+    catch(_){}
+  }
+  if (!_wsAesKey){
+    // Сервер не поддерживает handshake — fallback на plain (старая совместимость)
+    try { ws.send(JSON.stringify(payload)); } catch(_){}
+    return;
+  }
+  const pt = new TextEncoder().encode(JSON.stringify(payload));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ctBuf = await crypto.subtle.encrypt({name:'AES-GCM', iv}, _wsAesKey, pt);
+  const ct = new Uint8Array(ctBuf);
+  const blob = new Uint8Array(12 + ct.length);
+  blob.set(iv, 0); blob.set(ct, 12);
+  try { ws.send(JSON.stringify({type:'cs.enc', data: b64e(blob.buffer)})); }
+  catch(_){}
+}
+
+// Расшифровывает входящий cs.enc → возвращает inner JSON (или null).
+async function _wsDecryptFrame(data){
+  if (!_wsAesKey || typeof data !== 'string') return null;
+  try {
+    const blob = new Uint8Array(b64d(data));
+    const iv = blob.slice(0, 12);
+    const ct = blob.slice(12);
+    const ptBuf = await crypto.subtle.decrypt({name:'AES-GCM', iv}, _wsAesKey, ct);
+    return JSON.parse(new TextDecoder().decode(ptBuf));
+  } catch(e){
+    console.warn('[ws-crypto] decrypt err:', e);
+    return null;
+  }
+}
+
 // ── WS RPC: request-response поверх websocket ──
 // Клиент шлёт {type, data:{...args, request_id}}, ждёт ответа с тем же
 // request_id (type обычно type+'.ok'/'.err'). Возвращает Promise.
@@ -6888,11 +6974,9 @@ function wsRpc(type, data, timeoutMs){
       reject(new Error('WS timeout: ' + type));
     }, timeoutMs || 10000);
     _wsRpcPending.set(rid, { resolve, reject, timer });
-    try {
-      ws.send(JSON.stringify({ type, data: Object.assign({ request_id: rid }, data || {}) }));
-    } catch(e) {
-      clearTimeout(timer); _wsRpcPending.delete(rid); reject(e);
-    }
+    const payload = { type, data: Object.assign({ request_id: rid }, data || {}) };
+    // wsSendEnc сам выберет cs.enc если handshake готов, иначе plain.
+    wsSendEnc(payload).catch(e => { clearTimeout(timer); _wsRpcPending.delete(rid); reject(e); });
   });
 }
 // Хелперы для ack/read через WS RPC. Если WS не подключён или RPC падает —
@@ -6984,32 +7068,55 @@ function connectWS(){
   const base = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/soc/ws';
   const u = token ? `${base}?token=${encodeURIComponent(token)}` : base;
   try { ws = new WebSocket(u); } catch(e) { setTimeout(connectWS, wsReconnect); wsReconnect = Math.min(wsReconnect*2, 30000); return; }
-  ws.onopen = () => {
+  _resetWsCrypto();
+  ws.onopen = async () => {
     wsReconnect = 1000;
     _lastWsRecvAt = Date.now();
+    // Сразу запускаем шифровальный handshake. До его завершения wsSendEnc
+    // ждёт _wsHandshakeReady, поэтому ничего не теряется.
+    await _wsBeginHandshake();
     clearInterval(pingTimer);
     pingTimer = setInterval(() => {
       try{
-        ws.send('ping');
+        ws.send('ping');  // ping остаётся plain text — он короткий keepalive
         _pingSentAt = Date.now();
-        // Ждём pong 10 сек. Если за это время _lastWsRecvAt не обновился позже _pingSentAt — мёртв.
         clearTimeout(_pongTimeoutTimer);
         _pongTimeoutTimer = setTimeout(() => {
           if (_lastWsRecvAt < _pingSentAt) _killStaleWs('pong timeout');
         }, 10000);
       }catch(e){ _killStaleWs('send err'); }
     }, 25000);
-    // После reconnect — подтянем накопленные сообщения с retry на flaky-сети
     _fetchPendingWithRetry();
     loadGroups().catch(() => {});
   };
   ws.onmessage = async e => {
-    _lastWsRecvAt = Date.now();  // любое сообщение = ws живой
+    _lastWsRecvAt = Date.now();
     if (e.data === 'pong') return;
-    try { const m = JSON.parse(e.data); await handleWs(m); } catch(_){}
+    let m;
+    try { m = JSON.parse(e.data); } catch(_){ return; }
+    if (!m || !m.type) return;
+    // Handshake-обработка идёт ПЕРЕД handleWs.
+    if (m.type === 'cs.hello.ok'){
+      await _wsCompleteHandshake((m.data || {}).server_pub || '');
+      return;
+    }
+    if (m.type === 'cs.hello.err'){
+      console.warn('[ws-crypto] server отклонил handshake:', (m.data||{}).error);
+      // Сервер старый/не поддерживает — handshake не получится. Отпустим promise
+      // чтобы wsSendEnc упал в plain-fallback.
+      if (_wsHandshakeReadyResolve) { _wsHandshakeReadyResolve(false); _wsHandshakeReadyResolve = null; }
+      return;
+    }
+    if (m.type === 'cs.enc'){
+      const inner = await _wsDecryptFrame((m.data && typeof m.data === 'string') ? m.data : (m.data && m.data.data) || '');
+      if (inner) try { await handleWs(inner); } catch(_){}
+      return;
+    }
+    try { await handleWs(m); } catch(_){}
   };
   ws.onclose = (ev) => {
     clearInterval(pingTimer); clearTimeout(_pongTimeoutTimer);
+    _resetWsCrypto();
     if (ev && (ev.code === 1008 || ev.code === 4401 || ev.code === 4403)) {
       _wsAuthFail = true; return;
     }
@@ -7266,13 +7373,13 @@ function sendTyping(isTyping){
   if (isTyping && now - _myTypingLastSent < 2000) return;
   _myTypingLastSent = now;
   try {
-    ws.send(JSON.stringify({ type: 'chat.typing', data: { to: activePeer.username, is_typing: !!isTyping } }));
+    wsSendEnc({ type: 'chat.typing', data: { to: activePeer.username, is_typing: !!isTyping } }).catch(()=>{});
   } catch(_) {}
 }
 
 function askPresence(username){
   if (!ws || ws.readyState !== 1) return;
-  try { ws.send(JSON.stringify({ type: 'presence.ask', data: { username } })); } catch(_) {}
+  try { wsSendEnc({ type: 'presence.ask', data: { username } }).catch(()=>{}); } catch(_) {}
 }
 
 // ════════════════════════════════════════════════════════════════════
