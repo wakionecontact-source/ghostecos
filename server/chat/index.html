@@ -89,7 +89,7 @@ button,input,textarea{font-family:inherit;}
 .install-step b{color:var(--text);}
 .install-num{flex-shrink:0;width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;}
 .install-got{width:100%;padding:13px;border-radius:12px;border:none;background:linear-gradient(90deg,var(--primary),var(--primary2));color:#fff;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;}
-.install-arrow{position:fixed;bottom:max(20px, env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);color:var(--primary);font-size:28px;animation:arrowJump 1.2s ease-in-out infinite;pointer-events:none;display:none;filter:drop-shadow(0 0 16px rgba(168,85,247,0.6));}
+.install-arrow{position:fixed;bottom:max(20px, env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);color:var(--primary);font-size:28px;animation:arrowJump 1.2s ease-in-out infinite;pointer-events:none;display:none;text-shadow:0 0 12px rgba(168,85,247,0.6);}
 @keyframes arrowJump{0%,100%{transform:translateX(-50%) translateY(0);}50%{transform:translateX(-50%) translateY(8px);}}
 .install-overlay.open .install-arrow{display:block;}
 /* старый общий селектор удалён, см. .sb-empty > i ниже */
@@ -666,7 +666,7 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 /* ── Ghostik — призрак-маскот, парит в правом нижнем углу. ── */
 #ghostik{position:fixed;right:18px;bottom:18px;z-index:520;display:flex;flex-direction:column;align-items:flex-end;gap:8px;pointer-events:none;}
 #ghostik > *{pointer-events:auto;}
-.g-body{background:transparent;border:none;cursor:pointer;padding:0;animation:gFloat 4s ease-in-out infinite;filter:drop-shadow(0 6px 14px rgba(168,85,247,0.45));transition:transform .15s;}
+.g-body{background:transparent;border:none;cursor:pointer;padding:0;animation:gFloat 4s ease-in-out infinite;transition:transform .15s;will-change:transform;}
 .g-body:hover{transform:scale(1.08);}
 .g-body:active{transform:scale(0.94);}
 @keyframes gFloat{0%,100%{transform:translateY(0);}50%{transform:translateY(-7px);}}
