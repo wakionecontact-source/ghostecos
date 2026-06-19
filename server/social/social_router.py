@@ -1037,6 +1037,20 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     "posts": posts,
                 }})
 
+            # ── notif.unread: количество непрочитанных уведомлений ──
+            # data: {request_id?} → {type:'notif.unread.ok', data:{request_id, count}}
+            elif t == "notif.unread" and uid:
+                rid = data.get("request_id")
+                c = db()
+                cnt = c.execute(
+                    "SELECT COUNT(*) as cnt FROM soc_notifications WHERE user_id=? AND is_read=0",
+                    (uid,),
+                ).fetchone()["cnt"]
+                c.close()
+                await websocket.send_json({"type": "notif.unread.ok", "data": {
+                    "request_id": rid, "count": int(cnt),
+                }})
+
             # Клиент сообщает кому он "присутствует" — запрос статуса
             elif t == "presence.ask":
                 target = (data.get("username") or "").lower()

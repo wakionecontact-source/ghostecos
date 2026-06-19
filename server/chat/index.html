@@ -4264,7 +4264,7 @@ function startGSBadgePolling(){
   if (_gsBadgeTimer) return;
   const tick = async () => {
     try {
-      const d = await soc('/notif/unread');
+      const d = await wsCall('notif.unread', {}, () => soc('/notif/unread'));
       const badge = document.getElementById('sbFootBadge');
       if (!badge) return;
       const cnt = d.count || 0;
@@ -6979,6 +6979,20 @@ function wsRpc(type, data, timeoutMs){
     wsSendEnc(payload).catch(e => { clearTimeout(timer); _wsRpcPending.delete(rid); reject(e); });
   });
 }
+// Универсальный WS RPC хелпер: пробует action через WS, при ошибке —
+// вызывает httpFallback (если задан). Без fallback — пробрасывает ошибку.
+async function wsCall(action, data, httpFallback){
+  if (ws && ws.readyState === 1){
+    try { return await wsRpc(action, data || {}, 8000); }
+    catch(e) {
+      if (!httpFallback) throw e;
+      console.warn('[wsCall] ' + action + ' RPC fail, HTTP fallback:', e.message);
+    }
+  }
+  if (httpFallback) return await httpFallback();
+  throw new Error('WS не подключён, нет fallback для ' + action);
+}
+
 // Хелперы для ack/read через WS RPC. Если WS не подключён или RPC падает —
 // fallback на старый POST. Так что вызовы безопасны даже на flaky-WS.
 async function wsAck(ids){
