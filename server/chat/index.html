@@ -3797,27 +3797,12 @@ window.addEventListener('storage',e=>{
 // Любой сдвиг scrollY / documentElement.scrollTop возвращаем в 0.
 // А также сбрасываем застрявшие inline-стили body, которые могут расширить
 // его за пределы viewport (paddingTop, marginTop и т.п.).
-(function(){
-  const lock = () => {
-    try {
-      if (window.scrollY !== 0) window.scrollTo(0, 0);
-      if (document.documentElement.scrollTop !== 0) document.documentElement.scrollTop = 0;
-      if (document.body.scrollTop !== 0) document.body.scrollTop = 0;
-    } catch(_){}
-  };
-  window.addEventListener('scroll',  lock, {passive: true, capture: true});
-  window.addEventListener('click',   lock, {passive: true, capture: true});
-  window.addEventListener('keydown', lock, {passive: true, capture: true});
-  window.addEventListener('focusin', lock, {passive: true, capture: true});
-  window.addEventListener('resize',  lock, {passive: true, capture: true});
-
-  // ВАЖНО: rAF-loop был убран. На быстрых машинах он 0.01% CPU, но при
-  // длинном скролле/анимации в чате он подмешивался к каждому кадру и
-  // создавал заметные лаги. Сейчас держим только event listeners + lock
-  // через MutationObserver на изменения body inline-style (paddingTop и т.п.)
-  const mo = new MutationObserver(lock);
-  mo.observe(document.body, { attributes: true, attributeFilter: ['style'] });
-})();
+// Scroll-guard полностью удалён. body уже `overflow:hidden + height:100dvh +
+// position:relative` — он физически не скроллится, нечего лочить.
+// Раньше listeners на scroll/click/keydown/focusin/resize вызывали lock(),
+// который читал scrollY+scrollTop+scrollTop трижды = layout thrashing на КАЖДОЕ
+// нажатие клавиши. Это держало INP keyboard 250+мс. Если когда-то всплывёт
+// дрифт вверх — починим точечно в проблемной модалке, а не глобально.
 
 async function onReady(){
   console.log('[onReady] start');
