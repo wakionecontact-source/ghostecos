@@ -3184,27 +3184,16 @@ async function pinPubKey(username, pub, accepted=true){
 // Возвращает true если ключ либо новый (и пиннится), либо совпадает с пинном,
 // либо юзер согласился принять изменённый ключ.
 async function verifyAndPinPub(username, pub){
+  // По решению waki: «у того кто пересоздал ключ — того ключ главнее».
+  // Любой новый pub автопиннится молча, без модалки. Это убирает
+  // постоянное «изменился ключ собеседника» при rotate/смене устройства.
+  // Если ты хочешь убедиться что MITM нет — есть кнопка-щит «Код безопасности»
+  // в шапке чата с 60-цифровым сравнением.
   const existing = await pinnedPubKey(username);
-  if (!existing) {
-    // TOFU: первый раз видим — доверяем и пиннем.
+  if (!existing || existing.pub !== pub){
     await pinPubKey(username, pub, true);
-    return true;
   }
-  if (existing.pub === pub) return true;
-  // Ключ изменился. Спрашиваем юзера.
-  const ok = await Dialog.confirm(
-    `Ключ шифрования собеседника @${username} изменился.\n\n` +
-    `Это может означать:\n` +
-    `  • Собеседник зашёл с нового устройства / сменил пароль (нормально)\n` +
-    `  • Кто-то подменяет ключ на сервере (опасно — ваши сообщения могут читать)\n\n` +
-    `Доверять новому ключу?`,
-    { title: 'Изменился ключ', okText: 'Доверять', danger: true }
-  );
-  if (ok) {
-    await pinPubKey(username, pub, true);
-    return true;
-  }
-  return false;
+  return true;
 }
 async function wipePeerKeysIDB(){
   try {
