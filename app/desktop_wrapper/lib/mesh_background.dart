@@ -73,14 +73,38 @@ class _MeshBackgroundState extends State<MeshBackground>
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // Базовый градиент
+          // Фон один-в-один с сайтом (server/site/index.html body):
+          // вертикальный линейный bg-deep→bg + два радиала-источника света.
+          // 1) Базовый вертикальный градиент.
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [GE.bgDeep, GE.bg],
+              ),
+            ),
+          ),
+          // 2) Радиальный свет сверху-слева (#7c3aed @ 0.18).
           DecoratedBox(
             decoration: BoxDecoration(
               gradient: RadialGradient(
-                center: const Alignment(-0.6, -0.8),
-                radius: 1.4,
-                colors: [const Color(0x4D7C3AED), GE.bgDeep, GE.bg],
-                stops: const [0, 0.5, 1],
+                center: const Alignment(-0.6, -1.0),
+                radius: 1.1,
+                colors: [GE.primary2.withValues(alpha: 0.18), Colors.transparent],
+                stops: const [0, 0.6],
+              ),
+            ),
+          ),
+          // 3) Радиальный свет снизу-справа (#a855f7 @ 0.12) — этого не хватало,
+          //    из-за чего фон выглядел плоским и «не как на сайте».
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: const Alignment(1.0, 1.0),
+                radius: 1.1,
+                colors: [GE.primary.withValues(alpha: 0.12), Colors.transparent],
+                stops: const [0, 0.6],
               ),
             ),
           ),
