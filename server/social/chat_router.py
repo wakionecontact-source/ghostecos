@@ -124,34 +124,17 @@ def upload_keys(body: KeysUploadBody, authorization: Optional[str] = Header(None
             "UPDATE user_devices SET pub_key=? WHERE id=?",
             (body.x25519_pub, dev["id"]),
         )
-        # users.x25519_pub переписываем ТОЛЬКО для owner-device или если
-        # его ещё нет (первая публикация). Иначе сломаем шифрование с веба,
-        # который ходит по legacy /keys/{username}.x25519_pub.
-        if dev["is_owner"]:
-            c.execute(
-                "UPDATE users SET x25519_pub=?, encrypted_private_key=?, key_salt=?, in_ghostchat=1, key_storage_mode=? WHERE id=?",
-                (body.x25519_pub, priv_to_store, salt_to_store, mode, user["id"]),
-            )
-        else:
-            existing = c.execute("SELECT x25519_pub FROM users WHERE id=?", (user["id"],)).fetchone()
-            if not existing or not existing["x25519_pub"]:
-                c.execute(
-                    "UPDATE users SET x25519_pub=?, encrypted_private_key=?, key_salt=?, in_ghostchat=1, key_storage_mode=? WHERE id=?",
-                    (body.x25519_pub, priv_to_store, salt_to_store, mode, user["id"]),
-                )
-            elif body.storage_mode is not None:
-                # Не owner, но юзер явно меняет режим — сохраняем только режим
-                # (приватник трогаем только если переход в 'local' — зануляем серверную копию).
-                if mode == "local":
-                    c.execute(
-                        "UPDATE users SET encrypted_private_key=NULL, key_salt=NULL, key_storage_mode='local' WHERE id=?",
-                        (user["id"],),
-                    )
-                else:
-                    c.execute(
-                        "UPDATE users SET key_storage_mode=? WHERE id=?",
-                        (mode, user["id"]),
-                    )
+        # v1: на пару users.x25519_pub смотрят все собеседники через legacy
+        # /keys/{username}. Если non-owner устройство сделает rotate и мы НЕ
+        # обновим users.x25519_pub — клиент после reload увидит mismatch
+        # между IDB (свой свежий pub) и сервером (чужой/старый), _checkLocalPubMatchesServer
+        # тихо wipe-ает IDB → бесконечный banner «Приватный ключ не загружен».
+        # Поэтому любое устройство, делающее upload, перезаписывает users.x25519_pub.
+        # Multi-device полноценный приедет в v2 (envelope-per-device).
+        c.execute(
+            "UPDATE users SET x25519_pub=?, encrypted_private_key=?, key_salt=?, in_ghostchat=1, key_storage_mode=? WHERE id=?",
+            (body.x25519_pub, priv_to_store, salt_to_store, mode, user["id"]),
+        )
     else:
         # Legacy: токен из soc_tokens (старый веб), пишем напрямую в users.
         c.execute(
