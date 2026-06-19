@@ -94,7 +94,7 @@ button,input,textarea{font-family:inherit;}
 .install-overlay.open .install-arrow{display:block;}
 /* старый общий селектор удалён, см. .sb-empty > i ниже */
 
-.dialog{display:flex;gap:11px;padding:10px;border-radius:12px;cursor:pointer;align-items:center;content-visibility:auto;contain-intrinsic-size:0 64px;}
+.dialog{display:flex;gap:11px;padding:10px;border-radius:12px;cursor:pointer;align-items:center;contain:layout paint;}
 .dialog:hover{background:rgba(255,255,255,0.04);}
 .dialog.active{background:rgba(168,85,247,0.14);}
 .dialog.pinned-support{background:linear-gradient(95deg,rgba(168,85,247,0.10),rgba(236,72,153,0.05));border:1px solid rgba(168,85,247,0.25);margin-bottom:6px;}
@@ -3803,6 +3803,22 @@ window.addEventListener('storage',e=>{
 // который читал scrollY+scrollTop+scrollTop трижды = layout thrashing на КАЖДОЕ
 // нажатие клавиши. Это держало INP keyboard 250+мс. Если когда-то всплывёт
 // дрифт вверх — починим точечно в проблемной модалке, а не глобально.
+
+// Временный LongTask-логгер — пишет в console каждую main-thread задачу >50мс.
+// Это покажет что именно блокирует скролл (видно "container-type" виновника).
+// Снять когда лаги починятся.
+(function _ltobs(){
+  if (!('PerformanceObserver' in window)) return;
+  try {
+    const obs = new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) {
+        const at = (e.attribution && e.attribution[0]) || {};
+        console.warn('[LongTask]', Math.round(e.duration) + 'мс', at.name || at.containerType || '?', at.containerSrc || at.containerId || at.containerName || '');
+      }
+    });
+    obs.observe({ entryTypes: ['longtask'] });
+  } catch(e){ /* not supported — Safari */ }
+})();
 
 async function onReady(){
   console.log('[onReady] start');
