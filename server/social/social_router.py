@@ -512,6 +512,66 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 ws_hub.send_to(sender_id, "chat.read", {"ids": ids, "by_username": username})
                 await websocket.send_json({"type": "chat.read.ok", "data": {"request_id": rid, "sent": len(ids)}})
 
+            # ── chat.peer_pub: fetch x25519_pub собеседника (вместо GET /keys/{u}) ──
+            # data: {username, request_id?}
+            # ack: {type:'chat.peer_pub.ok', data:{request_id, username, x25519_pub, device_pubkeys}}
+            elif t == "chat.peer_pub" and uid:
+                rid = data.get("request_id")
+                target = (data.get("username") or "").lower().strip().lstrip("@")
+                if not target:
+                    await websocket.send_json({"type":"chat.peer_pub.err","data":{"request_id":rid,"error":"username обязателен"}})
+                    continue
+                c = db()
+                row = c.execute("SELECT id, x25519_pub FROM users WHERE username=?", (target,)).fetchone()
+                if not row:
+                    c.close()
+                    await websocket.send_json({"type":"chat.peer_pub.err","data":{"request_id":rid,"error":"Юзер не найден"}})
+                    continue
+                dev_rows = c.execute(
+                    "SELECT pub_key FROM user_devices WHERE user_id=? AND is_active=1 AND is_blocked=0 AND pub_key IS NOT NULL",
+                    (row["id"],),
+                ).fetchall()
+                c.close()
+                await websocket.send_json({"type":"chat.peer_pub.ok","data":{
+                    "request_id": rid,
+                    "username": target,
+                    "x25519_pub": row["x25519_pub"],
+                    "device_pubkeys": [d["pub_key"] for d in dev_rows if d["pub_key"]],
+                }})
+
+            # ── chat.pending: накопленные мне (НЕ удаляет — клиент сделает chat.ack) ──
+            # data: {request_id?}
+            # ack: {type:'chat.pending.ok', data:{request_id, messages:[...]}}
+            elif t == "chat.pending" and uid:
+                rid = data.get("request_id")
+                try:
+                    from .chat_router import _rate_limit as _rl
+                    _rl(f"pendlegacy:{uid}", limit=30, window=60)
+                except HTTPException as he:
+                    await websocket.send_json({"type":"chat.pending.err","data":{"request_id":rid,"error":he.detail}})
+                    continue
+                c = db()
+                rows = c.execute("""
+                    SELECT m.id, m.sender_id, m.text as ciphertext, m.created_at,
+                           u.username as from_username, u.display_name as from_display_name
+                    FROM chat_dm m JOIN users u ON u.id = m.sender_id
+                    WHERE m.receiver_id = ?
+                    ORDER BY m.id ASC LIMIT 500
+                """, (uid,)).fetchall()
+                me_row = c.execute("SELECT username FROM users WHERE id=?", (uid,)).fetchone()
+                c.close()
+                me_uname = me_row["username"] if me_row else username
+                await websocket.send_json({"type":"chat.pending.ok","data":{
+                    "request_id": rid,
+                    "messages": [
+                        {"id": r["id"], "from_username": r["from_username"],
+                         "from_display_name": r["from_display_name"],
+                         "to_username": me_uname,
+                         "ciphertext": r["ciphertext"], "created_at": r["created_at"]}
+                        for r in rows
+                    ],
+                }})
+
             # Клиент сообщает кому он "присутствует" — запрос статуса
             elif t == "presence.ask":
                 target = (data.get("username") or "").lower()

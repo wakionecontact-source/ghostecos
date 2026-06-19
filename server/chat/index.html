@@ -1718,7 +1718,7 @@ async function encryptForPeer(peerUsername, payload){
   }
   let pub = pubCache.get(peerUsername);
   if (!pub) {
-    const r = await chat(`/keys/${encodeURIComponent(peerUsername)}`);
+    const r = await wsFetchPeerPub(peerUsername);
     if (!r.x25519_pub) throw new Error('У получателя ещё нет E2E-ключей');
     pub = r.x25519_pub;
     const trusted = await verifyAndPinPub(peerUsername, pub);
@@ -1760,7 +1760,7 @@ function parsePayload(raw){
 async function encryptSealed(receiverUsername, payload) {
   let pub = pubCache.get(receiverUsername);
   if (!pub) {
-    const r = await chat(`/keys/${encodeURIComponent(receiverUsername)}`);
+    const r = await wsFetchPeerPub(receiverUsername);
     if (!r.x25519_pub) throw new Error('У получателя ещё нет E2E-ключей');
     pub = r.x25519_pub;
     const trusted = await verifyAndPinPub(receiverUsername, pub);
@@ -1806,7 +1806,7 @@ async function decryptFromPeer(peerUsername, cipherB64){
   let pub = pubCache.get(peerUsername);
   let usedCache = !!pub;
   if (!pub) {
-    const r = await chat(`/keys/${encodeURIComponent(peerUsername)}`);
+    const r = await wsFetchPeerPub(peerUsername);
     if (!r.x25519_pub) throw new Error('Нет ключа отправителя');
     pub = r.x25519_pub;
     const existing = await pinnedPubKey(peerUsername);
@@ -1829,7 +1829,7 @@ async function decryptFromPeer(peerUsername, cipherB64){
     // Авто-восстановление: pub в кэше/пине мог разъехаться с сервером.
     // Берём свежий pub и повторяем. Это закрывает кейс «собеседник перегенерил ключ».
     try {
-      const fresh = await chat(`/keys/${encodeURIComponent(peerUsername)}`);
+      const fresh = await wsFetchPeerPub(peerUsername);
       if (!fresh.x25519_pub || fresh.x25519_pub === pub) throw firstErr;
       const theirPub2 = await importPub(fresh.x25519_pub);
       const aes2 = await deriveShared(myPriv, theirPub2);
@@ -2682,7 +2682,7 @@ async function openSafetyCode(peerUsername){
   try {
     let peerPub = pubCache.get(peerUsername);
     if (!peerPub){
-      const r = await chat(`/keys/${encodeURIComponent(peerUsername)}`);
+      const r = await wsFetchPeerPub(peerUsername);
       if (!r.x25519_pub) throw new Error('У собеседника нет ключей');
       peerPub = r.x25519_pub;
     }
@@ -4306,7 +4306,7 @@ function closeInstall(remember){
 
 async function fetchPending(){
   try{
-    const d = await chat('/pending');
+    const d = await wsFetchPending();
     if (!d.messages || !d.messages.length) return;
     // Параллельный decrypt всех pending — раньше последовательно тормозило на 50+ сообщениях
     const results = await Promise.all(d.messages.map(m =>
@@ -6904,6 +6904,22 @@ async function wsAck(ids){
   }
   try { return await chat('/ack', 'POST', { ids }); } catch(_){ return { deleted: 0 }; }
 }
+// Fetch peer pub через WS (вместо GET /keys/{username}). Возвращает объект
+// формы {x25519_pub, device_pubkeys, username} — совместимый с HTTP-ответом.
+async function wsFetchPeerPub(username){
+  if (ws && ws.readyState === 1){
+    try { return await wsRpc('chat.peer_pub', { username }, 8000); } catch(_){}
+  }
+  return await chat(`/keys/${encodeURIComponent(username)}`);
+}
+// Fetch pending (накопленные сообщения) через WS. Совместим с HTTP-ответом.
+async function wsFetchPending(){
+  if (ws && ws.readyState === 1){
+    try { return await wsRpc('chat.pending', {}, 12000); } catch(_){}
+  }
+  return await chat('/pending');
+}
+
 async function wsRead(ids, fromUsername){
   if (!ids || !ids.length || !fromUsername) return { sent: 0 };
   if (ws && ws.readyState === 1){
@@ -7468,7 +7484,7 @@ async function decryptGroupEnvelope(senderUsername, envelopeB64){
   // Получаем pub отправителя (с кэшем + TOFU как в DM)
   let pub = pubCache.get(senderUsername);
   if (!pub) {
-    const r = await chat(`/keys/${encodeURIComponent(senderUsername)}`);
+    const r = await wsFetchPeerPub(senderUsername);
     if (!r.x25519_pub) throw new Error('Нет ключа отправителя');
     pub = r.x25519_pub;
     const existing = await pinnedPubKey(senderUsername);
