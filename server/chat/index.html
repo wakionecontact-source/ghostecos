@@ -84,7 +84,7 @@ button,input,textarea{font-family:inherit;}
 .sb-search input::placeholder{color:#334155;}
 .sb-search input:focus{border-color:rgba(168,85,247,0.4);}
 .sb-search i{position:absolute;left:25px;top:50%;transform:translateY(-50%);color:#475569;font-size:13px;pointer-events:none;}
-.sb-list{flex:1;overflow-y:auto;padding:4px 6px 12px;scrollbar-width:thin;overscroll-behavior:contain;transform:translateZ(0);}
+.sb-list{flex:1;overflow:hidden auto;padding:4px 14px 12px 8px;scrollbar-width:thin;overscroll-behavior:contain;transform:translateZ(0);}
 .sb-list::-webkit-scrollbar{width:6px;}
 .sb-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.07);border-radius:3px;}
 .sb-empty{padding:60px 20px;text-align:center;color:var(--muted);font-size:13px;}
@@ -144,7 +144,7 @@ button,input,textarea{font-family:inherit;}
   pointer-events:none;z-index:2;
 }
 .dialog:hover{
-  transform:translateX(6px);
+  transform:translateX(4px);
   background:var(--gl-grad);
   border-bottom-color:rgba(255,255,255,0.07);
   box-shadow:var(--gl-inset);
@@ -152,7 +152,7 @@ button,input,textarea{font-family:inherit;}
 .dialog:hover::before{opacity:1;}
 .dialog:hover::after{height:62%;}
 .dialog.active{
-  transform:translateX(9px);
+  transform:translateX(6px);
   background:linear-gradient(135deg, rgba(168,85,247,0.22) 0%, rgba(236,72,153,0.08) 100%), rgba(168,85,247,0.06);
   border-color:rgba(168,85,247,0.30);
   border-bottom-color:rgba(168,85,247,0.20);
@@ -661,6 +661,51 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 .set-tab:active{transform:scale(.97);transition:transform 60ms ease-out;}
 .set-page{display:none;}
 .set-page.active{display:block;}
+
+/* Drill-down: главный экран Settings — список категорий-кнопок.
+   Каждая кнопка ведёт в свою .set-page при клике. */
+.set-cat{
+  display:flex;align-items:center;gap:14px;width:100%;
+  padding:16px 16px 16px 18px;border-radius:16px;margin-bottom:11px;
+  background:var(--gl-grad), var(--gl-bg);
+  border:1px solid var(--gl-border);
+  box-shadow: var(--gl-inset), var(--gl-shadow);
+  color:var(--text);cursor:pointer;font-family:inherit;text-align:left;
+  position:relative;isolation:isolate;overflow:hidden;
+  transition:transform .25s cubic-bezier(.4,0,.2,1), border-color .25s ease;
+}
+.set-cat::before{
+  content:'';position:absolute;inset:0;border-radius:inherit;
+  background:radial-gradient(220px 220px at var(--mx,50%) var(--my,50%), rgba(168,85,247,0.22), rgba(168,85,247,0.06) 35%, transparent 70%);
+  opacity:0;transition:opacity .3s ease;pointer-events:none;z-index:-1;
+}
+.set-cat:hover{transform:translateX(4px);border-color:rgba(168,85,247,0.35);}
+.set-cat:hover::before{opacity:1;}
+.set-cat:active{transform:translateX(2px) scale(.99);transition:transform 80ms ease-out;}
+.set-cat-icon{
+  width:42px;height:42px;border-radius:13px;flex-shrink:0;
+  background:linear-gradient(135deg, rgba(168,85,247,0.34), rgba(236,72,153,0.20));
+  display:flex;align-items:center;justify-content:center;
+  color:#fff;font-size:17px;
+  box-shadow:inset 1px 1px 0 rgba(255,255,255,0.25), inset -1px -1px 0 rgba(0,0,0,0.20);
+}
+.set-cat-body{flex:1;min-width:0;}
+.set-cat-title{font-size:15px;font-weight:700;color:var(--text);margin-bottom:2px;}
+.set-cat-sub{font-size:12px;color:var(--sub);line-height:1.4;}
+.set-cat-chev{color:var(--sub);font-size:13px;flex-shrink:0;opacity:0.7;transition:transform .25s ease;}
+.set-cat:hover .set-cat-chev{transform:translateX(3px);}
+.set-cat > *:not(::before){position:relative;z-index:1;}
+
+/* Back-кнопка в шапке модалки. Видна только когда внутри категории. */
+.m-back{
+  background:transparent;border:none;color:var(--text);
+  width:34px;height:34px;border-radius:50%;cursor:pointer;
+  display:none;align-items:center;justify-content:center;font-size:14px;
+  margin-right:4px;
+  transition:background .18s ease, transform .18s ease;
+}
+.m-back:hover{background:rgba(255,255,255,0.06);}
+.m-back:active{transform:scale(.9);}
 
 /* Liquid-glass карточка: имитируем frosted glass БЕЗ backdrop-filter
    (он лагает на Intel UHD). Слой 1 — лёгкий диагональный градиент
@@ -1174,18 +1219,33 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
   <div class="modal-sheet set-sheet">
     <div class="m-handle"></div>
     <div class="m-head">
-      <div class="m-title"><i class="fa-solid fa-gear" style="margin-right:8px;color:var(--sub)"></i>Настройки</div>
+      <button class="m-back" id="settingsBack" onclick="switchSettingsTab('root')"><i class="fa-solid fa-arrow-left"></i></button>
+      <div class="m-title" id="settingsTitle"><i class="fa-solid fa-gear" style="margin-right:8px;color:var(--sub)"></i>Настройки</div>
       <button class="m-close" onclick="closeSettings()"><i class="fa-solid fa-xmark"></i></button>
     </div>
 
-    <!-- Табы: Безопасность / Устройства -->
-    <div class="set-tabs">
-      <button class="set-tab active" data-tab="security" onclick="switchSettingsTab('security')"><i class="fa-solid fa-shield-halved"></i>Безопасность</button>
-      <button class="set-tab" data-tab="devices" onclick="switchSettingsTab('devices')"><i class="fa-solid fa-mobile-screen"></i>Устройства</button>
+    <!-- ── Главный экран Settings: список категорий-кнопок ── -->
+    <div class="set-page active" data-page="root">
+      <button class="set-cat" onclick="switchSettingsTab('security')">
+        <div class="set-cat-icon"><i class="fa-solid fa-shield-halved"></i></div>
+        <div class="set-cat-body">
+          <div class="set-cat-title">Безопасность</div>
+          <div class="set-cat-sub">Хранение ключа, пересоздание, защита v2</div>
+        </div>
+        <i class="fa-solid fa-chevron-right set-cat-chev"></i>
+      </button>
+      <button class="set-cat" onclick="switchSettingsTab('devices')">
+        <div class="set-cat-icon"><i class="fa-solid fa-mobile-screen"></i></div>
+        <div class="set-cat-body">
+          <div class="set-cat-title">Устройства</div>
+          <div class="set-cat-sub">Подтверждение новых, список входов, QR-перенос ключа</div>
+        </div>
+        <i class="fa-solid fa-chevron-right set-cat-chev"></i>
+      </button>
     </div>
 
-    <!-- ── ВКЛАДКА «Безопасность» ── -->
-    <div class="set-page active" data-page="security">
+    <!-- ── Экран «Безопасность» ── -->
+    <div class="set-page" data-page="security">
       <div class="set-section">
         <div class="set-section-title">Ключ шифрования</div>
 
@@ -2709,26 +2769,39 @@ async function kmSwitchToServerMode(){
 // ════════════════════════════════════════════════════════════════════
 
 function openSettings(){
-  // Закрываем popup-меню sb если открыт (имя функции в коде не унифицировано — пробуем оба)
   try {
     const p = document.getElementById('sbPopup');
     if (p) p.classList.remove('open');
   } catch(_){}
   document.getElementById('settingsModal').classList.add('open');
   document.body.style.overflow = 'hidden';
-  // По умолчанию открываем «Безопасность»
-  switchSettingsTab('security');
+  // Открываем сразу главный экран Settings (список категорий).
+  switchSettingsTab('root');
   refreshStorageModeRow();
   loadDevicesIntoSettings();
 }
 
-// Переключение табов в Settings ('security' | 'devices').
-// Прячет другие .set-page, скроллит modal в начало.
+// Drill-down навигация в Settings.
+// 'root' — главный экран со списком категорий-кнопок.
+// 'security' / 'devices' — внутренние экраны категорий.
+// При входе в категорию: показываем back-кнопку, меняем заголовок.
+const _SETTINGS_TITLES = {
+  root:     { icon: 'fa-gear',           text: 'Настройки' },
+  security: { icon: 'fa-shield-halved',  text: 'Безопасность' },
+  devices:  { icon: 'fa-mobile-screen',  text: 'Устройства' },
+};
 function switchSettingsTab(tab){
   const modal = document.getElementById('settingsModal');
   if (!modal) return;
-  modal.querySelectorAll('.set-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   modal.querySelectorAll('.set-page').forEach(p => p.classList.toggle('active', p.dataset.page === tab));
+  // Back-кнопка только когда мы НЕ на главном экране.
+  const back = document.getElementById('settingsBack');
+  if (back) back.style.display = (tab === 'root') ? 'none' : 'flex';
+  // Меняем заголовок.
+  const title = document.getElementById('settingsTitle');
+  const meta = _SETTINGS_TITLES[tab] || _SETTINGS_TITLES.root;
+  if (title) title.innerHTML = '<i class="fa-solid ' + meta.icon + '" style="margin-right:8px;color:var(--sub)"></i>' + meta.text;
+  // На каждый переход — сбрасываем скролл sheet'а.
   const sheet = modal.querySelector('.modal-sheet');
   if (sheet) sheet.scrollTop = 0;
 }
@@ -2749,7 +2822,7 @@ function closeSettings(){
     _rafQueued = true;
     requestAnimationFrame(() => {
       _rafQueued = false;
-      const t = _lastEv && _lastEv.target && _lastEv.target.closest ? _lastEv.target.closest('.set-row, .dialog, .pd-item') : null;
+      const t = _lastEv && _lastEv.target && _lastEv.target.closest ? _lastEv.target.closest('.set-row, .set-cat, .dialog, .pd-item') : null;
       if (!t) return;
       const r = t.getBoundingClientRect();
       const mx = ((_lastEv.clientX - r.left) / r.width  * 100).toFixed(1);
