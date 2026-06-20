@@ -24,21 +24,17 @@ import base64, time
 
 from social_router import auth_member, db, ws_hub, _rate_limit
 
-# Лимиты по плану Premium (см. https://t.me/waki_one):
 MAX_FILE_SIZE = 100 * 1024 * 1024
 FILE_TTL_DAYS = 7
 
 router = APIRouter(prefix="/api/chat", tags=["GhostChat"])
 
-# ── Models ──
 class SendBody(BaseModel):
     to_username: str
     ciphertext: str  # base64; клиент уже зашифровал
 
 class KeysUploadBody(BaseModel):
     x25519_pub: str           # base64, 32 байта X25519 или 65 P-256
-    # В режиме 'local' приватник и соль НЕ передаются (или пустые).
-    # В режиме 'server' (default) — обязательны.
     encrypted_private_key: Optional[str] = None  # base64, ~60 байт (iv+priv+tag)
     key_salt: Optional[str] = None               # base64, 16 байт (для PBKDF2)
     storage_mode: Optional[str] = None           # 'server' | 'local' | None (сохранить текущий)
@@ -46,7 +42,6 @@ class KeysUploadBody(BaseModel):
 class StorageModeBody(BaseModel):
     mode: str  # 'server' или 'local'
 
-# ── Helpers ──
 def _is_b64(s: str, expected_len: Optional[int] = None) -> bool:
     if not s or not isinstance(s, str) or len(s) > 4000:
         return False
@@ -65,15 +60,10 @@ def _get_user_by_username(c, username: str) -> Optional[dict]:
     ).fetchone()
     return dict(row) if row else None
 
-# ── Keys management (E2E) ──
 @router.post("/keys/upload")
 def upload_keys(body: KeysUploadBody, authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
-    # Аплоад ключей — редкая операция (1 раз при первом входе, иногда при ротации).
-    # 5 в час хватит даже на смену пароля; даже с украденным токеном атакующий
-    # не сможет тихо подменить pubkey массово.
     _rate_limit(f"keys:{user['id']}", limit=5, window=3600)
-    # 32 для X25519, 65 для P-256 ECDH (web-клиент использует P-256 для совместимости со всеми браузерами)
     raw_pub = base64.b64decode(body.x25519_pub) if _is_b64(body.x25519_pub) else b""
     if len(raw_pub) not in (32, 65):
         raise HTTPException(400, "x25519_pub: ожидается 32 (X25519) или 65 (P-256) байт в base64")
@@ -89,7 +79,6 @@ def upload_keys(body: KeysUploadBody, authorization: Optional[str] = Header(None
         c.close()
         raise HTTPException(400, "storage_mode: ожидается 'server' или 'local'")
 
-    # В режиме 'server' приватник и соль обязательны.
     if mode == "server":
         if not body.encrypted_private_key or not body.key_salt:
             c.close()
@@ -104,12 +93,9 @@ def upload_keys(body: KeysUploadBody, authorization: Optional[str] = Header(None
         priv_to_store = body.encrypted_private_key
         salt_to_store = body.key_salt
     else:
-        # В режиме 'local' приватник и соль на сервере НЕ хранятся.
-        # Если они там были (юзер переключился из 'server') — зануляем.
         priv_to_store = None
         salt_to_store = None
 
-    # TDA-4: пишем pub в user_devices только для текущего device-токена.
     tok = (authorization or "").split(" ", 1)[-1] if authorization else ""
     dev = c.execute(
         "SELECT id, is_owner FROM user_devices WHERE token=? AND user_id=? LIMIT 1",
@@ -156,9 +142,6 @@ def get_my_keys(authorization: Optional[str] = Header(None)):
     c.close()
 
     storage_mode = row["key_storage_mode"] if row else None
-    # В режиме 'local' сервер физически не отдаёт приватник, даже если
-    # старый encrypted_private_key где-то завалялся в БД. На клиенте это
-    # сигнал «надо синхронизироваться через QR» (или выбрать заново).
     is_local = (storage_mode == "local")
     return {
         "x25519_pub": row["x25519_pub"] if row else None,
@@ -226,7 +209,6 @@ def set_storage_mode(body: StorageModeBody, authorization: Optional[str] = Heade
         c.close()
         return {"status": "ok", "mode": "local"}
     else:
-        # mode == 'server'
         has_priv_row = c.execute(
             "SELECT (encrypted_private_key IS NOT NULL) AS has_priv FROM users WHERE id=?",
             (user["id"],),
@@ -327,7 +309,6 @@ def revoke_my_device(device_pk: int, authorization: Optional[str] = Header(None)
     import device_auth as _da
     c = db()
     try:
-        # Защита: текущее устройство не отзываем (юзер сам себя выкинет посреди сессии)
         tok = (authorization or "").split(" ", 1)[-1] if authorization else ""
         cur = c.execute(
             "SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1",
@@ -338,9 +319,6 @@ def revoke_my_device(device_pk: int, authorization: Optional[str] = Header(None)
         ok = _da.revoke_device(c, user["id"], device_pk)
         if not ok:
             raise HTTPException(404, "Устройство не найдено")
-        # WS-уведомление всем устройствам юзера. Клиент сравнит device_pk
-        # со своим текущим (через GET /devices is_current) и решит, что делать:
-        # отозванное устройство — force-logout, остальные — обновить список.
         try:
             ws_hub.send_to(user["id"], "device.revoked", {"device_pk": device_pk})
         except Exception:
@@ -464,7 +442,6 @@ def approve_pending(request_id: str, body: TdaApproveBody,
             raise HTTPException(409, "Запрос уже обработан")
         if int(r["expires_at"]) < int(time.time()):
             raise HTTPException(410, "Срок запроса истёк")
-        # Лимит попыток
         if int(r["attempt_count"]) >= 5:
             c.execute("UPDATE pending_logins SET phase='denied' WHERE id=?", (r["id"],))
             c.commit()
@@ -476,7 +453,6 @@ def approve_pending(request_id: str, body: TdaApproveBody,
             )
             c.commit()
             raise HTTPException(401, "Неверный код")
-        # Код верный: создаём device для нового устройства, выдаём token.
         d = _da.register_device(c, user["id"], r["device_id"], r["device_name"], None, is_owner=False)
         c.execute(
             "UPDATE pending_logins SET phase='approved', granted_token=? WHERE id=?",
@@ -733,11 +709,9 @@ def get_user_pub_key(username: str, authorization: Optional[str] = Header(None))
         "device_pubkeys": [d["pub_key"] for d in dev_rows if d["pub_key"]],
     }
 
-# ── Messaging (transient — хранится только до доставки) ──
 @router.post("/send")
 def send_message(body: SendBody, authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
-    # 120 сообщений в минуту — даже самый активный чат укладывается.
     _rate_limit(f"chatsend:{user['id']}", limit=120, window=60)
     if not _is_b64(body.ciphertext) or len(body.ciphertext) > 8000:
         raise HTTPException(400, "ciphertext: некорректный формат")
@@ -768,19 +742,15 @@ def send_message(body: SendBody, authorization: Optional[str] = Header(None)):
         "ciphertext": body.ciphertext,
         "created_at": row["created_at"],
     }
-    # Real-time доставка получателю — если онлайн, отправляем и тут же удаляем
     sockets_recv = list(ws_hub._by_uid.get(to_user["id"], ()))
     sockets_send = list(ws_hub._by_uid.get(user["id"], ()))
     sent = bool(sockets_recv)
-    # Диагностика: вижу ли я WS-подключения receiver-а на момент /send.
-    # Если 0 — клиент думает что online (WS живой у него), но сервер уже отвалился.
     import logging as _lg
     _lg.getLogger('gc').info(
         f"[send msg={msg_id}] sender={user['username']} → recv={to_user['username']} | "
         f"ws_sender={len(sockets_send)} ws_recv={len(sockets_recv)}"
     )
     ws_hub.send_to(to_user["id"], "chat.new", payload)
-    # Echo отправителю — он не из БД получает, а сразу отображает
     ws_hub.send_to(user["id"], "chat.echo", payload)
     c.close()
     # Возвращаем `delivered_now` чтобы клиент сразу показал галочку
@@ -804,7 +774,6 @@ def delivery_status(body: DeliveryStatusBody, authorization: Optional[str] = Hea
     (sender_id=ME) — значит receiver сделал /ack и сервер удалил → delivered.
     """
     user = auth_member(authorization)
-    # Анти-polling DoS: клиент дёргает это после wake/reconnect, не постоянно.
     _rate_limit(f"delivstat:{user['id']}", limit=60, window=60)
     if not body.ids or not isinstance(body.ids, list):
         return {}
@@ -813,13 +782,11 @@ def delivery_status(body: DeliveryStatusBody, authorization: Optional[str] = Hea
         return {}
     c = db()
     ph = ",".join("?" * len(ids))
-    # Какие из моих ещё лежат в chat_dm (= не доставлены)
     rows = c.execute(
         f"SELECT id FROM chat_dm WHERE sender_id=? AND id IN ({ph})",
         [user["id"]] + ids,
     ).fetchall()
     still_pending = {r["id"] for r in rows}
-    # Какие уже прочитаны (запись в chat_dm_read_marks)
     read_rows = c.execute(
         f"SELECT msg_id FROM chat_dm_read_marks WHERE sender_id=? AND msg_id IN ({ph})",
         [user["id"]] + ids,
@@ -848,8 +815,6 @@ def send_sealed(body: SendSealedBody, authorization: Optional[str] = Header(None
     """Sealed-sender: только receiver виден серверу. От кого — внутри ciphertext.
     Сервер не пишет sender_id в БД и не передаёт его в WS."""
     user = auth_member(authorization)
-    # Rate-limit per-sender (token известен из Authorization).
-    # Полный sealed (без identity у сервера) требует blind tokens — отдельная фаза.
     _rate_limit(f"sealsend:{user['id']}", limit=120, window=60)
     if not _is_b64(body.ciphertext) or len(body.ciphertext) > 16000:
         raise HTTPException(400, "ciphertext: некорректный формат")
@@ -864,7 +829,6 @@ def send_sealed(body: SendSealedBody, authorization: Optional[str] = Header(None
     if not to_user["x25519_pub"]:
         c.close()
         raise HTTPException(400, "У получателя ещё нет E2E-ключей")
-    # Анти-targeted-spam: per-pair лимит. Сам отправитель скрыт от сервера за
     _rate_limit(f"sealpair:{user['id']}:{to_user['id']}", limit=30, window=300)
     now = int(time.time())
     c.execute(
@@ -873,7 +837,6 @@ def send_sealed(body: SendSealedBody, authorization: Optional[str] = Header(None
     )
     msg_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
     c.commit()
-    # Real-time доставка ТОЛЬКО receiver-у. Sender идентификатор НЕ передаётся.
     sent = False
     for _ws in list(ws_hub._by_uid.get(to_user["id"], ())):
         sent = True
@@ -896,9 +859,6 @@ def send_sealed(body: SendSealedBody, authorization: Optional[str] = Header(None
 def pending_sealed(authorization: Optional[str] = Header(None)):
     """Все накопленные мне sealed-сообщения. Клиент сам сделает /ack_sealed."""
     user = auth_member(authorization)
-    # Анти-DoS: legit клиент дёргает /pending_sealed только при reconnect или wake.
-    # 30 запросов в минуту — это уже подозрительный polling, серверу будет тяжело
-    # с тысячами параллельных вкладок.
     _rate_limit(f"pendsealed:{user['id']}", limit=30, window=60)
     c = db()
     rows = c.execute(
@@ -953,17 +913,14 @@ def ack_messages(body: AckBody, authorization: Optional[str] = Header(None)):
         return {"deleted": 0}
     c = db()
     ph = ",".join("?" * len(ids))
-    # До удаления — соберём какие сообщения чьи (нужно для broadcast'а sender'ам)
     rows = c.execute(
         f"SELECT id, sender_id FROM chat_dm WHERE receiver_id=? AND id IN ({ph})",
         [user["id"]] + ids,
     ).fetchall()
-    # Удаляем
     c.execute(f"DELETE FROM chat_dm WHERE receiver_id=? AND id IN ({ph})", [user["id"]] + ids)
     deleted = c.total_changes
     c.commit()
     c.close()
-    # Уведомим отправителей о delivered (двойная галочка)
     by_sender = {}
     for r in rows:
         by_sender.setdefault(r["sender_id"], []).append(r["id"])
@@ -1004,11 +961,9 @@ def read_messages(body: ReadBody, authorization: Optional[str] = Header(None)):
             [(sender_id, mid, user["id"]) for mid in ids],
         )
         c.commit()
-        # Opportunistic cleanup старых read-меток (>30 дней — точно не нужны)
         c.execute("DELETE FROM chat_dm_read_marks WHERE read_at < datetime('now', '-30 day')")
         c.commit()
     except Exception as e:
-        # Не падаем — WS broadcast всё равно делаем
         pass
     c.close()
     ws_hub.send_to(sender_id, "chat.read", {"ids": ids, "by_username": user["username"]})
@@ -1094,25 +1049,21 @@ def delete_chat_with(
     deleted_outgoing = 0
     deleted_incoming = 0
     try:
-        # Мои исходящие → ему (не доставленные ещё)
         c.execute(
             "DELETE FROM chat_dm WHERE sender_id=? AND receiver_id=?",
             (user["id"], peer["id"]),
         )
         deleted_outgoing = c.total_changes
-        # Мои read-метки для его сообщений (он отправлял, я прочитал)
         c.execute(
             "DELETE FROM chat_dm_read_marks WHERE sender_id=? AND recipient_id=?",
             (peer["id"], user["id"]),
         )
         if both:
-            # Его исходящие → мне (которые я ещё не ack-нул)
             c.execute(
                 "DELETE FROM chat_dm WHERE sender_id=? AND receiver_id=?",
                 (peer["id"], user["id"]),
             )
             deleted_incoming = c.total_changes
-            # Его read-метки для моих сообщений
             c.execute(
                 "DELETE FROM chat_dm_read_marks WHERE sender_id=? AND recipient_id=?",
                 (user["id"], peer["id"]),
@@ -1120,8 +1071,6 @@ def delete_chat_with(
         c.commit()
     finally:
         c.close()
-    # Если both=True — сообщим peer-у через WS, пусть удалит у себя локально.
-    # Если peer offline сейчас — событие потеряется, удаление будет только серверное.
     if both:
         ws_hub.send_to(peer["id"], "chat.cleared_by_peer", {
             "by_username": user["username"],
@@ -1163,7 +1112,6 @@ def search_users(
         (like, like),
     ).fetchall()
     c.close()
-    # Сортируем на питоне для точных совпадений в верхушке
     def score(r):
         u = (r["username"] or "").lower()
         d = (r["display_name"] or "").lower()
@@ -1216,7 +1164,6 @@ def get_pending(authorization: Optional[str] = Header(None)):
     """Все накопленные мне сообщения (НЕ удаляет — клиент сам подтвердит через /ack).
     Используется при login/reconnect когда мог пропустить что-то."""
     user = auth_member(authorization)
-    # Анти-DoS: legit-клиент дёргает /pending только при login/reconnect/wake.
     _rate_limit(f"pendlegacy:{user['id']}", limit=30, window=60)
     c = db()
     rows = c.execute("""
@@ -1280,7 +1227,6 @@ async def file_upload(
         c.close(); raise HTTPException(404, "Получатель не найден")
     if to_user["id"] == user["id"]:
         c.close(); raise HTTPException(400, "Нельзя слать себе")
-    # Cleanup просроченных файлов оппортунистически (не блокируем upload)
     c.execute("DELETE FROM chat_files WHERE created_at < datetime('now', ?)",
               (f"-{FILE_TTL_DAYS} day",))
     c.execute(
@@ -1296,7 +1242,6 @@ async def file_upload(
 def file_download(file_id: int, authorization: Optional[str] = Header(None)):
     """Скачать зашифрованный blob. Доступ только sender или receiver."""
     user = auth_member(authorization)
-    # Rate-limit на скачивание: защита от ID-enumeration + DoS большими файлами
     _rate_limit(f"filedl:{user['id']}", limit=120, window=60)
     c = db()
     row = c.execute(
@@ -1384,20 +1329,17 @@ def group_create(body: GroupCreateBody, authorization: Optional[str] = Header(No
     if not isinstance(body.member_usernames, list) or len(body.member_usernames) > 100:
         raise HTTPException(400, "Слишком много участников (макс 100)")
     c = db()
-    # Базовый лимит групп на юзера — антиспам
     own = c.execute(
         "SELECT COUNT(*) as cnt FROM chat_groups WHERE owner_id=?", (user["id"],)
     ).fetchone()
     if own["cnt"] >= 50:
         c.close(); raise HTTPException(400, "Лимит групп исчерпан (50)")
-    # is_public имеет смысл только для каналов; группы всегда приватные/E2E
     is_public = 1 if (kind == "channel" and body.is_public) else 0
     c.execute(
         "INSERT INTO chat_groups (name, owner_id, kind, is_public) VALUES (?,?,?,?)",
         (name, user["id"], kind, is_public),
     )
     gid = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
-    # Создатель — админ
     c.execute(
         "INSERT INTO chat_group_members (group_id, user_id, is_admin) VALUES (?,?,1)",
         (gid, user["id"]),
@@ -1417,7 +1359,6 @@ def group_create(body: GroupCreateBody, authorization: Optional[str] = Header(No
         )
         added.append({"id": peer["id"], "username": peer["username"], "display_name": peer["display_name"]})
     c.commit()
-    # Уведомим всех участников через WS — у них появилась новая группа
     for m in added:
         ws_hub.send_to(m["id"], "group.added", {"group_id": gid, "name": name, "kind": kind})
     c.close()
@@ -1543,7 +1484,6 @@ def group_remove_member(gid: int, username: str, authorization: Optional[str] = 
     is_self = peer["id"] == user["id"]
     if not is_self and not _is_group_admin(c, gid, user["id"]):
         c.close(); raise HTTPException(403, "Только админ может удалять других")
-    # Owner-а удалить нельзя (только через удаление всей группы)
     g = c.execute("SELECT owner_id, name FROM chat_groups WHERE id=?", (gid,)).fetchone()
     if not g:
         c.close(); raise HTTPException(404, "Группа не найдена")
@@ -1597,7 +1537,6 @@ def group_send(gid: int, body: GroupSendBody, authorization: Optional[str] = Hea
         raise HTTPException(400, "envelope_keys: обязательно (dict)")
     if len(body.envelope_keys) > 200:
         raise HTTPException(400, "Слишком много envelope_keys")
-    # Каждый ключ должен быть валидной base64-строкой разумного размера
     for uid_str, ek in body.envelope_keys.items():
         if not isinstance(ek, str) or len(ek) > 600 or not _is_b64(ek):
             raise HTTPException(400, f"envelope_keys[{uid_str}]: некорректный")
@@ -1607,11 +1546,8 @@ def group_send(gid: int, body: GroupSendBody, authorization: Optional[str] = Hea
     g = c.execute("SELECT kind, owner_id, name FROM chat_groups WHERE id=?", (gid,)).fetchone()
     if not g:
         c.close(); raise HTTPException(404, "Группа не найдена")
-    # В канале писать могут только админы
     if g["kind"] == "channel" and not _is_group_admin(c, gid, user["id"]):
         c.close(); raise HTTPException(403, "В канале писать могут только админы")
-    # envelope_keys должны покрывать всех участников КРОМЕ отправителя
-    # Если группа из одного участника (только sender) — envelope_keys может быть пустым.
     members = [r["user_id"] for r in c.execute(
         "SELECT user_id FROM chat_group_members WHERE group_id=?", (gid,)
     ).fetchall()]
@@ -1621,8 +1557,6 @@ def group_send(gid: int, body: GroupSendBody, authorization: Optional[str] = Hea
     if missing:
         c.close()
         raise HTTPException(400, f"envelope_keys не покрывают всех получателей: missing {missing}")
-    # Если получателей нет (Saved Messages-like) — допустим пустой envelope, но требуем ciphertext.
-    # Сообщение не будет реально доставлено никому, но останется в истории на сервере недолго.
     envelope_json = _json.dumps({str(k): v for k, v in keys_int.items()}, ensure_ascii=False)
     c.execute(
         "INSERT INTO chat_group_messages (group_id, sender_id, ciphertext, envelope_keys) VALUES (?,?,?,?)",
@@ -1641,18 +1575,13 @@ def group_send(gid: int, body: GroupSendBody, authorization: Optional[str] = Hea
         "envelope_keys": {str(k): v for k, v in keys_int.items()},
         "created_at": row["created_at"],
     }
-    # Doставка всем участникам в реальном времени
     for uid in recipients:
-        # Каждому шлём только его envelope — экономим bandwidth и не светим чужие
         per_user = dict(payload)
         per_user["envelope_keys"] = {str(uid): keys_int[uid]}
         ws_hub.send_to(uid, "group.new", per_user)
-    # Echo отправителю — он сразу видит у себя
     echo = dict(payload)
     echo["envelope_keys"] = {}  # себе envelope не нужен, шифровка дешифруется на стороне sender-а из локального AES-кэша
     ws_hub.send_to(user["id"], "group.echo", echo)
-    # Если получателей нет (Saved Messages случай) — сразу удалим серверную копию,
-    # клиент уже сохранил в IDB через echo. Сервер бессмысленно держать.
     if not recipients:
         c.execute("DELETE FROM chat_group_messages WHERE id=?", (msg_id,))
         c.commit()
@@ -1732,7 +1661,6 @@ def group_ack(gid: int, body: GroupAckBody, authorization: Optional[str] = Heade
             (user["id"], mid),
         )
     c.commit()
-    # Проверим какие сообщения теперь ack-нуты всеми получателями (кроме отправителя) → удалим
     rows = c.execute(
         f"SELECT id, sender_id FROM chat_group_messages WHERE group_id=? AND id IN ({ph})",
         [gid] + ids,
@@ -1889,8 +1817,6 @@ def group_publish_to_gs(gid: int, body: ChannelPublishBody, authorization: Optio
         c.close(); raise HTTPException(403, "Только публичные каналы могут публиковать")
     if not _is_group_admin(c, gid, user["id"]):
         c.close(); raise HTTPException(403, "Только админ канала")
-    # Создаём пост от имени owner-а канала (он — формально автор поста)
-    # Начальная activity = 500 (стандарт), source_channel_id для UI-бейджа
     import time as _t
     now_ts = int(_t.time())
     c.execute(
@@ -1916,18 +1842,14 @@ def group_publish_to_gs(gid: int, body: ChannelPublishBody, authorization: Optio
 def group_join_request(gid: int, authorization: Optional[str] = Header(None)):
     """Подать заявку на вступление в приватный канал/группу."""
     user = auth_member(authorization)
-    # Лимиты: 20 заявок на приват / 100 на паблик в 30 мин — но публичные
-    # каналы можно join без заявки → проверка пускаемся ниже
     c = db()
     g = c.execute(
         "SELECT id, name, kind, is_public, owner_id FROM chat_groups WHERE id=?", (gid,)
     ).fetchone()
     if not g:
         c.close(); raise HTTPException(404, "Не найдено")
-    # Уже участник?
     if _is_group_member(c, gid, user["id"]):
         c.close(); raise HTTPException(409, "Вы уже участник")
-    # Публичный канал — добавляем сразу без заявки
     if g["kind"] == "channel" and g["is_public"]:
         _rate_limit(f"pjoin:{user['id']}", limit=100, window=1800)
         c.execute(
@@ -1935,12 +1857,9 @@ def group_join_request(gid: int, authorization: Optional[str] = Header(None)):
             (gid, user["id"]),
         )
         c.commit()
-        # Уведомить админов о новом участнике (минорно)
         c.close()
         return {"status": "joined", "auto": True}
-    # Приватная группа / приватный канал — заявка
     _rate_limit(f"prjoin:{user['id']}", limit=20, window=1800)
-    # Уже есть pending-заявка?
     existing = c.execute(
         "SELECT id FROM chat_group_join_requests WHERE group_id=? AND user_id=? AND status='pending'",
         (gid, user["id"])
@@ -1954,7 +1873,6 @@ def group_join_request(gid: int, authorization: Optional[str] = Header(None)):
         (gid, user["id"], now),
     )
     c.commit()
-    # Уведомить владельца + админов
     admins = c.execute(
         "SELECT user_id FROM chat_group_members WHERE group_id=? AND (is_admin=1 OR user_id=?)",
         (gid, g["owner_id"])
@@ -2017,7 +1935,6 @@ def group_join_request_decide(gid: int, req_id: int, body: dict, authorization: 
     c.commit()
     g = c.execute("SELECT name, kind FROM chat_groups WHERE id=?", (gid,)).fetchone()
     c.close()
-    # Уведомить заявителя
     try:
         ws_hub.send_to(req["user_id"], "group.join_decided", {
             "group_id": gid, "accepted": accept,

@@ -7,9 +7,6 @@ import sqlite3, secrets, os, uuid, json, io, hashlib, hmac, re, time, random, ba
 
 router = APIRouter(prefix="/api/soc", tags=["GhostSocial"])
 
-# Версия экосистемы. Semver: MAJOR.MINOR.PATCH
-# Меняй здесь при каждом релизе — она доступна через GET /api/soc/version
-# и отображается в UI лендинга. CHANGELOG.md в корне репо.
 VERSION = "0.1.0"
 
 DB = os.getenv("SOCIAL_DB_PATH", '/opt/ghostchat/ghostchat.db')
@@ -41,7 +38,6 @@ class RegisterBody(BaseModel):
     password: str
     ref: Optional[str] = None
     age_18_confirm: bool = False
-    # TDA-1: опциональная привязка устройства
     device_id: Optional[str] = None
     device_name: Optional[str] = None
     platform: Optional[str] = None
@@ -212,8 +208,6 @@ def db():
     c = sqlite3.connect(DB, timeout=5.0)
     c.row_factory = sqlite3.Row
     c.create_function("ci_contains", 2, _ci_contains, deterministic=True)
-    # WAL: readers не блокируют writers, writer не блокирует readers. Безопасно вызывать
-    # каждый коннект — pragma persists между сессиями (один раз пропишется и хватит).
     try:
         c.execute("PRAGMA journal_mode=WAL")
         c.execute("PRAGMA synchronous=NORMAL")
@@ -228,10 +222,7 @@ def db():
 
 class _WSHub:
     def __init__(self):
-        # user_id -> set[WebSocket]. 0 = аноним/гость (тоже получают broadcast)
         self._by_uid: dict = defaultdict(set)
-        # WebSocket -> AESGCM. Если ключ есть в мапе, _send шифрует payload
-        # в cs.enc-фрейм. Если нет (старые клиенты без handshake) — отправляем plain.
         self._crypto: dict = {}
         self._lock = asyncio.Lock()
         # Главный event loop — фиксируем при первом register (где есть running loop).
@@ -266,8 +257,6 @@ class _WSHub:
         try:
             aesgcm = self._crypto.get(ws)
             if aesgcm is not None:
-                # Поверх WSS — ещё один слой AES-GCM с ключом из ECDH-handshake'а.
-                # Защищает от компрометации TLS (rogue CA, MITM-прокси).
                 import os as _os, json as _json, base64 as _b64
                 pt = _json.dumps(payload).encode('utf-8')
                 iv = _os.urandom(12)
@@ -275,7 +264,6 @@ class _WSHub:
                 payload = {"type": "cs.enc", "data": _b64.b64encode(iv + ct).decode()}
             await ws.send_json(payload)
         except Exception:
-            # битый сокет — выкинем его при следующем reconnect
             pass
 
     def _schedule(self, coro):
@@ -283,7 +271,6 @@ class _WSHub:
         мы находимся (async ручка → main loop running, sync ручка → threadpool)."""
         loop = self._loop
         if loop is None:
-            # Никто ещё не подключался → нечего слать; всё равно попробуем
             try:
                 loop = asyncio.get_event_loop()
             except RuntimeError:
@@ -291,7 +278,6 @@ class _WSHub:
                 return
         if loop.is_running():
             try:
-                # cross-thread safe; если мы УЖЕ в loop'е — это тоже работает корректно
                 asyncio.run_coroutine_threadsafe(coro, loop)
             except Exception:
                 try: coro.close()
@@ -300,7 +286,6 @@ class _WSHub:
             try: coro.close()
             except Exception: pass
 
-    # Типы событий, которые гости могут получать через broadcast (публичные)
     _PUBLIC_BROADCAST = {"post.new", "post.edit", "post.delete", "post.react",
                           "post.comment", "post.vote", "presence"}
 
@@ -326,7 +311,6 @@ class _WSHub:
 
 ws_hub = _WSHub()
 
-# Лимиты на коннекты — защита от DoS
 _WS_MAX_PER_USER = 10        # 10 вкладок/устройств на юзера — достаточно
 _WS_MAX_PER_IP_GUEST = 20    # гостям с одного IP не больше 20 коннектов
 
@@ -357,19 +341,14 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
         if row:
             uid = row["id"]
             username = row["username"]
-    # Cap: не более N открытых коннектов на одного юзера/IP.
-    # Гостям отдельный лимит по IP (uid=0 у всех гостей).
     if uid > 0 and len(ws_hub._by_uid.get(uid, set())) >= _WS_MAX_PER_USER:
         await websocket.close(code=1008)  # policy violation
         return
     if uid == 0 and len(ws_hub._by_uid.get(0, set())) >= _WS_MAX_PER_IP_GUEST:
-        # У нас нет per-IP fan-out для гостей, но общий cap на стол гостей хватит.
         await websocket.close(code=1008)
         return
     await websocket.accept()
     await ws_hub.register(uid, websocket)
-    # Hello-payload сразу с полным профилем — клиент использует это вместо
-    # HTTP /me на первой загрузке (один rt экономии при boot).
     _c = db()
     _stats = get_user_stats(_c, uid)
     _flags = _c.execute(
@@ -417,8 +396,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
     # должны спросить через presence.ask по конкретному username.
     try:
         while True:
-            # Тайм-аут на receive: если клиент молчит больше 90с — отвал.
-            # Клиент должен слать ping каждые ~25с. 90с = 3 ping-интервала.
             try:
                 msg = await asyncio.wait_for(websocket.receive_text(), timeout=90)
             except asyncio.TimeoutError:
@@ -472,7 +449,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                         pass
                 continue
 
-            # ── cs.enc: расшифровка → подменяем ev на расшифрованное ──
             if t == "cs.enc" and _aesgcm is not None:
                 try:
                     import base64 as _b64
@@ -486,7 +462,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     data = ev.get("data") or {}
                 except Exception:
                     continue
-            # Клиент сообщает что печатает в чат с username
             if t == "chat.typing" and username:
                 to_user = (data.get("to") or "").lower()
                 if not to_user:
@@ -509,7 +484,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                         "from_username": username,
                         "is_typing": bool(data.get("is_typing", True)),
                     })
-            # ── chat.send: отправка DM через WS (вместо POST /send) ──
             elif t == "chat.send" and uid:
                 rid = data.get("request_id")
                 to_username = (data.get("to_username") or "").lower().strip().lstrip("@")
@@ -519,7 +493,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     err = "to_username обязателен"
                 elif not isinstance(ciphertext, str) or len(ciphertext) > 8000:
                     err = "ciphertext: некорректный формат"
-                # rate-limit на WS-send такой же как на POST: 120/мин
                 if err is None:
                     try:
                         from .chat_router import _rate_limit as _rl
@@ -546,7 +519,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                         msg_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
                         row = c.execute("SELECT created_at FROM chat_dm WHERE id=?", (msg_id,)).fetchone()
                         c.commit()
-                        # Sender username для payload — берём из соединения (username переменная закрытия)
                         sender_row = c.execute("SELECT display_name FROM users WHERE id=?", (uid,)).fetchone()
                         payload = {
                             "id": msg_id,
@@ -573,9 +545,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                         "request_id": rid,
                         "error": str(err),
                     }})
-            # ── chat.ack: получатель подтверждает доставку (вместо POST /ack) ──
-            # data: {ids:[int], request_id?}
-            # ack: {type:'chat.ack.ok', data:{request_id, deleted}}
             elif t == "chat.ack" and uid:
                 rid = data.get("request_id")
                 ids = data.get("ids") or []
@@ -600,9 +569,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     ws_hub.send_to(sender_id, "chat.delivered", {"ids": mids, "by_username": username})
                 await _send_safe({"type": "chat.ack.ok", "data": {"request_id": rid, "deleted": deleted}})
 
-            # ── chat.read: получатель прочитал — пуш sender'у синие галочки ──
-            # data: {ids:[int], from_username, request_id?}
-            # ack: {type:'chat.read.ok', data:{request_id, sent}}
             elif t == "chat.read" and uid:
                 rid = data.get("request_id")
                 ids = data.get("ids") or []
@@ -632,9 +598,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 ws_hub.send_to(sender_id, "chat.read", {"ids": ids, "by_username": username})
                 await _send_safe({"type": "chat.read.ok", "data": {"request_id": rid, "sent": len(ids)}})
 
-            # ── chat.peer_pub: fetch x25519_pub собеседника (вместо GET /keys/{u}) ──
-            # data: {username, request_id?}
-            # ack: {type:'chat.peer_pub.ok', data:{request_id, username, x25519_pub, device_pubkeys}}
             elif t == "chat.peer_pub" and uid:
                 rid = data.get("request_id")
                 target = (data.get("username") or "").lower().strip().lstrip("@")
@@ -659,9 +622,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     "device_pubkeys": [d["pub_key"] for d in dev_rows if d["pub_key"]],
                 }})
 
-            # ── chat.pending: накопленные мне (НЕ удаляет — клиент сделает chat.ack) ──
-            # data: {request_id?}
-            # ack: {type:'chat.pending.ok', data:{request_id, messages:[...]}}
             elif t == "chat.pending" and uid:
                 rid = data.get("request_id")
                 try:
@@ -692,7 +652,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     ],
                 }})
 
-            # ── keys.me: то же что GET /keys/me ──
             elif t == "keys.me" and uid:
                 rid = data.get("request_id")
                 c = db()
@@ -700,9 +659,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     "SELECT x25519_pub, encrypted_private_key, key_salt, key_storage_mode FROM users WHERE id=?",
                     (uid,),
                 ).fetchone()
-                # Текущий device-токен достаём из соединения. ws_hub не хранит
-                # явный токен, но при register мы клали websocket с уже-проверенной
-                # авторизацией. Самый простой путь — берём device_token из WS-state.
                 cur_tok = data.get("_self_token") or ""  # клиент может не знать
                 other_devs = c.execute(
                     "SELECT pub_key FROM user_devices "
@@ -721,7 +677,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     "storage_mode": storage_mode,
                 }})
 
-            # ── keys.upload: POST /keys/upload (любое устройство обновляет users.x25519_pub) ──
             elif t == "keys.upload" and uid:
                 rid = data.get("request_id")
                 try:
@@ -758,8 +713,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     priv_store, salt_store = encrypted_private_key, key_salt
                 else:
                     priv_store, salt_store = None, None
-                # Запись users.x25519_pub разрешена любому устройству
-                # (multi-device на v1 архитектурно дырявый — см. 342b1da).
                 c.execute(
                     "UPDATE users SET x25519_pub=?, encrypted_private_key=?, key_salt=?, in_ghostchat=1, key_storage_mode=? WHERE id=?",
                     (x25519_pub, priv_store, salt_store, mode, uid),
@@ -768,7 +721,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 c.close()
                 await _send_safe({"type":"keys.upload.ok","data":{"request_id":rid,"status":"ok","storage_mode":mode}})
 
-            # ── keys.storage_mode.get + .set ──
             elif t == "keys.storage_mode.get" and uid:
                 rid = data.get("request_id")
                 c = db()
@@ -817,7 +769,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                         "needs_upload": not bool(has_priv and has_priv["has_priv"]),
                     }})
 
-            # ── keys.server_copy.delete ──
             elif t == "keys.server_copy.delete" and uid:
                 rid = data.get("request_id")
                 try:
@@ -832,7 +783,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 c.close()
                 await _send_safe({"type":"keys.server_copy.delete.ok","data":{"request_id":rid,"status":"ok"}})
 
-            # ── devices.list ──
             elif t == "devices.list" and uid:
                 rid = data.get("request_id")
                 import device_auth as _da
@@ -848,7 +798,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 finally:
                     c.close()
 
-            # ── devices.rename ──
             elif t == "devices.rename" and uid:
                 rid = data.get("request_id")
                 try:
@@ -873,7 +822,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 c.close()
                 await _send_safe({"type":"devices.rename.ok","data":{"request_id":rid,"status":"ok","name":name}})
 
-            # ── devices.revoke ──
             elif t == "devices.revoke" and uid:
                 rid = data.get("request_id")
                 try:
@@ -898,7 +846,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 finally:
                     c.close()
 
-            # ── contacts.list ──
             elif t == "contacts.list" and uid:
                 rid = data.get("request_id")
                 c = db()
@@ -914,7 +861,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     "contacts": [{"username":r["username"],"display_name":r["display_name"],"added_at":r["added_at"]} for r in rows],
                 }})
 
-            # ── contacts.add / contacts.remove / contacts.check ──
             elif t == "contacts.add" and uid:
                 rid = data.get("request_id")
                 try:
@@ -966,7 +912,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 c.close()
                 await _send_safe({"type":"contacts.check.ok","data":{"request_id":rid,"in_contacts":in_c}})
 
-            # ── support_admin ──
             elif t == "support_admin" and uid:
                 rid = data.get("request_id")
                 c = db()
@@ -986,7 +931,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                         "x25519_pub": r["x25519_pub"], "is_me": (username == r["username"]),
                     }})
 
-            # ── delivery_status: status batch для исходящих ──
             elif t == "delivery_status" and uid:
                 rid = data.get("request_id")
                 try:
@@ -1015,7 +959,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     "request_id": rid, "result": {str(i): _stat(i) for i in ids},
                 }})
 
-            # ── prof.get: GhostSocial профиль (через тот же WS) ──
             elif t == "prof.get" and uid:
                 rid = data.get("request_id")
                 target = (data.get("username") or "").lower().strip().lstrip("@")
@@ -1067,7 +1010,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     "posts": posts,
                 }})
 
-            # ── keys.me: возвращает свои ключи + список pub_key чужих устройств ──
             elif t == "keys.me" and uid:
                 rid = data.get("request_id")
                 c = db()
@@ -1094,7 +1036,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     "storage_mode": storage_mode,
                 }})
 
-            # ── keys.storage_mode.get ──
             elif t == "keys.storage_mode.get" and uid:
                 rid = data.get("request_id")
                 c = db()
@@ -1110,7 +1051,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     "has_server_priv": bool(row and row["has_server_priv"]),
                 }})
 
-            # ── keys.storage_mode.set ──
             elif t == "keys.storage_mode.set" and uid:
                 rid = data.get("request_id")
                 mode = (data.get("mode") or "").lower()
@@ -1143,7 +1083,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                         "needs_upload": not bool(has_priv_row and has_priv_row["has_priv"]),
                     }})
 
-            # ── devices.list ──
             elif t == "devices.list" and uid:
                 rid = data.get("request_id")
                 import device_auth as _da
@@ -1159,7 +1098,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 finally:
                     c.close()
 
-            # ── devices.rename: {device_pk, name} ──
             elif t == "devices.rename" and uid:
                 rid = data.get("request_id")
                 pk = data.get("device_pk")
@@ -1185,7 +1123,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 finally:
                     c.close()
 
-            # ── devices.revoke: {device_pk} ──
             elif t == "devices.revoke" and uid:
                 rid = data.get("request_id")
                 pk = data.get("device_pk")
@@ -1216,7 +1153,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 finally:
                     c.close()
 
-            # ── contacts.list ──
             elif t == "contacts.list" and uid:
                 rid = data.get("request_id")
                 c = db()
@@ -1232,7 +1168,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     "contacts": [{"username": r["username"], "display_name": r["display_name"], "added_at": r["added_at"]} for r in rows],
                 }})
 
-            # ── contacts.add: {username} ──
             elif t == "contacts.add" and uid:
                 rid = data.get("request_id")
                 target = (data.get("username") or "").lower().strip().lstrip("@")
@@ -1259,7 +1194,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 c.commit(); c.close()
                 await _send_safe({"type": "contacts.add.ok", "data": {"request_id": rid, "username": peer["username"], "display_name": peer["display_name"]}})
 
-            # ── contacts.remove: {username} ──
             elif t == "contacts.remove" and uid:
                 rid = data.get("request_id")
                 target = (data.get("username") or "").lower().strip().lstrip("@")
@@ -1282,7 +1216,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 c.commit(); c.close()
                 await _send_safe({"type": "contacts.remove.ok", "data": {"request_id": rid}})
 
-            # ── contacts.check: {username} → {in_contacts} ──
             elif t == "contacts.check" and uid:
                 rid = data.get("request_id")
                 target = (data.get("username") or "").lower().strip().lstrip("@")
@@ -1300,7 +1233,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 c.close()
                 await _send_safe({"type": "contacts.check.ok", "data": {"request_id": rid, "in_contacts": r is not None}})
 
-            # ── group.my: список моих групп ──
             elif t == "group.my" and uid:
                 rid = data.get("request_id")
                 c = db()
@@ -1326,7 +1258,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 } for r in rows]
                 await _send_safe({"type": "group.my.ok", "data": {"request_id": rid, "groups": groups}})
 
-            # ── group.pending: {gid} → сообщения группы, которые я не ack-ал ──
             elif t == "group.pending" and uid:
                 rid = data.get("request_id")
                 gid = data.get("gid")
@@ -1375,7 +1306,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     })
                 await _send_safe({"type": "group.pending.ok", "data": {"request_id": rid, "messages": out}})
 
-            # ── tda.pending.list: pending-логины текущего юзера ──
             elif t == "tda.pending.list" and uid:
                 rid = data.get("request_id")
                 now_ = int(time.time())
@@ -1392,7 +1322,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     "pending": [dict(r) for r in rows],
                 }})
 
-            # ── tda.approve: {request_id, code} ──
             elif t == "tda.approve" and uid:
                 rid = data.get("request_id")
                 target_rid = data.get("login_request_id") or ""
@@ -1444,7 +1373,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                         (d["token"], r["id"]),
                     )
                     c.commit()
-                    # Уведомляем все trusted-устройства юзера: pending исчез (карточку убрать).
                     try: ws_hub.send_to(uid, "tda.pending.gone", {"login_request_id": target_rid, "phase": "approved", "device_name": r["device_name"]})
                     except Exception: pass
                     await _send_safe({"type": "tda.approve.ok", "data": {"request_id": rid, "device_name": r["device_name"]}})
@@ -1474,7 +1402,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     if not r:
                         await _send_safe({"type": "tda.block.err", "data": {"request_id": rid, "error": "Запрос не найден"}})
                         continue
-                    # 1) Pending — в denied (как обычный deny).
                     if r["phase"] == "pending":
                         c.execute("UPDATE pending_logins SET phase='denied' WHERE id=?", (r["id"],))
                     # 2) Блокируем device_id у этого юзера.
@@ -1501,7 +1428,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 finally:
                     c.close()
 
-            # ── tda.deny: {request_id} ──
             elif t == "tda.deny" and uid:
                 rid = data.get("request_id")
                 target_rid = data.get("login_request_id") or ""
@@ -1534,7 +1460,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 finally:
                     c.close()
 
-            # ── support_admin: данные о support-юзере для PINNED-карточки ──
             elif t == "support_admin" and uid:
                 rid = data.get("request_id")
                 from .chat_router import SUPPORT_ADMIN_USERNAME as _SUP
@@ -1555,7 +1480,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                         "is_me": username == r["username"],
                     }})
 
-            # ── keys.upload: публикация pub + (опц.) encrypted_priv + salt + mode ──
             elif t == "keys.upload" and uid:
                 rid = data.get("request_id")
                 try:
@@ -1568,7 +1492,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 enc_priv = data.get("encrypted_private_key")
                 key_salt = data.get("key_salt")
                 req_mode = (data.get("storage_mode") or "").lower() or None
-                # Длина raw pub: 32 (X25519) или 65 (P-256)
                 try:
                     raw_pub = base64.b64decode(x25519_pub) if _is_b64(x25519_pub) else b""
                 except Exception:
@@ -1609,8 +1532,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 dev = c.execute("SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1", (token, uid)).fetchone()
                 if dev:
                     c.execute("UPDATE user_devices SET pub_key=? WHERE id=?", (x25519_pub, dev["id"]))
-                # users.x25519_pub перезаписывается любым устройством — multi-device
-                # для v1 невозможен через единый pub; v2 решает через envelope-per-device.
                 c.execute(
                     "UPDATE users SET x25519_pub=?, encrypted_private_key=?, key_salt=?, in_ghostchat=1, key_storage_mode=? WHERE id=?",
                     (x25519_pub, priv_to_store, salt_to_store, mode, uid),
@@ -1618,7 +1539,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 c.commit(); c.close()
                 await _send_safe({"type": "keys.upload.ok", "data": {"request_id": rid, "status": "ok", "storage_mode": mode}})
 
-            # ── keys.server_copy.delete: убрать серверную копию приватника (mode=local) ──
             elif t == "keys.server_copy.delete" and uid:
                 rid = data.get("request_id")
                 c = db()
@@ -1629,7 +1549,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 c.commit(); c.close()
                 await _send_safe({"type": "keys.server_copy.delete.ok", "data": {"request_id": rid, "status": "ok"}})
 
-            # ── delivery_status: {ids:[int]} → {id:'pending'|'delivered'|'read'} ──
             elif t == "delivery_status" and uid:
                 rid = data.get("request_id")
                 ids = data.get("ids") or []
@@ -1656,7 +1575,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     return "delivered"
                 await _send_safe({"type": "delivery_status.ok", "data": {"request_id": rid, "status": {str(i): _st(i) for i in ids}}})
 
-            # ── prof.get: {username, offset?} → профиль социалки + posts ──
             elif t == "prof.get" and uid:
                 rid = data.get("request_id")
                 target = (data.get("username") or "").lower().strip()
@@ -1707,7 +1625,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     "posts": posts,
                 }})
 
-            # ── me.get: профиль текущего юзера (id, username, display_name, stats, flags) ──
             elif t == "me.get" and uid:
                 rid = data.get("request_id")
                 c = db()
@@ -1726,8 +1643,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 }
                 await _send_safe({"type": "me.get.ok", "data": {"request_id": rid, **payload}})
 
-            # ── notif.unread: количество непрочитанных уведомлений ──
-            # data: {request_id?} → {type:'notif.unread.ok', data:{request_id, count}}
             elif t == "notif.unread" and uid:
                 rid = data.get("request_id")
                 c = db()
@@ -1740,7 +1655,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     "request_id": rid, "count": int(cnt),
                 }})
 
-            # Клиент сообщает кому он "присутствует" — запрос статуса
             elif t == "presence.ask":
                 target = (data.get("username") or "").lower()
                 if not target:
@@ -1756,7 +1670,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
         pass
     finally:
         await ws_hub.unregister(uid, websocket)
-        # NB: убран broadcast presence offline — см. комментарий выше.
 
 
 def init():
@@ -2062,17 +1975,14 @@ def init():
         CREATE INDEX IF NOT EXISTS idx_soc_wallet_tx_user ON soc_wallet_tx(user_id, id DESC);
         CREATE INDEX IF NOT EXISTS idx_soc_wallet_tx_day ON soc_wallet_tx(user_id, source, created_at);
     ''')
-    # Добавляем колонку is_official в users (для системного юзера GhostEcos с галочкой)
     try:
         c.execute("ALTER TABLE users ADD COLUMN is_official INTEGER NOT NULL DEFAULT 0")
     except sqlite3.OperationalError:
         pass
-    # Добавляем currency в soc_nft_listings если её ещё нет (миграция со старого формата)
     try:
         c.execute("ALTER TABLE soc_nft_listings ADD COLUMN currency TEXT NOT NULL DEFAULT 'soul'")
     except sqlite3.OperationalError:
         pass
-    # Колонки для пользовательских NFT (image_kind/data) и лимит создания username
     try:
         c.execute("ALTER TABLE soc_nft_catalog ADD COLUMN image_kind TEXT NOT NULL DEFAULT 'preset'")
     except sqlite3.OperationalError:
@@ -2098,7 +2008,6 @@ def init():
     except sqlite3.OperationalError:
         pass
     try:
-        # Реферальная программа: кто пригласил этого юзера. NULL — пришёл сам.
         c.execute("ALTER TABLE users ADD COLUMN referrer_id INTEGER DEFAULT NULL")
     except sqlite3.OperationalError:
         pass
@@ -2106,7 +2015,6 @@ def init():
         c.execute("CREATE INDEX IF NOT EXISTS idx_users_referrer ON users(referrer_id)")
     except sqlite3.OperationalError:
         pass
-    # Группы и каналы — расширения для Фазы 1 (теги/bio/публичность)
     try:
         c.execute("ALTER TABLE chat_groups ADD COLUMN username TEXT DEFAULT NULL")
     except sqlite3.OperationalError:
@@ -2116,16 +2024,13 @@ def init():
     except sqlite3.OperationalError:
         pass
     try:
-        # Только для каналов: 1=публичный (видим в поиске, без E2E), 0=приватный (E2E, по заявкам)
         c.execute("ALTER TABLE chat_groups ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0")
     except sqlite3.OperationalError:
         pass
     try:
-        # Уникальный индекс на @username канала/группы. NULL разрешён (нет тега).
         c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_groups_username ON chat_groups(username) WHERE username IS NOT NULL")
     except sqlite3.OperationalError:
         pass
-    # Таблица заявок на вступление в приватный канал/группу (Фаза 2)
     try:
         c.execute("""
             CREATE TABLE IF NOT EXISTS chat_group_join_requests (
@@ -2146,13 +2051,11 @@ def init():
     except sqlite3.OperationalError:
         pass
 
-    # Колонка для постов-репостов из каналов GC (Фаза 3 каналов)
     try: c.execute("ALTER TABLE soc_posts ADD COLUMN source_channel_id INTEGER")
     except sqlite3.OperationalError: pass
     try: c.execute("CREATE INDEX IF NOT EXISTS idx_posts_source_channel ON soc_posts(source_channel_id) WHERE source_channel_id IS NOT NULL")
     except sqlite3.OperationalError: pass
 
-    # ── Модерация (Фаза 2+3) ──
     try: c.execute("ALTER TABLE users ADD COLUMN is_moderator INTEGER NOT NULL DEFAULT 0")
     except sqlite3.OperationalError: pass
     try: c.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")  # owner экосистемы
@@ -2163,12 +2066,8 @@ def init():
     except sqlite3.OperationalError: pass
     try: c.execute("ALTER TABLE users ADD COLUMN moderator_since INTEGER")  # когда дали роль
     except sqlite3.OperationalError: pass
-    # Incognito-аккаунты: создаются кнопкой «Инкогнито» на auth-экране,
-    # имеют рандомный username, токен только в sessionStorage браузера,
-    # удаляются вместе с закрытием окна (через navigator.sendBeacon).
     try: c.execute("ALTER TABLE users ADD COLUMN is_anon INTEGER NOT NULL DEFAULT 0")
     except sqlite3.OperationalError: pass
-    # Заявки на роль модератора
     try:
         c.execute("""
             CREATE TABLE IF NOT EXISTS soc_moderator_applications (
@@ -2185,7 +2084,6 @@ def init():
     except sqlite3.OperationalError: pass
     try: c.execute("CREATE INDEX IF NOT EXISTS idx_modapp_status ON soc_moderator_applications(status, quality_score DESC)")
     except sqlite3.OperationalError: pass
-    # Overwatch — ремодерация постов модераторами
     try:
         c.execute("""
             CREATE TABLE IF NOT EXISTS soc_overwatch_requests (
@@ -2204,7 +2102,6 @@ def init():
     except sqlite3.OperationalError: pass
     try: c.execute("CREATE INDEX IF NOT EXISTS idx_ow_status ON soc_overwatch_requests(status, created_at DESC)")
     except sqlite3.OperationalError: pass
-    # Голоса модераторов в overwatch
     try:
         c.execute("""
             CREATE TABLE IF NOT EXISTS soc_overwatch_votes (
@@ -2218,15 +2115,12 @@ def init():
         """)
     except sqlite3.OperationalError: pass
 
-    # ── Система активности и модерации (Фаза 0+1) ──
-    # activity 0..1000: 0 = тень, 100 = низкий, 500 = середина (default), 1000 = max
     try: c.execute("ALTER TABLE soc_posts ADD COLUMN activity INTEGER NOT NULL DEFAULT 500")
     except sqlite3.OperationalError: pass
     try: c.execute("ALTER TABLE soc_posts ADD COLUMN activity_set_at INTEGER")
     except sqlite3.OperationalError: pass
     try: c.execute("ALTER TABLE soc_posts ADD COLUMN automod_source TEXT")  # 'A'|'B'|'C'|'manual'
     except sqlite3.OperationalError: pass
-    # Таблица просмотров — для дедупа feed («не показывать уже виденное»)
     try:
         c.execute("""
             CREATE TABLE IF NOT EXISTS soc_post_views (
@@ -2239,7 +2133,6 @@ def init():
     except sqlite3.OperationalError: pass
     try: c.execute("CREATE INDEX IF NOT EXISTS idx_post_views_user ON soc_post_views(user_id, viewed_at DESC)")
     except sqlite3.OperationalError: pass
-    # Аудит изменений activity (для дебага / истории моды)
     try:
         c.execute("""
             CREATE TABLE IF NOT EXISTS soc_activity_log (
@@ -2258,16 +2151,13 @@ def init():
     try: c.execute("CREATE INDEX IF NOT EXISTS idx_activity_log_post ON soc_activity_log(post_id, id DESC)")
     except sqlite3.OperationalError: pass
 
-    # ── kind: 'post' | 'miniska' (миниски — короткие 48ч-видео) ──
     try: c.execute("ALTER TABLE soc_posts ADD COLUMN kind TEXT NOT NULL DEFAULT 'post'")
     except sqlite3.OperationalError: pass
     try: c.execute("CREATE INDEX IF NOT EXISTS idx_posts_kind ON soc_posts(kind, id DESC)")
     except sqlite3.OperationalError: pass
-    # ── edited_at: timestamp последнего редактирования (NULL = не редактировался) ──
     try: c.execute("ALTER TABLE soc_posts ADD COLUMN edited_at TIMESTAMP")
     except sqlite3.OperationalError: pass
 
-    # ── NSFW (18+ контент с обязательным блюром) ──
     try: c.execute("ALTER TABLE soc_posts ADD COLUMN is_nsfw INTEGER NOT NULL DEFAULT 0")
     except sqlite3.OperationalError: pass
     try: c.execute("ALTER TABLE soc_posts ADD COLUMN nsfw_set_by INTEGER")  # NULL=автор сам, INT=ID админа/мода
@@ -2275,13 +2165,10 @@ def init():
     try: c.execute("CREATE INDEX IF NOT EXISTS idx_posts_nsfw ON soc_posts(is_nsfw, id DESC)")
     except sqlite3.OperationalError: pass
 
-    # ── Репутация юзера (0..100, по умолчанию 100) ──
-    # Снижается на 10 за NSFW-блюр админом, на 20 — за повторное; восстанавливается +1/неделю.
     try: c.execute("ALTER TABLE users ADD COLUMN reputation_score INTEGER NOT NULL DEFAULT 100")
     except sqlite3.OperationalError: pass
     try: c.execute("ALTER TABLE users ADD COLUMN reputation_updated_at INTEGER")
     except sqlite3.OperationalError: pass
-    # Аудит репутации
     try:
         c.execute("""
             CREATE TABLE IF NOT EXISTS soc_reputation_log (
@@ -2300,19 +2187,15 @@ def init():
     try: c.execute("CREATE INDEX IF NOT EXISTS idx_rep_log_user ON soc_reputation_log(user_id, id DESC)")
     except sqlite3.OperationalError: pass
 
-    # ── Подтверждение возраста 18+ (для соответствия ToS) ──
     try: c.execute("ALTER TABLE users ADD COLUMN confirmed_18_at INTEGER")
     except sqlite3.OperationalError: pass
 
-    # ── Ежедневный статус (сбрасывается через 24ч, ставится обязательно) ──
     try: c.execute("ALTER TABLE users ADD COLUMN daily_status_text TEXT")
     except sqlite3.OperationalError: pass
     try: c.execute("ALTER TABLE users ADD COLUMN daily_status_set_at INTEGER")
     except sqlite3.OperationalError: pass
-    # mood: optional emoji-key (joy|sad|fire|love|tired|chill|angry|surprised)
     try: c.execute("ALTER TABLE users ADD COLUMN daily_status_mood TEXT")
     except sqlite3.OperationalError: pass
-    # Eternal status (за Soul, без TTL)
     try: c.execute("ALTER TABLE users ADD COLUMN eternal_status_text TEXT")
     except sqlite3.OperationalError: pass
     try: c.execute("ALTER TABLE users ADD COLUMN eternal_status_mood TEXT")
@@ -2320,22 +2203,14 @@ def init():
     try: c.execute("ALTER TABLE users ADD COLUMN eternal_status_purchased_at INTEGER")
     except sqlite3.OperationalError: pass
 
-    # ── Хранение приватного ключа: явный выбор юзера ──
     try: c.execute("ALTER TABLE users ADD COLUMN key_storage_mode TEXT DEFAULT NULL")
     except sqlite3.OperationalError: pass
 
-    # ── TDA: требование подтверждения новых устройств с уже доверенного ──
-    # 0 = выключено (по умолчанию, любой логин с паролем создаёт активное устройство)
-    # 1 = новые устройства попадают в pending_logins и ждут одобрения
     try: c.execute("ALTER TABLE users ADD COLUMN tda_enabled INTEGER NOT NULL DEFAULT 0")
     except sqlite3.OperationalError: pass
-    # Токен, выдаваемый новому устройству после одобрения. NULL до approve.
     try: c.execute("ALTER TABLE pending_logins ADD COLUMN granted_token TEXT NULL")
     except sqlite3.OperationalError: pass
 
-    # ── Sealed Sender (DM без sender_id в БД) ──
-    # Sender виден ТОЛЬКО внутри зашифрованного envelope ciphertext.
-    # Сервер хранит только receiver_id + ciphertext.
     try:
         c.execute("""
             CREATE TABLE IF NOT EXISTS chat_dm_sealed (
@@ -2350,7 +2225,6 @@ def init():
     try: c.execute("CREATE INDEX IF NOT EXISTS idx_dm_sealed_recv ON chat_dm_sealed(receiver_id, id DESC)")
     except sqlite3.OperationalError: pass
 
-    # ── Репосты (TikTok-style) ──
     try:
         c.execute("""
             CREATE TABLE IF NOT EXISTS soc_reposts (
@@ -2369,7 +2243,6 @@ def init():
     try: c.execute("CREATE INDEX IF NOT EXISTS idx_reposts_post ON soc_reposts(post_id, created_at DESC)")
     except sqlite3.OperationalError: pass
 
-    # ── Жалобы на посты (для автомодерации) ──
     try:
         c.execute("""
             CREATE TABLE IF NOT EXISTS soc_reports (
@@ -2385,7 +2258,6 @@ def init():
     try: c.execute("CREATE INDEX IF NOT EXISTS idx_reports_post ON soc_reports(post_id, created_at DESC)")
     except sqlite3.OperationalError: pass
 
-    # ── Cooldown освобождения username (30 дней после удаления) ──
     try:
         c.execute("""
             CREATE TABLE IF NOT EXISTS soc_username_cooldown (
@@ -2399,9 +2271,6 @@ def init():
     try: c.execute("CREATE INDEX IF NOT EXISTS idx_username_cd_released ON soc_username_cooldown(released_at)")
     except sqlite3.OperationalError: pass
 
-    # ── Розыгрыши GhostBank (giveaway): движок розыгрышей Gost ──
-    # Создаёт только владелец (GE_ADMIN_TOKEN). Каждый розыгрыш — разовый с дедлайном.
-    # entries: 1 билет на аккаунт (UNIQUE). winners: кто выиграл и сколько Gost получил.
     try:
         c.executescript('''
         CREATE TABLE IF NOT EXISTS soc_giveaways (
@@ -2442,9 +2311,6 @@ def init():
 
 # ── Bootstrap: системный юзер GhostEcos, NFT-каталог, сезон 1 ─────────────────
 
-# Стартовый каталог NFT — стартовые цены в Gost (первичная продажа от GhostEcos)
-# Логика: юзер копит Gost активностью → покупает первичный NFT у GhostEcos за Gost.
-# Soul появляется когда GhostEcos выкупает NFT обратно у юзеров за Soul (Phase 4).
 _NFT_SEED = [
     {"slug":"ghost",   "name":"Призрак",  "rarity":"common", "price_gost":100,
      "desc":"Символ экосистемы GhostEcos — призрак, плавающий в эфире."},
@@ -2473,7 +2339,6 @@ GHOSTECOS_USERNAME = 'ghostecos'
 def bootstrap_economy():
     """Идемпотентный сидинг: системный юзер, сезон 1, NFT-каталог + 100 экз каждого + листинги."""
     c = db()
-    # 1) Системный юзер @ghostecos с is_official=1
     sys_row = c.execute("SELECT id FROM users WHERE username=?", (GHOSTECOS_USERNAME,)).fetchone()
     if not sys_row:
         sys_pwd = secrets.token_hex(48)  # никто никогда не залогинится — random
@@ -2487,15 +2352,12 @@ def bootstrap_economy():
             pass
         sys_row = c.execute("SELECT id FROM users WHERE username=?", (GHOSTECOS_USERNAME,)).fetchone()
     else:
-        # Уже есть — но мог быть создан без флага. Гарантируем флаг.
         c.execute("UPDATE users SET is_official=1, display_name='GhostEcos' WHERE username=?", (GHOSTECOS_USERNAME,))
         c.commit()
     sys_uid = sys_row['id']
-    # Wallet для системного юзера (для удобства; balance Soul у него не считается — он "печатает")
     c.execute("INSERT OR IGNORE INTO soc_wallets (user_id) VALUES (?)", (sys_uid,))
     c.commit()
 
-    # 2) Сезон 1
     season = c.execute("SELECT * FROM soc_economy_state WHERE season_id=1").fetchone()
     if not season:
         c.execute(
@@ -2505,7 +2367,6 @@ def bootstrap_economy():
         c.commit()
         print(f"[economy] season 1 started: cap={SEASON_CAP} system_balance={SEASON_CAP}")
 
-    # 3) NFT-каталог + минт 100 экз каждого NFT + выставление на маркет (за Gost)
     catalog_count = c.execute("SELECT COUNT(*) as c FROM soc_nft_catalog").fetchone()['c']
     if catalog_count == 0:
         for nft in _NFT_SEED:
@@ -2515,14 +2376,12 @@ def bootstrap_economy():
                 (nft['slug'], nft['name'], nft['desc'], nft['rarity'], sys_uid, nft['price_gost']),
             )
             cat_id = c.execute("SELECT last_insert_rowid() as id").fetchone()['id']
-            # Минтим 100 экз
             for serial in range(1, 101):
                 c.execute(
                     "INSERT INTO soc_nfts (catalog_id, serial, owner_id) VALUES (?,?,?)",
                     (cat_id, serial, sys_uid),
                 )
                 nft_id = c.execute("SELECT last_insert_rowid() as id").fetchone()['id']
-                # Цены первичных продаж в Gost. Серии 1-10 × 1.5, 11-30 × 1.2, остальные base.
                 price = nft['price_gost']
                 if serial <= 10: price = int(nft['price_gost'] * 1.5)
                 elif serial <= 30: price = int(nft['price_gost'] * 1.2)
@@ -2533,8 +2392,6 @@ def bootstrap_economy():
             print(f"[economy] minted {nft['name']} x100 за {nft['price_gost']} Gost (catalog #{cat_id})")
         c.commit()
     else:
-        # Миграция: если catalog уже создан со старыми ценами в Soul — пересчитать
-        # листинги ghostecos в Gost с правильными ценами
         sys_listings = c.execute(
             "SELECT COUNT(*) as cnt FROM soc_nft_listings WHERE seller_id=? AND currency='soul'",
             (sys_uid,)
@@ -2561,8 +2418,6 @@ def bootstrap_economy():
 
 
 
-# TDA-4: уведомить ВСЕХ кто общался с этим юзером, что у него сменились
-# pubkey'и устройств. Клиенты сбросят _peerPubCache.
 def broadcast_devices_changed(user_id: int, username: str):
     """Шлём всем WS-подключённым юзерам событие peer.devices_changed."""
     try:
@@ -2586,7 +2441,6 @@ def auth(authorization: Optional[str]) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Unauthorized")
     token = authorization.split(" ", 1)[1]
-    # Гостевой токен — не лежит в БД, формат `guest_<hex>`
     if token.startswith("guest_") and len(token) > 16:
         return {"id": 0, "username": "__guest__", "display_name": "Гость", "token": token, "is_guest": True}
     c = db()
@@ -2595,7 +2449,6 @@ def auth(authorization: Optional[str]) -> dict:
         (token,),
     ).fetchone()
     if not row:
-        # TDA-1 bridge: токены device-уровня лежат в user_devices
         row = c.execute(
             "SELECT u.*, d.id AS _device_pk, d.device_id AS _did FROM users u "
             "JOIN user_devices d ON d.user_id = u.id "
@@ -2629,8 +2482,6 @@ def fmt_post(row: dict, user_id: int, reactions: Optional[dict] = None, am_follo
             media_list = json.loads(row["media"])
         except Exception:
             pass
-    # is_nsfw / nsfw_set_by могут отсутствовать в старых SELECT-выборках (поле
-    # доступно только если SELECT включает p.is_nsfw); тогда считаем 0.
     is_nsfw = 0
     try: is_nsfw = int(row.get("is_nsfw") or 0)
     except Exception: is_nsfw = 0
@@ -2648,7 +2499,6 @@ def fmt_post(row: dict, user_id: int, reactions: Optional[dict] = None, am_follo
         "media": media_list,
         "am_following": am_following,
         "is_nsfw": bool(is_nsfw),
-        # nsfw_set_by_admin=true → пост был помечен NSFW админом (а не самим автором)
         "nsfw_set_by_admin": bool(nsfw_by) if is_nsfw else False,
     }
 
@@ -2716,7 +2566,6 @@ def _add_notif(c, recipient_id: int, actor_id: int, ntype: str, post_id: int = 0
         "INSERT INTO soc_notifications (user_id, actor_id, type, post_id, preview) VALUES (?,?,?,?,?)",
         (recipient_id, actor_id, ntype, post_id, preview),
     )
-    # Real-time пинг адресату — клиент покажет бейдж сразу
     try:
         ws_hub.send_to(recipient_id, "notif.new", {"type": ntype})
     except Exception:
@@ -2727,7 +2576,6 @@ def _add_notif(c, recipient_id: int, actor_id: int, ntype: str, post_id: int = 0
 _rl_buckets: dict = defaultdict(list)
 
 def _client_ip(request: Request) -> str:
-    # nginx ставит X-Forwarded-For; берём первый IP цепочки
     fwd = request.headers.get('x-forwarded-for', '')
     if fwd:
         return fwd.split(',')[0].strip()
@@ -2746,9 +2594,7 @@ def _rate_limit(key: str, limit: int, window: int):
 
 # ── Hashtags & mentions parsing ─────────────────────────────────────────────────
 
-# Хэштеги: латиница/кириллица/цифры/_, 1..30 символов после #
 _TAG_RE = re.compile(r'#([0-9A-Za-zА-Яа-яЁё_]{1,30})', re.UNICODE)
-# Упоминания: ровно тот же набор что и валидный username (a-z, 0-9, _, .)
 _MENTION_RE = re.compile(r'(?<![A-Za-z0-9_.])@([a-z0-9._]{3,64})')
 
 def _extract_tags(text: str) -> list:
@@ -2773,7 +2619,6 @@ def _extract_mentions(text: str) -> list:
 
 # ── Reactions aggregation ─────────────────────────────────────────────────────
 
-# Допустимые эмодзи-коды (хранятся в БД как короткие имена, фронт мапит на символ)
 ALLOWED_EMOJI = {'heart', 'fire', 'laugh', 'sad', 'clap', 'eyes'}
 
 def _post_reactions(c, post_id: int, user_id: int) -> dict:
@@ -2793,14 +2638,12 @@ def _post_reactions(c, post_id: int, user_id: int) -> dict:
 
 @router.post("/register")
 def register(body: RegisterBody, request: Request):
-    # 5 регистраций с одного IP в час — отбиваем спам-аккаунты
     _rate_limit(f"reg:{_client_ip(request)}", limit=5, window=3600)
     username = _val_username(body.username)
     display_name = _val_name(body.display_name)
     _val_password(body.password)
     argon2 = hash_argon2(body.password)
     token = secrets.token_hex(32)
-    # Генерим seed-фразу для recovery (16 символов без 0/O/1/l/I)
     seed_alpha = "abcdefghkmnpqrstuvwxyz23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
     seed = ''.join(secrets.choice(seed_alpha) for _ in range(16))
     seed_hash = hash_argon2(seed)
@@ -2816,7 +2659,6 @@ def register(body: RegisterBody, request: Request):
         finally:
             c0.close()
     c = db()
-    # 30-day cooldown на username: если был удалён аккаунт — должно пройти 30 дней
     now_ts = int(time.time())
     cd_row = c.execute(
         "SELECT released_at FROM soc_username_cooldown WHERE username=?", (username,)
@@ -2825,11 +2667,9 @@ def register(body: RegisterBody, request: Request):
         days_left = max(1, (int(cd_row["released_at"]) - now_ts) // 86400)
         c.close()
         raise HTTPException(409, f"Имя освободится через {days_left} дн.")
-    # Истёкший cooldown — просто чистим запись (косметика)
     if cd_row:
         try: c.execute("DELETE FROM soc_username_cooldown WHERE username=?", (username,))
         except Exception: pass
-    # Подтверждение возраста 18+ — required по ToS
     confirmed_18_ts = now_ts if getattr(body, 'age_18_confirm', False) else None
     if not confirmed_18_ts:
         c.close()
@@ -2850,13 +2690,11 @@ def register(body: RegisterBody, request: Request):
         c.close()
     try: award_gost(uid, 'register')
     except Exception: pass
-    # Реферальные награды (отдельно, после успешной регистрации)
     if referrer_id and referrer_id != uid:
         try: award_gost(uid, 'refin')           # welcome бонус приглашённому
         except Exception: pass
         try: award_gost(referrer_id, 'refout')  # пригласителю
         except Exception: pass
-    # TDA-1: первое устройство = owner аккаунта
     final_token = token
     final_did = None
     if getattr(body, 'device_id', None):
@@ -2900,7 +2738,6 @@ def recovery_seed(body: SeedRecoveryBody, request: Request):
         c.close()
         verify_argon2(seed, _DUMMY_ARGON2_HASH)
         raise HTTPException(401, "Неверная seed-фраза")
-    # Создать новый токен (старый невалиден — но если юзер залогинен с старым, он останется)
     new_token = secrets.token_hex(32)
     c.execute("INSERT OR REPLACE INTO soc_tokens (user_id, token) VALUES (?,?)", (user["id"], new_token))
     c.commit()
@@ -2930,7 +2767,6 @@ def regen_seed(body: SeedRegenBody, authorization: Optional[str] = Header(None))
 @router.post("/guest")
 def guest_login(request: Request):
     """Гостевой токен — read-only доступ, без записи в БД."""
-    # 20 гостевых сессий с IP в час — защита от бессмысленного флуда
     _rate_limit(f"guest:{_client_ip(request)}", limit=20, window=3600)
     return {
         "id": 0,
@@ -2942,7 +2778,6 @@ def guest_login(request: Request):
 
 @router.post("/login")
 def login(body: LoginBody, request: Request):
-    # 15 неудачных попыток входа с одного IP за 10 минут — защита от перебора
     _rate_limit(f"login:{_client_ip(request)}", limit=15, window=600)
     username = body.username.strip().lower()
     if not username:
@@ -2963,7 +2798,6 @@ def login(body: LoginBody, request: Request):
         ok = True
     elif u.get("pbkdf2_hash") and verify_pbkdf2(body.password, u["pbkdf2_hash"]):
         ok = True
-        # Прозрачный апгрейд хэша
         new_hash = hash_argon2(body.password)
         c.execute("UPDATE users SET argon2_hash=?, pbkdf2_hash=NULL WHERE id=?", (new_hash, u["id"]))
         c.commit()
@@ -2983,26 +2817,20 @@ def login(body: LoginBody, request: Request):
         if blocked:
             c.close()
             raise HTTPException(403, "Это устройство заблокировано владельцем аккаунта")
-        # Уже зарегистрированное устройство — обычный путь (без TDA).
         already = c.execute(
             "SELECT id FROM user_devices WHERE user_id=? AND device_id=? LIMIT 1",
             (u["id"], body.device_id),
         ).fetchone()
-        # Сколько есть подтверждённых устройств у юзера.
         trusted_count = c.execute(
             "SELECT COUNT(*) AS n FROM user_devices "
             "WHERE user_id=? AND is_active=1 AND is_blocked=0",
             (u["id"],),
         ).fetchone()["n"]
-        # Включена ли у юзера TDA (требование подтверждения новых устройств).
         tda_row = c.execute("SELECT tda_enabled FROM users WHERE id=?", (u["id"],)).fetchone()
         tda_on = bool(tda_row and tda_row["tda_enabled"])
 
-        # Pending-путь: TDA включена И новое устройство И уже есть хотя бы одно
-        # подтверждённое (первое устройство всегда становится trusted без подтверждения).
         if tda_on and (not already) and trusted_count > 0:
             now_ = int(time.time())
-            # 6-значный код. Argon2-хэш в БД, plaintext возвращаем только новому устройству.
             login_code = "".join(secrets.choice("0123456789") for _ in range(6))
             code_hash = hash_argon2(login_code)
             request_id = uuid.uuid4().hex
@@ -3015,7 +2843,6 @@ def login(body: LoginBody, request: Request):
                  (body.device_name or "")[:120], code_hash, now_, now_ + 300),
             )
             c.commit()
-            # WS-уведомление trusted-устройствам этого юзера.
             push_data = {
                 "request_id": request_id,
                 "login_request_id": request_id,  # явное имя для tda.* handler'ов
@@ -3034,7 +2861,6 @@ def login(body: LoginBody, request: Request):
             except Exception:
                 pass
             c.close()
-            # Новому устройству: показывает экран ожидания с кодом, long-polling статуса.
             return {
                 "requires_approval": True,
                 "request_id": request_id,
@@ -3044,7 +2870,6 @@ def login(body: LoginBody, request: Request):
                 "expires_in": 300,
             }
 
-        # Обычный путь: первое устройство, TDA выключена или уже подтверждено.
         is_first_dev = (trusted_count == 0)
         d = _da.register_device(
             c, u["id"], body.device_id, body.device_name,
@@ -3094,7 +2919,6 @@ async def _run_ffmpeg(cmd: list, timeout: int = 600) -> int:
 @router.post("/upload")
 async def upload_media(request: Request, file: UploadFile = File(...), authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
-    # Защита от спама файлами: 60 загрузок в час с аккаунта
     _rate_limit(f"upload:{user['id']}", limit=60, window=3600)
     ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
     mime = file.content_type or ""
@@ -3124,12 +2948,9 @@ async def upload_media(request: Request, file: UploadFile = File(...), authoriza
     if ftype == "image":
         try:
             from PIL import Image
-            # Defuse decompression-bomb: запрет картинок > 50MP (~примерно 7000x7000)
-            # По дефолту PIL ругается на 89.5MP, но мы и того не хотим — обрабатываем сами.
             Image.MAX_IMAGE_PIXELS = 50_000_000
             img = Image.open(io.BytesIO(data))
             img.verify()  # rapid integrity check
-            # verify() закрывает stream, открываем заново для реальной обработки
             img = Image.open(io.BytesIO(data))
             if img.mode not in ("RGB", "RGBA"):
                 img = img.convert("RGB")
@@ -3146,7 +2967,6 @@ async def upload_media(request: Request, file: UploadFile = File(...), authoriza
         except HTTPException:
             raise
         except Exception:
-            # Не показываем PIL-детали наружу (могут утечь пути/версия)
             raise HTTPException(400, "Не удалось обработать изображение")
     elif ftype == "video":
         with open(filepath, "wb") as f:
@@ -3198,7 +3018,6 @@ def _hydrate_posts(c, rows: list, uid: int) -> list:
         per_post[r["post_id"]]["total"] += r["cnt"]
     for r in my_rows:
         per_post[r["post_id"]]["your_emoji"] = r["emoji"]
-    # На кого из авторов этих постов я подписан
     author_ids = list({r["user_id"] for r in rows})
     followed: set = set()
     if uid and author_ids:
@@ -3208,7 +3027,6 @@ def _hydrate_posts(c, rows: list, uid: int) -> list:
             [uid] + author_ids
         ).fetchall()
         followed = {r["followee_id"] for r in f_rows}
-    # Views count (одним запросом по всем постам в пачке)
     views_map = {pid: 0 for pid in ids}
     try:
         v_count_rows = c.execute(
@@ -3219,7 +3037,6 @@ def _hydrate_posts(c, rows: list, uid: int) -> list:
             views_map[r["post_id"]] = r["n"]
     except Exception:
         pass
-    # Reposts count
     reposts_map = {pid: 0 for pid in ids}
     try:
         r_count_rows = c.execute(
@@ -3230,14 +3047,12 @@ def _hydrate_posts(c, rows: list, uid: int) -> list:
             reposts_map[r["post_id"]] = r["n"]
     except Exception:
         pass
-    # Опросы (одним запросом для всех постов в пачке)
     polls_map = {}
     p_rows = c.execute(
         f"SELECT post_id, question, options, is_quiz, correct_idx FROM soc_polls WHERE post_id IN ({placeholders})",
         ids
     ).fetchall()
     if p_rows:
-        # Голоса
         v_rows = c.execute(
             f"SELECT post_id, option_idx, COUNT(*) as cnt FROM soc_poll_votes WHERE post_id IN ({placeholders}) GROUP BY post_id, option_idx",
             ids
@@ -3267,7 +3082,6 @@ def _hydrate_posts(c, rows: list, uid: int) -> list:
                 "is_quiz": bool(r["is_quiz"]),
                 "correct_idx": r["correct_idx"] if (r["is_quiz"] and mv is not None) else None,
             }
-    # Канал-источники для постов из каналов (один запрос на пачку)
     channel_map = {}
     src_ids = list({r["source_channel_id"] for r in rows if "source_channel_id" in r.keys() and r["source_channel_id"]})
     if src_ids:
@@ -3284,7 +3098,6 @@ def _hydrate_posts(c, rows: list, uid: int) -> list:
             post["poll"] = polls_map[r["id"]]
         post["views_count"] = views_map.get(r["id"], 0)
         post["reposts_count"] = reposts_map.get(r["id"], 0)
-        # Бейдж канала-источника
         sci = r["source_channel_id"] if "source_channel_id" in r.keys() else None
         if sci and channel_map.get(sci):
             ch = channel_map[sci]
@@ -3304,14 +3117,11 @@ def get_posts(
 ):
     user = auth(authorization)
     uid = user["id"]
-    # DoS guard на классическую ленту /post.
     _rate_limit(f"posts:{uid}", limit=120, window=60)
     # Clamp offset чтобы не дёрнули миллион постов вперёд.
     offset = max(0, min(int(offset or 0), 100000))
     c = db()
-    # ── Алгоритм ранжирования постов ──
     if sort == "top":
-        # top = реакции × activity × recency_decay
         order = (
             "((SELECT COUNT(*) FROM soc_reactions l WHERE l.post_id=p.id) + 1) "
             "* COALESCE(p.activity, 500) / 500.0 "
@@ -3321,14 +3131,9 @@ def get_posts(
     elif sort == "old":
         order = "p.created_at ASC"
     elif sort == "random":
-        # Псевдослучайный, но детерминированный для данного seed.
-        # Без seed офсеты ломались бы — каждая страница тасовалась бы заново.
-        # Тоже бустится activity (popular content show чаще даже в рандоме)
         s = max(1, int(seed) % 1000003) or 1
         order = f"((p.id * {s}) % 1000003) / (COALESCE(p.activity, 500) / 500.0 + 0.1)"
     else:
-        # new — по дате, но **бустим activity > 700** наверх (буст видимости)
-        # viewed_at не используется (юзер хочет новые в порядке времени)
         order = (
             "CASE WHEN COALESCE(p.activity, 500) >= 700 THEN 0 ELSE 1 END, "
             "p.created_at DESC"
@@ -3402,16 +3207,13 @@ def get_feed_candidates(
         excl_sql = f"AND p.id NOT IN ({ph})"
         excl_params = excluded
 
-    # Пропорции candidate-pool:
     n_follow = max(1, int(limit * 0.30))
     n_new = max(1, int(limit * 0.30))
     n_top = max(1, int(limit * 0.25))
     n_rnd = max(1, limit - n_follow - n_new - n_top)
-    # Минимальная activity для feed (< 10 → shadow ban / снято модерацией)
     MIN_ACTIVITY = 10
 
     c = db()
-    # 1. От тех, на кого подписан (если есть)
     follow_taken = []
     if not excluded:
         follow_sql_excl = ""
@@ -3433,7 +3235,6 @@ def get_feed_candidates(
         LIMIT ?
     """, follow_params).fetchall()
 
-    # 2. Свежие за 24ч с буст activity (учитываем уже взятые из follow)
     taken_ids = {r["id"] for r in follow_rows} | set(excluded)
     if taken_ids:
         ph_t = ",".join("?" * len(taken_ids))
@@ -3452,10 +3253,8 @@ def get_feed_candidates(
         ORDER BY (COALESCE(p.activity,500) / 500.0) DESC, p.created_at DESC
         LIMIT ?
     """, fresh_params).fetchall()
-    # offset-эмуляция для fresh (избегаем дубликата с другими страницами)
     fresh = fresh[offset:offset + n_new] if offset < len(fresh) else []
 
-    # 3. Топ по weighted score за неделю
     taken = {r["id"] for r in follow_rows} | {r["id"] for r in fresh} | set(excluded)
     if taken:
         not_in_sql_top = f"AND p.id NOT IN ({','.join('?' * len(taken))})"
@@ -3478,7 +3277,6 @@ def get_feed_candidates(
         LIMIT ?
     """, top_params).fetchall()
 
-    # 4. Рандомные (discovery — детерминирован по uid и offset)
     seed = (uid * 9973 + offset * 17 + 1) % 1000003
     taken |= {r["id"] for r in top}
     if taken:
@@ -3576,7 +3374,6 @@ def get_one_post(post_id: int, authorization: Optional[str] = Header(None)):
 @router.post("/post/new")
 def create_post(body: PostBody, request: Request, authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
-    # 30 постов в час — больше реальный человек не пишет
     _rate_limit(f"post:{user['id']}", limit=30, window=3600)
     text = body.text.strip()
     if not text:
@@ -3586,7 +3383,6 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
     media = _val_media(body.media)
     media_json = json.dumps(media, ensure_ascii=False) if media else None
 
-    # Валидация опроса (если есть)
     poll = body.poll
     if poll is not None:
         q = (poll.question or "").strip()
@@ -3603,7 +3399,6 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
                 raise HTTPException(400, "Викторина: укажите правильный ответ")
 
     c = db()
-    # ── Автомодерация B (история юзера): начальная activity при создании ──
     now_ts = int(time.time())
     u_info = c.execute(
         "SELECT created_at FROM users WHERE id=?", (user["id"],)
@@ -3612,14 +3407,12 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
         "SELECT COUNT(*) as n FROM soc_posts WHERE user_id=?", (user["id"],)
     ).fetchone()["n"]
     is_banned = False  # колонки бан-флага сейчас нет в users; добавим позже
-    # Дни с регистрации (created_at — ISO TIMESTAMP, простая оценка)
     try:
         import datetime as _dt
         reg_dt = _dt.datetime.fromisoformat(u_info["created_at"].replace('Z',''))
         days_reg = (_dt.datetime.now() - reg_dt).days
     except Exception:
         days_reg = 0
-    # Базовая шкала автомодерации
     if is_banned:
         init_activity = 50           # бан-юзер: минимальная видимость
     elif days_reg < 1:
@@ -3630,18 +3423,15 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
         init_activity = 500          # стандарт
     else:
         init_activity = 600          # опытный юзер
-    # Гарантируем минимум по ТЗ: не ниже 10 при автомоде
     init_activity = max(10, min(1000, init_activity))
 
     nsfw_flag = 1 if body.is_nsfw else 0
-    # nsfw_set_by=NULL → автор сам отметил; запоминаем для аудита/правил восстановления репутации
     c.execute(
         "INSERT INTO soc_posts (user_id, content, media, activity, activity_set_at, automod_source, is_nsfw, nsfw_set_by) "
         "VALUES (?,?,?,?,?,?,?,?)",
         (user["id"], text, media_json, init_activity, now_ts, 'B', nsfw_flag, None),
     )
     post_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
-    # Логируем для аудита
     c.execute(
         "INSERT INTO soc_activity_log (post_id, old_activity, new_activity, delta, source, actor_id, note, created_at) "
         "VALUES (?,?,?,?,?,?,?,?)",
@@ -3659,7 +3449,6 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
     preview = text[:120]
     notified = {user["id"]}  # не дублируем уведомления автору / повторно
 
-    # Уведомить подписчиков о новом посте
     followers = c.execute(
         "SELECT follower_id FROM soc_follows WHERE followee_id=?", (user["id"],)
     ).fetchall()
@@ -3670,7 +3459,6 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
         _add_notif(c, fid, user["id"], "new_post", post_id, preview)
         notified.add(fid)
 
-    # Уведомить @упомянутых пользователей
     for uname in _extract_mentions(text):
         u = c.execute("SELECT id FROM users WHERE username=?", (uname,)).fetchone()
         if u and u["id"] not in notified:
@@ -3678,7 +3466,6 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
             notified.add(u["id"])
 
     c.commit()
-    # Подтянуть только что созданный пост в полном формате и разослать
     c2 = db()
     row = c2.execute("""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
@@ -3691,10 +3478,8 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
         ws_hub.broadcast("post.new", {"post": full})
     c2.close()
     c.close()
-    # Награда автору за пост (cap 25/день — антиспам)
     try: award_gost(user["id"], 'post', ref_type='post', ref_id=post_id)
     except Exception: pass
-    # Реактивное восстановление репутации: если прошла неделя с последнего изменения и score < 100
     try: _restore_reputation_if_due(user["id"])
     except Exception: pass
     return {"status": "ok", "post_id": post_id}
@@ -3715,7 +3500,6 @@ def edit_post(post_id: int, body: EditPostBody, authorization: Optional[str] = H
         c.close()
         raise HTTPException(403, "Forbidden")
 
-    # Если правится ТОЛЬКО is_nsfw — окно редактирования не применяется (это безопасный mark).
     nsfw_only_edit = (
         body.is_nsfw is not None and body.text is None and body.media is None
     )
@@ -3751,19 +3535,16 @@ def edit_post(post_id: int, body: EditPostBody, authorization: Optional[str] = H
         params.append(text)
 
     if body.media is not None:
-        # Парсим старые медиа
         old_media = []
         if p.get("media"):
             try: old_media = json.loads(p["media"])
             except: pass
         old_urls = {m.get("url") for m in old_media}
         new_urls = {m.get("url") for m in (body.media or [])}
-        # Все новые URL должны быть подмножеством старых (медиа можно только убрать)
         added = new_urls - old_urls
         if added:
             c.close()
             raise HTTPException(400, "Добавлять медиа нельзя — только удалять существующие")
-        # Удаляем файлы тех, что убрал
         removed = old_urls - new_urls
         for m in old_media:
             if m.get("url") in removed:
@@ -3773,7 +3554,6 @@ def edit_post(post_id: int, body: EditPostBody, authorization: Optional[str] = H
                     if os.path.exists(fp):
                         try: os.remove(fp)
                         except: pass
-        # Сохраняем оставшиеся (с оригинальной структурой, чтоб name не терялся)
         kept = [m for m in old_media if m.get("url") in new_urls]
         updates.append("media=?")
         params.append(json.dumps(kept, ensure_ascii=False) if kept else None)
@@ -3782,30 +3562,23 @@ def edit_post(post_id: int, body: EditPostBody, authorization: Optional[str] = H
         new_val = 1 if body.is_nsfw else 0
         cur_val = int(p.get("is_nsfw") or 0)
         cur_setby = p.get("nsfw_set_by")
-        # Снять nsfw можно только если автор сам пометил (nsfw_set_by=NULL).
-        # Если модератор пометил — автор не может снять.
         if new_val == 0 and cur_val == 1 and cur_setby is not None:
             c.close()
             raise HTTPException(403, "NSFW поставлен модерацией — снять может только модератор")
-        # Не пишем апдейт если значение не меняется
         if new_val != cur_val:
             updates.append("is_nsfw=?")
             params.append(new_val)
-            # При выставлении автором — nsfw_set_by остаётся NULL (значит «автор сам»).
-            # При снятии — тоже NULL.
             updates.append("nsfw_set_by=NULL")
 
     if not updates:
         c.close()
         raise HTTPException(422, "Нечего менять")
 
-    # NSFW-only edit не помечаем как «отредактировано» — это просто метка
     if not nsfw_only_edit:
         updates.append("edited_at=datetime('now')")
     params.append(post_id)
     c.execute(f"UPDATE soc_posts SET {', '.join(updates)} WHERE id=?", params)
     c.commit()
-    # Broadcast обновлённого поста
     row = c.execute("""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
                u.username, u.display_name,
@@ -3918,7 +3691,6 @@ def get_profile(username: str, offset: int = Query(0), authorization: Optional[s
     posts = _hydrate_posts(c, rows, uid)
     c.close()
     rep_score = int(u.get("reputation_score") if u.get("reputation_score") is not None else 100)
-    # Eternal статус приоритетнее дневного
     if u.get("eternal_status_text"):
         status_text = u.get("eternal_status_text")
         status_mood = u.get("eternal_status_mood")
@@ -3936,7 +3708,6 @@ def get_profile(username: str, offset: int = Query(0), authorization: Optional[s
         "am_following": am_following,
         "is_me": uid == u["id"],
         "reputation_score": rep_score,
-        # Метка: репутация ниже 30 = «плохая», от 70 = «хорошая» (для UI)
         "reputation_band": "low" if rep_score < 30 else ("mid" if rep_score < 70 else "good"),
         "daily_status": status_text,
         "daily_status_mood": status_mood,
@@ -3969,7 +3740,6 @@ def get_profile_posts(username: str, offset: int = Query(0), authorization: Opti
 @router.post("/follow/{username}")
 def follow(username: str, authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
-    # 30 фолловов в минуту — защита от mass-follow ботов
     _rate_limit(f"follow:{user['id']}", limit=30, window=60)
     c = db()
     target = c.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
@@ -3993,8 +3763,6 @@ def follow(username: str, authorization: Optional[str] = Header(None)):
     _add_notif(c, target["id"], user["id"], "follow", 0)
     c.commit()
     c.close()
-    # Награда followee за нового подписчика. UNIQUE по (followee, 'follow', follower, '', 0)
-    # → если follower отписался и подписался снова — НЕ начисляется повторно (как и должно быть).
     try: award_gost(target["id"], 'follow', actor_id=user["id"])
     except Exception: pass
     return {"status": "ok", "following": True}
@@ -4035,7 +3803,6 @@ def get_me(authorization: Optional[str] = Header(None)):
         }
     c = db()
     stats = get_user_stats(c, user["id"])
-    # Flags: is_admin (owner экосистемы), is_moderator (роль)
     flags_row = c.execute(
         "SELECT is_admin, is_moderator FROM users WHERE id=?", (user["id"],)
     ).fetchone()
@@ -4054,7 +3821,6 @@ def get_me(authorization: Optional[str] = Header(None)):
 @router.patch("/me")
 def edit_me(body: EditProfileBody, authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
-    # Защита от перебора старого пароля + от спама смены username
     _rate_limit(f"editme:{user['id']}", limit=10, window=3600)
 
     needs_old_pwd = body.username is not None or body.new_password is not None
@@ -4076,9 +3842,6 @@ def edit_me(body: EditProfileBody, authorization: Optional[str] = Header(None)):
         updates["argon2_hash"] = hash_argon2(body.new_password)
         # Инвалидируем legacy-pbkdf2-хэш если он был — пусть остаётся только argon2
         updates["password_hash"] = None
-        # Сменили пароль → старый encrypted_private_key (зашифрован старым паролем)
-        # больше не расшифровать. Зануляем E2E-ключи — клиент сгенерирует новые при
-        # следующем входе в /chat. История в IDB у клиента остаётся (там plaintext).
         updates["x25519_pub"] = None
         updates["encrypted_private_key"] = None
         updates["key_salt"] = None
@@ -4099,8 +3862,6 @@ def edit_me(body: EditProfileBody, authorization: Optional[str] = Header(None)):
     c.execute(f"UPDATE users SET {set_clause} WHERE id=?", list(updates.values()) + [user["id"]])
     new_token = None
     if body.new_password is not None:
-        # Инвалидируем ВСЕ старые токены — украденный токен переставлет работать.
-        # Текущей сессии выдаём свежий токен.
         c.execute("DELETE FROM soc_tokens WHERE user_id=?", (user["id"],))
         new_token = secrets.token_hex(32)
         c.execute("INSERT INTO soc_tokens (user_id, token) VALUES (?,?)", (user["id"], new_token))
@@ -4128,7 +3889,6 @@ def delete_my_account(body: DeleteAccountBody, authorization: Optional[str] = He
     """
     user = auth_member(authorization)
     _rate_limit(f"delacc:{user['id']}", limit=3, window=3600)
-    # Проверка пароля
     stored_hash = user.get("argon2_hash") or user.get("password_hash")
     if not stored_hash or not verify_argon2(body.password, stored_hash):
         raise HTTPException(401, "Неверный пароль")
@@ -4141,17 +3901,12 @@ def delete_my_account(body: DeleteAccountBody, authorization: Optional[str] = He
     c = db()
     try:
         c.execute("BEGIN IMMEDIATE")
-        # Найти system uid (GhostEcos) для передачи активов
         sys_row = c.execute("SELECT id FROM users WHERE username=?", (GHOSTECOS_USERNAME,)).fetchone()
         sys_uid = sys_row["id"] if sys_row else None
 
-        # 1. Передача активов системе: NFT, активные листинги
         if sys_uid:
-            # NFT перешли владельцу-системе
             c.execute("UPDATE soc_nfts SET owner_id=? WHERE owner_id=?", (sys_uid, uid))
-            # Активные листинги юзера — снимаем (NFT уже передан)
             c.execute("DELETE FROM soc_nft_listings WHERE seller_id=?", (uid,))
-            # Кошелёк: переводим балансы Gost/Soul/Prem системе
             try:
                 w = c.execute("SELECT gost, soul, prem FROM soc_wallets WHERE user_id=?", (uid,)).fetchone()
                 if w:
@@ -4174,18 +3929,14 @@ def delete_my_account(body: DeleteAccountBody, authorization: Optional[str] = He
             except Exception:
                 pass
 
-        # 2. Стираем контент юзера
-        # Реакции на свои посты + реакции которые юзер ставил
         c.execute(
             "DELETE FROM soc_reactions WHERE post_id IN (SELECT id FROM soc_posts WHERE user_id=?)", (uid,)
         )
         c.execute("DELETE FROM soc_reactions WHERE user_id=?", (uid,))
-        # Комментарии под чужими постами + комменты под своими
         c.execute("DELETE FROM soc_comments WHERE user_id=?", (uid,))
         c.execute(
             "DELETE FROM soc_comments WHERE post_id IN (SELECT id FROM soc_posts WHERE user_id=?)", (uid,)
         )
-        # Опросы и голоса
         try:
             c.execute("DELETE FROM soc_poll_votes WHERE user_id=?", (uid,))
             c.execute(
@@ -4193,16 +3944,12 @@ def delete_my_account(body: DeleteAccountBody, authorization: Optional[str] = He
             )
         except Exception:
             pass
-        # Посты и миниски (kind='post'|'miniska')
         c.execute("DELETE FROM soc_posts WHERE user_id=?", (uid,))
-        # Подписки в обе стороны
         c.execute("DELETE FROM soc_follows WHERE follower_id=? OR followee_id=?", (uid, uid))
-        # Уведомления
         try:
             c.execute("DELETE FROM soc_notifications WHERE user_id=? OR actor_id=?", (uid, uid))
         except Exception:
             pass
-        # Чат: контакты, сообщения, ack, member-ship
         try:
             c.execute("DELETE FROM chat_dm WHERE from_id=? OR to_id=?", (uid, uid))
             c.execute("DELETE FROM chat_contacts WHERE user_id=? OR contact_id=?", (uid, uid))
@@ -4211,16 +3958,13 @@ def delete_my_account(body: DeleteAccountBody, authorization: Optional[str] = He
             c.execute("DELETE FROM chat_group_join_requests WHERE user_id=?", (uid,))
         except Exception:
             pass
-        # Жалобы модерации (overwatch и заявки)
         try:
             c.execute("DELETE FROM soc_moderator_applications WHERE user_id=?", (uid,))
             c.execute("DELETE FROM soc_overwatch_votes WHERE moderator_id=?", (uid,))
         except Exception:
             pass
-        # Tokens
         c.execute("DELETE FROM soc_tokens WHERE user_id=?", (uid,))
 
-        # 3. Custom usernames — освобождаются с cooldown 30 дней
         try:
             owned_unames = [r["username"] for r in c.execute(
                 "SELECT username FROM soc_usernames WHERE owner_id=?", (uid,)
@@ -4235,7 +3979,6 @@ def delete_my_account(body: DeleteAccountBody, authorization: Optional[str] = He
         except Exception:
             pass
 
-        # 4. Primary username юзера — тоже на 30-day cooldown
         if uname:
             c.execute(
                 "INSERT OR REPLACE INTO soc_username_cooldown (username, released_at, prev_user_id, reason) "
@@ -4243,13 +3986,11 @@ def delete_my_account(body: DeleteAccountBody, authorization: Optional[str] = He
                 (uname, now + 30 * 86400, uid, 'account_deleted'),
             )
 
-        # 5. Удаляем сам аккаунт + wallet
         try: c.execute("DELETE FROM soc_wallets WHERE user_id=?", (uid,))
         except Exception: pass
         c.execute("DELETE FROM users WHERE id=?", (uid,))
 
         c.commit()
-        # 6. Best-effort: архивируем страну в GhostNation (постройки остаются на карте)
         _nation_token = os.getenv("NATION_INTERNAL_TOKEN")
         if _nation_token and uname:
             try:
@@ -4276,7 +4017,6 @@ def delete_my_account(body: DeleteAccountBody, authorization: Optional[str] = He
 def react(post_id: int, body: ReactBody, authorization: Optional[str] = Header(None)):
     """Установить/сменить/снять реакцию. emoji=null → снять."""
     user = auth_member(authorization)
-    # 120 реакций в минуту — нормально тапать быстро, но защита от скрипта
     _rate_limit(f"react:{user['id']}", limit=120, window=60)
     if body.emoji is not None and body.emoji not in ALLOWED_EMOJI:
         raise HTTPException(400, "Недопустимая реакция")
@@ -4294,7 +4034,6 @@ def react(post_id: int, body: ReactBody, authorization: Optional[str] = Header(N
     do_award_owner = False
 
     if body.emoji is None:
-        # Снять реакцию
         if existing:
             c.execute("DELETE FROM soc_reactions WHERE post_id=? AND user_id=?", (post_id, user["id"]))
             c.execute(
@@ -4321,7 +4060,6 @@ def react(post_id: int, body: ReactBody, authorization: Optional[str] = Header(N
 
     c.commit()
     result = _post_reactions(c, post_id, user["id"])
-    # Глобальный broadcast реакций (без your_emoji — каждый клиент сам определит)
     public = {"counts": result.get("counts", {}), "total": result.get("total", 0)}
     ws_hub.broadcast("post.react", {"post_id": post_id, "reactions": public})
     c.close()
@@ -4331,7 +4069,6 @@ def react(post_id: int, body: ReactBody, authorization: Optional[str] = Header(N
         try: award_gost(owner_id, 'react', actor_id=user["id"], ref_type='post', ref_id=post_id)
         except Exception: pass
 
-    # Триггер автомодерации виральных постов (отдельным коннектом — без блокировки)
     try:
         c2 = db()
         _check_and_create_overwatch_viral(c2, post_id)
@@ -4342,14 +4079,11 @@ def react(post_id: int, body: ReactBody, authorization: Optional[str] = Header(N
 
 # ── Comments ───────────────────────────────────────────────────────────────────
 
-# ── Comments v2 (TT-style): reactions + replies ──
-# Хелпер: для списка comment_ids возвращает {id: {counts: {emoji: int}, your: str|None, replies_count: int}}
 def _hydrate_comments(c, comment_ids, viewer_id):
     if not comment_ids:
         return {}
     qs = ",".join("?" * len(comment_ids))
     out = {cid: {"counts": {}, "your": None, "replies_count": 0} for cid in comment_ids}
-    # reactions: counts
     for r in c.execute(f"""
         SELECT comment_id, emoji, COUNT(*) as cnt
         FROM soc_comment_reactions
@@ -4357,14 +4091,12 @@ def _hydrate_comments(c, comment_ids, viewer_id):
         GROUP BY comment_id, emoji
     """, comment_ids).fetchall():
         out[r["comment_id"]]["counts"][r["emoji"]] = r["cnt"]
-    # your reaction
     if viewer_id:
         for r in c.execute(f"""
             SELECT comment_id, emoji FROM soc_comment_reactions
             WHERE comment_id IN ({qs}) AND user_id=?
         """, comment_ids + [viewer_id]).fetchall():
             out[r["comment_id"]]["your"] = r["emoji"]
-    # replies_count (только для top-level)
     for r in c.execute(f"""
         SELECT parent_id, COUNT(*) as cnt FROM soc_comments
         WHERE parent_id IN ({qs}) GROUP BY parent_id
@@ -4440,7 +4172,6 @@ def get_replies(comment_id: int, offset: int = Query(0), limit: int = Query(10),
     auth(authorization)
     limit = max(1, min(50, limit))
     c = db()
-    # Подтянем родителя (на которого был реальный reply, не top-level parent) для quote-плашки
     rows = c.execute("""
         SELECT cm.id, cm.text, cm.created_at, cm.parent_id, cm.reply_to_id,
                u.username, u.display_name,
@@ -4477,7 +4208,6 @@ def write_comment(post_id: int, body: CommentBody, authorization: Optional[str] 
     if not post:
         c.close()
         raise HTTPException(404, "Post not found")
-    # parent_comment_id: проверим что коммент существует И принадлежит ЭТОМУ посту.
     parent_id = body.parent_comment_id  # после flatten будет top-level
     reply_to_id = body.parent_comment_id  # ОРИГИНАЛ — то на что юзер реально ответил
     parent_author_id = None
@@ -4499,7 +4229,6 @@ def write_comment(post_id: int, body: CommentBody, authorization: Optional[str] 
     )
     comment_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
     notified = {user["id"]}
-    # Уведомления: 1) автору поста; 2) автору родителя если reply; 3) упомянутым
     _add_notif(c, post["user_id"], user["id"], "comment", post_id, text[:120])
     notified.add(post["user_id"])
     if parent_author_id and parent_author_id not in notified:
@@ -4555,11 +4284,9 @@ def react_comment(comment_id: int, body: CommentReactBody, authorization: Option
         c.execute("INSERT INTO soc_comment_reactions (comment_id, user_id, emoji) VALUES (?,?,?)",
                   (comment_id, user["id"], emoji))
         your = emoji
-        # уведомление автору коммента
         if cm["user_id"] != user["id"]:
             _add_notif(c, cm["user_id"], user["id"], "comment_react", cm["post_id"], emoji)
     c.commit()
-    # пересобираем counts
     counts = {}
     for r in c.execute("SELECT emoji, COUNT(*) as cnt FROM soc_comment_reactions WHERE comment_id=? GROUP BY emoji", (comment_id,)).fetchall():
         counts[r["emoji"]] = r["cnt"]
@@ -4575,7 +4302,6 @@ def delete_comment(comment_id: int, authorization: Optional[str] = Header(None))
     if not row:
         c.close()
         raise HTTPException(404, "Comment not found")
-    # Удалить может автор коммента ИЛИ автор поста (модерация своей ленты)
     if row["user_id"] != user["id"] and row["post_owner"] != user["id"]:
         c.close()
         raise HTTPException(403, "Forbidden")
@@ -4665,7 +4391,6 @@ def _safe_url(u: str) -> Optional[str]:
     if not p.netloc:
         return None
     host = p.hostname or ""
-    # SSRF: блокируем internal IPs
     try:
         for fam in (socket.AF_INET, socket.AF_INET6):
             try:
@@ -4685,7 +4410,6 @@ def _safe_url(u: str) -> Optional[str]:
 async def link_preview(url: str = Query(..., max_length=2000), authorization: Optional[str] = Header(None)):
     """OG/Twitter meta preview. SSRF-safe, кэш 24ч."""
     u = auth(authorization)
-    # DoS guard: без лимита flood с разными URL → flood httpx-запросов наружу.
     _rate_limit(f"linkprev:{u.get('id', 0)}", limit=30, window=60)
     safe = _safe_url(url)
     if not safe:
@@ -4742,7 +4466,6 @@ async def link_preview(url: str = Query(..., max_length=2000), authorization: Op
     image = meta("og:image") or meta("twitter:image")
     site = meta("og:site_name") or urlparse(final_url).hostname
 
-    # Абсолютный URL картинки
     if image and not image.startswith(("http://", "https://")):
         image = urljoin(final_url, image)
     if image:
@@ -4774,7 +4497,6 @@ def mark_viewed(body: ViewBody, authorization: Optional[str] = Header(None)):
     """Клиент шлёт сюда id постов которые юзер увидел на экране.
     Используется feed-ом для сортировки 'не показывать уже видённое сверху'.
     Batch — до 50 за раз."""
-    # Гости (guest_-токен) — тихо 200, без 403-спама в ленте
     if authorization and "guest_" in authorization:
         return {"recorded": 0, "guest": True}
     user = auth_member(authorization)
@@ -4856,7 +4578,6 @@ def _is_admin_user(user) -> bool:
     return bool(owner) and user.get("username", "").lower() == owner
 
 
-# ── OG PNG-генерация (превью карточки для шеринга в TG/WA/Twitter) ──
 _OG_CACHE_DIR = "/tmp/ge_og_cache"
 try: os.makedirs(_OG_CACHE_DIR, exist_ok=True)
 except Exception: pass
@@ -4886,11 +4607,9 @@ def _og_render(title: str, subtitle: str, footer: str, accent: str = "") -> byte
     from PIL import Image, ImageDraw, ImageFont
     W, H = 1200, 630
     img = Image.new("RGB", (W, H), (10, 4, 26))  # #0a041a
-    # Градиент через прямоугольники (без numpy)
     overlay = Image.new("RGB", (W, H), (10, 4, 26))
     od = ImageDraw.Draw(overlay)
     for y in range(H):
-        # верх — фиолетовый, низ — тёмный
         t = y / H
         r = int(20 + (10 - 20) * t)
         g = int(8 + (4 - 8) * t)
@@ -4898,7 +4617,6 @@ def _og_render(title: str, subtitle: str, footer: str, accent: str = "") -> byte
         od.line([(0, y), (W, y)], fill=(r, g, b))
     img = overlay
     d = ImageDraw.Draw(img)
-    # Радиальные «звёздные пятна» — статичные кружки
     for (cx, cy, rr, alpha) in [(200, 100, 220, 22), (1000, 530, 280, 18), (1100, 150, 160, 16)]:
         layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         ld = ImageDraw.Draw(layer)
@@ -4920,9 +4638,7 @@ def _og_render(title: str, subtitle: str, footer: str, accent: str = "") -> byte
     f_sub = _font(34)
     f_accent = _font(22, bold=True)
     f_footer = _font(20)
-    # Брендинг сверху
     d.text((60, 56), "GHOSTECOS", font=f_brand, fill=(168, 85, 247))
-    # Accent-бейдж (опционально, справа)
     if accent:
         try:
             tw = d.textlength(accent, font=f_accent)
@@ -4931,7 +4647,6 @@ def _og_render(title: str, subtitle: str, footer: str, accent: str = "") -> byte
         bx, by = W - 60 - int(tw) - 28, 60
         d.rounded_rectangle([bx, by, W - 60, by + 36], radius=18, fill=(74, 222, 128, 30), outline=(74, 222, 128, 180), width=2)
         d.text((bx + 14, by + 6), accent, font=f_accent, fill=(74, 222, 128))
-    # Title — может занимать 2 строки
     def _wrap(text, font, max_w):
         words = text.split(); lines = []; cur = ""
         for w in words:
@@ -4949,14 +4664,12 @@ def _og_render(title: str, subtitle: str, footer: str, accent: str = "") -> byte
     for ln in title_lines:
         d.text((60, y), ln, font=f_title, fill=(241, 245, 249))
         y += 76
-    # Subtitle
     if subtitle:
         sub_lines = _wrap(subtitle, f_sub, W - 120)[:2]
         y += 14
         for ln in sub_lines:
             d.text((60, y), ln, font=f_sub, fill=(148, 163, 184))
             y += 42
-    # Footer
     d.text((60, H - 60), footer or "ghostecos.duckdns.org", font=f_footer, fill=(168, 85, 247))
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
@@ -5013,7 +4726,6 @@ def og_post_png(post_id: int):
     reactions = c.execute("SELECT COUNT(*) as n FROM soc_reactions WHERE post_id=?", (post_id,)).fetchone()["n"]
     comments = c.execute("SELECT COUNT(*) as n FROM soc_comments WHERE post_id=?", (post_id,)).fetchone()["n"]
     c.close()
-    # NSFW-посты не показываем содержимое в превью
     is_nsfw = bool(row["is_nsfw"])
     if is_nsfw:
         title = "Пост помечен 18+"
@@ -5195,7 +4907,6 @@ def og_nft_png(nft_id: int):
     ).fetchone()
     if not row:
         c.close(); raise HTTPException(404, "NFT not found")
-    # Текущая цена в активном листинге (если есть)
     list_row = c.execute(
         "SELECT price, currency FROM soc_nft_listings WHERE nft_id=? ORDER BY id DESC LIMIT 1",
         (nft_id,),
@@ -5223,7 +4934,6 @@ def wrapped_data(username: str, authorization: Optional[str] = Header(None)):
     uname = (username or "").strip().lower().lstrip("@")
     if not uname:
         raise HTTPException(400, "Empty username")
-    # Опциональная авторизация — не падать если токена нет
     me_id = 0
     if authorization:
         try:
@@ -5255,14 +4965,12 @@ def wrapped_data(username: str, authorization: Optional[str] = Header(None)):
     followers = _one("SELECT COUNT(*) FROM soc_follows WHERE followee_id=?", (uid,))
     following = _one("SELECT COUNT(*) FROM soc_follows WHERE follower_id=?", (uid,))
 
-    # ТОП-3 эмодзи которые юзер ставит чаще всего
     top_react_rows = c.execute(
         "SELECT emoji, COUNT(*) as cnt FROM soc_reactions WHERE user_id=? GROUP BY emoji ORDER BY cnt DESC LIMIT 3",
         (uid,),
     ).fetchall()
     top_reactions = [{"emoji": r["emoji"], "count": r["cnt"]} for r in top_react_rows]
 
-    # ТОП-1 пост (самый залайканный)
     top_post_row = c.execute(
         "SELECT p.id, p.content, (SELECT COUNT(*) FROM soc_reactions WHERE post_id=p.id) as cnt "
         "FROM soc_posts p WHERE p.user_id=? AND p.kind='post' ORDER BY cnt DESC, p.created_at DESC LIMIT 1",
@@ -5289,13 +4997,11 @@ def wrapped_data(username: str, authorization: Optional[str] = Header(None)):
     except Exception:
         bal = {"gost": 0, "soul": 0, "prem": 0}
 
-    # NFT в коллекции
     try:
         nft_count = _one("SELECT COUNT(*) FROM soc_nfts WHERE owner_id=?", (uid,))
     except Exception:
         nft_count = 0
 
-    # Ранг по активности (всего активных юзеров и место текущего)
     rank_total = _one("SELECT COUNT(*) FROM users WHERE id IN (SELECT DISTINCT user_id FROM soc_posts)")
     try:
         my_posts = posts + miniska
@@ -5306,7 +5012,6 @@ def wrapped_data(username: str, authorization: Optional[str] = Header(None)):
     except Exception:
         rank = 0
 
-    # Дата регистрации → дней в системе
     days_in = 0
     try:
         import datetime as _dt
@@ -5316,7 +5021,6 @@ def wrapped_data(username: str, authorization: Optional[str] = Header(None)):
         pass
 
     c.close()
-    # Базовый набор — публичный (показывает что юзер активен, без финансов и приватных предпочтений)
     out = {
         "username": u["username"],
         "display_name": u["display_name"],
@@ -5329,7 +5033,6 @@ def wrapped_data(username: str, authorization: Optional[str] = Header(None)):
         "activity_rank_total": rank_total,
         "is_owner": is_owner,
     }
-    # Приватные данные — только для самого владельца
     if is_owner:
         out.update({
             "reactions_given": reactions_given,    # кому ставил лайки — приватно
@@ -5342,7 +5045,6 @@ def wrapped_data(username: str, authorization: Optional[str] = Header(None)):
     return out
 
 
-# ── Репосты (TikTok-style) ──
 
 @router.get("/me/reposts/ids")
 def my_reposts_ids(authorization: Optional[str] = Header(None)):
@@ -5375,7 +5077,6 @@ def repost_post(post_id: int, authorization: Optional[str] = Header(None)):
             (post_id, user["id"], now),
         )
         c.commit(); c.close()
-        # Уведомление автору поста
         try:
             ws_hub.send_to(p["user_id"], "post.reposted", {
                 "post_id": post_id, "by_user_id": user["id"], "by_username": user["username"],
@@ -5448,9 +5149,6 @@ def user_feed_combined(username: str, offset: int = Query(0), limit: int = Query
     if not u:
         c.close(); raise HTTPException(404, "User not found")
     target_uid = u["id"]
-    # Объединяем свои посты и репосты через UNION с пометкой kind
-    # Свои посты: created_at — timestamp
-    # Репосты: r.created_at
     rows = c.execute("""
         SELECT 'self' as kind, p.id, strftime('%s', p.created_at) as ts,
                p.content, p.media, p.is_nsfw, p.nsfw_set_by, p.user_id, p.created_at, p.edited_at, p.source_channel_id,
@@ -5472,7 +5170,6 @@ def user_feed_combined(username: str, offset: int = Query(0), limit: int = Query
         ORDER BY ts DESC
         LIMIT ? OFFSET ?
     """, (target_uid, target_uid, max(1, min(80, limit)), max(0, offset))).fetchall()
-    # Hydrate (реакции, опросы, follow)
     posts = _hydrate_posts(c, rows, uid_caller)
     c.close()
     out = []
@@ -5509,7 +5206,6 @@ def user_reposts(username: str, offset: int = Query(0), limit: int = Query(20), 
         LIMIT ? OFFSET ?
     """, (u["id"], max(1, min(50, limit)), max(0, offset))).fetchall()
     out = _hydrate_posts(c, rows, uid_caller)
-    # Добавляем метку «репост»
     for i, row in enumerate(rows):
         out[i]["reposted_at"] = row["reposted_at"]
         out[i]["is_repost"] = True
@@ -5517,7 +5213,6 @@ def user_reposts(username: str, offset: int = Query(0), limit: int = Query(20), 
     return out
 
 
-# ── Жалобы на посты + автомодерация ──
 
 _REPORT_REASONS = {"spam", "nsfw_unmarked", "illegal", "harassment", "other"}
 _REPORTS_THRESHOLD_1H = 5
@@ -5543,7 +5238,6 @@ def _check_and_create_overwatch_reports(c, post_id: int):
     ).fetchone()[0] or 0
     if cnt_1h < _REPORTS_THRESHOLD_1H and cnt_24h < _REPORTS_THRESHOLD_24H:
         return
-    # Уже есть открытый
     already = c.execute(
         "SELECT id FROM soc_overwatch_requests "
         "WHERE post_id=? AND kind='system_reports' AND status='open'",
@@ -5551,7 +5245,6 @@ def _check_and_create_overwatch_reports(c, post_id: int):
     ).fetchone()
     if already:
         return
-    # Найти автора поста
     p = c.execute("SELECT user_id FROM soc_posts WHERE id=?", (post_id,)).fetchone()
     if not p:
         return
@@ -5560,7 +5253,6 @@ def _check_and_create_overwatch_reports(c, post_id: int):
         "VALUES (?, ?, 'system_reports', 0, ?, 'open')",
         (post_id, p["user_id"], now),
     )
-    # Notification всем модераторам
     try:
         mods = c.execute("SELECT id FROM users WHERE is_moderator=1").fetchall()
         for m in mods:
@@ -5576,8 +5268,6 @@ def _check_and_create_overwatch_viral(c, post_id: int):
     """Если за последние 30 минут пост получил 30+ реакций и нет открытого
     system_viral за последние 24 часа — создаёт автоматический overwatch."""
     now = int(time.time())
-    # Реакции за 30 мин — у нас в soc_reactions нет created_at, поэтому
-    # ориентируемся на activity. Если activity ≥ 800 (буст) — потенциально вирусный.
     try:
         activity = c.execute("SELECT activity FROM soc_posts WHERE id=?", (post_id,)).fetchone()
         activity_val = int(activity["activity"]) if activity else 500
@@ -5588,7 +5278,6 @@ def _check_and_create_overwatch_viral(c, post_id: int):
     reactions = c.execute("SELECT COUNT(*) FROM soc_reactions WHERE post_id=?", (post_id,)).fetchone()[0] or 0
     if reactions < _VIRAL_REACTIONS_30MIN:
         return
-    # Был ли уже виралный overwatch за последние 24 часа
     recent = c.execute(
         "SELECT id FROM soc_overwatch_requests "
         "WHERE post_id=? AND kind='system_viral' AND created_at > ?",
@@ -5622,7 +5311,6 @@ def report_post(post_id: int, body: ReportBody, authorization: Optional[str] = H
     if reason not in _REPORT_REASONS:
         raise HTTPException(400, f"reason должен быть одним из: {', '.join(sorted(_REPORT_REASONS))}")
     c = db()
-    # Пост существует?
     p = c.execute("SELECT id, user_id FROM soc_posts WHERE id=?", (post_id,)).fetchone()
     if not p:
         c.close(); raise HTTPException(404, "Post not found")
@@ -5637,7 +5325,6 @@ def report_post(post_id: int, body: ReportBody, authorization: Optional[str] = H
         )
     except sqlite3.IntegrityError:
         c.close(); raise HTTPException(409, "Вы уже жаловались на этот пост")
-    # Триггер автомодерации
     _check_and_create_overwatch_reports(c, post_id)
     c.commit(); c.close()
     return {"status": "ok"}
@@ -5686,7 +5373,6 @@ def me_reports_incoming(authorization: Optional[str] = Header(None)):
         try: c.execute("ROLLBACK")
         except: pass
         c.close(); raise HTTPException(500, f"Ошибка: {e}")
-    # Достаём список жалоб на МОИ посты
     rows = c.execute("""
         SELECT r.reporter_id, r.reason, r.created_at,
                r.post_id, u.username, u.display_name,
@@ -5732,7 +5418,6 @@ def reports_count(post_id: int, authorization: Optional[str] = Header(None)):
     }
 
 
-# ── Ежедневный статус (сбрасывается через 24ч, обязателен при заходе) ──
 
 _STATUS_TTL = 86400  # 24 часа
 _ALLOWED_MOODS = {"joy", "sad", "fire", "love", "tired", "chill", "angry", "surprised"}
@@ -5904,7 +5589,6 @@ def status_feed(authorization: Optional[str] = Header(None)):
             "is_me": r["id"] == uid,
             **st,
         })
-    # Сортировка: сначала свежие, потом eternal
     out.sort(key=lambda x: (x.get("set_at") or 0), reverse=True)
     return out
 
@@ -5947,7 +5631,6 @@ def admin_stats(authorization: Optional[str] = Header(None)):
         r = c.execute(sql, params).fetchone()
         return (r[0] if r else 0) or 0
 
-    # USERS
     total_users = _one("SELECT COUNT(*) FROM users")
     reg_24h = _one("SELECT COUNT(*) FROM users WHERE strftime('%s', created_at) > ?", (str(d1),))
     reg_7d = _one("SELECT COUNT(*) FROM users WHERE strftime('%s', created_at) > ?", (str(d7),))
@@ -5955,7 +5638,6 @@ def admin_stats(authorization: Optional[str] = Header(None)):
     moderators = _one("SELECT COUNT(*) FROM users WHERE is_moderator=1")
     age_confirmed = _one("SELECT COUNT(*) FROM users WHERE confirmed_18_at IS NOT NULL")
 
-    # ACTIVITY (DAU/WAU/MAU по таблице просмотров постов — наиболее активный сигнал)
     try:
         dau = _one("SELECT COUNT(DISTINCT user_id) FROM soc_post_views WHERE viewed_at > ?", (d1,))
         wau = _one("SELECT COUNT(DISTINCT user_id) FROM soc_post_views WHERE viewed_at > ?", (d7,))
@@ -5963,7 +5645,6 @@ def admin_stats(authorization: Optional[str] = Header(None)):
     except Exception:
         dau = wau = mau = 0
 
-    # CONTENT
     posts_total = _one("SELECT COUNT(*) FROM soc_posts WHERE kind='post'")
     posts_24h = _one("SELECT COUNT(*) FROM soc_posts WHERE kind='post' AND strftime('%s', created_at) > ?", (str(d1),))
     posts_7d = _one("SELECT COUNT(*) FROM soc_posts WHERE kind='post' AND strftime('%s', created_at) > ?", (str(d7),))
@@ -5975,7 +5656,6 @@ def admin_stats(authorization: Optional[str] = Header(None)):
     comments_24h = _one("SELECT COUNT(*) FROM soc_comments WHERE strftime('%s', created_at) > ?", (str(d1),))
     reactions_total = _one("SELECT COUNT(*) FROM soc_reactions")
 
-    # CHAT
     try:
         dm_24h = _one("SELECT COUNT(*) FROM chat_dm WHERE created_at > ?", (d1,))
         groups_total = _one("SELECT COUNT(*) FROM chat_groups")
@@ -5984,7 +5664,6 @@ def admin_stats(authorization: Optional[str] = Header(None)):
     except Exception:
         dm_24h = groups_total = groups_public = group_msg_24h = 0
 
-    # ECONOMY
     try:
         wallet_users = _one("SELECT COUNT(*) FROM soc_wallets WHERE gost > 0 OR soul > 0 OR prem > 0")
         gost_total = _one("SELECT COALESCE(SUM(gost), 0) FROM soc_wallets")
@@ -5994,7 +5673,6 @@ def admin_stats(authorization: Optional[str] = Header(None)):
     except Exception:
         wallet_users = gost_total = soul_total = nft_owned = nft_listed = 0
 
-    # MODERATION
     try:
         mod_apps_pending = _one("SELECT COUNT(*) FROM soc_moderator_applications WHERE status='pending'")
         overwatch_open = _one("SELECT COUNT(*) FROM soc_overwatch_requests WHERE status='open'")
@@ -6004,10 +5682,8 @@ def admin_stats(authorization: Optional[str] = Header(None)):
     except Exception:
         mod_apps_pending = overwatch_open = rep_low = rep_mid = rep_good = 0
 
-    # FOLLOWS
     follows_total = _one("SELECT COUNT(*) FROM soc_follows")
 
-    # REFERRAL
     refs_total = _one("SELECT COUNT(*) FROM users WHERE referrer_id IS NOT NULL")
 
     c.close()
@@ -6057,18 +5733,15 @@ def mod_apply(authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
     _rate_limit(f"modapply:{user['id']}", limit=3, window=86400)  # 3 заявки в сутки
     c = db()
-    # Уже модератор?
     u = c.execute("SELECT is_moderator FROM users WHERE id=?", (user["id"],)).fetchone()
     if u and u["is_moderator"]:
         c.close(); raise HTTPException(400, "Вы уже модератор")
-    # Есть pending-заявка?
     existing = c.execute(
         "SELECT 1 FROM soc_moderator_applications WHERE user_id=? AND status='pending'",
         (user["id"],)
     ).fetchone()
     if existing:
         c.close(); raise HTTPException(409, "У вас уже есть заявка на рассмотрении")
-    # Списываем Gost
     bal = get_balance(user["id"])["gost"]
     if bal < MOD_APPLY_PRICE_GOST:
         c.close(); raise HTTPException(400, f"Нужно {MOD_APPLY_PRICE_GOST} Gost (у вас {bal})")
@@ -6098,7 +5771,6 @@ def mod_apply(authorization: Optional[str] = Header(None)):
             (user["id"],)
         ).fetchone()
         days_reg = int(days_reg_row["days"] or 0)
-        # Формула: posts*0.5 (max 50) + days*0.5 (max 50) + comments*0.1 (max 10) = 0..110, capped 100
         quality = max(0, min(100, int(posts_cnt * 0.5 + days_reg * 0.5 + comments_cnt * 0.1)))
         c.execute(
             "INSERT INTO soc_moderator_applications (user_id, created_at, quality_score) VALUES (?,?,?)",
@@ -6167,7 +5839,6 @@ def mod_application_decide(app_id: int, body: dict, authorization: Optional[str]
         )
     c.commit()
     c.close()
-    # Уведомить заявителя
     try:
         ws_hub.send_to(app_row["user_id"], "mod.application_decided",
                        {"accepted": accept, "application_id": app_id})
@@ -6185,11 +5856,9 @@ def post_overwatch_buy(post_id: int, authorization: Optional[str] = Header(None)
     p = c.execute("SELECT user_id, activity FROM soc_posts WHERE id=?", (post_id,)).fetchone()
     if not p:
         c.close(); raise HTTPException(404, "Пост не найден")
-    # Owner может делать overwatch на любые посты (модерация чужого контента)
     is_admin = _is_admin_user(user)
     if p["user_id"] != user["id"] and not is_admin:
         c.close(); raise HTTPException(403, "Можно купить только для своего поста")
-    # Открытый overwatch уже есть?
     open_req = c.execute(
         "SELECT id FROM soc_overwatch_requests WHERE post_id=? AND status='open'", (post_id,)
     ).fetchone()
@@ -6220,7 +5889,6 @@ def post_overwatch_buy(post_id: int, authorization: Optional[str] = Header(None)
         try: c.execute("ROLLBACK")
         except: pass
         c.close(); raise
-    # Уведомим модераторов о новом overwatch (через WS)
     mods = c.execute("SELECT id FROM users WHERE is_moderator=1").fetchall()
     for m in mods:
         try: ws_hub.send_to(m["id"], "overwatch.new", {"request_id": req_id, "post_id": post_id})
@@ -6276,7 +5944,6 @@ def mod_overwatch_queue(authorization: Optional[str] = Header(None)):
             "created_at": r["created_at"],
             "my_vote": r["my_vote"],
             "reports_breakdown": reports_breakdown,
-            # НЕ ВКЛЮЧАЕМ: author, username, реакции, комменты
         })
     return out
 
@@ -6308,7 +5975,6 @@ def mod_overwatch_vote(request_id: int, body: OverwatchVoteBody, authorization: 
     if req["author_id"] == user["id"]:
         c.close(); raise HTTPException(403, "Нельзя голосовать на своём посте")
     now = int(time.time())
-    # Записать голос (PRIMARY KEY — один голос на модератора в request)
     try:
         c.execute(
             "INSERT INTO soc_overwatch_votes (request_id, moderator_id, delta, comment, created_at) "
@@ -6317,13 +5983,11 @@ def mod_overwatch_vote(request_id: int, body: OverwatchVoteBody, authorization: 
         )
     except sqlite3.IntegrityError:
         c.close(); raise HTTPException(409, "Вы уже проголосовали")
-    # Подсчёт голосов
     votes = c.execute(
         "SELECT delta FROM soc_overwatch_votes WHERE request_id=?", (request_id,)
     ).fetchall()
     vote_count = len(votes)
     avg_delta = sum(v["delta"] for v in votes) / vote_count
-    # Cap ±150
     delta_applied = max(-OVERWATCH_MAX_STEP, min(OVERWATCH_MAX_STEP, int(round(avg_delta))))
     c.execute(
         "UPDATE soc_overwatch_requests SET votes_count=? WHERE id=?",
@@ -6331,7 +5995,6 @@ def mod_overwatch_vote(request_id: int, body: OverwatchVoteBody, authorization: 
     )
     closed = False
     if vote_count >= 3:
-        # Применяем результат
         p = c.execute("SELECT activity FROM soc_posts WHERE id=?", (req["post_id"],)).fetchone()
         old_act = p["activity"] if p else 500
         new_act = max(0, min(1000, old_act + delta_applied))
@@ -6345,7 +6008,6 @@ def mod_overwatch_vote(request_id: int, body: OverwatchVoteBody, authorization: 
             (req["post_id"], old_act, new_act, delta_applied, "overwatch", None,
              f"avg={avg_delta:.1f}, votes={vote_count}", now),
         )
-        # Распределяем награды модераторам: OVERWATCH_PER_MOD_BASE × rating_multiplier
         for v_mod in c.execute(
             "SELECT v.moderator_id, u.moderator_rating FROM soc_overwatch_votes v "
             "JOIN users u ON u.id = v.moderator_id WHERE v.request_id=?",
@@ -6365,13 +6027,11 @@ def mod_overwatch_vote(request_id: int, body: OverwatchVoteBody, authorization: 
                 "UPDATE soc_wallets SET gost = gost + ?, updated_at = CURRENT_TIMESTAMP WHERE user_id=?",
                 (reward, v_mod["moderator_id"]),
             )
-        # Закрыть overwatch
         c.execute(
             "UPDATE soc_overwatch_requests SET status='resolved', resolved_at=?, delta_applied=? WHERE id=?",
             (now, delta_applied, request_id),
         )
         closed = True
-        # Feature 4: если жалобы подтверждены (delta_applied < 0) — наградить репортёров
         rewarded_reporters = []
         if delta_applied < 0:
             REPORT_CONFIRMED_REWARD = 5
@@ -6394,7 +6054,6 @@ def mod_overwatch_vote(request_id: int, body: OverwatchVoteBody, authorization: 
                     )
                     rewarded_reporters.append(rid)
                 except Exception: pass
-        # Уведомить автора
         try:
             ws_hub.send_to(req["author_id"], "overwatch.resolved", {
                 "request_id": request_id, "post_id": req["post_id"],
@@ -6402,7 +6061,6 @@ def mod_overwatch_vote(request_id: int, body: OverwatchVoteBody, authorization: 
                 "delta": delta_applied, "votes": vote_count,
             })
         except Exception: pass
-        # Уведомить репортёров о награде
         for rid in rewarded_reporters:
             try:
                 ws_hub.send_to(rid, "report.rewarded", {
@@ -6473,11 +6131,9 @@ def mod_set_nsfw(post_id: int, body: SetNsfwBody, authorization: Optional[str] =
 
     author_id = p["user_id"]
     now = int(time.time())
-    # Снижение репутации только при пометке админом (не при снятии и не если автор сам пометил)
     delta = 0
     reason = "nsfw_admin_clear"
     if new_val == 1:
-        # Пометили мы — был не помечен → штраф автору
         delta = -10
         reason = "nsfw_admin_set"
         c.execute(
@@ -6485,7 +6141,6 @@ def mod_set_nsfw(post_id: int, body: SetNsfwBody, authorization: Optional[str] =
             (user["id"], post_id),
         )
     else:
-        # Снимаем пометку. Если она была поставлена админом — возвращаем +10. Если автор сам пометил — без compensation.
         if p["nsfw_set_by"]:
             delta = 10
         c.execute(
@@ -6508,7 +6163,6 @@ def mod_set_nsfw(post_id: int, body: SetNsfwBody, authorization: Optional[str] =
                 (author_id, delta, old_score, new_score, reason, user["id"], post_id, now),
             )
     c.commit(); c.close()
-    # Уведомление автору
     try:
         ws_hub.send_to(
             author_id,
@@ -6607,7 +6261,6 @@ def vote(post_id: int, body: VoteBody, authorization: Optional[str] = Header(Non
     if body.option_idx < 0 or body.option_idx >= len(opts):
         c.close()
         raise HTTPException(400, "Невалидный вариант")
-    # один голос на юзера. Можно поменять
     c.execute(
         "INSERT OR REPLACE INTO soc_poll_votes (post_id, user_id, option_idx) VALUES (?,?,?)",
         (post_id, user["id"], body.option_idx)
@@ -6663,7 +6316,6 @@ MINISKA_MAX_TEXT = 200
 @router.post("/miniska/new")
 def create_miniska(body: MiniskaBody, authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
-    # Миниски тяжёлые (видео + cron убирает их), 10 в час более чем достаточно
     _rate_limit(f"miniska:{user['id']}", limit=10, window=3600)
     if not _MEDIA_URL_RE.match(body.video_url or ""):
         raise HTTPException(400, "Некорректный URL видео")
@@ -6674,7 +6326,6 @@ def create_miniska(body: MiniskaBody, authorization: Optional[str] = Header(None
     fpath = os.path.join(MEDIA_DIR, fname)
     if not os.path.exists(fpath):
         raise HTTPException(404, "Видео не найдено")
-    # Длительность через ffprobe
     try:
         import subprocess
         out = subprocess.run(
@@ -6765,14 +6416,12 @@ GOST_REWARDS = {
     'refout':     10,   # пригласителю — за приведённого юзера
     'refin':      30,   # приглашённому — welcome bonus сверх register
 }
-# Cap начисления per-источник per-юзер за скользящие 24ч (защита от спама)
 GOST_DAILY_CAP = {
     'post':     25,    # ≈ 5 постов в день максимум засчитано
     'react':    50,    # ≈ 50 лайков на свои посты
     'comment':  60,    # ≈ 30 комментов
     'follow':   25,    # ≈ 5 новых фолловеров
     'refout':   100,   # ≈ 10 рефералов в день засчитано (anti-spam)
-    # daily/register/refin — natural cap (one-time)
 }
 DAILY_CLAIM_INTERVAL = 24 * 3600   # секунд между daily-claim
 ALLOWED_CURRENCIES = {'gost', 'soul', 'prem'}
@@ -6824,9 +6473,7 @@ def _restore_reputation_if_due(user_id: int) -> Optional[int]:
             c.close(); return None
         last = int(row["reputation_updated_at"] or 0)
         now = int(time.time())
-        # Сколько полных недель прошло — столько +1 (но не выше 100)
         if last <= 0:
-            # никогда не было апдейтов — просто проставим now без бонуса
             c.execute("UPDATE users SET reputation_updated_at=? WHERE id=?", (now, user_id))
             c.commit(); c.close(); return score
         weeks = max(0, (now - last) // (7 * 86400))
@@ -6879,7 +6526,6 @@ def award_gost(
         c.execute("BEGIN IMMEDIATE")
         _ensure_wallet(c, user_id)
 
-        # daily — особый: 1 раз в 24ч
         if source == 'daily':
             last = c.execute(
                 "SELECT created_at FROM soc_wallet_tx "
@@ -6897,14 +6543,12 @@ def award_gost(
                     c.close()
                     return {"credited": 0, "new_balance": get_balance(user_id)["gost"], "reason": "too_soon"}
 
-        # Per-day cap для тех источников где он есть
         if source in GOST_DAILY_CAP:
             already = _sum_source_24h(c, user_id, source)
             if already >= GOST_DAILY_CAP[source]:
                 c.execute("ROLLBACK")
                 c.close()
                 return {"credited": 0, "new_balance": get_balance(user_id)["gost"], "reason": "daily_cap"}
-            # Не дать переплеснуть cap — режем amount
             if already + amount > GOST_DAILY_CAP[source]:
                 amount = GOST_DAILY_CAP[source] - already
 
@@ -6916,12 +6560,10 @@ def award_gost(
                 (user_id, amount, source, actor_id, ref_type, ref_id),
             )
         except sqlite3.IntegrityError:
-            # Дубль по UNIQUE — это OK, источник уже был засчитан
             c.execute("ROLLBACK")
             c.close()
             return {"credited": 0, "new_balance": get_balance(user_id)["gost"], "reason": "already_credited"}
 
-        # Обновляем баланс
         c.execute(
             "UPDATE soc_wallets SET gost = gost + ?, updated_at = CURRENT_TIMESTAMP WHERE user_id=?",
             (amount, user_id),
@@ -6934,7 +6576,6 @@ def award_gost(
         c.close()
         raise
     c.close()
-    # WS-пуш владельцу: моментально подсветить +N в кошельке
     ws_hub.send_to(user_id, "wallet.credit", {
         "currency": "gost", "delta": amount, "source": source,
         "balance": new_bal,
@@ -6949,7 +6590,6 @@ def my_referrals(authorization: Optional[str] = Header(None)):
     """Моя реф-статистика: ссылка + сколько привёл + сколько заработал."""
     user = auth_member(authorization)
     c = db()
-    # Список приглашённых (последние 50)
     rows = c.execute("""
         SELECT id, username, display_name, created_at
         FROM users WHERE referrer_id=?
@@ -6959,16 +6599,13 @@ def my_referrals(authorization: Optional[str] = Header(None)):
         {"id": r["id"], "username": r["username"], "display_name": r["display_name"], "created_at": r["created_at"]}
         for r in rows
     ]
-    # Всего приведено
     total = c.execute(
         "SELECT COUNT(*) as cnt FROM users WHERE referrer_id=?", (user["id"],)
     ).fetchone()["cnt"]
-    # Заработано Gost через рефералов
     earned = c.execute(
         "SELECT COALESCE(SUM(delta), 0) as s FROM soc_wallet_tx WHERE user_id=? AND currency='gost' AND source='refout'",
         (user["id"],)
     ).fetchone()["s"]
-    # Кто меня пригласил
     invited_by = None
     me_row = c.execute("SELECT referrer_id FROM users WHERE id=?", (user["id"],)).fetchone()
     if me_row and me_row["referrer_id"]:
@@ -7049,7 +6686,6 @@ def my_wallet(authorization: Optional[str] = Header(None)):
     """Текущий баланс залогиненного юзера."""
     user = auth_member(authorization)
     bal = get_balance(user["id"])
-    # Информация о daily-claim для UI: сколько ждать до следующего
     c = db()
     last = c.execute(
         "SELECT created_at FROM soc_wallet_tx WHERE user_id=? AND source='daily' "
@@ -7081,7 +6717,6 @@ def my_wallet_tx(offset: int = Query(0, ge=0), authorization: Optional[str] = He
         "ORDER BY id DESC LIMIT 30 OFFSET ?",
         (user["id"], offset),
     ).fetchall()
-    # Дотягиваем username актора одной пачкой
     actor_ids = list({r["actor_id"] for r in rows if r["actor_id"]})
     actor_map = {}
     if actor_ids:
@@ -7213,20 +6848,16 @@ def soul_transfer(body: SoulTransferBody, authorization: Optional[str] = Header(
         if not recipient:
             c.execute("ROLLBACK"); c.close()
             raise HTTPException(404, "Получатель не найден")
-        # Комиссия — округление вверх, минимум 1 Soul
         fee = max(1, (body.amount * SOUL_TRANSFER_FEE_BPS + 9999) // 10000)
         total_debit = body.amount + fee
         sender_bal = _soul_balance(c, user["id"])
         if sender_bal < total_debit:
             c.execute("ROLLBACK"); c.close()
             raise HTTPException(400, f"Недостаточно Soul. Нужно {total_debit} (включая комиссию {fee}), у вас {sender_bal}")
-        # 1) Списываем у отправителя сумму + комиссию (одной записью)
         _credit_soul_tx(c, user["id"], -total_debit, 'transfer_out',
                         counter=recipient["id"], note=note)
-        # 2) Зачисляем получателю
         _credit_soul_tx(c, recipient["id"], body.amount, 'transfer_in',
                         counter=user["id"], note=note)
-        # 3) Комиссия → system_balance
         c.execute("UPDATE soc_economy_state SET system_balance = system_balance + ? WHERE is_active=1", (fee,))
         sender_new = _soul_balance(c, user["id"])
         recipient_new = _soul_balance(c, recipient["id"])
@@ -7339,7 +6970,6 @@ def admin_grant(body: AdminGrantBody, request: Request, authorization: Optional[
         state = _economy_state(c)
         if not state:
             c.execute("ROLLBACK"); c.close(); raise HTTPException(503, "Сезон не активен")
-        # Если выдаём → списываем с system_balance. Если забираем → возвращаем в system_balance.
         if body.amount > 0:
             if state["system_balance"] < body.amount:
                 c.execute("ROLLBACK"); c.close()
@@ -7558,13 +7188,11 @@ def nft_buy(nft_id: int, authorization: Optional[str] = Header(None)):
         currency = lst["currency"] or 'soul'
 
         if currency == 'gost':
-            # ─── Первичная продажа от GhostEcos за Gost ───
             wallet = c.execute("SELECT gost FROM soc_wallets WHERE user_id=?", (user["id"],)).fetchone()
             buyer_gost = (wallet["gost"] if wallet else 0)
             if buyer_gost < price:
                 c.execute("ROLLBACK"); c.close()
                 raise HTTPException(400, f"Недостаточно Gost. Цена {price}, у вас {buyer_gost}")
-            # Списываем у покупателя
             c.execute(
                 "UPDATE soc_wallets SET gost = gost - ?, updated_at = CURRENT_TIMESTAMP WHERE user_id=?",
                 (price, user["id"]),
@@ -7574,13 +7202,11 @@ def nft_buy(nft_id: int, authorization: Optional[str] = Header(None)):
                 "VALUES (?, 'gost', ?, 'spend', ?, 'nft', ?)",
                 (user["id"], -price, lst["seller_id"], nft_id),
             )
-            # Зачисляем продавцу (ghostecos копит Gost)
             c.execute("INSERT OR IGNORE INTO soc_wallets (user_id) VALUES (?)", (lst["seller_id"],))
             c.execute(
                 "UPDATE soc_wallets SET gost = gost + ?, updated_at = CURRENT_TIMESTAMP WHERE user_id=?",
                 (price, lst["seller_id"]),
             )
-            # Передача NFT
             c.execute("UPDATE soc_nfts SET owner_id=? WHERE id=?", (user["id"], nft_id))
             c.execute("DELETE FROM soc_nft_listings WHERE nft_id=?", (nft_id,))
             buyer_gost_new = c.execute("SELECT gost FROM soc_wallets WHERE user_id=?", (user["id"],)).fetchone()["gost"]
@@ -7592,7 +7218,6 @@ def nft_buy(nft_id: int, authorization: Optional[str] = Header(None)):
             ws_hub.broadcast("nft.sold", {"nft_id": nft_id})
             return {"status": "ok", "price": price, "fee": 0, "currency": "gost", "new_balance_gost": buyer_gost_new}
 
-        # ─── P2P (Soul) ───
         fee = max(1, (price * NFT_MARKET_FEE_BPS + 9999) // 10000)
         buyer_bal = _soul_balance(c, user["id"])
         if buyer_bal < price + fee:
@@ -7602,7 +7227,6 @@ def nft_buy(nft_id: int, authorization: Optional[str] = Header(None)):
                         counter=lst["seller_id"], ref_type='nft', ref_id=nft_id)
         seller_official = c.execute("SELECT is_official FROM users WHERE id=?", (lst["seller_id"],)).fetchone()
         if seller_official and seller_official["is_official"]:
-            # Системная Soul-продажа (на будущее, когда GhostEcos будет продавать за Soul) — 10% сжигается
             c.execute("UPDATE soc_economy_state SET system_balance = system_balance - ?, burned_total = burned_total + ? WHERE is_active=1",
                       (price, fee))
             _credit_soul_tx(c, lst["seller_id"], 0, 'nft_sell',
@@ -7664,13 +7288,11 @@ def invoice_create(body: InvoiceCreateBody, authorization: Optional[str] = Heade
     c = db()
     try:
         c.execute("BEGIN IMMEDIATE")
-        # Проверяем Gost
         wallet = c.execute("SELECT gost FROM soc_wallets WHERE user_id=?", (user["id"],)).fetchone()
         bal = (wallet["gost"] if wallet else 0)
         if bal < INVOICE_CREATE_GOST:
             c.execute("ROLLBACK"); c.close()
             raise HTTPException(400, f"Нужно {INVOICE_CREATE_GOST} Gost для создания счёта (у вас {bal})")
-        # Списываем Gost
         c.execute("INSERT OR IGNORE INTO soc_wallets (user_id) VALUES (?)", (user["id"],))
         c.execute(
             "UPDATE soc_wallets SET gost = gost - ?, updated_at = CURRENT_TIMESTAMP WHERE user_id=?",
@@ -7680,7 +7302,6 @@ def invoice_create(body: InvoiceCreateBody, authorization: Optional[str] = Heade
             "INSERT INTO soc_wallet_tx (user_id, currency, delta, source) VALUES (?, 'gost', ?, 'spend')",
             (user["id"], -INVOICE_CREATE_GOST),
         )
-        # Генерим уникальный code (несколько попыток на коллизию)
         for _attempt in range(8):
             code = _gen_invoice_code()
             exists = c.execute("SELECT 1 FROM soc_invoices WHERE code=?", (code,)).fetchone()
@@ -7881,12 +7502,10 @@ def username_create(body: UsernameCreateBody, authorization: Optional[str] = Hea
     c = db()
     try:
         c.execute("BEGIN IMMEDIATE")
-        # Lifetime cap check
         u = c.execute("SELECT usernames_created FROM users WHERE id=?", (user["id"],)).fetchone()
         if (u["usernames_created"] or 0) >= USERNAME_LIFETIME_CAP:
             c.execute("ROLLBACK"); c.close()
             raise HTTPException(403, f"Лимит создания username: {USERNAME_LIFETIME_CAP}")
-        # Уникальность
         clash = c.execute(
             "SELECT 1 FROM users WHERE username=? UNION ALL SELECT 1 FROM soc_usernames WHERE username=?",
             (new_username, new_username),
@@ -7894,7 +7513,6 @@ def username_create(body: UsernameCreateBody, authorization: Optional[str] = Hea
         if clash:
             c.execute("ROLLBACK"); c.close()
             raise HTTPException(409, "Username уже занят")
-        # Списываем Soul
         bal = _soul_balance(c, user["id"])
         if bal < USERNAME_CREATE_PRICE_SOUL:
             c.execute("ROLLBACK"); c.close()
@@ -8039,17 +7657,14 @@ def username_set_primary(body: UsernameSetPrimaryBody, authorization: Optional[s
             c.execute("ROLLBACK"); c.close(); raise HTTPException(403, "Не ваш username")
         if row["for_sale_price"] is not None:
             c.execute("ROLLBACK"); c.close(); raise HTTPException(400, "Сначала снимите username с продажи")
-        # Защита: убедимся что new_primary не является primary у другого юзера (раса с username_create)
         clash = c.execute("SELECT id FROM users WHERE username=? AND id!=?", (new_primary, user["id"])).fetchone()
         if clash:
             c.execute("ROLLBACK"); c.close()
             raise HTTPException(409, "Этот username уже primary у другого юзера")
-        # И что old_primary не лежит в soc_usernames (мы туда сейчас впихнём — UNIQUE сломается)
         if c.execute("SELECT 1 FROM soc_usernames WHERE username=?", (user["username"],)).fetchone():
             c.execute("ROLLBACK"); c.close()
             raise HTTPException(500, "Inconsistent state: текущий primary уже в коллекции")
         old_primary = user["username"]
-        # Меняем местами
         c.execute("UPDATE users SET username=? WHERE id=?", (new_primary, user["id"]))
         c.execute("DELETE FROM soc_usernames WHERE username=?", (new_primary,))
         c.execute("INSERT INTO soc_usernames (username, owner_id, acquired_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
@@ -8122,22 +7737,18 @@ def nft_mint(body: MintNftBody, authorization: Optional[str] = Header(None)):
     if body.sell_price_soul < 1 or body.sell_price_soul > 1_000_000:
         raise HTTPException(400, "sell_price_soul 1..1 000 000")
 
-    # Подсчёт цены создания
     gost_fee = MINT_BASE_GOST + _mint_supply_fee(body.supply)
 
     c = db()
     try:
         c.execute("BEGIN IMMEDIATE")
-        # Lifetime cap
         u = c.execute("SELECT nft_mints_count FROM users WHERE id=?", (user["id"],)).fetchone()
         if (u["nft_mints_count"] or 0) >= MINT_LIFETIME_CAP:
             c.execute("ROLLBACK"); c.close()
             raise HTTPException(403, f"Лимит созданных NFT: {MINT_LIFETIME_CAP}")
-        # Уникальность slug
         if c.execute("SELECT 1 FROM soc_nft_catalog WHERE slug=?", (slug,)).fetchone():
             c.execute("ROLLBACK"); c.close()
             raise HTTPException(409, "Slug занят")
-        # Списываем Gost
         c.execute("INSERT OR IGNORE INTO soc_wallets (user_id) VALUES (?)", (user["id"],))
         wallet = c.execute("SELECT gost FROM soc_wallets WHERE user_id=?", (user["id"],)).fetchone()
         if wallet["gost"] < gost_fee:
@@ -8151,7 +7762,6 @@ def nft_mint(body: MintNftBody, authorization: Optional[str] = Header(None)):
             "INSERT INTO soc_wallet_tx (user_id, currency, delta, source) VALUES (?, 'gost', ?, 'spend')",
             (user["id"], -gost_fee),
         )
-        # Auto-buy логика: M штук система выкупает у автора по auto_buy_price = sell_price_soul
         soul_to_author = 0
         if body.auto_buy > 0:
             soul_to_author = body.auto_buy * body.sell_price_soul
@@ -8163,7 +7773,6 @@ def nft_mint(body: MintNftBody, authorization: Optional[str] = Header(None)):
                       (soul_to_author,))
             _credit_soul_tx(c, user["id"], soul_to_author, 'nft_mint_payout',
                             ref_type='nft_catalog', note=f"autobuy {body.auto_buy}")
-        # Создаём catalog
         c.execute(
             "INSERT INTO soc_nft_catalog (slug, name, description, rarity, max_supply, creator_id, "
             "start_price_soul, image_kind, image_data, bg_color) "
@@ -8171,7 +7780,6 @@ def nft_mint(body: MintNftBody, authorization: Optional[str] = Header(None)):
             (slug, name, desc, rarity, body.supply, user["id"], body.sell_price_soul, emoji, bg),
         )
         cat_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
-        # Минтим supply штук
         ghostecos = c.execute("SELECT id FROM users WHERE username=?", (GHOSTECOS_USERNAME,)).fetchone()
         gh_uid = ghostecos["id"]
         for serial in range(1, body.supply + 1):
@@ -8184,7 +7792,6 @@ def nft_mint(body: MintNftBody, authorization: Optional[str] = Header(None)):
                 (cat_id, serial, owner),
             )
             nft_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
-            # Первые auto_buy штук → автоматически на маркет по sell_price (Soul)
             if serial <= body.auto_buy:
                 c.execute(
                     "INSERT INTO soc_nft_listings (nft_id, seller_id, price_soul, currency) VALUES (?,?,?,'soul')",
@@ -8240,7 +7847,6 @@ def mint_post_as_nft(body: PostMintBody, authorization: Optional[str] = Header(N
     slug = f"post-{post['id']}-{suffix}"
     emoji = (body.image_emoji or '').strip() or (user['display_name'] or user['username'])[0].upper()
     bg = body.bg_color or '#7c3aed'
-    # Прокидываем в существующий /nft/mint helper-логику — вызываем напрямую
     fake_body = MintNftBody(
         slug=slug, name=name, description=desc,
         supply=max(100, min(10000, body.supply)),
@@ -8276,7 +7882,6 @@ def nft_transfer(body: NftTransferBody, authorization: Optional[str] = Header(No
         recipient = c.execute("SELECT id, username, display_name FROM users WHERE username=?", (to_username,)).fetchone()
         if not recipient:
             c.execute("ROLLBACK"); c.close(); raise HTTPException(404, "Получатель не найден")
-        # Комиссия — 1 Soul
         sender_bal = _soul_balance(c, user["id"])
         if sender_bal < NFT_TRANSFER_FEE_SOUL:
             c.execute("ROLLBACK"); c.close()
@@ -8284,9 +7889,7 @@ def nft_transfer(body: NftTransferBody, authorization: Optional[str] = Header(No
         _credit_soul_tx(c, user["id"], -NFT_TRANSFER_FEE_SOUL, 'nft_fee',
                         counter=recipient["id"], ref_type='nft', ref_id=body.nft_id)
         c.execute("UPDATE soc_economy_state SET system_balance = system_balance + ? WHERE is_active=1", (NFT_TRANSFER_FEE_SOUL,))
-        # Снимаем с маркета если был выставлен
         c.execute("DELETE FROM soc_nft_listings WHERE nft_id=?", (body.nft_id,))
-        # Передаём
         c.execute("UPDATE soc_nfts SET owner_id=? WHERE id=?", (recipient["id"], body.nft_id))
         sender_new = _soul_balance(c, user["id"])
         c.execute("COMMIT")
@@ -8395,7 +7998,6 @@ def _draw_giveaway(gid: int) -> dict:
                 "INSERT INTO soc_giveaway_winners (giveaway_id, user_id, prize_gost, created_at) "
                 "VALUES (?,?,?,?)", (gid, win_uid, prize, now),
             )
-            # source='giveaway' не покрыт partial дедуп-индексом — начисляем прямо тут
             c.execute("INSERT OR IGNORE INTO soc_wallets (user_id) VALUES (?)", (win_uid,))
             c.execute(
                 "INSERT INTO soc_wallet_tx (user_id, currency, delta, source, actor_id, ref_type, ref_id) "
@@ -8415,7 +8017,6 @@ def _draw_giveaway(gid: int) -> dict:
         c.close()
         raise
     c.close()
-    # WS-пуши вне транзакции: подсветить +Gost в кошельке и сообщить о победе
     for win_uid, prize, new_bal in winners_payload:
         ws_hub.send_to(win_uid, "wallet.credit", {
             "currency": "gost", "delta": prize, "source": "giveaway", "balance": new_bal,
@@ -8522,7 +8123,6 @@ def giveaway_enter(gid: int, authorization: Optional[str] = Header(None)):
     return {"entered": True, "already": already, "entries_count": count}
 
 
-# ── Админские ручки (только владелец, GE_ADMIN_TOKEN) ──
 
 class GiveawayCreateBody(BaseModel):
     title: str
@@ -8622,7 +8222,6 @@ def giveaway_delete(gid: int, token: str = Query(...)):
     return {"status": "ok"}
 
 
-# ============================================================
 
 def _ensure_saved_table():
     c = db()
@@ -8731,7 +8330,6 @@ def my_reacted(offset: int = Query(0), limit: int = Query(20), authorization: Op
     c.close()
     return out
 
-# ============================================================================
 
 class MiniskaV2Item(BaseModel):
     url: str
@@ -8767,7 +8365,6 @@ def v11_create_miniska_carousel(body: MiniskaV2Body,
     video_count = 0
     media = []
     for it in items:
-        # it может быть dict или модель — берём поля аккуратно
         url = (it.get("url") if isinstance(it, dict) else getattr(it, "url", "")) or ""
         mtype = (it.get("type") if isinstance(it, dict) else getattr(it, "type", "image")) or "image"
         mtype = "video" if mtype == "video" else "image"
@@ -8783,7 +8380,6 @@ def v11_create_miniska_carousel(body: MiniskaV2Body,
             video_count += 1
             if video_count > 1:
                 raise HTTPException(400, "Максимум одно видео в миниске")
-            # длительность через ffprobe (как в старой ручке)
             try:
                 import subprocess
                 out = subprocess.run(

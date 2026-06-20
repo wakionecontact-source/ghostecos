@@ -20,15 +20,12 @@ _PRIVATE_PATH_PREFIXES = (
 class _SecHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
-        # Универсальные защитные заголовки
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-        # Не выдаём версию сервера
         if "server" in response.headers:
             del response.headers["server"]
-        # Приватные данные не должны кэшироваться прокси/CDN
         path = request.url.path
         if any(path.startswith(p) for p in _PRIVATE_PATH_PREFIXES):
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
@@ -52,7 +49,6 @@ _RL_WINDOW = 60          # за секунд
 _RL_EXCLUDE_PREFIXES = ("/api/soc/ws",)  # WebSocket свой keepalive имеет
 
 def _rl_key(req: Request) -> str:
-    # Авторизованные — по токену (стабильный, переживает смену IP).
     a = req.headers.get("authorization") or ""
     if a.startswith("Bearer ") and len(a) > 16:
         return "t:" + a[7:23]  # префикс достаточен для группировки
@@ -69,7 +65,6 @@ class _GlobalRateLimitMiddleware(BaseHTTPMiddleware):
             key = _rl_key(request)
             now = _gtime.time()
             dq = _RL_BUCKETS.setdefault(key, _gdq())
-            # Удаляем старше окна
             while dq and now - dq[0] > _RL_WINDOW:
                 dq.popleft()
             if len(dq) >= _RL_MAX:
@@ -81,7 +76,6 @@ class _GlobalRateLimitMiddleware(BaseHTTPMiddleware):
                     headers={"Retry-After": str(retry_after)},
                 )
             dq.append(now)
-            # Опциональная уборка старых ключей (раз в N запросов)
             if len(_RL_BUCKETS) > 5000 and len(dq) == 1:
                 cutoff = now - _RL_WINDOW * 2
                 stale = [k for k, d in _RL_BUCKETS.items() if not d or d[-1] < cutoff]
@@ -91,10 +85,8 @@ class _GlobalRateLimitMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(_GlobalRateLimitMiddleware)
 
-# CORS: явный whitelist наших доменов.
 _ALLOWED_ORIGINS = [
     "https://ghostecos.duckdns.org",
-    # Локальные dev-серверы для разработки (на проде nginx всё равно режет посторонние)
     "http://localhost:8005",
     "http://127.0.0.1:8005",
 ]
@@ -106,14 +98,10 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
-# Создаем папку для медиафайлов, если её нет
 os.makedirs("/opt/ghostchat/media", exist_ok=True)
-# Раздаем медиа-файлы станично по адресу /media
 app.mount("/media", StaticFiles(directory="/opt/ghostchat/media"), name="media")
 
-# Подключаем роуты GhostSocial
 app.include_router(social_router)
-# Подключаем роуты GhostChat (ЛС)
 app.include_router(chat_router)
 
 @app.get("/api/soc/health")
