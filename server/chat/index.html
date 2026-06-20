@@ -7291,11 +7291,37 @@ function connectWS(){
     if (ev && (ev.code === 1008 || ev.code === 4401 || ev.code === 4403)) {
       _wsAuthFail = true; return;
     }
+    // Если мы намеренно закрыли WS из-за скрытой вкладки — не реконнектим
+    // в фоне. Это сэкономит батарею + не будет идти зомби-handshake'ов.
+    // connectWS вызовется обратно когда vкладка станет visible.
+    if (_wsPausedByVisibility) return;
     setTimeout(connectWS, wsReconnect);
     wsReconnect = Math.min(wsReconnect*2, 30000);
   };
   ws.onerror = () => { try{ws.close();}catch(e){} };
 }
+
+// Visibility-aware WS: при скрытии вкладки закрываем сокет и
+// останавливаем ping (Chrome всё равно throttle'ит таймеры). При
+// возврате в foreground — connectWS заново.
+let _wsPausedByVisibility = false;
+function _onTabHidden(){
+  if (!ws || ws.readyState !== 1) return;
+  _wsPausedByVisibility = true;
+  clearInterval(pingTimer); clearTimeout(_pongTimeoutTimer);
+  try { ws.close(1000, 'tab hidden'); } catch(_){}
+}
+function _onTabVisible(){
+  if (_wsPausedByVisibility){
+    _wsPausedByVisibility = false;
+    wsReconnect = 1000;  // сразу, без backoff
+    connectWS();
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') _onTabHidden();
+  else _onTabVisible();
+});
 
 // При возврате на вкладку (browser suspended → wake) проверяем WS и догоняем
 // pending. Без этого juзер видел "залипшие" сообщения — пришедшие пока tab
