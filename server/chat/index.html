@@ -1643,14 +1643,17 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 
 <div class="toast" id="toast"></div>
 
-<script src="/mesh.js"></script>
-<script src="/dialog.js"></script>
-<!-- QR-генератор для синхронизации устройств. ~10kb, defer чтобы не блокировать boot. -->
+<!-- Все external скрипты с defer: парсинг HTML не блокируется на загрузке.
+     Порядок выполнения сохраняется (defer гарантирует это для скриптов с src).
+     Раньше эти 5 скриптов БЕЗ defer держали HTML парсер на каждом round-trip
+     до сервера → /chat/ грузилось в 10 раз медленнее /social/ при одной сети. -->
+<script defer src="/mesh.js"></script>
+<script defer src="/dialog.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
 <!-- GhostChat Keys v2: TweetNaCl + BIP-39 wordlist + наш модуль. -->
-<script src="/chat/nacl.min.js"></script>
-<script src="/chat/bip39_en.js"></script>
-<script src="/chat/keys_v2.js"></script>
+<script defer src="/chat/nacl.min.js"></script>
+<script defer src="/chat/bip39_en.js"></script>
+<script defer src="/chat/keys_v2.js"></script>
 <script>
 // ════════════════════════════════════════════════════════════════════
 // GhostChat web — E2E-зашифрованный мессенджер
