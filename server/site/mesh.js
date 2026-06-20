@@ -29,9 +29,12 @@
   const COLOR_DOT = "rgba(168, 85, 247, 0.85)";   // --primary
   const LINE_RGB  = "168, 85, 247";               // для rgba с альфой
   function countFor(area) {
-    // ~1 точка на 9000 px², ограничим разумными рамками
-    const n = Math.round(area / 9000);
-    return Math.max(35, Math.min(n, 110));
+    // ~1 точка на 16000 px², ограничим разумными рамками.
+    // (Раньше было 9000 + max 110 → mesh жрал 51.9% main thread по профилю
+    // юзера. Уменьшил плотность вдвое, max до 60 — O(n²) проверок соседей
+    // упало с 110*110≈12100 до 60*60=3600 за кадр.)
+    const n = Math.round(area / 16000);
+    return Math.max(25, Math.min(n, 60));
   }
   function resize() {
     W = window.innerWidth;
@@ -182,11 +185,24 @@
     // случай, когда visibilitychange запросил ещё один rAF параллельно текущему —
     // без guard со временем накапливалось N параллельных tick-циклов и
     // частицы летали с N-кратной скоростью.
-    if (running && !rafId) rafId = requestAnimationFrame(tick);
+    if (running && !rafId) rafId = requestAnimationFrame(_throttledTick);
+  }
+  // FPS-throttle: рисуем mesh раз в 2 кадра монитора (60Hz → 30fps).
+  // На анимации движущихся частиц глаз почти не отличит, зато main thread
+  // в 2 раза меньше времени на расчёт O(n²) соседей.
+  let _meshFrameN = 0;
+  function _throttledTick(){
+    _meshFrameN++;
+    if (_meshFrameN % 2 === 0){
+      rafId = 0;
+      if (running && !rafId) rafId = requestAnimationFrame(_throttledTick);
+      return;
+    }
+    tick();
   }
 
   function schedule() {
-    if (running && !rafId) rafId = requestAnimationFrame(tick);
+    if (running && !rafId) rafId = requestAnimationFrame(_throttledTick);
   }
 
   document.addEventListener("visibilitychange", () => {
