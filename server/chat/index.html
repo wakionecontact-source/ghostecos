@@ -945,6 +945,27 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 .pd-close{position:absolute;top:calc(14px + env(safe-area-inset-top));right:12px;width:34px;height:34px;border-radius:50%;border:none;background:rgba(255,255,255,0.06);color:var(--text);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;}
 .pd-close:hover{background:rgba(255,255,255,0.12);}
 .pd-ava{width:78px;height:78px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;color:#fff;font-size:32px;font-weight:700;box-shadow:0 8px 28px rgba(168,85,247,0.35);margin-bottom:12px;overflow:hidden;}
+/* Ряд аккаунтов сверху шторки — мини-аватарки + кнопка «+» как в TG.
+   Скрыто если аккаунт всего один (только текущий) — нечего показывать. */
+.pd-acct-row{position:absolute;top:calc(14px + env(safe-area-inset-top));left:18px;right:56px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.pd-acct{
+  width:32px;height:32px;border-radius:50%;border:2px solid transparent;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:800;
+  background:linear-gradient(135deg,var(--primary),var(--primary2));position:relative;overflow:hidden;
+  transition:transform .15s,border-color .18s;flex-shrink:0;
+}
+.pd-acct img{width:100%;height:100%;object-fit:cover;}
+.pd-acct:hover{transform:scale(1.06);}
+.pd-acct.active{border-color:#fff;box-shadow:0 0 0 2px rgba(168,85,247,0.55);}
+.pd-acct-add{
+  width:32px;height:32px;border-radius:50%;border:1px dashed rgba(255,255,255,0.30);
+  background:transparent;color:rgba(255,255,255,0.7);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;
+  transition:background .15s,color .15s,border-color .15s,transform .15s;
+}
+.pd-acct-add:hover{background:rgba(255,255,255,0.08);color:#fff;border-color:rgba(255,255,255,0.50);transform:scale(1.06);}
+.pd-item.accent{color:#fff;}
+.pd-item.accent i{color:#fff;background:linear-gradient(135deg,#a855f7,#ec4899);width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:10px;box-shadow:inset 1px 1px 0 rgba(255,255,255,0.22);}
 .pd-ava img{width:100%;height:100%;object-fit:cover;}
 .pd-name{font-size:18px;font-weight:700;color:var(--text);line-height:1.2;margin-bottom:3px;word-break:break-word;}
 .pd-handle{font-size:13px;color:var(--sub);font-weight:500;}
@@ -1118,12 +1139,15 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
   <div class="pd-backdrop" id="pdBackdrop" onclick="closeProfileDrawer()"></div>
   <aside class="pd-drawer" id="pdDrawer" role="dialog" aria-label="Профиль">
     <div class="pd-head">
+      <!-- Ряд аватарок других аккаунтов (по Telegram-style multi-account) -->
+      <div class="pd-acct-row" id="pdAcctRow"></div>
       <button class="pd-close" onclick="closeProfileDrawer()" title="Закрыть"><i class="fa-solid fa-xmark"></i></button>
       <div class="pd-ava" id="pdAva">?</div>
       <div class="pd-name" id="pdName">—</div>
       <div class="pd-handle" id="pdHandle">@—</div>
     </div>
     <nav class="pd-list">
+      <button class="pd-item accent" onclick="closeProfileDrawer();accountsAdd()"><i class="fa-solid fa-plus"></i> Добавить аккаунт</button>
       <button class="pd-item" onclick="closeProfileDrawer();openSettings()"><i class="fa-solid fa-gear"></i> Настройки</button>
       <button class="pd-item" id="pdInstallItem" onclick="closeProfileDrawer();openInstall()" style="display:none;"><i class="fa-solid fa-mobile-screen"></i> Установить как приложение</button>
       <div class="pd-divider"></div>
@@ -1646,6 +1670,80 @@ let token=localStorage.getItem('gs_token');
 let me=null;
 try { me = JSON.parse(localStorage.getItem('gs_me')||'null'); }
 catch(_) { localStorage.removeItem('gs_me'); me=null; }
+
+// ── Multi-account storage ────────────────────────────────────────────
+// gs_accounts: массив активных аккаунтов [{token, id, username, display_name}, ...]
+// gs_token / gs_me — legacy одиночные ключи; синхронно отражают активный аккаунт
+// (это нужно чтобы остальной код, читающий localStorage.gs_token, работал без правок).
+function accountsLoad(){
+  try { return JSON.parse(localStorage.getItem('gs_accounts') || '[]') || []; }
+  catch(_){ return []; }
+}
+function accountsSave(arr){ localStorage.setItem('gs_accounts', JSON.stringify(arr || [])); }
+function accountsActiveIndex(){
+  const arr = accountsLoad();
+  if (!arr.length) return -1;
+  const cur = localStorage.getItem('gs_token');
+  const idx = arr.findIndex(a => a && a.token === cur);
+  return idx >= 0 ? idx : 0;
+}
+function accountsActive(){
+  const arr = accountsLoad();
+  const i = accountsActiveIndex();
+  return i >= 0 ? arr[i] : null;
+}
+// При успешном login/register/seed-recovery — сохраняем аккаунт в массиве
+// (и одновременно остаётся активным через legacy gs_token).
+function accountsAddOrUpdate(token, meObj){
+  if (!token || !meObj || !meObj.username) return;
+  const arr = accountsLoad();
+  const rec = {
+    token,
+    id: meObj.id || meObj.user_id || 0,
+    username: meObj.username,
+    display_name: meObj.display_name || meObj.username,
+  };
+  const i = arr.findIndex(a => a && a.username === rec.username);
+  if (i >= 0) arr[i] = rec;
+  else arr.push(rec);
+  accountsSave(arr);
+}
+// Переключение активного аккаунта: синхронизирует legacy ключи и перезагружает страницу.
+function accountsSwitchTo(idx){
+  const arr = accountsLoad();
+  if (idx < 0 || idx >= arr.length) return;
+  const a = arr[idx];
+  localStorage.setItem('gs_token', a.token);
+  localStorage.setItem('gs_me', JSON.stringify({id: a.id, user_id: a.id, username: a.username, display_name: a.display_name, is_guest: false}));
+  try { setSsoCookie(a.token); } catch(_){}
+  location.reload();
+}
+// Открытие auth-экрана как «добавление аккаунта» — НЕ удаляет текущие
+// данные, помечает флагом что после login надо положить в массив,
+// и при отмене (close) возвращает обратно в текущий аккаунт.
+function accountsAdd(){
+  sessionStorage.setItem('gs_adding_account', '1');
+  // Сохраняем backup активного, чтобы при «Отмена» вернуть.
+  const cur = accountsActive();
+  if (cur) sessionStorage.setItem('gs_acc_backup', JSON.stringify(cur));
+  // Освобождаем legacy ключи — showAuth увидит как «нет токена» и покажет форму.
+  localStorage.removeItem('gs_token');
+  localStorage.removeItem('gs_me');
+  try { clearSsoCookie && clearSsoCookie(); } catch(_){}
+  // Закрываем WS чтобы не дребезжал в фоне.
+  try { if (ws) ws.close(1000, 'add account'); } catch(_){}
+  location.reload();
+}
+// Удалить текущий аккаунт из массива (используется в doLogout).
+function accountsRemoveCurrent(){
+  const arr = accountsLoad();
+  const i = accountsActiveIndex();
+  if (i < 0) return arr;
+  arr.splice(i, 1);
+  accountsSave(arr);
+  return arr;
+}
+
 let myPriv=null;             // CryptoKey (X25519 приватный) на сессию
 let myPub=null;              // base64 публичного
 let pubCache=new Map();      // username -> base64 pub
@@ -4060,6 +4158,9 @@ async function doLogin(){
     }
     token=d.token;me=d;
     localStorage.setItem('gs_token',token);localStorage.setItem('gs_me',JSON.stringify(me));setSsoCookie(token);
+    accountsAddOrUpdate(token, me);
+    sessionStorage.removeItem('gs_adding_account');
+    sessionStorage.removeItem('gs_acc_backup');
     showBoot('Подготовка чата', 'Минуточку…');
     await ensureKeys(p);
     // ensureKeys уже сохраняет pkcs8 в IDB внутри
@@ -4139,6 +4240,9 @@ async function _tdaPendingPoll(ctx){
       localStorage.setItem('gs_token', token);
       localStorage.setItem('gs_me', JSON.stringify(me));
       try { setSsoCookie(token); } catch(_){}
+      accountsAddOrUpdate(token, me);
+      sessionStorage.removeItem('gs_adding_account');
+      sessionStorage.removeItem('gs_acc_backup');
       showBoot('Подготовка чата', 'Подтверждение получено…');
       try {
         await ensureKeys(ctx.password);
@@ -4189,6 +4293,9 @@ async function doRegister(){
     }
     token=d.token;me=d;
     localStorage.setItem('gs_token',token);localStorage.setItem('gs_me',JSON.stringify(me));setSsoCookie(token);
+    accountsAddOrUpdate(token, me);
+    sessionStorage.removeItem('gs_adding_account');
+    sessionStorage.removeItem('gs_acc_backup');
     showBoot('Настройка профиля', 'Минуточку…');
     await ensureKeys(p);
     // ensureKeys уже сохраняет pkcs8 в IDB внутри
@@ -4283,12 +4390,24 @@ function appPrompt(title, msg, opts){
   });
 }
 function doLogout(){
+  const arr = accountsLoad();
+  const hasOthers = arr.length > 1;
   showConfirm({
     title:'Выйти из аккаунта?',
-    msg:'Вы выйдете во всех вкладках GhostEcos — соцсеть, чат и магазин.',
+    msg: hasOthers
+      ? 'Этот аккаунт уберём из панели. Другие добавленные останутся.'
+      : 'Вы выйдете во всех вкладках GhostEcos — соцсеть, чат и магазин.',
     okText:'Выйти',
     onOk:async()=>{
       await wipeKeysIDB();
+      // Убираем текущий из массива.
+      const left = accountsRemoveCurrent();
+      if (left.length){
+        // Есть другие — переключаемся на первый. accountsSwitchTo сделает reload.
+        accountsSwitchTo(0);
+        return;
+      }
+      // Это был последний аккаунт — обычный logout.
       token=null;me=null;myPriv=null;myPub=null;
       localStorage.removeItem('gs_token');localStorage.removeItem('gs_me');clearSsoCookie();
       try{ws&&ws.close();}catch(e){}
@@ -5502,6 +5621,25 @@ function openProfileDrawer(){
   // PWA-install пункт показываем только если есть deferred prompt.
   const ii = document.getElementById('pdInstallItem');
   if (ii) ii.style.display = (window._deferredInstallPrompt || window._pwaCanInstall) ? '' : 'none';
+  // Multi-account row: миниатюры аккаунтов (кроме активного) + кнопка «+».
+  // Если в массиве только текущий — оставляем только «+».
+  try {
+    const row = document.getElementById('pdAcctRow');
+    if (row){
+      // Активный аккаунт должен быть в массиве — синхронизируем на лету.
+      if (me && me.username && localStorage.getItem('gs_token')){
+        accountsAddOrUpdate(localStorage.getItem('gs_token'), me);
+      }
+      const arr = accountsLoad();
+      const cur = accountsActiveIndex();
+      const others = arr.map((a, i) => ({a, i})).filter(x => x.i !== cur);
+      const chips = others.map(({a, i}) => {
+        const init = (a.display_name || a.username || '?').trim().charAt(0).toUpperCase();
+        return `<button class="pd-acct" title="@${esc(a.username)}" onclick="accountsSwitchTo(${i})">${esc(init)}</button>`;
+      }).join('');
+      row.innerHTML = chips + '<button class="pd-acct-add" title="Добавить аккаунт" onclick="closeProfileDrawer();accountsAdd()"><i class="fa-solid fa-plus"></i></button>';
+    }
+  } catch(_){}
   b.classList.add('open');
   d.classList.add('open');
   document.addEventListener('keydown', _pdEscClose);
