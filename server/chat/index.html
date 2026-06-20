@@ -7908,8 +7908,9 @@ init();
 // ════════════════════════════════════════════════════════════════════
 async function loadGroups(){
   try {
-    const r = await chat('/group/my');
-    groups = Array.isArray(r) ? r : [];
+    const r = await wsCall('group.my', null, () => chat('/group/my'));
+    // WS ответ: {request_id, groups: [...]}; HTTP — массив напрямую.
+    groups = Array.isArray(r) ? r : (r && Array.isArray(r.groups) ? r.groups : []);
     renderDialogs(document.getElementById('sbSearch').value);
     // Подтянем pending для каждой группы параллельно (не блокируем UI)
     for (const g of groups) {
@@ -8453,7 +8454,7 @@ async function ingestGroupIncoming(m){
 
 async function fetchGroupPending(gid){
   try {
-    const d = await chat(`/group/${gid}/pending`);
+    const d = await wsCall('group.pending', { gid }, () => chat(`/group/${gid}/pending`));
     if (!d.messages || !d.messages.length) return;
     const ackIds = [];
     for (const m of d.messages) {

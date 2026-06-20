@@ -1298,6 +1298,81 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 c.close()
                 await websocket.send_json({"type": "contacts.check.ok", "data": {"request_id": rid, "in_contacts": r is not None}})
 
+            # ── group.my: список моих групп ──
+            elif t == "group.my" and uid:
+                rid = data.get("request_id")
+                c = db()
+                rows = c.execute("""
+                    SELECT g.id, g.name, g.kind, g.owner_id, g.created_at,
+                           g.username, g.bio, g.is_public,
+                           m.is_admin,
+                           (SELECT COUNT(*) FROM chat_group_members WHERE group_id=g.id) as members_count
+                    FROM chat_groups g
+                    JOIN chat_group_members m ON m.group_id = g.id
+                    WHERE m.user_id = ?
+                    ORDER BY g.id DESC
+                """, (uid,)).fetchall()
+                c.close()
+                groups = [{
+                    "id": r["id"], "name": r["name"], "kind": r["kind"],
+                    "owner_id": r["owner_id"], "username": r["username"],
+                    "bio": r["bio"], "is_public": bool(r["is_public"]),
+                    "is_admin": bool(r["is_admin"]),
+                    "is_owner": r["owner_id"] == uid,
+                    "members_count": r["members_count"],
+                    "created_at": r["created_at"],
+                } for r in rows]
+                await websocket.send_json({"type": "group.my.ok", "data": {"request_id": rid, "groups": groups}})
+
+            # ── group.pending: {gid} → сообщения группы, которые я не ack-ал ──
+            elif t == "group.pending" and uid:
+                rid = data.get("request_id")
+                gid = data.get("gid")
+                if not isinstance(gid, int):
+                    await websocket.send_json({"type": "group.pending.err", "data": {"request_id": rid, "error": "gid required"}})
+                    continue
+                try:
+                    from .chat_router import _rate_limit as _rl, _is_group_member as _ism
+                    _rl(f"grouppend:{uid}:{gid}", limit=20, window=60)
+                except HTTPException as he:
+                    await websocket.send_json({"type": "group.pending.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    continue
+                c = db()
+                if not _ism(c, gid, uid):
+                    c.close()
+                    await websocket.send_json({"type": "group.pending.err", "data": {"request_id": rid, "error": "Не участник группы"}})
+                    continue
+                rows = c.execute("""
+                    SELECT m.id, m.sender_id, m.ciphertext, m.envelope_keys, m.created_at,
+                           u.username as from_username, u.display_name as from_display_name
+                    FROM chat_group_messages m
+                    JOIN users u ON u.id = m.sender_id
+                    LEFT JOIN chat_group_acks a ON a.msg_id = m.id AND a.user_id = ?
+                    WHERE m.group_id = ? AND a.msg_id IS NULL AND m.sender_id <> ?
+                    ORDER BY m.id ASC
+                    LIMIT 500
+                """, (uid, gid, uid)).fetchall()
+                c.close()
+                out = []
+                for r in rows:
+                    try:
+                        envs = json.loads(r["envelope_keys"])
+                    except Exception:
+                        envs = {}
+                    my_env = envs.get(str(uid))
+                    if not my_env:
+                        continue
+                    out.append({
+                        "id": r["id"], "group_id": gid,
+                        "sender_id": r["sender_id"],
+                        "from_username": r["from_username"],
+                        "from_display_name": r["from_display_name"],
+                        "ciphertext": r["ciphertext"],
+                        "envelope_keys": {str(uid): my_env},
+                        "created_at": r["created_at"],
+                    })
+                await websocket.send_json({"type": "group.pending.ok", "data": {"request_id": rid, "messages": out}})
+
             # ── tda.pending.list: pending-логины текущего юзера ──
             elif t == "tda.pending.list" and uid:
                 rid = data.get("request_id")
