@@ -343,6 +343,16 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
             "SELECT u.id, u.username FROM soc_tokens t JOIN users u ON u.id=t.user_id WHERE t.token=?",
             (token,)
         ).fetchone()
+        if not row:
+            # TDA-1 bridge: device-уровневый токен из user_devices (после recovery
+            # или /login с device_id попадает сюда, а НЕ в soc_tokens). HTTP auth()
+            # тоже делает этот fallback — WS без него видел юзера как гостя.
+            row = c.execute(
+                "SELECT u.id, u.username FROM users u "
+                "JOIN user_devices d ON d.user_id=u.id "
+                "WHERE d.token=? AND d.is_active=1 AND d.is_blocked=0 LIMIT 1",
+                (token,)
+            ).fetchone()
         c.close()
         if row:
             uid = row["id"]
@@ -2075,6 +2085,11 @@ def init():
     try: c.execute("ALTER TABLE users ADD COLUMN moderator_reprimands INTEGER NOT NULL DEFAULT 0")  # 0..3, 4й=снятие
     except sqlite3.OperationalError: pass
     try: c.execute("ALTER TABLE users ADD COLUMN moderator_since INTEGER")  # когда дали роль
+    except sqlite3.OperationalError: pass
+    # Incognito-аккаунты: создаются кнопкой «Инкогнито» на auth-экране,
+    # имеют рандомный username, токен только в sessionStorage браузера,
+    # удаляются вместе с закрытием окна (через navigator.sendBeacon).
+    try: c.execute("ALTER TABLE users ADD COLUMN is_anon INTEGER NOT NULL DEFAULT 0")
     except sqlite3.OperationalError: pass
     # Заявки на роль модератора
     try:

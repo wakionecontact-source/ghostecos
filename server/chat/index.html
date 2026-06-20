@@ -57,7 +57,7 @@ button,input,textarea{font-family:inherit;}
 
 /* APP */
 #app{display:none;height:100vh;height:100dvh;overflow:hidden;}
-.app-grid{display:grid;grid-template-columns:1fr;grid-template-rows:minmax(0,1fr);height:100%;min-height:0;overflow:hidden;}
+.app-grid{display:grid;grid-template-columns:1fr;grid-template-rows:minmax(0,1fr);height:calc(100% - var(--km-h, 0px));min-height:0;overflow:hidden;margin-top:var(--km-h, 0px);transition:margin-top .2s ease, height .2s ease;}
 @media (min-width:800px){.app-grid{grid-template-columns:340px 1fr;}}
 
 .sb{display:flex;flex-direction:column;border-right:1px solid var(--border);background:rgba(2,6,23,0.96);min-width:0;height:100%;}
@@ -2751,22 +2751,23 @@ function showKeyMissingBanner(){
   b.innerHTML = `
     <div class="km-ico"><i class="fa-solid fa-key"></i></div>
     <div class="km-text">
-      <div class="km-title">Приватный ключ не загружен</div>
-      <div class="km-sub">Сообщения не расшифровываются и не отправляются. Получите ключ с другого вашего устройства.</div>
+      <div class="km-title">Старого ключа нет на этом устройстве</div>
+      <div class="km-sub">Прошлая переписка останется зашифрованной. Подгрузи ключ с другого устройства или сбрось его и начни новую переписку.</div>
     </div>
     <div class="km-acts">
-      <button class="km-btn" onclick="openKeysyncReceive()"><i class="fa-solid fa-qrcode"></i> QR</button>
+      <button class="km-btn" onclick="openKeysyncReceive()"><i class="fa-solid fa-qrcode"></i> QR с другого устройства</button>
       <button class="km-btn" onclick="openKeyFileImport()"><i class="fa-solid fa-file-arrow-up"></i> Файл</button>
-      <button class="km-btn alt" onclick="kmSwitchToServerMode()" title="Переключиться на режим «На сервере»">Сервер</button>
+      <button class="km-btn alt" onclick="rotateMyKeys()" title="Сгенерировать новый ключ — старая переписка станет нечитаемой">Сбросить ключ</button>
     </div>
     <button class="km-close" onclick="hideKeyMissingBanner()" title="Скрыть"><i class="fa-solid fa-xmark"></i></button>
   `;
   document.body.appendChild(b);
-  // Чтобы баннер не перекрывал шапку чата — даём body отступ сверху равный
-  // высоте баннера (фиксируем после appendChild, когда измерения корректны).
+  // Высота баннера → CSS-переменная --km-h. app-grid использует её, чтобы
+  // съехать вниз и одновременно сократить свою высоту — низ страницы не
+  // обрезается (раньше body padding-top пушил контент за пределы 100dvh).
   requestAnimationFrame(() => {
     const h = b.offsetHeight || 56;
-    document.body.style.paddingTop = h + 'px';
+    document.documentElement.style.setProperty('--km-h', h + 'px');
     document.body.setAttribute('data-km-shown', '1');
   });
 }
@@ -2774,7 +2775,7 @@ function showKeyMissingBanner(){
 function hideKeyMissingBanner(){
   const el = document.getElementById('_keyMissingBanner');
   if (el) el.remove();
-  document.body.style.paddingTop = '';
+  document.documentElement.style.setProperty('--km-h', '0px');
   document.body.removeAttribute('data-km-shown');
   window._keyMissing = false;
 }
