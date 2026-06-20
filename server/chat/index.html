@@ -8,6 +8,14 @@
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <!-- PWA -->
 <link rel="manifest" href="/chat/manifest.json">
+<script>
+// Регистрируем sw.js: он сам unregister'ится и чистит старые caches.
+// Без этого юзеры с залипшим старым SW из прошлых установок продолжают
+// получать stale-код (см. бывшие 33-секундные загрузки + 404 на /v2/...).
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/chat/sw.js').catch(() => {});
+}
+</script>
 <meta name="theme-color" content="#7c3aed">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -7758,31 +7766,22 @@ async function init(){
   // Открываем WS первым — сервер пришлёт hello с полным профилем
   connectWS();
   let d;
+  // hello через WS И HTTP /me параллельно — побеждает кто быстрее.
+  // Раньше: 8с timeout, потом fallback → worst-case 8с+RTT. Теперь оба гонятся сразу.
+  const helloP = (_helloPromise || Promise.reject(new Error('no hello promise')))
+    .catch(() => new Promise(()=>{}));
+  const httpP = soc('/me').catch(() => new Promise(()=>{}));
   try {
     d = await Promise.race([
-      _helloPromise || Promise.reject(new Error('no hello promise')),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('hello timeout')), 8000)),
+      Promise.any([helloP, httpP]),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('init timeout')), 2500)),
     ]);
   } catch(_) {
-    if (ws && ws.readyState === 1 && _helloPromise){
-      // WS открыт — ждём hello без таймаута. Если разорвётся, _helloReject
-      // вызовется в connectWS на следующем reconnect.
-      try { d = await _helloPromise; }
-      catch(_){
-        try { d = await soc('/me'); }
-        catch(e){
-          token=null; me=null;
-          localStorage.removeItem('gs_token'); localStorage.removeItem('gs_me'); clearSsoCookie();
-          showAuth(); return;
-        }
-      }
-    } else {
-      try { d = await soc('/me'); }
-      catch(e) {
-        token=null; me=null;
-        localStorage.removeItem('gs_token'); localStorage.removeItem('gs_me'); clearSsoCookie();
-        showAuth(); return;
-      }
+    try { d = await soc('/me'); }
+    catch(e) {
+      token=null; me=null;
+      localStorage.removeItem('gs_token'); localStorage.removeItem('gs_me'); clearSsoCookie();
+      showAuth(); return;
     }
   }
   try {

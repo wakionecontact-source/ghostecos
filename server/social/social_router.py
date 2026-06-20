@@ -436,9 +436,12 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
             data = ev.get("data") or {}
 
             # ── cs.hello: handshake (один раз на коннект, опционально) ──
+            # ECDH/HKDF — CPU-bound (~30-60мс), уносим в thread чтобы не
+            # блокировать event loop. Иначе параллельные коннекты ждут в
+            # очереди и handshake занимает секунды.
             if t == "cs.hello" and _aesgcm is None:
                 try:
-                    import os as _os, base64 as _b64
+                    import os as _os, base64 as _b64, asyncio as _aio
                     from cryptography.hazmat.primitives.asymmetric import ec as _ec
                     from cryptography.hazmat.primitives.serialization import Encoding as _ENC, PublicFormat as _PF
                     from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -449,14 +452,16 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     if len(client_pub_raw) != 65:
                         await websocket.send_json({"type":"cs.hello.err","data":{"error":"client_pub: 65 байт"}})
                         continue
-                    client_key = _ec.EllipticCurvePublicKey.from_encoded_point(_ec.SECP256R1(), client_pub_raw)
-                    server_priv = _ec.generate_private_key(_ec.SECP256R1())
-                    shared = server_priv.exchange(_ec.ECDH(), client_key)
-                    master = HKDF(algorithm=hashes.SHA256(), length=32, salt=b'\x00'*32, info=b'ghostchat-cs-v1').derive(shared)
-                    _aesgcm = AESGCM(master)
+                    def _do_ecdh():
+                        client_key = _ec.EllipticCurvePublicKey.from_encoded_point(_ec.SECP256R1(), client_pub_raw)
+                        server_priv = _ec.generate_private_key(_ec.SECP256R1())
+                        shared = server_priv.exchange(_ec.ECDH(), client_key)
+                        master = HKDF(algorithm=hashes.SHA256(), length=32, salt=b'\x00'*32, info=b'ghostchat-cs-v1').derive(shared)
+                        aes = AESGCM(master)
+                        spub = server_priv.public_key().public_bytes(_ENC.X962, _PF.UncompressedPoint)
+                        return aes, spub
+                    _aesgcm, server_pub_raw = await _aio.to_thread(_do_ecdh)
                     ws_hub.set_crypto(websocket, _aesgcm)
-                    server_pub_raw = server_priv.public_key().public_bytes(_ENC.X962, _PF.UncompressedPoint)
-                    # cs.hello.ok — последнее plain сообщение от сервера
                     await websocket.send_json({"type":"cs.hello.ok","data":{
                         "server_pub": _b64.b64encode(server_pub_raw).decode(),
                     }})
