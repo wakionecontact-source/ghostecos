@@ -7361,12 +7361,28 @@ async function wsAck(ids){
   }
   try { return await chat('/ack', 'POST', { ids }); } catch(_){ return { deleted: 0 }; }
 }
-// Универсальный wsCall: пробует WS RPC, при ошибке/закрытом WS — fallback на HTTP.
-// fallbackHttp — функция возвращающая Promise.
+// Универсальный wsCall: пробует WS RPC, при закрытом WS — fallback на REST.
+// fallbackHttp — функция возвращающая Promise (через fetch/https).
+// Если WS открыт но handshake-крипта не готова — короткое ожидание (1.5с),
+// потом всё равно через WS с увеличенным timeout. Так избегаем массовых
+// REST-fallback'ов сразу после reconnect'а (handshake занимает 200-500мс).
 async function wsCall(action, data, fallbackHttp, timeoutMs){
+  // Если WS открывается — подождать чуть-чуть, не падать в REST сразу.
+  if (ws && ws.readyState === 0){
+    for (let i = 0; i < 15 && ws && ws.readyState === 0; i++){
+      await new Promise(r => setTimeout(r, 100));
+    }
+  }
   if (ws && ws.readyState === 1){
-    try { return await wsRpc(action, data || {}, timeoutMs || 8000); }
-    catch(e){ console.warn('[wsCall]', action, 'fell back to HTTP:', e.message); }
+    try { return await wsRpc(action, data || {}, timeoutMs || 15000); }
+    catch(e){
+      // Если соединение реально упало — fallback. Иначе пробрасываем ошибку
+      // (сервер ответил err, или таймаут на живой связи — REST тоже не поможет).
+      if (ws && ws.readyState === 1){
+        throw e;
+      }
+      console.warn('[wsCall]', action, 'WS dropped, REST fallback:', e.message);
+    }
   }
   if (typeof fallbackHttp === 'function') return await fallbackHttp();
   throw new Error('WS не подключён и нет fallback');
@@ -7504,11 +7520,18 @@ function connectWS(){
     // в фоне. Это сэкономит батарею + не будет идти зомби-handshake'ов.
     // connectWS вызовется обратно когда vкладка станет visible.
     if (_wsPausedByVisibility) return;
-    setTimeout(connectWS, wsReconnect);
+    // Дебаунс reconnect: иначе onclose + _onWakeup + storage-event могут
+    // запланировать несколько setTimeout(connectWS) одновременно — открывается
+    // 2-3 сокета подряд, каждый закрывается следующим (WebSocket is closed
+    // before the connection is established в console). Один pending — хватит.
+    if (_wsReconnectScheduled) return;
+    _wsReconnectScheduled = true;
+    setTimeout(() => { _wsReconnectScheduled = false; connectWS(); }, wsReconnect);
     wsReconnect = Math.min(wsReconnect*2, 30000);
   };
   ws.onerror = () => { try{ws.close();}catch(e){} };
 }
+let _wsReconnectScheduled = false;
 
 // Visibility-aware WS: при скрытии вкладки закрываем сокет и
 // останавливаем ping (Chrome всё равно throttle'ит таймеры). При
@@ -7549,12 +7572,14 @@ function _doWakeup(){
   _wakeupTimer = null;
   if (!token || _wsAuthFail) return;
   const now = Date.now();
-  // WS — если закрыт ИЛИ давно молчит (>40 сек) — реконнект.
-  // Браузер мог заморозить таймеры в фоне → ping не отправлялся → сервер закрыл,
-  // но onclose мог не сработать. _lastWsRecvAt — самый надёжный признак жизни.
+  // CONNECTING (readyState=0) — handshake идёт, нельзя считать stale, иначе
+  // wake-check на каждом visibilitychange/focus убивал свежий сокет, создавая
+  // гонку: connectWS_1 → onopen→cs.hello → _doWakeup_2 → kill → connectWS_3 …
+  if (ws && ws.readyState === 0) return;
+  // OPEN — живой если был приём <40с назад.
   const wsAlive = ws && ws.readyState === 1 && (now - _lastWsRecvAt < 40_000);
   if (!wsAlive) {
-    _killStaleWs('wake check');
+    if (ws && ws.readyState === 1) _killStaleWs('wake check');
     connectWS();
     return;
   }
