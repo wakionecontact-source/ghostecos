@@ -3313,6 +3313,10 @@ def get_posts(
 ):
     user = auth(authorization)
     uid = user["id"]
+    # DoS guard на классическую ленту /post.
+    _rate_limit(f"posts:{uid}", limit=120, window=60)
+    # Clamp offset чтобы не дёрнули миллион постов вперёд.
+    offset = max(0, min(int(offset or 0), 100000))
     c = db()
     # ── Алгоритм ранжирования постов ──
     # activity (0..1000) — главный коэффициент видимости (модерация + автомод)
@@ -3393,6 +3397,10 @@ def get_feed_candidates(
     """
     user = auth(authorization)
     uid = user["id"]
+    # DoS guard: каждый /post/feed делает 4 SQL (follow + fresh + top + random),
+    # массовая отправка (DevTools console for-loop) кладёт сервер за секунды.
+    # 60 запросов/мин на юзера — реалистичный максимум при свайп-ленте.
+    _rate_limit(f"feed:{uid}", limit=60, window=60)
     limit = max(5, min(100, limit))
     excluded: list = []
     if exclude:
@@ -3861,12 +3869,21 @@ def delete_post(post_id: int, authorization: Optional[str] = Header(None)):
 # ── Search ─────────────────────────────────────────────────────────────────────
 
 @router.get("/search")
-def search(q: str = Query(...), offset: int = Query(0), authorization: Optional[str] = Header(None)):
+def search(q: str = Query(..., max_length=120), offset: int = Query(0), authorization: Optional[str] = Header(None)):
     user = auth(authorization)
     uid = user["id"]
+    # DoS guard: внешний security audit (Воlдемар Домиров, 2026-06-20) показал
+    # что массовая отправка /search кладёт сервер. Каждый запрос делает 2
+    # SQL FULLTEXT-like через ci_contains. Лимит: 30 запросов/мин на юзера
+    # (для гостей uid=0 — общий пул).
+    _rate_limit(f"search:{uid}", limit=30, window=60)
     q = q.strip()
     if not q:
         raise HTTPException(400, "Empty query")
+    if len(q) < 2:
+        raise HTTPException(400, "Query too short")
+    if len(q) > 80:
+        raise HTTPException(400, "Query too long")
     c = db()
     if q.startswith("@"):
         term = q[1:].strip()
