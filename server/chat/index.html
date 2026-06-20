@@ -7304,21 +7304,23 @@ async function wsAck(ids){
 }
 // Универсальный wsCall: пробует WS RPC, при закрытом WS — fallback на REST.
 async function wsCall(action, data, fallbackHttp, timeoutMs){
-  // Если WS открывается — подождать чуть-чуть, не падать в REST сразу.
   if (ws && ws.readyState === 0){
-    for (let i = 0; i < 15 && ws && ws.readyState === 0; i++){
+    for (let i = 0; i < 10 && ws && ws.readyState === 0; i++){
       await new Promise(r => setTimeout(r, 100));
     }
   }
   if (ws && ws.readyState === 1){
-    try { return await wsRpc(action, data || {}, timeoutMs || 15000); }
-    catch(e){
-      // Если соединение реально упало — fallback. Иначе пробрасываем ошибку
-      // (сервер ответил err, или таймаут на живой связи — REST тоже не поможет).
-      if (ws && ws.readyState === 1){
-        throw e;
+    // Ждём cs.hello handshake max 1.5с — без него wsSendEnc ушлёт plain
+    // и сервер ответ не пришлёт (он в encrypted-режиме). Лучше сразу REST.
+    if (!_wsAesKey && _wsHandshakeReady){
+      try { await Promise.race([_wsHandshakeReady, new Promise(r=>setTimeout(()=>r(false), 1500))]); } catch(_){}
+    }
+    if (_wsAesKey){
+      try { return await wsRpc(action, data || {}, timeoutMs || 5000); }
+      catch(e){
+        if (ws && ws.readyState === 1){ throw e; }
+        console.warn('[wsCall]', action, 'WS dropped, REST fallback:', e.message);
       }
-      console.warn('[wsCall]', action, 'WS dropped, REST fallback:', e.message);
     }
   }
   if (typeof fallbackHttp === 'function') return await fallbackHttp();
@@ -7812,24 +7814,22 @@ async function init(){
     return;
   }
   if (loaded) {
-    try {
-      _tlog('wsStorageModeGet');
-      const modeRes = await wsStorageModeGet();
-      _tlog('storage mode=' + (modeRes && modeRes.mode));
-      if (!modeRes.mode){
-        const chosen = await pickKeyStorageMode();
-        await wsStorageModeSet({ mode: chosen });
-      }
-    } catch(e){
-      console.warn('[E2E] storage_mode check failed on init:', e);
-    }
-    _tlog('_checkLocalPubMatchesServer');
-    const ok = await _checkLocalPubMatchesServer();
-    _tlog('pub match=' + ok);
-    if (!ok) window._keyMissing = true;
-    _tlog('onReady() →');
+    _tlog('onReady() → (storage_mode + pub_match check в фоне)');
     await onReady();
     _tlog('onReady() ←');
+    (async () => {
+      try {
+        const modeRes = await wsStorageModeGet();
+        if (!modeRes.mode){
+          const chosen = await pickKeyStorageMode();
+          await wsStorageModeSet({ mode: chosen });
+        }
+      } catch(e){ console.warn('[E2E] storage_mode bg:', e.message); }
+      try {
+        const ok = await _checkLocalPubMatchesServer();
+        if (!ok) window._keyMissing = true;
+      } catch(e){ console.warn('[E2E] pub_match bg:', e.message); }
+    })();
     return;
   }
   // Первый вход на этом устройстве — нужен пароль один раз для расшифровки приватного ключа
