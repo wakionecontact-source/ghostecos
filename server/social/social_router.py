@@ -404,9 +404,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 ct = _aesgcm.encrypt(iv, pt, None)
                 await websocket.send_json({"type": "cs.enc", "data": _b64.b64encode(iv + ct).decode()})
             else:
-                await _send_safe(payload)
-        except Exception:
-            pass
+                # БЕЗ recursion: plain fallback идёт прямо в websocket.send_json,
+                # НЕ через _send_safe (был bulk-replace bug → ∞ рекурсия → silent fail).
+                await websocket.send_json(payload)
+        except Exception as _e:
+            import logging as _lg, traceback as _tb
+            _lg.getLogger('gc').warning('[_send_safe] FAIL on %s: %s\n%s',
+                                         payload.get('type', '?'), _e, _tb.format_exc())
 
     # NB: убран broadcast presence — раньше все онлайн юзеры узнавали о входе/выходе
     # любого другого юзера. Это утечка социального графа. Теперь интересующиеся
