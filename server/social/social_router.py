@@ -404,7 +404,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 ct = _aesgcm.encrypt(iv, pt, None)
                 await websocket.send_json({"type": "cs.enc", "data": _b64.b64encode(iv + ct).decode()})
             else:
-                await websocket.send_json(payload)
+                await _send_safe(payload)
         except Exception:
             pass
 
@@ -1083,7 +1083,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 c.close()
                 storage_mode = row["key_storage_mode"] if row else None
                 is_local = (storage_mode == "local")
-                await websocket.send_json({"type": "keys.me.ok", "data": {
+                await _send_safe({"type": "keys.me.ok", "data": {
                     "request_id": rid,
                     "x25519_pub": row["x25519_pub"] if row else None,
                     "encrypted_private_key": None if is_local else (row["encrypted_private_key"] if row else None),
@@ -1101,7 +1101,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     (uid,),
                 ).fetchone()
                 c.close()
-                await websocket.send_json({"type": "keys.storage_mode.get.ok", "data": {
+                await _send_safe({"type": "keys.storage_mode.get.ok", "data": {
                     "request_id": rid,
                     "mode": row["key_storage_mode"] if row else None,
                     "has_pub": bool(row and row["x25519_pub"]),
@@ -1113,13 +1113,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 rid = data.get("request_id")
                 mode = (data.get("mode") or "").lower()
                 if mode not in ("server", "local"):
-                    await websocket.send_json({"type": "keys.storage_mode.set.err", "data": {"request_id": rid, "error": "mode: ожидается 'server' или 'local'"}})
+                    await _send_safe({"type": "keys.storage_mode.set.err", "data": {"request_id": rid, "error": "mode: ожидается 'server' или 'local'"}})
                     continue
                 try:
                     from .chat_router import _rate_limit as _rl
                     _rl(f"keymode:{uid}", limit=10, window=3600)
                 except HTTPException as he:
-                    await websocket.send_json({"type": "keys.storage_mode.set.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    await _send_safe({"type": "keys.storage_mode.set.err", "data": {"request_id": rid, "error": str(he.detail)}})
                     continue
                 c = db()
                 if mode == "local":
@@ -1128,14 +1128,14 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                         (uid,),
                     )
                     c.commit(); c.close()
-                    await websocket.send_json({"type": "keys.storage_mode.set.ok", "data": {"request_id": rid, "mode": "local"}})
+                    await _send_safe({"type": "keys.storage_mode.set.ok", "data": {"request_id": rid, "mode": "local"}})
                 else:
                     has_priv_row = c.execute(
                         "SELECT (encrypted_private_key IS NOT NULL) AS has_priv FROM users WHERE id=?", (uid,)
                     ).fetchone()
                     c.execute("UPDATE users SET key_storage_mode='server' WHERE id=?", (uid,))
                     c.commit(); c.close()
-                    await websocket.send_json({"type": "keys.storage_mode.set.ok", "data": {
+                    await _send_safe({"type": "keys.storage_mode.set.ok", "data": {
                         "request_id": rid,
                         "mode": "server",
                         "needs_upload": not bool(has_priv_row and has_priv_row["has_priv"]),
@@ -1153,7 +1153,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     cur_id = cur["id"] if cur else None
                     for d_ in devs:
                         d_["is_current"] = (d_["id"] == cur_id)
-                    await websocket.send_json({"type": "devices.list.ok", "data": {"request_id": rid, "devices": devs, "current_id": cur_id}})
+                    await _send_safe({"type": "devices.list.ok", "data": {"request_id": rid, "devices": devs, "current_id": cur_id}})
                 finally:
                     c.close()
 
@@ -1163,23 +1163,23 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 pk = data.get("device_pk")
                 name = (data.get("name") or "").strip()
                 if not isinstance(pk, int) or not name or len(name) > 60:
-                    await websocket.send_json({"type": "devices.rename.err", "data": {"request_id": rid, "error": "invalid params"}})
+                    await _send_safe({"type": "devices.rename.err", "data": {"request_id": rid, "error": "invalid params"}})
                     continue
                 try:
                     from .chat_router import _rate_limit as _rl
                     _rl(f"devrename:{uid}", limit=20, window=3600)
                 except HTTPException as he:
-                    await websocket.send_json({"type": "devices.rename.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    await _send_safe({"type": "devices.rename.err", "data": {"request_id": rid, "error": str(he.detail)}})
                     continue
                 c = db()
                 try:
                     r = c.execute("SELECT id FROM user_devices WHERE id=? AND user_id=? LIMIT 1", (pk, uid)).fetchone()
                     if not r:
-                        await websocket.send_json({"type": "devices.rename.err", "data": {"request_id": rid, "error": "Устройство не найдено"}})
+                        await _send_safe({"type": "devices.rename.err", "data": {"request_id": rid, "error": "Устройство не найдено"}})
                     else:
                         c.execute("UPDATE user_devices SET device_name=? WHERE id=?", (name, r["id"]))
                         c.commit()
-                        await websocket.send_json({"type": "devices.rename.ok", "data": {"request_id": rid, "name": name}})
+                        await _send_safe({"type": "devices.rename.ok", "data": {"request_id": rid, "name": name}})
                 finally:
                     c.close()
 
@@ -1188,13 +1188,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 rid = data.get("request_id")
                 pk = data.get("device_pk")
                 if not isinstance(pk, int):
-                    await websocket.send_json({"type": "devices.revoke.err", "data": {"request_id": rid, "error": "device_pk required"}})
+                    await _send_safe({"type": "devices.revoke.err", "data": {"request_id": rid, "error": "device_pk required"}})
                     continue
                 try:
                     from .chat_router import _rate_limit as _rl
                     _rl(f"devrevoke:{uid}", limit=20, window=3600)
                 except HTTPException as he:
-                    await websocket.send_json({"type": "devices.revoke.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    await _send_safe({"type": "devices.revoke.err", "data": {"request_id": rid, "error": str(he.detail)}})
                     continue
                 import device_auth as _da
                 c = db()
@@ -1202,15 +1202,15 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     ws_token = token  # из ?token=… handshake-параметра
                     cur = c.execute("SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1", (ws_token, uid)).fetchone()
                     if cur and cur["id"] == pk:
-                        await websocket.send_json({"type": "devices.revoke.err", "data": {"request_id": rid, "error": "Нельзя отозвать текущее устройство — выйдите через «Выход»"}})
+                        await _send_safe({"type": "devices.revoke.err", "data": {"request_id": rid, "error": "Нельзя отозвать текущее устройство — выйдите через «Выход»"}})
                     else:
                         ok = _da.revoke_device(c, uid, pk)
                         if not ok:
-                            await websocket.send_json({"type": "devices.revoke.err", "data": {"request_id": rid, "error": "Устройство не найдено"}})
+                            await _send_safe({"type": "devices.revoke.err", "data": {"request_id": rid, "error": "Устройство не найдено"}})
                         else:
                             try: ws_hub.send_to(uid, "device.revoked", {"device_pk": pk})
                             except Exception: pass
-                            await websocket.send_json({"type": "devices.revoke.ok", "data": {"request_id": rid}})
+                            await _send_safe({"type": "devices.revoke.ok", "data": {"request_id": rid}})
                 finally:
                     c.close()
 
@@ -1225,7 +1225,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     ORDER BY u.display_name COLLATE NOCASE
                 """, (uid,)).fetchall()
                 c.close()
-                await websocket.send_json({"type": "contacts.list.ok", "data": {
+                await _send_safe({"type": "contacts.list.ok", "data": {
                     "request_id": rid,
                     "contacts": [{"username": r["username"], "display_name": r["display_name"], "added_at": r["added_at"]} for r in rows],
                 }})
@@ -1235,68 +1235,68 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 rid = data.get("request_id")
                 target = (data.get("username") or "").lower().strip().lstrip("@")
                 if not target:
-                    await websocket.send_json({"type": "contacts.add.err", "data": {"request_id": rid, "error": "username required"}})
+                    await _send_safe({"type": "contacts.add.err", "data": {"request_id": rid, "error": "username required"}})
                     continue
                 try:
                     from .chat_router import _rate_limit as _rl, _get_user_by_username as _gu
                     _rl(f"contactadd:{uid}", limit=60, window=3600)
                 except HTTPException as he:
-                    await websocket.send_json({"type": "contacts.add.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    await _send_safe({"type": "contacts.add.err", "data": {"request_id": rid, "error": str(he.detail)}})
                     continue
                 c = db()
                 peer = _gu(c, target)
                 if not peer:
                     c.close()
-                    await websocket.send_json({"type": "contacts.add.err", "data": {"request_id": rid, "error": "Юзер не найден"}})
+                    await _send_safe({"type": "contacts.add.err", "data": {"request_id": rid, "error": "Юзер не найден"}})
                     continue
                 if peer["id"] == uid:
                     c.close()
-                    await websocket.send_json({"type": "contacts.add.err", "data": {"request_id": rid, "error": "Нельзя добавить себя"}})
+                    await _send_safe({"type": "contacts.add.err", "data": {"request_id": rid, "error": "Нельзя добавить себя"}})
                     continue
                 c.execute("INSERT OR IGNORE INTO chat_contacts (owner_id, contact_id) VALUES (?,?)", (uid, peer["id"]))
                 c.commit(); c.close()
-                await websocket.send_json({"type": "contacts.add.ok", "data": {"request_id": rid, "username": peer["username"], "display_name": peer["display_name"]}})
+                await _send_safe({"type": "contacts.add.ok", "data": {"request_id": rid, "username": peer["username"], "display_name": peer["display_name"]}})
 
             # ── contacts.remove: {username} ──
             elif t == "contacts.remove" and uid:
                 rid = data.get("request_id")
                 target = (data.get("username") or "").lower().strip().lstrip("@")
                 if not target:
-                    await websocket.send_json({"type": "contacts.remove.err", "data": {"request_id": rid, "error": "username required"}})
+                    await _send_safe({"type": "contacts.remove.err", "data": {"request_id": rid, "error": "username required"}})
                     continue
                 try:
                     from .chat_router import _rate_limit as _rl, _get_user_by_username as _gu
                     _rl(f"contactdel:{uid}", limit=60, window=3600)
                 except HTTPException as he:
-                    await websocket.send_json({"type": "contacts.remove.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    await _send_safe({"type": "contacts.remove.err", "data": {"request_id": rid, "error": str(he.detail)}})
                     continue
                 c = db()
                 peer = _gu(c, target)
                 if not peer:
                     c.close()
-                    await websocket.send_json({"type": "contacts.remove.err", "data": {"request_id": rid, "error": "Юзер не найден"}})
+                    await _send_safe({"type": "contacts.remove.err", "data": {"request_id": rid, "error": "Юзер не найден"}})
                     continue
                 c.execute("DELETE FROM chat_contacts WHERE owner_id=? AND contact_id=?", (uid, peer["id"]))
                 c.commit(); c.close()
-                await websocket.send_json({"type": "contacts.remove.ok", "data": {"request_id": rid}})
+                await _send_safe({"type": "contacts.remove.ok", "data": {"request_id": rid}})
 
             # ── contacts.check: {username} → {in_contacts} ──
             elif t == "contacts.check" and uid:
                 rid = data.get("request_id")
                 target = (data.get("username") or "").lower().strip().lstrip("@")
                 if not target:
-                    await websocket.send_json({"type": "contacts.check.ok", "data": {"request_id": rid, "in_contacts": False}})
+                    await _send_safe({"type": "contacts.check.ok", "data": {"request_id": rid, "in_contacts": False}})
                     continue
                 from .chat_router import _get_user_by_username as _gu
                 c = db()
                 peer = _gu(c, target)
                 if not peer:
                     c.close()
-                    await websocket.send_json({"type": "contacts.check.ok", "data": {"request_id": rid, "in_contacts": False}})
+                    await _send_safe({"type": "contacts.check.ok", "data": {"request_id": rid, "in_contacts": False}})
                     continue
                 r = c.execute("SELECT 1 FROM chat_contacts WHERE owner_id=? AND contact_id=?", (uid, peer["id"])).fetchone()
                 c.close()
-                await websocket.send_json({"type": "contacts.check.ok", "data": {"request_id": rid, "in_contacts": r is not None}})
+                await _send_safe({"type": "contacts.check.ok", "data": {"request_id": rid, "in_contacts": r is not None}})
 
             # ── group.my: список моих групп ──
             elif t == "group.my" and uid:
@@ -1322,25 +1322,25 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     "members_count": r["members_count"],
                     "created_at": r["created_at"],
                 } for r in rows]
-                await websocket.send_json({"type": "group.my.ok", "data": {"request_id": rid, "groups": groups}})
+                await _send_safe({"type": "group.my.ok", "data": {"request_id": rid, "groups": groups}})
 
             # ── group.pending: {gid} → сообщения группы, которые я не ack-ал ──
             elif t == "group.pending" and uid:
                 rid = data.get("request_id")
                 gid = data.get("gid")
                 if not isinstance(gid, int):
-                    await websocket.send_json({"type": "group.pending.err", "data": {"request_id": rid, "error": "gid required"}})
+                    await _send_safe({"type": "group.pending.err", "data": {"request_id": rid, "error": "gid required"}})
                     continue
                 try:
                     from .chat_router import _rate_limit as _rl, _is_group_member as _ism
                     _rl(f"grouppend:{uid}:{gid}", limit=20, window=60)
                 except HTTPException as he:
-                    await websocket.send_json({"type": "group.pending.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    await _send_safe({"type": "group.pending.err", "data": {"request_id": rid, "error": str(he.detail)}})
                     continue
                 c = db()
                 if not _ism(c, gid, uid):
                     c.close()
-                    await websocket.send_json({"type": "group.pending.err", "data": {"request_id": rid, "error": "Не участник группы"}})
+                    await _send_safe({"type": "group.pending.err", "data": {"request_id": rid, "error": "Не участник группы"}})
                     continue
                 rows = c.execute("""
                     SELECT m.id, m.sender_id, m.ciphertext, m.envelope_keys, m.created_at,
@@ -1371,7 +1371,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                         "envelope_keys": {str(uid): my_env},
                         "created_at": r["created_at"],
                     })
-                await websocket.send_json({"type": "group.pending.ok", "data": {"request_id": rid, "messages": out}})
+                await _send_safe({"type": "group.pending.ok", "data": {"request_id": rid, "messages": out}})
 
             # ── tda.pending.list: pending-логины текущего юзера ──
             elif t == "tda.pending.list" and uid:
@@ -1385,7 +1385,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     (username, now_),
                 ).fetchall()
                 c.close()
-                await websocket.send_json({"type": "tda.pending.list.ok", "data": {
+                await _send_safe({"type": "tda.pending.list.ok", "data": {
                     "request_id": rid,
                     "pending": [dict(r) for r in rows],
                 }})
@@ -1396,13 +1396,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 target_rid = data.get("login_request_id") or ""
                 code = (data.get("code") or "").strip()
                 if not target_rid or not code:
-                    await websocket.send_json({"type": "tda.approve.err", "data": {"request_id": rid, "error": "request_id и code обязательны"}})
+                    await _send_safe({"type": "tda.approve.err", "data": {"request_id": rid, "error": "request_id и code обязательны"}})
                     continue
                 try:
                     from .chat_router import _rate_limit as _rl
                     _rl(f"tda_appr:{uid}", limit=30, window=3600)
                 except HTTPException as he:
-                    await websocket.send_json({"type": "tda.approve.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    await _send_safe({"type": "tda.approve.err", "data": {"request_id": rid, "error": str(he.detail)}})
                     continue
                 try:
                     from security import verify_argon2 as _verify
@@ -1416,25 +1416,25 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                         (target_rid, username),
                     ).fetchone()
                     if not r:
-                        await websocket.send_json({"type": "tda.approve.err", "data": {"request_id": rid, "error": "Запрос не найден"}})
+                        await _send_safe({"type": "tda.approve.err", "data": {"request_id": rid, "error": "Запрос не найден"}})
                         continue
                     if r["phase"] != "pending":
-                        await websocket.send_json({"type": "tda.approve.err", "data": {"request_id": rid, "error": "Запрос уже обработан"}})
+                        await _send_safe({"type": "tda.approve.err", "data": {"request_id": rid, "error": "Запрос уже обработан"}})
                         continue
                     if int(r["expires_at"]) < int(time.time()):
-                        await websocket.send_json({"type": "tda.approve.err", "data": {"request_id": rid, "error": "Срок запроса истёк"}})
+                        await _send_safe({"type": "tda.approve.err", "data": {"request_id": rid, "error": "Срок запроса истёк"}})
                         continue
                     if int(r["attempt_count"]) >= 5:
                         c.execute("UPDATE pending_logins SET phase='denied' WHERE id=?", (r["id"],))
                         c.commit()
                         try: ws_hub.send_to(uid, "tda.pending.gone", {"login_request_id": target_rid, "phase": "denied", "reason": "too_many_attempts"})
                         except Exception: pass
-                        await websocket.send_json({"type": "tda.approve.err", "data": {"request_id": rid, "error": "Превышен лимит попыток — запрос отклонён"}})
+                        await _send_safe({"type": "tda.approve.err", "data": {"request_id": rid, "error": "Превышен лимит попыток — запрос отклонён"}})
                         continue
                     if not _verify(code, r["code_hash"]):
                         c.execute("UPDATE pending_logins SET attempt_count=attempt_count+1 WHERE id=?", (r["id"],))
                         c.commit()
-                        await websocket.send_json({"type": "tda.approve.err", "data": {"request_id": rid, "error": "Неверный код"}})
+                        await _send_safe({"type": "tda.approve.err", "data": {"request_id": rid, "error": "Неверный код"}})
                         continue
                     d = _da.register_device(c, uid, r["device_id"], r["device_name"], None, is_owner=False)
                     c.execute(
@@ -1445,7 +1445,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     # Уведомляем все trusted-устройства юзера: pending исчез (карточку убрать).
                     try: ws_hub.send_to(uid, "tda.pending.gone", {"login_request_id": target_rid, "phase": "approved", "device_name": r["device_name"]})
                     except Exception: pass
-                    await websocket.send_json({"type": "tda.approve.ok", "data": {"request_id": rid, "device_name": r["device_name"]}})
+                    await _send_safe({"type": "tda.approve.ok", "data": {"request_id": rid, "device_name": r["device_name"]}})
                 finally:
                     c.close()
 
@@ -1454,13 +1454,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 rid = data.get("request_id")
                 target_rid = data.get("login_request_id") or ""
                 if not target_rid:
-                    await websocket.send_json({"type": "tda.block.err", "data": {"request_id": rid, "error": "request_id обязателен"}})
+                    await _send_safe({"type": "tda.block.err", "data": {"request_id": rid, "error": "request_id обязателен"}})
                     continue
                 try:
                     from .chat_router import _rate_limit as _rl
                     _rl(f"tda_block:{uid}", limit=30, window=3600)
                 except HTTPException as he:
-                    await websocket.send_json({"type": "tda.block.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    await _send_safe({"type": "tda.block.err", "data": {"request_id": rid, "error": str(he.detail)}})
                     continue
                 c = db()
                 try:
@@ -1470,7 +1470,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                         (target_rid, username),
                     ).fetchone()
                     if not r:
-                        await websocket.send_json({"type": "tda.block.err", "data": {"request_id": rid, "error": "Запрос не найден"}})
+                        await _send_safe({"type": "tda.block.err", "data": {"request_id": rid, "error": "Запрос не найден"}})
                         continue
                     # 1) Pending — в denied (как обычный deny).
                     if r["phase"] == "pending":
@@ -1495,7 +1495,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     c.commit()
                     try: ws_hub.send_to(uid, "tda.pending.gone", {"login_request_id": target_rid, "phase": "blocked", "device_name": r["device_name"]})
                     except Exception: pass
-                    await websocket.send_json({"type": "tda.block.ok", "data": {"request_id": rid, "device_name": r["device_name"]}})
+                    await _send_safe({"type": "tda.block.ok", "data": {"request_id": rid, "device_name": r["device_name"]}})
                 finally:
                     c.close()
 
@@ -1504,13 +1504,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 rid = data.get("request_id")
                 target_rid = data.get("login_request_id") or ""
                 if not target_rid:
-                    await websocket.send_json({"type": "tda.deny.err", "data": {"request_id": rid, "error": "request_id обязателен"}})
+                    await _send_safe({"type": "tda.deny.err", "data": {"request_id": rid, "error": "request_id обязателен"}})
                     continue
                 try:
                     from .chat_router import _rate_limit as _rl
                     _rl(f"tda_deny:{uid}", limit=30, window=3600)
                 except HTTPException as he:
-                    await websocket.send_json({"type": "tda.deny.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    await _send_safe({"type": "tda.deny.err", "data": {"request_id": rid, "error": str(he.detail)}})
                     continue
                 c = db()
                 try:
@@ -1519,16 +1519,16 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                         (target_rid, username),
                     ).fetchone()
                     if not r:
-                        await websocket.send_json({"type": "tda.deny.err", "data": {"request_id": rid, "error": "Запрос не найден"}})
+                        await _send_safe({"type": "tda.deny.err", "data": {"request_id": rid, "error": "Запрос не найден"}})
                         continue
                     if r["phase"] != "pending":
-                        await websocket.send_json({"type": "tda.deny.err", "data": {"request_id": rid, "error": "Запрос уже обработан"}})
+                        await _send_safe({"type": "tda.deny.err", "data": {"request_id": rid, "error": "Запрос уже обработан"}})
                         continue
                     c.execute("UPDATE pending_logins SET phase='denied' WHERE id=?", (r["id"],))
                     c.commit()
                     try: ws_hub.send_to(uid, "tda.pending.gone", {"login_request_id": target_rid, "phase": "denied", "device_name": r["device_name"]})
                     except Exception: pass
-                    await websocket.send_json({"type": "tda.deny.ok", "data": {"request_id": rid, "device_name": r["device_name"]}})
+                    await _send_safe({"type": "tda.deny.ok", "data": {"request_id": rid, "device_name": r["device_name"]}})
                 finally:
                     c.close()
 
@@ -1543,9 +1543,9 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 ).fetchone()
                 c.close()
                 if not r:
-                    await websocket.send_json({"type": "support_admin.ok", "data": {"request_id": rid, "username": None, "display_name": None, "is_me": False, "x25519_pub": None}})
+                    await _send_safe({"type": "support_admin.ok", "data": {"request_id": rid, "username": None, "display_name": None, "is_me": False, "x25519_pub": None}})
                 else:
-                    await websocket.send_json({"type": "support_admin.ok", "data": {
+                    await _send_safe({"type": "support_admin.ok", "data": {
                         "request_id": rid,
                         "username": r["username"],
                         "display_name": r["display_name"],
@@ -1560,7 +1560,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     from .chat_router import _rate_limit as _rl, _is_b64
                     _rl(f"keys:{uid}", limit=5, window=3600)
                 except HTTPException as he:
-                    await websocket.send_json({"type": "keys.upload.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    await _send_safe({"type": "keys.upload.err", "data": {"request_id": rid, "error": str(he.detail)}})
                     continue
                 x25519_pub = data.get("x25519_pub") or ""
                 enc_priv = data.get("encrypted_private_key")
@@ -1572,7 +1572,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 except Exception:
                     raw_pub = b""
                 if len(raw_pub) not in (32, 65):
-                    await websocket.send_json({"type": "keys.upload.err", "data": {"request_id": rid, "error": "x25519_pub: ожидается 32 (X25519) или 65 (P-256) байт в base64"}})
+                    await _send_safe({"type": "keys.upload.err", "data": {"request_id": rid, "error": "x25519_pub: ожидается 32 (X25519) или 65 (P-256) байт в base64"}})
                     continue
                 c = db()
                 current_mode_row = c.execute("SELECT key_storage_mode FROM users WHERE id=?", (uid,)).fetchone()
@@ -1580,12 +1580,12 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 mode = req_mode or saved_mode or "server"
                 if mode not in ("server", "local"):
                     c.close()
-                    await websocket.send_json({"type": "keys.upload.err", "data": {"request_id": rid, "error": "storage_mode: ожидается 'server' или 'local'"}})
+                    await _send_safe({"type": "keys.upload.err", "data": {"request_id": rid, "error": "storage_mode: ожидается 'server' или 'local'"}})
                     continue
                 if mode == "server":
                     if not enc_priv or not key_salt:
                         c.close()
-                        await websocket.send_json({"type": "keys.upload.err", "data": {"request_id": rid, "error": "В режиме 'server' encrypted_private_key и key_salt обязательны"}})
+                        await _send_safe({"type": "keys.upload.err", "data": {"request_id": rid, "error": "В режиме 'server' encrypted_private_key и key_salt обязательны"}})
                         continue
                     try:
                         raw_priv = base64.b64decode(enc_priv)
@@ -1593,11 +1593,11 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                         raw_priv = b""
                     if not _is_b64(enc_priv) or len(raw_priv) < 40 or len(raw_priv) > 500:
                         c.close()
-                        await websocket.send_json({"type": "keys.upload.err", "data": {"request_id": rid, "error": "encrypted_private_key: некорректный формат"}})
+                        await _send_safe({"type": "keys.upload.err", "data": {"request_id": rid, "error": "encrypted_private_key: некорректный формат"}})
                         continue
                     if not _is_b64(key_salt, 16):
                         c.close()
-                        await websocket.send_json({"type": "keys.upload.err", "data": {"request_id": rid, "error": "key_salt: ожидается 16 байт в base64"}})
+                        await _send_safe({"type": "keys.upload.err", "data": {"request_id": rid, "error": "key_salt: ожидается 16 байт в base64"}})
                         continue
                     priv_to_store = enc_priv
                     salt_to_store = key_salt
@@ -1614,7 +1614,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     (x25519_pub, priv_to_store, salt_to_store, mode, uid),
                 )
                 c.commit(); c.close()
-                await websocket.send_json({"type": "keys.upload.ok", "data": {"request_id": rid, "status": "ok", "storage_mode": mode}})
+                await _send_safe({"type": "keys.upload.ok", "data": {"request_id": rid, "status": "ok", "storage_mode": mode}})
 
             # ── keys.server_copy.delete: убрать серверную копию приватника (mode=local) ──
             elif t == "keys.server_copy.delete" and uid:
@@ -1625,7 +1625,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     (uid,),
                 )
                 c.commit(); c.close()
-                await websocket.send_json({"type": "keys.server_copy.delete.ok", "data": {"request_id": rid, "status": "ok"}})
+                await _send_safe({"type": "keys.server_copy.delete.ok", "data": {"request_id": rid, "status": "ok"}})
 
             # ── delivery_status: {ids:[int]} → {id:'pending'|'delivered'|'read'} ──
             elif t == "delivery_status" and uid:
@@ -1633,13 +1633,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 ids = data.get("ids") or []
                 ids = [int(x) for x in ids if isinstance(x, (int, str)) and str(x).isdigit()][:500]
                 if not ids:
-                    await websocket.send_json({"type": "delivery_status.ok", "data": {"request_id": rid, "status": {}}})
+                    await _send_safe({"type": "delivery_status.ok", "data": {"request_id": rid, "status": {}}})
                     continue
                 try:
                     from .chat_router import _rate_limit as _rl
                     _rl(f"delivstat:{uid}", limit=60, window=60)
                 except HTTPException as he:
-                    await websocket.send_json({"type": "delivery_status.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    await _send_safe({"type": "delivery_status.err", "data": {"request_id": rid, "error": str(he.detail)}})
                     continue
                 c = db()
                 ph = ",".join("?" * len(ids))
@@ -1652,7 +1652,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     if i in still_pending: return "pending"
                     if i in read_ids: return "read"
                     return "delivered"
-                await websocket.send_json({"type": "delivery_status.ok", "data": {"request_id": rid, "status": {str(i): _st(i) for i in ids}}})
+                await _send_safe({"type": "delivery_status.ok", "data": {"request_id": rid, "status": {str(i): _st(i) for i in ids}}})
 
             # ── prof.get: {username, offset?} → профиль социалки + posts ──
             elif t == "prof.get" and uid:
@@ -1660,13 +1660,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 target = (data.get("username") or "").lower().strip()
                 offset = int(data.get("offset") or 0)
                 if not target:
-                    await websocket.send_json({"type": "prof.get.err", "data": {"request_id": rid, "error": "username required"}})
+                    await _send_safe({"type": "prof.get.err", "data": {"request_id": rid, "error": "username required"}})
                     continue
                 c = db()
                 u_row = c.execute("SELECT * FROM users WHERE username=?", (target,)).fetchone()
                 if not u_row:
                     c.close()
-                    await websocket.send_json({"type": "prof.get.err", "data": {"request_id": rid, "error": "User not found"}})
+                    await _send_safe({"type": "prof.get.err", "data": {"request_id": rid, "error": "User not found"}})
                     continue
                 u_dict = dict(u_row)
                 stats_p = get_user_stats(c, u_dict["id"])
@@ -1689,7 +1689,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     status_text = u_dict.get("daily_status_text"); status_mood = u_dict.get("daily_status_mood"); status_eternal = False
                 else:
                     status_text = None; status_mood = None; status_eternal = False
-                await websocket.send_json({"type": "prof.get.ok", "data": {
+                await _send_safe({"type": "prof.get.ok", "data": {
                     "request_id": rid,
                     "user_id": u_dict["id"],
                     "username": u_dict["username"],
@@ -1722,7 +1722,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     "is_moderator": bool(flags_row and flags_row["is_moderator"]),
                     **stats,
                 }
-                await websocket.send_json({"type": "me.get.ok", "data": {"request_id": rid, **payload}})
+                await _send_safe({"type": "me.get.ok", "data": {"request_id": rid, **payload}})
 
             # ── notif.unread: количество непрочитанных уведомлений ──
             # data: {request_id?} → {type:'notif.unread.ok', data:{request_id, count}}
@@ -1734,7 +1734,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     (uid,),
                 ).fetchone()["cnt"]
                 c.close()
-                await websocket.send_json({"type": "notif.unread.ok", "data": {
+                await _send_safe({"type": "notif.unread.ok", "data": {
                     "request_id": rid, "count": int(cnt),
                 }})
 
