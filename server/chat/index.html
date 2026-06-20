@@ -7254,7 +7254,7 @@ function connectWS(){
         clearTimeout(_pongTimeoutTimer);
         _pongTimeoutTimer = setTimeout(() => {
           if (_lastWsRecvAt < _pingSentAt) _killStaleWs('pong timeout');
-        }, 10000);
+        }, 25000);  // 25с (раньше 10с): мобильные сети + Chrome throttling сворачивали соединение слишком агрессивно.
       }catch(e){ _killStaleWs('send err'); }
     }, 25000);
     _fetchPendingWithRetry();
