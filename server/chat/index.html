@@ -7760,10 +7760,13 @@ function askPresence(username){
 // ════════════════════════════════════════════════════════════════════
 // INIT
 // ════════════════════════════════════════════════════════════════════
+const _T0 = performance.now();
+const _tlog = (label) => console.log('[boot+' + Math.round(performance.now() - _T0) + 'ms]', label);
 async function init(){
-  if (!token) { showAuth(); return; }
+  _tlog('init() start');
+  if (!token) { _tlog('no token → showAuth'); showAuth(); return; }
   setSsoCookie(token);
-  // Открываем WS первым — сервер пришлёт hello с полным профилем
+  _tlog('connectWS()');
   connectWS();
   let d;
   // hello через WS И HTTP /me параллельно — побеждает кто быстрее.
@@ -7772,11 +7775,14 @@ async function init(){
     .catch(() => new Promise(()=>{}));
   const httpP = soc('/me').catch(() => new Promise(()=>{}));
   try {
+    _tlog('await hello/httpMe race (2.5s max)');
     d = await Promise.race([
       Promise.any([helloP, httpP]),
       new Promise((_, rej) => setTimeout(() => rej(new Error('init timeout')), 2500)),
     ]);
+    _tlog('got identity from ' + (d && d.username ? 'hello/me' : 'unknown'));
   } catch(_) {
+    _tlog('race FAILED → fallback soc(/me)');
     try { d = await soc('/me'); }
     catch(e) {
       token=null; me=null;
@@ -7793,22 +7799,23 @@ async function init(){
     localStorage.removeItem('gs_token'); localStorage.removeItem('gs_me'); clearSsoCookie();
     showAuth(); return;
   }
-  // Пробуем загрузить ключи из IndexedDB (вводили пароль раньше на этом устройстве)
   let loaded = false;
   try {
+    _tlog('openIDB');
     await openIDB();
+    _tlog('loadKeysFromIDB');
     loaded = await loadKeysFromIDB();
+    _tlog('keys loaded=' + loaded);
   } catch(e) {
-    // openIDB заблокирована другой вкладкой или другая ошибка — покажем юзеру
     showAuth();
     document.getElementById('loginError').textContent = e.message || 'Не удалось открыть локальное хранилище';
     return;
   }
   if (loaded) {
-    // SSO + ключи готовы → проверяем, выбрал ли юзер режим хранения ключа.
-    // Существующие юзеры впервые видят этот экран после миграции — обязательно.
     try {
+      _tlog('wsStorageModeGet');
       const modeRes = await wsStorageModeGet();
+      _tlog('storage mode=' + (modeRes && modeRes.mode));
       if (!modeRes.mode){
         const chosen = await pickKeyStorageMode();
         await wsStorageModeSet({ mode: chosen });
@@ -7816,12 +7823,13 @@ async function init(){
     } catch(e){
       console.warn('[E2E] storage_mode check failed on init:', e);
     }
-    // Сверяем pub из IDB с pub на сервере. Если расходятся (юзер сбросил ключ
-    // на другом устройстве, мы не знаем) — wipe IDB и показываем banner.
-    // Без этой проверки все incoming сообщения падают как «не удалось расшифровать».
+    _tlog('_checkLocalPubMatchesServer');
     const ok = await _checkLocalPubMatchesServer();
+    _tlog('pub match=' + ok);
     if (!ok) window._keyMissing = true;
+    _tlog('onReady() →');
     await onReady();
+    _tlog('onReady() ←');
     return;
   }
   // Первый вход на этом устройстве — нужен пароль один раз для расшифровки приватного ключа
