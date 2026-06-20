@@ -37,6 +37,60 @@ class _SecHeadersMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(_SecHeadersMiddleware)
 
+
+# ── Global rate-limit middleware ────────────────────────────────────────────
+# Дополнительная защита поверх per-endpoint лимитов: общий потолок запросов
+# с одного клиента в минуту. Pentest waki (2026-06-20) показал что одна
+# DevTools-консоль с for-loop кладёт сервер за секунды, если на конкретном
+# endpoint не было лимита. 61 endpoint из 176 ходили без _rate_limit —
+# точечно править все долго, поэтому здесь общий "circuit breaker".
+import time as _gtime
+from collections import deque as _gdq
+_RL_BUCKETS: dict = {}   # key → deque[timestamps]
+_RL_MAX = 300            # запросов
+_RL_WINDOW = 60          # за секунд
+_RL_EXCLUDE_PREFIXES = ("/api/soc/ws",)  # WebSocket свой keepalive имеет
+
+def _rl_key(req: Request) -> str:
+    # Авторизованные — по токену (стабильный, переживает смену IP).
+    a = req.headers.get("authorization") or ""
+    if a.startswith("Bearer ") and len(a) > 16:
+        return "t:" + a[7:23]  # префикс достаточен для группировки
+    # Иначе — по IP. nginx ставит X-Forwarded-For.
+    xff = req.headers.get("x-forwarded-for") or ""
+    if xff:
+        return "ip:" + xff.split(",")[0].strip()
+    return "ip:" + (req.client.host if req.client else "?")
+
+class _GlobalRateLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        if not any(path.startswith(p) for p in _RL_EXCLUDE_PREFIXES):
+            key = _rl_key(request)
+            now = _gtime.time()
+            dq = _RL_BUCKETS.setdefault(key, _gdq())
+            # Удаляем старше окна
+            while dq and now - dq[0] > _RL_WINDOW:
+                dq.popleft()
+            if len(dq) >= _RL_MAX:
+                from starlette.responses import JSONResponse
+                retry_after = int(_RL_WINDOW - (now - dq[0])) + 1
+                return JSONResponse(
+                    {"detail": "Слишком много запросов, подождите немного"},
+                    status_code=429,
+                    headers={"Retry-After": str(retry_after)},
+                )
+            dq.append(now)
+            # Опциональная уборка старых ключей (раз в N запросов)
+            if len(_RL_BUCKETS) > 5000 and len(dq) == 1:
+                cutoff = now - _RL_WINDOW * 2
+                stale = [k for k, d in _RL_BUCKETS.items() if not d or d[-1] < cutoff]
+                for k in stale[:1000]:
+                    _RL_BUCKETS.pop(k, None)
+        return await call_next(request)
+
+app.add_middleware(_GlobalRateLimitMiddleware)
+
 # CORS: явный whitelist наших доменов.
 # Раньше было allow_origins=["*"] + allow_credentials=True — это нарушение спеки CORS
 # (браузеры это игнорируют, но это сигнал что safety не продумана).
