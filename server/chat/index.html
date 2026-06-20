@@ -39,7 +39,7 @@ button,input,textarea{font-family:inherit;}
 
 /* AUTH */
 #authScreen{position:fixed;inset:0;z-index:500;display:none;align-items:center;justify-content:center;padding:24px;overflow-y:auto;}
-.auth-card{width:100%;max-width:400px;background:rgba(9,14,30,0.92);backdrop-filter:blur(30px);border:1px solid var(--border-strong);border-radius:24px;padding:36px 28px 32px;}
+.auth-card{width:100%;max-width:400px;background:rgba(9,14,30,0.92);backdrop-filter:blur(30px);border:1px solid var(--border-strong);border-radius:24px;padding:36px 28px 32px;position:relative;}
 .auth-logo{font-size:30px;font-weight:800;background:linear-gradient(90deg,var(--primary),var(--primary2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;text-align:center;margin-bottom:6px;}
 .auth-tagline{text-align:center;color:#475569;font-size:13px;margin-bottom:28px;}
 .auth-tabs{display:flex;background:rgba(2,6,23,0.6);border-radius:12px;padding:4px;margin-bottom:24px;gap:4px;}
@@ -947,7 +947,8 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 .pd-ava{width:78px;height:78px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;color:#fff;font-size:32px;font-weight:700;box-shadow:0 8px 28px rgba(168,85,247,0.35);margin-bottom:12px;overflow:hidden;}
 /* Ряд аккаунтов сверху шторки — мини-аватарки + кнопка «+» как в TG.
    Скрыто если аккаунт всего один (только текущий) — нечего показывать. */
-.pd-acct-row{position:absolute;top:calc(14px + env(safe-area-inset-top));left:18px;right:56px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.pd-acct-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;padding:8px 14px;border-top:1px solid var(--border);background:linear-gradient(180deg, transparent 0%, rgba(255,255,255,0.025) 100%);}
+.pd-acct-row:empty{display:none;}
 .pd-acct{
   width:32px;height:32px;border-radius:50%;border:2px solid transparent;cursor:pointer;
   display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:800;
@@ -1062,6 +1063,11 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 
 <div id="authScreen">
   <div class="auth-card">
+    <!-- При добавлении аккаунта (sessionStorage.gs_adding_account) — стрелка
+         «Назад» возвращает в предыдущий активный аккаунт без логина. -->
+    <button id="authBack" onclick="accountsAddCancel()" style="display:none;position:absolute;top:18px;left:18px;background:transparent;border:none;color:var(--text);cursor:pointer;font-size:14px;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;transition:background .15s;" onmouseover="this.style.background='rgba(255,255,255,0.07)'" onmouseout="this.style.background='transparent'" title="Отменить добавление аккаунта">
+      <i class="fa-solid fa-arrow-left"></i>
+    </button>
     <div class="auth-logo">GhostChat</div>
     <div class="auth-tagline">Приватный мессенджер</div>
     <div class="auth-tabs">
@@ -1139,15 +1145,12 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
   <div class="pd-backdrop" id="pdBackdrop" onclick="closeProfileDrawer()"></div>
   <aside class="pd-drawer" id="pdDrawer" role="dialog" aria-label="Профиль">
     <div class="pd-head">
-      <!-- Ряд аватарок других аккаунтов (по Telegram-style multi-account) -->
-      <div class="pd-acct-row" id="pdAcctRow"></div>
       <button class="pd-close" onclick="closeProfileDrawer()" title="Закрыть"><i class="fa-solid fa-xmark"></i></button>
       <div class="pd-ava" id="pdAva">?</div>
       <div class="pd-name" id="pdName">—</div>
       <div class="pd-handle" id="pdHandle">@—</div>
     </div>
     <nav class="pd-list">
-      <button class="pd-item accent" onclick="closeProfileDrawer();accountsAdd()"><i class="fa-solid fa-plus"></i> Добавить аккаунт</button>
       <button class="pd-item" onclick="closeProfileDrawer();openSettings()"><i class="fa-solid fa-gear"></i> Настройки</button>
       <button class="pd-item" id="pdInstallItem" onclick="closeProfileDrawer();openInstall()" style="display:none;"><i class="fa-solid fa-mobile-screen"></i> Установить как приложение</button>
       <div class="pd-divider"></div>
@@ -1158,6 +1161,8 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
       <div class="pd-divider"></div>
       <button class="pd-item danger" onclick="closeProfileDrawer();doLogout()"><i class="fa-solid fa-right-from-bracket"></i> Выйти</button>
     </nav>
+    <!-- Ряд аккаунтов внизу шторки, справа: мини-аватарки + кнопка «+». -->
+    <div class="pd-acct-row" id="pdAcctRow"></div>
     <div class="pd-foot">GhostChat · приватный мессенджер</div>
   </aside>
 
@@ -1718,10 +1723,20 @@ function accountsSwitchTo(idx){
   try { setSsoCookie(a.token); } catch(_){}
   location.reload();
 }
+const ACCOUNTS_MAX = 5;
 // Открытие auth-экрана как «добавление аккаунта» — НЕ удаляет текущие
 // данные, помечает флагом что после login надо положить в массив,
 // и при отмене (close) возвращает обратно в текущий аккаунт.
 function accountsAdd(){
+  const arr = accountsLoad();
+  if (arr.length >= ACCOUNTS_MAX){
+    if (typeof appAlert === 'function'){
+      appAlert('Лимит аккаунтов', 'Можно добавить максимум ' + ACCOUNTS_MAX + ' аккаунтов. Сначала выйди из ненужного.');
+    } else {
+      alert('Можно добавить максимум ' + ACCOUNTS_MAX + ' аккаунтов.');
+    }
+    return;
+  }
   sessionStorage.setItem('gs_adding_account', '1');
   // Сохраняем backup активного, чтобы при «Отмена» вернуть.
   const cur = accountsActive();
@@ -1732,6 +1747,23 @@ function accountsAdd(){
   try { clearSsoCookie && clearSsoCookie(); } catch(_){}
   // Закрываем WS чтобы не дребезжал в фоне.
   try { if (ws) ws.close(1000, 'add account'); } catch(_){}
+  location.reload();
+}
+
+// Отмена добавления — восстанавливает backup активного аккаунта.
+function accountsAddCancel(){
+  let backup = null;
+  try { backup = JSON.parse(sessionStorage.getItem('gs_acc_backup') || 'null'); } catch(_){}
+  sessionStorage.removeItem('gs_adding_account');
+  sessionStorage.removeItem('gs_acc_backup');
+  if (backup && backup.token){
+    localStorage.setItem('gs_token', backup.token);
+    localStorage.setItem('gs_me', JSON.stringify({
+      id: backup.id, user_id: backup.id, username: backup.username,
+      display_name: backup.display_name, is_guest: false,
+    }));
+    try { setSsoCookie(backup.token); } catch(_){}
+  }
   location.reload();
 }
 // Удалить текущий аккаунт из массива (используется в doLogout).
@@ -4044,6 +4076,13 @@ function showAuth(){
   document.getElementById('authScreen').style.display='flex';
   document.getElementById('app').style.display='none';
   document.getElementById('boot').classList.remove('open');
+  // Кнопка «Назад» — только в режиме «добавление аккаунта» (есть backup
+  // активного в sessionStorage). Возвращает в предыдущий аккаунт без логина.
+  try {
+    const bk = document.getElementById('authBack');
+    const adding = sessionStorage.getItem('gs_adding_account') === '1';
+    if (bk) bk.style.display = adding ? 'flex' : 'none';
+  } catch(_){}
   // По умолчанию поле username активно. Это явно сбрасывается, иначе
   // disabled из «confirm password»-сценария мог остаться с прошлого вызова
   // showAuth — в incognito юзер бы видел заблокированное поле.
@@ -4417,9 +4456,21 @@ function doLogout(){
 }
 
 // SSO sync
-window.addEventListener('storage',e=>{
-  if(e.key==='gs_token'&&!e.newValue&&token){
-    token=null;me=null;myPriv=null;myPub=null;clearSsoCookie();try{ws&&ws.close();}catch(e){}showAuth();switchTab('login');
+window.addEventListener('storage', e => {
+  if (e.key !== 'gs_token') return;
+  // Полный logout в другой вкладке → newValue пуст → разлогиниваемся тоже.
+  if (!e.newValue && token){
+    token=null;me=null;myPriv=null;myPub=null;clearSsoCookie();
+    try{ws&&ws.close();}catch(_){}
+    showAuth();switchTab('login');
+    return;
+  }
+  // Account switch в другой вкладке → newValue не пуст и отличается от текущего.
+  // Старое поведение: считали это logout'ом и кикали. Новое: подтягиваем
+  // новый активный аккаунт через reload — все вкладки синхронно показывают
+  // того же юзера, multi-account это прозрачно поддерживает.
+  if (e.newValue && e.newValue !== token){
+    location.reload();
   }
 });
 
@@ -5621,8 +5672,8 @@ function openProfileDrawer(){
   // PWA-install пункт показываем только если есть deferred prompt.
   const ii = document.getElementById('pdInstallItem');
   if (ii) ii.style.display = (window._deferredInstallPrompt || window._pwaCanInstall) ? '' : 'none';
-  // Multi-account row: миниатюры аккаунтов (кроме активного) + кнопка «+».
-  // Если в массиве только текущий — оставляем только «+».
+  // Multi-account row внизу шторки справа: миниатюры ВСЕХ аккаунтов
+  // (текущий с подсветкой) + кнопка «+» если не достигнут лимит.
   try {
     const row = document.getElementById('pdAcctRow');
     if (row){
@@ -5632,12 +5683,15 @@ function openProfileDrawer(){
       }
       const arr = accountsLoad();
       const cur = accountsActiveIndex();
-      const others = arr.map((a, i) => ({a, i})).filter(x => x.i !== cur);
-      const chips = others.map(({a, i}) => {
+      const chips = arr.map((a, i) => {
         const init = (a.display_name || a.username || '?').trim().charAt(0).toUpperCase();
-        return `<button class="pd-acct" title="@${esc(a.username)}" onclick="accountsSwitchTo(${i})">${esc(init)}</button>`;
+        const onclick = i === cur ? '' : `onclick="accountsSwitchTo(${i})"`;
+        return `<button class="pd-acct ${i === cur ? 'active' : ''}" title="@${esc(a.username)}" ${onclick}>${esc(init)}</button>`;
       }).join('');
-      row.innerHTML = chips + '<button class="pd-acct-add" title="Добавить аккаунт" onclick="closeProfileDrawer();accountsAdd()"><i class="fa-solid fa-plus"></i></button>';
+      const addBtn = arr.length < ACCOUNTS_MAX
+        ? `<button class="pd-acct-add" title="Добавить аккаунт (${arr.length}/${ACCOUNTS_MAX})" onclick="closeProfileDrawer();accountsAdd()"><i class="fa-solid fa-plus"></i></button>`
+        : '';
+      row.innerHTML = chips + addBtn;
     }
   } catch(_){}
   b.classList.add('open');
