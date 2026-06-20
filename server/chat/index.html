@@ -2026,6 +2026,23 @@ async function decryptFromPeer(peerUsername, cipherB64){
   }
 }
 
+// Спросить юзера один раз за сессию: пересоздать ключ при упорной
+// невозможности расшифровать сообщения от конкретного собеседника.
+const _recreateAskedFor = new Set();
+async function _maybeAskRecreateKey(peerUsername){
+  if (!peerUsername || _recreateAskedFor.has(peerUsername)) return;
+  _recreateAskedFor.add(peerUsername);
+  // Подождём 2 секунды на случай если придут ещё сообщения от того же peer —
+  // не спамим окнами, ждём паузы.
+  await new Promise(r => setTimeout(r, 2000));
+  const yes = await appConfirm(
+    'Не удалось расшифровать',
+    'Сообщения от @' + peerUsername + ' не расшифровываются. Скорее всего твой ключ устарел или повреждён. Пересоздать твой ключ?',
+    'Пересоздать'
+  );
+  if (yes) { try { await rotateMyKeys(); } catch(e){ console.warn('[recreate-key]', e); } }
+}
+
 // ── Сохранение/загрузка приватного ключа в IDB ──
 // Храним pkcs8-байты приватного ключа. При load импортируем с extractable=false
 // — это значит XSS не сможет re-export через crypto.subtle.exportKey() уже импортированный
@@ -4757,6 +4774,7 @@ async function ingestIncoming(m){
       raw = await decryptFromPeer(peerUsername, m.ciphertext);
     } catch(e) {
       raw = '[не удалось расшифровать]';
+      _maybeAskRecreateKey(peerUsername);
     }
     payload = parsePayload(raw);
   }
@@ -8306,6 +8324,7 @@ async function ingestGroupIncoming(m){
     console.warn('[group-recv] decrypt failed', e);
     text = '[не удалось расшифровать]';
     payload = { type: 'msg', text };
+    _maybeAskRecreateKey(m.from_username);
   }
 
   // Edit/Delete операции
