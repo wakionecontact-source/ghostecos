@@ -153,15 +153,7 @@ def get_my_keys(authorization: Optional[str] = Header(None)):
 
 @router.get("/keys/storage_mode")
 def get_storage_mode(authorization: Optional[str] = Header(None)):
-    """
-    Возвращает текущий выбор юзера по хранению приватного ключа.
-    Используется веб-клиентом при загрузке, чтобы решить:
-    - mode is None  → показать обязательный экран выбора (новый юзер
-      или существующий, ещё не сделавший выбор после миграции);
-    - mode == 'server' → стандартный поток: подтянуть encrypted_private_key;
-    - mode == 'local'  → проверить наличие приватника в IndexedDB; если нет —
-      показать экран синхронизации через QR.
-    """
+    """Текущий режим хранения приватника (server/local/None)."""
     user = auth_member(authorization)
     c = db()
     row = c.execute(
@@ -180,20 +172,7 @@ def get_storage_mode(authorization: Optional[str] = Header(None)):
 
 @router.post("/keys/storage_mode")
 def set_storage_mode(body: StorageModeBody, authorization: Optional[str] = Header(None)):
-    """
-    Сохранить выбор юзера по хранению приватного ключа.
-
-    Поведение:
-    - mode='local'  → серверная копия приватника зануляется немедленно
-                      (encrypted_private_key=NULL, key_salt=NULL).
-                      Клиент должен заранее иметь приватник в IndexedDB,
-                      иначе потеряет доступ к сообщениям.
-    - mode='server' → только записывается режим. Если приватника на сервере
-                      ещё нет — в ответе needs_upload=true, и клиент должен
-                      следом сделать POST /keys/upload с зашифрованным приватником.
-
-    Сменить можно в любой момент через настройки аккаунта.
-    """
+    """Сохранить режим хранения. local → серверная копия зануляется; server → needs_upload=true если приватника на сервере нет."""
     user = auth_member(authorization)
     _rate_limit(f"keymode:{user['id']}", limit=10, window=3600)
     mode = (body.mode or "").lower()
@@ -228,12 +207,7 @@ def set_storage_mode(body: StorageModeBody, authorization: Optional[str] = Heade
 
 @router.delete("/keys/server_copy")
 def delete_server_key_copy(authorization: Optional[str] = Header(None)):
-    """
-    Жёсткое удаление серверной копии приватного ключа.
-    Используется при переключении в режим 'local' и для явной кнопки
-    «Удалить с сервера» в настройках безопасности.
-    Сам факт удаления НЕ переключает режим — это делает /storage_mode.
-    """
+    """Удалить серверную копию приватника (режим не меняет — это /storage_mode)."""
     user = auth_member(authorization)
     _rate_limit(f"keywipe:{user['id']}", limit=10, window=3600)
     c = db()
@@ -256,8 +230,7 @@ class RenameDeviceBody(BaseModel):
 
 @router.get("/devices")
 def list_my_devices(authorization: Optional[str] = Header(None)):
-    """Все устройства текущего юзера. Поле is_current отмечает, с какого
-    именно сейчас сделан запрос — по совпадению токена."""
+    """Все устройства юзера (is_current — текущий по токену)."""
     user = auth_member(authorization)
     import device_auth as _da
     c = db()
@@ -303,7 +276,7 @@ def rename_my_device(device_pk: int, body: RenameDeviceBody,
 
 @router.post("/devices/{device_pk}/revoke")
 def revoke_my_device(device_pk: int, authorization: Optional[str] = Header(None)):
-    """Отзыв устройства. Защищено в device_auth: owner-устройство не отзывается."""
+    """Отозвать устройство (owner не отзывается — защита в device_auth)."""
     user = auth_member(authorization)
     _rate_limit(f"devrevoke:{user['id']}", limit=20, window=3600)
     import device_auth as _da
@@ -397,7 +370,7 @@ def set_tda(body: TdaToggleBody, authorization: Optional[str] = Header(None)):
 
 @router.get("/devices/pending")
 def list_pending_logins(authorization: Optional[str] = Header(None)):
-    """Список pending-логинов текущего юзера (для UI на trusted устройстве)."""
+    """Pending-логины юзера (для UI на trusted устройстве)."""
     user = auth_member(authorization)
     now_ = int(time.time())
     c = db()
@@ -418,7 +391,7 @@ def list_pending_logins(authorization: Optional[str] = Header(None)):
 @router.post("/devices/pending/{request_id}/approve")
 def approve_pending(request_id: str, body: TdaApproveBody,
                     authorization: Optional[str] = Header(None)):
-    """С доверенного устройства: ввести 6-значный код, чтобы одобрить новое."""
+    """Одобрить pending-логин 6-значным кодом."""
     user = auth_member(authorization)
     _rate_limit(f"tda_appr:{user['id']}", limit=30, window=3600)
     import device_auth as _da
@@ -466,7 +439,7 @@ def approve_pending(request_id: str, body: TdaApproveBody,
 
 @router.post("/devices/pending/{request_id}/deny")
 def deny_pending(request_id: str, authorization: Optional[str] = Header(None)):
-    """С доверенного устройства: явно отклонить новый логин."""
+    """Отклонить pending-логин."""
     user = auth_member(authorization)
     _rate_limit(f"tda_deny:{user['id']}", limit=30, window=3600)
     c = db()

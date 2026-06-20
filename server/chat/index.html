@@ -1914,17 +1914,8 @@ function parsePayload(raw){
   return {type:'msg', text: raw};
 }
 
-// ── Sealed Sender ────────────────────────────────────────────────────────────
-// Sender генерит одноразовую ECDH-пару на каждое сообщение. Public
-// прикладывается к envelope в открытом виде, но НЕ идентифицирует sender'а.
-// Внутри AES-GCM ciphertext — настоящий from_username и payload.
-// Receiver расшифровывает СВОИМ приватным ключом + ephemeral_pub из envelope,
-// не зная заранее кто sender. Внутри расшифрованного envelope — кто.
-//
-// Envelope формат (binary): ephemeral_pub(65) || iv(12) || aes_gcm_ciphertext
-//
-// ⚠️ v1 без подписи: receiver не может верифицировать что from_username не
-// подделан. В будущем — Ed25519-sign(envelope) с persistent identity.
+// Sealed Sender: одноразовая ECDH-пара на сообщение, ephemeral_pub в envelope открыто,
+// from_username и payload в AES-GCM ciphertext. V1 без подписи — в будущем Ed25519.
 
 async function encryptSealed(receiverUsername, payload) {
   let pub = pubCache.get(receiverUsername);
@@ -2020,19 +2011,9 @@ async function _maybeAskRecreateKey(peerUsername){
   if (yes) { try { await rotateMyKeys(); } catch(e){ console.warn('[recreate-key]', e); } }
 }
 
-// ── Сохранение/загрузка приватного ключа в IDB ──
-// Храним pkcs8-байты приватного ключа. При load импортируем с extractable=false
-// — это значит XSS не сможет re-export через crypto.subtle.exportKey() уже импортированный
-// ключ. (Полная защита от XSS требовала бы session-key wrapping — TODO в будущем.)
-// pkcs8-в-IDB совместимо со всеми браузерами (Safari/iOS не поддерживает
-// structured-clone CryptoKey-объектов — было причиной вечного спиннера).
+// Сохранение ключей в IDB (pkcs8-байты, extractable=false для защиты от XSS).
 async function saveKeysToIDB(pkcs8Bytes){
-  // ВАЖНО: оба put'а в ОДНОЙ синхронной транзакции, ждём tx.oncomplete.
-  // Раньше было два последовательных `await new Promise(...)` в одной tx —
-  // между ними JS уходит в microtask и tx автокоммитится. На некоторых
-  // браузерах второй put для 'pub' попадает в уже-закрытую транзакцию,
-  // и IDB остаётся с priv но без pub → reload → loadKeysFromIDB→false →
-  // _ensureKeysLocal ветка (c) → banner «Приватный ключ не загружен».
+  // Оба put'а в одной синхронной транзакции (иначе tx автокоммитится в microtask).
   const db = await openIDB();
   if (!db.objectStoreNames.contains('keys')) return;
   await new Promise((res, rej) => {
@@ -3806,9 +3787,7 @@ async function idbGetMessages(peer){
     cur.onsuccess = e => { const c = e.target.result; if (c) { out.push(c.value); c.continue(); } else res(out); };
   });
 }
-// ─── filecache: encrypted blob'ы файлов/голосовых, кэшируем после первого
-//     успешного скачивания. Сервер удаляет файл после ack от receiver →
-//     второе открытие падало с 404. Теперь IDB-cache, server-fallback.
+// Filecache: IDB encrypted blob'ы после первого скачивания (сервер удаляет, fallback→404).
 async function idbCacheFile(file_id, bytes, mime){
   try {
     const db = await openIDB();
@@ -4418,7 +4397,7 @@ function startGSBadgePolling(){
   _gsBadgeTimer = setInterval(tick, 20000);
 }
 
-// ── PWA install prompt (iOS Safari) ──
+// PWA install prompt (iOS Safari)
 function isIOS(){
   const ua = navigator.userAgent || '';
   return /iPad|iPhone|iPod/.test(ua) || (ua.includes('Mac') && 'ontouchend' in document);
@@ -4687,7 +4666,7 @@ async function ingestIncoming(m){
     return true;
   }
 
-  // ── Обычное сообщение (или legacy plain text) ──
+  // Обычное сообщение (или legacy plain text)
   const text = String(payload.text || '');
   const stored = {
     sid: m.id,
@@ -6124,9 +6103,7 @@ async function doForwardTo(kind, target){
   }
 }
 
-// ── Emoji-палитра ──
-// Используем системный emoji-font: на Apple-устройствах будут реальные iOS emoji,
-// на остальных — системные альтернативы. Никаких 5MB SVG-наборов.
+// Emoji-палитра системным font (iOS emoji на Apple, альтернативы на других).
 const EMOJI_DATA = {
   smiles: { icon: '😀', name: 'Смайлы', items: [
     {e:'😀',t:'grin happy'},{e:'😃',t:'happy'},{e:'😄',t:'smile happy'},{e:'😁',t:'grin'},{e:'😆',t:'laugh'},
@@ -7236,7 +7213,7 @@ async function handleWs(m){
     if (_helloResolve) { try { _helloResolve(d); } catch(_){} _helloResolve = null; _helloReject = null; }
     return;
   }
-  // TDA: новое устройство хочет войти (legacy модалка).
+  // TDA: новое устройство хочет войти.
   if (t === 'login.pending') {
     showLoginApprovalToast(d);
     return;
@@ -7403,8 +7380,7 @@ async function init(){
   _tlog('connectWS()');
   connectWS();
   let d;
-  // hello через WS И HTTP /me параллельно — побеждает кто быстрее.
-  // Раньше: 8с timeout, потом fallback → worst-case 8с+RTT. Теперь оба гонятся сразу.
+  // hello через WS И HTTP /me параллельно (race, раньше 8с timeout).
   const helloP = (_helloPromise || Promise.reject(new Error('no hello promise')))
     .catch(() => new Promise(()=>{}));
   const httpP = soc('/me').catch(() => new Promise(()=>{}));
@@ -8273,10 +8249,7 @@ renderDialogs = function(filter=''){
     gArr = gArr.filter(g => (g.name || '').toLowerCase().includes(f));
   }
 
-  // ── PINNED-карточка «Поддержка GhostChat» ──
-  // ВАЖНО: считаем её ДО проверки пустого, чтобы у юзеров без своих
-  // чатов поддержка всё равно висела сверху. Без неё новички не знают
-  // куда задавать вопросы.
+  // PINNED карточка «Поддержка GhostChat» ДО проверки пустого (иначе новички не знают куда спросить).
   const isAdmin = _supportAdmin && _supportAdmin.is_me;
   const showSupport = !f && (_supportAdmin || isAdmin);
   let supportHtml = '';
