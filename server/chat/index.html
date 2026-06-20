@@ -1688,7 +1688,6 @@ let me=null;
 try { me = JSON.parse(localStorage.getItem('gs_me')||'null'); }
 catch(_) { localStorage.removeItem('gs_me'); me=null; }
 
-// ── Multi-account storage ────────────────────────────────────────────
 function accountsLoad(){
   try { return JSON.parse(localStorage.getItem('gs_accounts') || '[]') || []; }
   catch(_){ return []; }
@@ -1733,9 +1732,6 @@ function accountsSwitchTo(idx){
   location.reload();
 }
 const ACCOUNTS_MAX = 5;
-// Открытие auth-экрана как «добавление аккаунта» — НЕ удаляет текущие
-// данные, помечает флагом что после login надо положить в массив,
-// и при отмене (close) возвращает обратно в текущий аккаунт.
 function accountsAdd(){
   const arr = accountsLoad();
   if (arr.length >= ACCOUNTS_MAX){
@@ -1759,7 +1755,6 @@ function accountsAdd(){
   location.reload();
 }
 
-// Отмена добавления — восстанавливает backup активного аккаунта.
 function accountsAddCancel(){
   let backup = null;
   try { backup = JSON.parse(sessionStorage.getItem('gs_acc_backup') || 'null'); } catch(_){}
@@ -1775,7 +1770,6 @@ function accountsAddCancel(){
   }
   location.reload();
 }
-// Удалить текущий аккаунт из массива (используется в doLogout).
 function accountsRemoveCurrent(){
   const arr = accountsLoad();
   const i = accountsActiveIndex();
@@ -1795,14 +1789,10 @@ let activePeer=null;         // {username, display_name}
 let activeMessages=[];       // расшифрованные сообщения активного чата
 let ws=null, wsReconnect=1000, pingTimer=null;
 
-// ── tiny helpers ──
 const u8=s=>new TextEncoder().encode(s);
 const b64e=buf=>btoa(String.fromCharCode(...new Uint8Array(buf)));
 const b64d=s=>{const bin=atob(s);const out=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)out[i]=bin.charCodeAt(i);return out;};
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
-// jsAttr: безопасная вставка ЛЮБОЙ строки внутрь onclick="foo(...)". JSON.stringify
-// делает её JS-литералом + esc нейтрализует кавычки HTML-атрибута. Используй вместо
-// `'${esc(s)}'` — там esc() даёт &#39; которое HTML декодит обратно в ' → JS-break.
 function jsAttr(v){return esc(JSON.stringify(v == null ? null : String(v)));}
 function ini(n){return n?n[0].toUpperCase():'?';}
 function showToast(m, err=false){const t=document.getElementById('toast');t.textContent=m;t.className='toast'+(err?' err':'');t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400);}
@@ -1862,7 +1852,6 @@ async function genECDHPair(){
 }
 
 async function importPub(b64){
-  // P-256 raw public key: 65 байт (0x04 + 32 X + 32 Y)
   return crypto.subtle.importKey('raw', b64d(b64), ECDH_ALGO, false, []);
 }
 
@@ -1908,7 +1897,6 @@ async function encryptForPeer(peerUsername, payload){
   }
   const theirPub = await importPub(pub);
   const aes = await deriveShared(myPriv, theirPub);
-  // Если объект — сериализуем в JSON. Если строка — оборачиваем в стандартный msg-payload.
   const raw = (typeof payload === 'object' && payload !== null) ? JSON.stringify(payload) : String(payload);
   return encryptText(aes, raw);
 }
@@ -1949,10 +1937,8 @@ async function encryptSealed(receiverUsername, payload) {
     pubCache.set(receiverUsername, pub);
   }
   const receiverPub = await importPub(pub);
-  // Одноразовая ECDH-пара (P-256)
   const eph = await crypto.subtle.generateKey(ECDH_ALGO, true, ['deriveBits']);
   const ephPubRaw = new Uint8Array(await crypto.subtle.exportKey('raw', eph.publicKey));
-  // Shared = ECDH(eph_priv, receiver_pub) → 32 bytes
   const shared = await crypto.subtle.deriveBits({name:'ECDH', public: receiverPub}, eph.privateKey, 256);
   const aesKey = await crypto.subtle.importKey('raw', shared, {name:'AES-GCM'}, false, ['encrypt']);
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -1992,8 +1978,6 @@ async function decryptFromPeer(peerUsername, cipherB64){
     pub = r.x25519_pub;
     const existing = await pinnedPubKey(peerUsername);
     if (existing && existing.pub !== pub) {
-      // Авто-обновление: если расшифровка с новым ключом удастся — pin сам перепишется.
-      // Если не удастся — фолбэк через старый pin ниже.
     } else if (!existing) {
       await pinPubKey(peerUsername, pub, true);
     }
@@ -2007,15 +1991,12 @@ async function decryptFromPeer(peerUsername, cipherB64){
     try { await pinPubKey(peerUsername, pub, true); } catch(_){}
     return pt;
   } catch(firstErr){
-    // Авто-восстановление: pub в кэше/пине мог разъехаться с сервером.
-    // Берём свежий pub и повторяем. Это закрывает кейс «собеседник перегенерил ключ».
     try {
       const fresh = await wsFetchPeerPub(peerUsername);
       if (!fresh.x25519_pub || fresh.x25519_pub === pub) throw firstErr;
       const theirPub2 = await importPub(fresh.x25519_pub);
       const aes2 = await deriveShared(myPriv, theirPub2);
       const pt = await decryptText(aes2, cipherB64);
-      // Тихий апдейт: pin и кэш на актуальный pub.
       pubCache.set(peerUsername, fresh.x25519_pub);
       try { await pinPubKey(peerUsername, fresh.x25519_pub, true); } catch(_){}
       console.log('[E2E] decrypt recovered via fresh pub for @' + peerUsername);
@@ -2026,14 +2007,10 @@ async function decryptFromPeer(peerUsername, cipherB64){
   }
 }
 
-// Спросить юзера один раз за сессию: пересоздать ключ при упорной
-// невозможности расшифровать сообщения от конкретного собеседника.
 const _recreateAskedFor = new Set();
 async function _maybeAskRecreateKey(peerUsername){
   if (!peerUsername || _recreateAskedFor.has(peerUsername)) return;
   _recreateAskedFor.add(peerUsername);
-  // Подождём 2 секунды на случай если придут ещё сообщения от того же peer —
-  // не спамим окнами, ждём паузы.
   await new Promise(r => setTimeout(r, 2000));
   const yes = await appConfirm(
     'Не удалось расшифровать',
@@ -2099,7 +2076,6 @@ async function wipeKeysIDB(){
   } catch(_) {}
 }
 
-// ── Модалка обязательного выбора хранения приватного ключа ──
 let _ksResolve = null;
 function ksTogglePick(btn){
   document.querySelectorAll('#keyStorageModal .ks-card').forEach(c => {
@@ -2126,20 +2102,17 @@ function pickKeyStorageMode(){
   });
 }
 
-// ── Init / restore keys ──
 async function ensureKeys(password){
   console.log('[E2E] checking storage mode...');
   let modeRes;
   try {
     modeRes = await wsStorageModeGet();
   } catch(e){
-    // Сетевая ошибка или старый сервер — старое поведение (server-режим).
     console.warn('[E2E] /storage_mode unreachable, fallback to server-mode:', e);
     modeRes = { mode: 'server', has_pub: false, has_server_priv: false };
   }
   let mode = modeRes.mode;
 
-  // Юзер ещё не сделал выбор — показываем обязательную модалку.
   if (!mode){
     console.log('[E2E] no mode chosen yet — showing modal');
     mode = await pickKeyStorageMode();
@@ -2159,7 +2132,6 @@ async function ensureKeys(password){
   return await _ensureKeysServer(password);
 }
 
-// Режим «На сервере»: приватник зашифрован паролем, лежит в users.encrypted_private_key.
 async function _ensureKeysServer(password){
   console.log('[E2E] mode=server — checking remote keys...');
   const remote = await wsKeysMe();
@@ -2171,7 +2143,6 @@ async function _ensureKeysServer(password){
     await wipeKeysIDB();
     myPriv = null; myPub = null;
   }
-  // Если на сервере ключи занулены (после смены пароля) — генерируем заново ниже.
   if (remote.x25519_pub && remote.encrypted_private_key && remote.key_salt) {
     console.log('[E2E] found remote keys, decrypting with password...');
     try {
@@ -2181,10 +2152,8 @@ async function _ensureKeysServer(password){
       const iv = enc.slice(0, 12);
       const ct = enc.slice(12);
       const privBytes = await crypto.subtle.decrypt({name:'AES-GCM', iv}, master, ct);
-      // extractable=false: после импорта байты ключа недоступны JS через exportKey.
       myPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
       myPub = remote.x25519_pub;
-      // Сохраним pkcs8 в IDB — следующий заход не будет требовать пароль
       await saveKeysToIDB(privBytes);
       console.log('[E2E] keys decrypted OK');
       return;
@@ -2202,7 +2171,6 @@ async function _ensureKeysServer(password){
   myPub = b64e(pubBytes);
   console.log('[E2E] pub generated, len=', pubBytes.byteLength);
   const privBytes = await crypto.subtle.exportKey('pkcs8', pair.privateKey);
-  // Шифруем pkcs8 паролем для отправки на сервер
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const master = await deriveMasterKey(password, salt);
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -2216,15 +2184,11 @@ async function _ensureKeysServer(password){
     key_salt: b64e(salt),
     storage_mode: 'server',
   });
-  // Переимпортируем priv как non-extractable.
   myPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
-  // Сохраним pkcs8 в IDB для следующих заходов (БЕЗ пароля).
   await saveKeysToIDB(privBytes);
   console.log('[E2E] upload OK, priv is non-extractable, saved to IDB');
 }
 
-// Проверяет, совпадает ли локальный pub (из IDB) с тем что на сервере.
-// При несоответствии — wipe IDB, отдаёт false (клиент должен показать banner).
 async function _checkLocalPubMatchesServer(){
   try {
     const r = await wsKeysMe();
@@ -2243,9 +2207,7 @@ async function _checkLocalPubMatchesServer(){
   } catch(_) { return true; }  // сетевая ошибка — не блокируем
 }
 
-// Режим «Только на устройстве»: приватник никогда не уходит на сервер.
 async function _ensureKeysLocal(password, modeRes){
-  // (a) Ключи уже в памяти (init подтянул их из IDB до doLogin).
   if (myPriv && myPub){
     console.log('[E2E] mode=local — keys already in memory');
     if (!(await _checkLocalPubMatchesServer())){
@@ -2257,13 +2219,11 @@ async function _ensureKeysLocal(password, modeRes){
     try { await wsKeysUpload({ x25519_pub: myPub, storage_mode: 'local' }); } catch(_){}
     return;
   }
-  // (b) Попробовать IDB.
   try {
     await openIDB();
     if (await loadKeysFromIDB()){
       console.log('[E2E] mode=local — keys loaded from IDB');
       if (!(await _checkLocalPubMatchesServer())){
-        // mismatch — priv остался в памяти и IDB, banner покажет это.
         return;
       }
       try { await wsKeysUpload({ x25519_pub: myPub, storage_mode: 'local' }); } catch(_){}
@@ -2272,7 +2232,6 @@ async function _ensureKeysLocal(password, modeRes){
   } catch(e){
     console.warn('[E2E] mode=local — IDB load failed:', e);
   }
-  // (c) Нет priv нигде — новое устройство. Если на сервере pub есть — НЕ
   if (modeRes.has_pub){
     myPub = (modeRes && modeRes.x25519_pub) || null;
     try {
@@ -2286,7 +2245,6 @@ async function _ensureKeysLocal(password, modeRes){
     console.warn('[E2E] local-mode: на сервере pub есть, локально priv нет — banner');
     return;
   }
-  // (d) Новый юзер — генерируем пару и публикуем только публичный ключ.
   console.log('[E2E] mode=local — generating new ECDH pair (P-256)...');
   const pair = await crypto.subtle.generateKey(ECDH_ALGO, true, ['deriveBits']);
   const pubBytes = await crypto.subtle.exportKey('raw', pair.publicKey);
@@ -2294,7 +2252,6 @@ async function _ensureKeysLocal(password, modeRes){
   const privBytes = await crypto.subtle.exportKey('pkcs8', pair.privateKey);
   myPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
   await saveKeysToIDB(privBytes);
-  // На сервер уходит ТОЛЬКО pubkey + режим — приватник остаётся только в IDB.
   await wsKeysUpload({
     x25519_pub: myPub,
     storage_mode: 'local',
@@ -2314,7 +2271,6 @@ async function _ensureKeysLocal(password, modeRes){
 
 async function _keysHealthCheck(){
   if (!myPriv || !myPub) { console.log('[E2E] health: priv/pub отсутствуют — пропуск'); return; }
-  // 1) Сравнить с сервером. Если myPub == server pub — это уже good sign.
   let serverPub = null;
   try {
     const r = await wsKeysMe();
@@ -2326,7 +2282,6 @@ async function _keysHealthCheck(){
     // Попробуем понять: priv ли соответствует server pub? Если да — апдейтим myPub.
     // Иначе — priv от старой пары, пересоздаём.
   }
-  // 2) Round-trip self-test.
   try {
     const myPubKey = await importPub(serverPub);
     const eph = await crypto.subtle.generateKey(ECDH_ALGO, true, ['deriveBits']);
@@ -2334,7 +2289,6 @@ async function _keysHealthCheck(){
     const aesKey = await crypto.subtle.importKey('raw', sharedBits, {name:'AES-GCM'}, false, ['encrypt']);
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, aesKey, new TextEncoder().encode('healthcheck'));
-    // Расшифровываем "от имени получателя" = я (eph pub известен).
     const ephPubRaw = new Uint8Array(await crypto.subtle.exportKey('raw', eph.publicKey));
     const ephPubKey = await importPub(b64e(ephPubRaw));
     const sharedBack = await crypto.subtle.deriveBits({name:'ECDH', public: ephPubKey}, myPriv, 256);
@@ -2342,7 +2296,6 @@ async function _keysHealthCheck(){
     const pt = new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM', iv}, aesBack, ct));
     if (new TextDecoder().decode(pt) === 'healthcheck'){
       console.log('[E2E] health: OK — priv соответствует server pub');
-      // Если myPub в памяти отличался — синхронизируем (priv тот же, просто наш кэш стейл).
       if (myPub !== serverPub){
         console.log('[E2E] health: обновляю myPub из server');
         myPub = serverPub;
@@ -2380,7 +2333,6 @@ async function _keysHealthCheck(){
 //   • Локально wipe IDB ключей + pubCache.clear() — иначе стейл-пинов.
 
 async function rotateMyKeys(){
-  // Шаг 1: подтверждение + (server-mode) пароль.
   const ok1 = await appConfirm(
     'Пересоздать ключ?',
     'Собеседники автоматически примут новый ключ. Сообщения, ещё не доставленные тебе (в /pending), могут пропасть.',
@@ -2397,14 +2349,12 @@ async function rotateMyKeys(){
     if (!password) return;
   }
 
-  // Шаг 2: забыть свою историю?
   const wipeMine = await appConfirm(
     'Забыть всю историю на этом устройстве?',
     'Будут удалены все локальные сообщения во всех чатах с этого браузера. Сами чаты в списке останутся. Это необратимо.',
     'Да, забыть'
   );
 
-  // Шаг 3: если да — стереть и у собеседников?
   let wipePeers = false;
   if (wipeMine){
     wipePeers = await appConfirm(
@@ -2433,14 +2383,12 @@ async function rotateMyKeys(){
       ]);
     }
 
-    // Шаг B: генерим новую пару.
     const pair = await crypto.subtle.generateKey(ECDH_ALGO, true, ['deriveBits']);
     const pubBytes = await crypto.subtle.exportKey('raw', pair.publicKey);
     const privBytes = await crypto.subtle.exportKey('pkcs8', pair.privateKey);
     const newPub = b64e(pubBytes);
     const newPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
 
-    // Шаг C: аплоадим новый pub (+ encrypted_private_key для server-mode).
     if (mode === 'server'){
       const salt = crypto.getRandomValues(new Uint8Array(16));
       const master = await deriveMasterKey(password, salt);
@@ -2461,7 +2409,6 @@ async function rotateMyKeys(){
       });
     }
 
-    // Шаг D: локально — wipe IDB ключей + cache + (опц.) wipe messages у себя.
     try { await wipeKeysIDB(); } catch(_){}
     try { pubCache.clear(); } catch(_){}
     if (wipeMine){
@@ -2478,8 +2425,6 @@ async function rotateMyKeys(){
   }
 }
 
-// Удаляет все сообщения из IDB store 'messages' (всю переписку на устройстве).
-// Сами диалоги (last_at, peer_username) не трогает — список чатов остаётся.
 async function wipeAllMyMessages(){
   const db = await openIDB();
   if (db.objectStoreNames.contains('messages')){
@@ -2489,12 +2434,10 @@ async function wipeAllMyMessages(){
       r.onsuccess = res; r.onerror = () => rej(r.error);
     });
   }
-  // Активный экран чата тоже обновим.
   if (Array.isArray(activeMessages)) activeMessages.length = 0;
   if (typeof renderMessages === 'function') try { renderMessages(); } catch(_){}
 }
 
-// Удаляет переписку именно с одним собеседником (для входящего wipe_history).
 async function wipeMessagesWithPeer(peerUsername){
   const db = await openIDB();
   if (!db.objectStoreNames.contains('messages')) return;
@@ -2511,7 +2454,6 @@ async function wipeMessagesWithPeer(peerUsername){
       };
       req.onerror = () => rej(req.error);
     } else {
-      // Нет индекса по peer — пробегаем все, удаляем те где peer совпал.
       const req = store.openCursor();
       req.onsuccess = e => {
         const c = e.target.result;
@@ -2543,7 +2485,6 @@ async function _safetyCodeFromPubs(myPubB64, peerPubB64){
   const [a, b] = [myPubB64, peerPubB64].sort();
   const buf = new TextEncoder().encode(a + '|' + b);
   const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
-  // 30 байт = 5 chunks по 6 байт. Каждые 6 байт → uint48 → строка из 12 цифр.
   const groups = [];
   for (let i = 0; i < 5; i++){
     const off = i * 6;
@@ -2554,7 +2495,6 @@ async function _safetyCodeFromPubs(myPubB64, peerPubB64){
   return groups;
 }
 
-// (Старая версия openSafetyCode — удалена, оставлена единая на 2202.)
 
 // ════════════════════════════════════════════════════════════════════
 // KEYS V2 ОНБОРДИНГ
@@ -2565,7 +2505,6 @@ async function _safetyCodeFromPubs(myPubB64, peerPubB64){
 let _v2NewMnemonic = null;  // временно держим показанную фразу
 
 function openV2Onboard(){
-  // Stage 1 — выбор Create vs Recover.
   document.getElementById('v2Stage1').style.display = '';
   document.getElementById('v2Stage2').style.display = 'none';
   document.getElementById('v2Stage3').style.display = 'none';
@@ -2587,7 +2526,6 @@ async function v2StartCreate(){
   }
   document.getElementById('v2Stage1').style.display = 'none';
   document.getElementById('v2Stage2').style.display = '';
-  // Генерим mnemonic и показываем в гриде с порядковыми номерами.
   _v2NewMnemonic = await GhostKeysV2.generateMnemonic();
   const words = _v2NewMnemonic.split(' ');
   document.getElementById('v2SeedGrid').innerHTML = words.map((w, i) => `
@@ -2595,7 +2533,6 @@ async function v2StartCreate(){
       <span style="color:var(--sub);font-size:10px;width:18px;text-align:right;">${i+1}.</span>
       <b style="flex:1;">${esc(w)}</b>
     </div>`).join('');
-  // Чекбокс активирует кнопку.
   const cb = document.getElementById('v2SeedConfirmed');
   const btn = document.getElementById('v2ConfirmBtn');
   cb.onchange = () => { btn.disabled = !cb.checked; };
@@ -2612,7 +2549,6 @@ async function v2ConfirmAndPublish(){
   try {
     const id = await GhostKeysV2.mnemonicToIdentity(_v2NewMnemonic);
     const dev = GhostKeysV2.generateDeviceKey();
-    // proof — подпись фиксированной строки identity_priv'ом.
     const proof = GhostKeysV2.signWithIdentity(id.identity_priv, GhostKeysV2._u8('ghostchat-v2-identity-claim'));
     status.textContent = 'Публикую identity на сервере…';
     await chat('/v2/identity/publish', 'POST', {
@@ -2625,7 +2561,6 @@ async function v2ConfirmAndPublish(){
       device_pub: GhostKeysV2._b64e(dev.device_pub),
       signed_prekey_sig: GhostKeysV2._b64e(devSig),
     });
-    // Сохраняем в IDB. Pkcs8-варианта тут нет — храним raw байты в Uint8Array.
     await _v2SaveToIDB({
       identity_priv: id.identity_priv,
       identity_pub:  id.identity_pub,
@@ -2668,7 +2603,6 @@ async function v2DoRecover(){
     }
     status.textContent = 'Восстанавливаю identity…';
     const id = await GhostKeysV2.mnemonicToIdentity(mnemonic);
-    // Сверим с сервером — должен совпасть с опубликованным identity_pub.
     let me;
     try { me = await chat('/v2/identity/me'); } catch(_) { me = {identity_pub: null}; }
     if (me.identity_pub && me.identity_pub !== GhostKeysV2._b64e(id.identity_pub)){
@@ -2676,10 +2610,8 @@ async function v2DoRecover(){
       status.textContent = 'Эта фраза не от этого аккаунта (identity_pub на сервере другой).';
       btn.disabled = false; return;
     }
-    // Новый device key для этого устройства.
     const dev = GhostKeysV2.generateDeviceKey();
     const devSig = GhostKeysV2.signWithIdentity(id.identity_priv, dev.device_pub);
-    // Если identity ещё не на сервере (например, фраза от старого аккаунта) — публикуем.
     if (!me.identity_pub){
       const proof = GhostKeysV2.signWithIdentity(id.identity_priv, GhostKeysV2._u8('ghostchat-v2-identity-claim'));
       await chat('/v2/identity/publish', 'POST', {
@@ -2708,7 +2640,6 @@ async function v2DoRecover(){
   }
 }
 
-// Auto-prompt v2 identity при первом входе. Без вопросов «хочешь ли» —
 async function _ensureV2Identity(){
   let serverId;
   try { serverId = await chat('/v2/identity/me'); }
@@ -2716,7 +2647,6 @@ async function _ensureV2Identity(){
   const haveOnServer = !!(serverId && serverId.identity_pub);
   const localKeys = await _v2LoadFromIDB().catch(() => null);
   const haveLocal = !!(localKeys && localKeys.identity_priv);
-  // Кейс 1: ни там, ни тут — первый раз. Открываем создание.
   if (!haveOnServer && !haveLocal){
     if (!localStorage.getItem('v2_create_dismissed')){
       openV2Onboard();
@@ -2724,19 +2654,14 @@ async function _ensureV2Identity(){
     }
     return;
   }
-  // Кейс 2: на сервере есть, локально нет — другое устройство уже инициализировано.
-  // Открываем Stage 3 (восстановление через seed).
   if (haveOnServer && !haveLocal){
     openV2Onboard();
     v2StartRecover();
     ghostikSay('Введи <b>seed-фразу</b> чтобы это устройство тоже работало с твоим identity.', 9000);
     return;
   }
-  // Кейс 3: всё на месте — ничего не делаем. Если public на сервере != локальному,
-  // это конфликт — но решаем его в отдельном проходе (v2 health check).
 }
 
-// ── v2 keys storage в IDB ────────────────────────────────────
 async function _v2SaveToIDB(obj){
   const db = await openIDB();
   if (!db.objectStoreNames.contains('v2_keys')){
@@ -2799,16 +2724,12 @@ async function _computeSafetyCode(myPubB64, theirPubB64){
   // 5 итераций SHA-256 чтобы slightly slow брутфорс предобразов.
   let h = new Uint8Array(await crypto.subtle.digest('SHA-256', concat));
   for (let i = 0; i < 4; i++) h = new Uint8Array(await crypto.subtle.digest('SHA-256', h));
-  // Берём первые 30 байт → конвертируем в 60 десятичных цифр (5 групп по 12)
   let digits = '';
   for (let i = 0; i < 30; i += 5){
-    // 5 байт → 40 бит → 12 десятичных цифр (макс ~1.1×10^12)
     const v = (BigInt(h[i]) << 32n) | (BigInt(h[i+1]) << 24n) | (BigInt(h[i+2]) << 16n) | (BigInt(h[i+3]) << 8n) | BigInt(h[i+4]);
     const piece = (v % 1000000000000n).toString().padStart(12, '0');
     digits += piece;
   }
-  // Форматируем: 12-12-12-12-12 → группы по 3 цифры для удобства чтения
-  // Итог: 60 цифр = 20 групп по 3, разнесём по строкам в UI
   const parts = [];
   for (let i = 0; i < 60; i += 12) parts.push(digits.slice(i, i+12));
   return parts; // массив из 5 строк по 12 цифр
@@ -2864,7 +2785,6 @@ async function openSafetyCode(peerUsername){
       peerPub = r.x25519_pub;
     }
     const parts = await _computeSafetyCode(myPub, peerPub);
-    // Красивый формат: 12 цифр — две группы по 3+3+3+3
     const fmt = s => s.match(/.{1,3}/g).join(' ');
     box.innerHTML = parts.map(p => `<div>${fmt(p)}</div>`).join('');
     peerLabel.textContent = `Между вами и @${peerUsername}. Совпадает с тем что видит собеседник у себя.`;
@@ -2887,7 +2807,6 @@ function copySafetyCode(){
   }, () => {});
 }
 
-// (Дубль rotateMyKey удалён — единая функция rotateMyKeys выше.)
 
 // ════════════════════════════════════════════════════════════════════
 // KEY-MISSING BANNER: persistent плашка сверху чата, если на этом
@@ -2957,13 +2876,11 @@ function openSettings(){
   } catch(_){}
   document.getElementById('settingsModal').classList.add('open');
   document.body.style.overflow = 'hidden';
-  // Открываем сразу главный экран Settings (список категорий).
   switchSettingsTab('root');
   refreshStorageModeRow();
   loadDevicesIntoSettings();
 }
 
-// Drill-down навигация в Settings.
 const _SETTINGS_TITLES = {
   root:     { icon: 'fa-gear',           text: 'Настройки' },
   security: { icon: 'fa-shield-halved',  text: 'Безопасность' },
@@ -2973,14 +2890,11 @@ function switchSettingsTab(tab){
   const modal = document.getElementById('settingsModal');
   if (!modal) return;
   modal.querySelectorAll('.set-page').forEach(p => p.classList.toggle('active', p.dataset.page === tab));
-  // Back-кнопка только когда мы НЕ на главном экране.
   const back = document.getElementById('settingsBack');
   if (back) back.style.display = (tab === 'root') ? 'none' : 'flex';
-  // Меняем заголовок.
   const title = document.getElementById('settingsTitle');
   const meta = _SETTINGS_TITLES[tab] || _SETTINGS_TITLES.root;
   if (title) title.innerHTML = '<i class="fa-solid ' + meta.icon + '" style="margin-right:8px;color:var(--sub)"></i>' + meta.text;
-  // На каждый переход — сбрасываем скролл sheet'а.
   const sheet = modal.querySelector('.modal-sheet');
   if (sheet) sheet.scrollTop = 0;
 }
@@ -2989,7 +2903,6 @@ function closeSettings(){
   document.body.style.overflow = '';
 }
 
-// Параллакс-glow: радиальная подсветка следует за курсором в liquid-glass
 (function _liquidGlassParallax(){
   let _rafQueued = false, _lastEv = null;
   document.addEventListener('mousemove', (e) => {
@@ -3019,18 +2932,15 @@ async function refreshStorageModeRow(){
   } catch(e){
     el.textContent = 'Не удалось загрузить';
   }
-  // Заодно подтянуть TDA-флажок и pending-секцию.
   refreshTdaRow();
   loadPendingLoginsIntoSettings();
 }
 
-// ── TDA: тумблер и pending в настройках ──
 async function refreshTdaRow(){
   try {
     const r = await chat('/tda');
     document.getElementById('setTdaCheck').checked = !!r.enabled;
   } catch(e){
-    // ignore
   }
 }
 async function toggleTda(){
@@ -3091,9 +3001,6 @@ async function quickDenyPending(rid){
   }
 }
 
-// ── TDA: pending-карточки в чате поддержки ──
-// _tdaPendings — массив текущих запросов. Загружается при openChat(support)
-// через wsCall('tda.pending.list') и обновляется по WS push'ам tda.pending.new/gone.
 let _tdaPendings = [];
 
 function _tdaTimeStr(ts){
@@ -3206,10 +3113,8 @@ async function tdaBlock(btn){
   }
 }
 
-// ── TDA: WS-уведомление и модалка одобрения на trusted устройстве ──
 let _approveRid = null;
 function showLoginApprovalToast(d){
-  // d = {request_id, device_name, platform, ip, ts}
   _approveRid = d.request_id;
   document.getElementById('appReqInfo').innerHTML =
     `Кто-то пытается войти в ваш аккаунт. ` +
@@ -3277,7 +3182,6 @@ async function changeStorageMode(){
       if (!ok) return;
       await wsStorageModeSet({ mode: 'local' });
     } else {
-      // local → server
       if (!myPub){
         await appAlert('Подождите', 'Свой ключ ещё не загружен.');
         return;
@@ -3330,7 +3234,6 @@ async function changeStorageMode(){
   }
 }
 
-// ── Устройства ──
 async function loadDevicesIntoSettings(){
   const cont = document.getElementById('setDevList');
   cont.innerHTML = '<div class="set-dev-loading"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</div>';
@@ -3433,7 +3336,6 @@ async function openKeyFileExport(){
   const pwd2 = await appPrompt('Повторите пароль', 'Введите ещё раз для проверки.', {password: true, placeholder: 'Тот же пароль'});
   if (pwd !== pwd2){ await appAlert('Не совпадают', 'Пароли не совпадают'); return; }
   try {
-    // Достаём pkcs8-байты приватника из IDB.
     const db = await openIDB();
     const tx = db.transaction('keys', 'readonly');
     const priv = await new Promise(r => { const q = tx.objectStore('keys').get('priv'); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
@@ -3469,12 +3371,10 @@ async function openKeyFileExport(){
 }
 
 async function openKeyFileImport(){
-  // Защита: импорт работает только если ты залогинен (проверяем что есть me).
   if (!me || !token){
     await appAlert('Войдите', 'Сначала войдите в аккаунт. Файл-ключ проверит, что pubkey в нём совпадает с вашим аккаунтом.');
     return;
   }
-  // Создаём file picker динамически.
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = '.gcsk,application/json,.json';
@@ -3487,7 +3387,6 @@ async function openKeyFileImport(){
       try { blob = JSON.parse(text); }
       catch(_){ await appAlert('Не файл', 'Это не валидный JSON-файл'); return; }
       if (blob.magic !== 'GCSKv1'){ await appAlert('Не файл-ключ', 'Файл повреждён или не является ключом GhostChat (нет magic-заголовка GCSKv1)'); return; }
-      // Сверяем pub с pub аккаунта.
       let myAccountPub;
       try {
         const r = await wsKeysMe();
@@ -3515,8 +3414,6 @@ async function openKeyFileImport(){
         myPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
         myPub = blob.pub;
         await saveKeysToIDB(privBytes);
-        // Аплоадим pub на сервер в режиме local (а если уже там что-то было —
-        // upload сохраняет storage_mode который уже выставлен).
         await wsKeysUpload({ x25519_pub: myPub, storage_mode: 'local' });
         ghostikSay('Ключ импортирован. Перезагружаю…', 2500);
         setTimeout(() => location.reload(), 1500);
@@ -3550,20 +3447,15 @@ async function openKeysyncShow(){
   document.getElementById('qrStatus').textContent = '';
   document.getElementById('qrStatus').className = 'qr-status';
   try {
-    // 1) Генерим ephemeral пару (extractable=true только для приватной части операции,
-    // но deriveBits сам не требует extractable).
     const ephPair = await crypto.subtle.generateKey(ECDH_ALGO, true, ['deriveBits']);
     const ephPubRaw = await crypto.subtle.exportKey('raw', ephPair.publicKey);
     const ephPubB64 = b64e(ephPubRaw);
-    // 2) Стартуем сессию на сервере
     const r = await chat('/keysync/start', 'POST', { eph_pub: ephPubB64 });
     _qrSession = { sid: r.sid, short_code: r.short_code, ephPair, ephPubB64, pollTimer: 0 };
     _qrPollIdx = 0;
-    // 3) Рендерим QR с компактным payload: {s:sid, e:eph_pub}
     const payload = JSON.stringify({ s: r.sid, e: ephPubB64 });
     _renderQR(payload);
     document.getElementById('qrCodeValue').textContent = r.short_code;
-    // 4) Стартуем поллинг ответа от Б
     _qrPollLoop();
   } catch(e){
     document.getElementById('qrCanvas').innerHTML = '';
@@ -3583,7 +3475,6 @@ function _renderQR(text){
   const qr = qrcode(0, 'M');
   qr.addData(text);
   qr.make();
-  // imgTag(cellSize, margin) → <img> с base64-png
   wrap.innerHTML = qr.createImgTag(5, 10);
   const img = wrap.querySelector('img');
   if (img) img.style.cssText = 'width:240px;height:240px;image-rendering:pixelated;';
@@ -3619,21 +3510,16 @@ async function _qrPollLoop(){
       s.className = 'qr-status';
       return;
     }
-    // прочая ошибка — продолжаем
   }
   if (_qrSession) _qrSession.pollTimer = setTimeout(_qrPollLoop, 1800);
 }
 
 async function _qrHandlePostFromB(b64){
-  // Б присылает только ephB_pub (RAW base64). Получаем его → ECDH → шифруем
-  // настоящий приватник и шлём обратно.
   try {
     const ephB_raw = b64d(b64);
     const ephB_pub = await crypto.subtle.importKey('raw', ephB_raw, ECDH_ALGO, false, []);
-    // Общий секрет
     const sharedBits = await crypto.subtle.deriveBits({ name: 'ECDH', public: ephB_pub }, _qrSession.ephPair.privateKey, 256);
     const aesKey = await _hkdfToAesKey(sharedBits);
-    // Экспортируем настоящий приватник из IDB (pkcs8 байты лежат там).
     const db = await openIDB();
     const tx = db.transaction('keys', 'readonly');
     const priv = await new Promise(r => { const q = tx.objectStore('keys').get('priv'); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
@@ -3678,13 +3564,11 @@ function closeKeysyncShow(){
   document.body.style.overflow = '';
   if (_qrSession){
     if (_qrSession.pollTimer) clearTimeout(_qrSession.pollTimer);
-    // Закрываем сессию на сервере (best-effort)
     try { chat('/keysync/' + encodeURIComponent(_qrSession.sid), 'DELETE'); } catch(_){}
   }
   _qrSession = null;
 }
 
-// ── Б: приёмник ключа ──
 let _qrRecvSid = null;
 let _qrRecvEphPair = null;
 let _qrRecvPollIdx = 0;
@@ -3724,22 +3608,17 @@ async function qrReceiveByCode(){
     const lk = await chat('/keysync/lookup', 'POST', { short_code: code });
     _qrRecvSid = lk.sid;
     st.textContent = 'Генерирую свою пару ключей…';
-    // Б: своя ephemeral пара
     _qrRecvEphPair = await crypto.subtle.generateKey(ECDH_ALGO, true, ['deriveBits']);
     const ephB_raw = await crypto.subtle.exportKey('raw', _qrRecvEphPair.publicKey);
     const ephB_b64 = b64e(ephB_raw);
-    // А: его pub из lookup
     const ephA_raw = b64d(lk.eph_pub_A);
     const ephA_pub = await crypto.subtle.importKey('raw', ephA_raw, ECDH_ALGO, false, []);
-    // Общий ECDH-секрет (Б).
     const sharedBits = await crypto.subtle.deriveBits({ name: 'ECDH', public: ephA_pub }, _qrRecvEphPair.privateKey, 256);
     const aesKey = await _hkdfToAesKey(sharedBits);
-    // Отдаём А наш ephB_pub
     await chat('/keysync/' + encodeURIComponent(_qrRecvSid) + '/post', 'POST', {
       from_role: 'B', payload: ephB_b64
     });
     st.textContent = 'Жду ключ от другого устройства…';
-    // Ждём пока А пришлёт enc_priv
     _qrRecvPollIdx = 0;
     _qrRecvPollLoop(aesKey, st, btn);
   } catch(e){
@@ -3755,7 +3634,6 @@ async function _qrRecvPollLoop(aesKey, st, btn){
     const r = await chat('/keysync/' + encodeURIComponent(_qrRecvSid) + '/poll?for_role=B&after=' + _qrRecvPollIdx);
     for (const post of (r.posts || [])){
       _qrRecvPollIdx = Math.max(_qrRecvPollIdx, post.index);
-      // Это завернутый JSON {pub, enc} (b64 от UTF-8 строки)
       try {
         const wrapJson = decodeURIComponent(escape(atob(post.payload)));
         const wrap = JSON.parse(wrapJson);
@@ -3763,7 +3641,6 @@ async function _qrRecvPollLoop(aesKey, st, btn){
         const iv = enc.slice(0, 12);
         const ct = enc.slice(12);
         const privBytes = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, aesKey, ct);
-        // Импортируем priv non-extractable, сохраняем в IDB, аплоадим pub в режиме local.
         myPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
         myPub = wrap.pub;
         await saveKeysToIDB(privBytes);
@@ -3796,9 +3673,6 @@ async function _qrRecvPollLoop(aesKey, st, btn){
   _qrRecvPollTimer = setTimeout(() => _qrRecvPollLoop(aesKey, st, btn), 1800);
 }
 
-// Слушаем ws-уведомление об отзыве устройства — если отозвали наше, force-logout.
-// (Если loadDevicesIntoSettings уже знает свой current_id, можно сравнивать.)
-// Этот обработчик регистрируется ниже в общем ws-роутинге, не здесь.
 
 // ════════════════════════════════════════════════════════════════════
 // INDEXED DB: история и метаданные диалогов
@@ -3809,8 +3683,6 @@ function openIDB(){
   return new Promise((res, rej) => {
     // v3: peerkeys для TOFU-пиннинга
     const req = indexedDB.open('ghostchat-' + (me && me.username || 'anon'), 4);
-    // Timeout 8 секунд — если что-то блокирует апгрейд (другая вкладка с v2),
-    // лучше показать ошибку чем вечный спиннер.
     const tid = setTimeout(() => {
       try { req.onsuccess = null; req.onerror = null; req.onblocked = null; } catch(_){}
       rej(new Error('IndexedDB заблокирована другой вкладкой. Закрой все открытые вкладки GhostChat и попробуй снова.'));
@@ -3829,26 +3701,20 @@ function openIDB(){
         db.createObjectStore('keys', { keyPath: 'id' });
       }
       if (!db.objectStoreNames.contains('peerkeys')) {
-        // {username, pub, first_seen, accepted}
         db.createObjectStore('peerkeys', { keyPath: 'username' });
       }
       if (!db.objectStoreNames.contains('filecache')) {
-        // {file_id (string), bytes (ArrayBuffer, encrypted), mime, cached_at}
-        // Хранит ЗАшифрованный blob — мы не доверяем IDB plaintext, к тому же
-        // ключ файла остаётся в file_payload сообщения (тоже зашифрован)
         const s = db.createObjectStore('filecache', { keyPath: 'file_id' });
         s.createIndex('cached_at', 'cached_at', { unique: false });
       }
     };
     req.onblocked = () => {
-      // Другая вкладка держит старую версию открытой → апгрейд завис.
       clearTimeout(tid);
       rej(new Error('Другая вкладка GhostChat блокирует обновление базы. Закрой её и обнови страницу.'));
     };
     req.onsuccess = e => {
       clearTimeout(tid);
       _idb = e.target.result;
-      // Если в будущем третья вкладка откроет с версией выше — закрываем тихо
       _idb.onversionchange = () => { try { _idb.close(); } catch(_){} _idb = null; };
       res(_idb);
     };
@@ -3879,10 +3745,7 @@ async function pinPubKey(username, pub, accepted=true){
     q.onsuccess = () => r(); q.onerror = () => r();
   });
 }
-// Возвращает true если ключ либо новый (и пиннится), либо совпадает с пинном,
-// либо юзер согласился принять изменённый ключ.
 async function verifyAndPinPub(username, pub){
-  // По решению waki: «у того кто пересоздал ключ — того ключ главнее».
   const existing = await pinnedPubKey(username);
   if (!existing || existing.pub !== pub){
     await pinPubKey(username, pub, true);
@@ -3908,7 +3771,6 @@ async function idbAddMessage(m){
   const db = await openIDB();
   const tx = db.transaction('messages', 'readwrite');
   const store = tx.objectStore('messages');
-  // дедуп по sid
   if (m.sid) {
     const idx = store.index('sid');
     const exists = await new Promise(r => { const q = idx.get(m.sid); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
@@ -3917,14 +3779,12 @@ async function idbAddMessage(m){
   await idbReq(tx, t => t.objectStore('messages').add(m));
   return true;
 }
-// Поиск сообщения по sid (для edit/delete операций)
 async function idbFindMessageBySid(sid){
   const db = await openIDB();
   const tx = db.transaction('messages', 'readonly');
   const idx = tx.objectStore('messages').index('sid');
   return new Promise(r => { const q = idx.get(sid); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
 }
-// Обновить существующее сообщение в IDB по sid (для edit/delete)
 async function idbUpdateMessage(sid, patch){
   const db = await openIDB();
   const tx = db.transaction('messages', 'readwrite');
@@ -3990,8 +3850,6 @@ async function fetchEncryptedFile(file_id, mime){
     });
     if (!r.ok) return null;
     const ct = await r.arrayBuffer();
-    // Сохраняем в IDB ДО возврата — даже если caller сразу же сделает /file/ack
-    // и сервер удалит, у нас локально уже всё есть.
     await idbCacheFile(file_id, ct, mime);
     return ct;
   } catch(e) {
@@ -4006,7 +3864,6 @@ async function idbPutDialog(d){
   await idbReq(tx, t => t.objectStore('dialogs').put(d));
 }
 
-// Удалить все сообщения с указанным peer (DM-юзер или group-key вида 'g:42')
 async function idbDeleteMessagesByPeer(peer){
   const db = await openIDB();
   const tx = db.transaction('messages', 'readwrite');
@@ -4026,7 +3883,6 @@ async function idbDeleteMessagesByPeer(peer){
     };
     cur.onerror = () => rej(cur.error);
   });
-  // Заодно почистим filecache для этих сообщений (медиа уже не нужны)
   if (fileIdsToCleanup.length && db.objectStoreNames.contains('filecache')) {
     try {
       const ftx = db.transaction('filecache', 'readwrite');
@@ -4039,7 +3895,6 @@ async function idbDeleteMessagesByPeer(peer){
   return fileIdsToCleanup.length;
 }
 
-// Удалить запись dialog (превью чата в списке) по username
 async function idbDeleteDialog(username){
   const db = await openIDB();
   const tx = db.transaction('dialogs', 'readwrite');
@@ -4062,8 +3917,6 @@ function showAuth(){
   document.getElementById('authScreen').style.display='flex';
   document.getElementById('app').style.display='none';
   document.getElementById('boot').classList.remove('open');
-  // Кнопка «Назад» — только в режиме «добавление аккаунта» (есть backup
-  // активного в sessionStorage). Возвращает в предыдущий аккаунт без логина.
   try {
     const bk = document.getElementById('authBack');
     const adding = sessionStorage.getItem('gs_adding_account') === '1';
@@ -4073,7 +3926,6 @@ function showAuth(){
   // password»-сценария мог остаться с прошлого showAuth).
   const lu = document.getElementById('loginUsername');
   if (lu) lu.disabled = false;
-  // Префилл username из локальных данных — БЕЗ запроса к серверу.
   try {
     if (lu && !lu.value){
       let saved = null;
@@ -4123,7 +3975,6 @@ function ghostikSay(text, durationMs){
   const b = document.getElementById('ghostikBubble');
   if (!b) return;
   b.innerHTML = '<button class="g-close" onclick="document.getElementById(\'ghostikBubble\').classList.remove(\'open\')" title="Скрыть"><i class="fa-solid fa-xmark"></i></button>' + text;
-  // Микро-задержка нужна чтоб transition сработал после смены contents.
   requestAnimationFrame(() => b.classList.add('open'));
   if (_ghostikHideTimer) clearTimeout(_ghostikHideTimer);
   if (durationMs && durationMs > 0){
@@ -4131,7 +3982,6 @@ function ghostikSay(text, durationMs){
   }
 }
 
-// Триггер: подсказки при первом входе в чат за сессию.
 function _ghostikFirstTimeTips(){
   if (localStorage.getItem('ghostik_seen_intro')) return;
   setTimeout(() => {
@@ -4146,7 +3996,6 @@ function switchTab(t){
   document.getElementById('tabReg').classList.toggle('active',t==='reg');
   document.getElementById('loginError').textContent='';document.getElementById('regError').textContent='';
 }
-// Постоянный device_id для этого браузера. Один раз — на всю жизнь localStorage.
 function getOrCreateDeviceId(){
   let did = localStorage.getItem('gs_device_id');
   if (!did){
@@ -4192,7 +4041,6 @@ async function doLogin(){
       device_name: getDeviceName(),
       platform: getDevicePlatform(),
     });
-    // TDA: сервер требует одобрения с уже доверенного устройства.
     if (d.requires_approval){
       return showAuthPendingApproval(d, u, p);
     }
@@ -4203,7 +4051,6 @@ async function doLogin(){
     sessionStorage.removeItem('gs_acc_backup');
     showBoot('Подготовка чата', 'Минуточку…');
     await ensureKeys(p);
-    // ensureKeys уже сохраняет pkcs8 в IDB внутри
     try { await onReady(); }
     catch(rdyErr){
       console.error('[onReady FAILED]', rdyErr);
@@ -4215,13 +4062,10 @@ async function doLogin(){
   btn.disabled=false;btn.textContent='Войти';
 }
 
-// ── TDA: экран ожидания одобрения нового устройства ──
 let _tdaPendingTimer = 0;
 let _tdaPendingDeadline = 0;
 
 function showAuthPendingApproval(d, username, password){
-  // d = {requires_approval, request_id, code, username, expires_in}
-  // Показываем фуллскрин-экран в authScreen-зоне.
   const code = d.code || '';
   const rid = d.request_id;
   _tdaPendingDeadline = Date.now() + (d.expires_in || 300) * 1000;
@@ -4261,7 +4105,6 @@ function cancelTdaPending(){
 }
 
 async function _tdaPendingPoll(ctx){
-  // Опрашиваем status. Между опросами обновляем countdown.
   const status = document.getElementById('_tdaPendStatus');
   const countdown = document.getElementById('_tdaPendCountdown');
   if (!status) return;  // Экран закрыт.
@@ -4274,7 +4117,6 @@ async function _tdaPendingPoll(ctx){
   try {
     const r = await fetch(`/api/chat/devices/pending/${encodeURIComponent(ctx.rid)}/status`).then(x => x.json());
     if (r.phase === 'approved'){
-      // Получили токен, продолжаем стандартный поток входа.
       cancelTdaPending();
       token = r.token; me = { username: ctx.username, display_name: ctx.username };
       localStorage.setItem('gs_token', token);
@@ -4316,7 +4158,6 @@ async function doRegister(){
   if(p!==c){err.textContent='Пароли не совпадают';return;}
   if(!age18){err.textContent='Подтвердите, что вам исполнилось 18 лет';return;}
   btn.disabled=true;btn.textContent='...';
-  // Реф: сначала из URL, потом из localStorage (лендинг мог сохранить)
   let ref = (new URLSearchParams(location.search)).get('ref') || localStorage.getItem('gs_ref') || null;
   if (ref) ref = ref.trim().replace(/^@/, '').toLowerCase();
   try{
@@ -4338,7 +4179,6 @@ async function doRegister(){
     sessionStorage.removeItem('gs_acc_backup');
     showBoot('Настройка профиля', 'Минуточку…');
     await ensureKeys(p);
-    // ensureKeys уже сохраняет pkcs8 в IDB внутри
     try { await onReady(); }
     catch(rdyErr){
       console.error('[onReady FAILED]', rdyErr);
@@ -4364,7 +4204,6 @@ function showConfirm({title='Подтвердите',msg='',okText='Ок',onOk})
   ov.onclick=e=>{if(e.target===ov)close();};
 }
 
-// ── Promise-обёртки. БЕЗ нативных alert/confirm/prompt — только наши модалки. ──
 function appConfirm(title, msg, okText='Ок'){
   return new Promise(resolve => {
     const ov = document.getElementById('confirmModal');
@@ -4440,14 +4279,11 @@ function doLogout(){
     okText:'Выйти',
     onOk:async()=>{
       await wipeKeysIDB();
-      // Убираем текущий из массива.
       const left = accountsRemoveCurrent();
       if (left.length){
-        // Есть другие — переключаемся на первый. accountsSwitchTo сделает reload.
         accountsSwitchTo(0);
         return;
       }
-      // Это был последний аккаунт — обычный logout.
       token=null;me=null;myPriv=null;myPub=null;
       localStorage.removeItem('gs_token');localStorage.removeItem('gs_me');clearSsoCookie();
       try{ws&&ws.close();}catch(e){}
@@ -4456,17 +4292,14 @@ function doLogout(){
   });
 }
 
-// SSO sync
 window.addEventListener('storage', e => {
   if (e.key !== 'gs_token') return;
-  // Полный logout в другой вкладке → newValue пуст → разлогиниваемся тоже.
   if (!e.newValue && token){
     token=null;me=null;myPriv=null;myPub=null;clearSsoCookie();
     try{ws&&ws.close();}catch(_){}
     showAuth();switchTab('login');
     return;
   }
-  // Account switch в другой вкладке → newValue не пуст и отличается от текущего.
   if (e.newValue && e.newValue !== token){
     location.reload();
   }
@@ -4490,16 +4323,13 @@ window.addEventListener('storage', e => {
   }
 })();
 
-// Scroll-guard: чат — single-viewport SPA, внешний scroll невозможен по дизайну.
 
 async function onReady(){
   console.log('[onReady] start');
-  // Сброс возможных залипших inline-стилей с предыдущих сессий/модалок.
   try {
     document.body.style.paddingTop = '';
     document.body.style.overflow = '';
     document.body.removeAttribute('data-km-shown');
-    // На случай если scrollTop documentElement сдвинут — вернём в 0.
     window.scrollTo(0, 0);
     document.documentElement.scrollTop = 0;
   } catch(_){}
@@ -4519,28 +4349,17 @@ async function onReady(){
     return bv - av;  // DESC: новые сверху
   });
   renderDialogs();
-  // Groups + WS + pending — параллельно в фоне, не блокируем UI открытие
   console.log('[onReady] connectWS');
   connectWS();
   console.log('[onReady] loadGroups + fetchPending in background');
   loadGroups().catch(e => console.warn('[onReady] groups err', e));
   fetchPending().catch(e => console.warn('[onReady] pending err', e));
-  // Pinned-чат «Поддержка GhostChat»: загружаем кто админ и перерисовываем
-  // список диалогов с pinned-записью сверху (если ты не админ).
   loadSupportAdmin().catch(() => {});
-  // Ghostik — показываем призрака, при первом запуске бросает приветствие.
   ghostikShow();
   _ghostikFirstTimeTips();
-  // Health-check ключей в фоне: проверяем что myPriv действительно умеет
-  // расшифровать сообщение, зашифрованное под мой pub. Если нет — автопочинка.
   setTimeout(() => { _keysHealthCheck().catch(e => console.warn('[E2E] health err', e)); }, 1500);
-  // V2 identity — auto-prompt при первом входе. Если у юзера нет identity_pub
-  // на сервере — открываем онбординг с генерацией seed-фразы. Если есть, но
-  // в IDB priv нет — открываем recovery flow.
   setTimeout(() => { _ensureV2Identity().catch(e => console.warn('[v2 init err]', e)); }, 2500);
-  // Бейдж непрочитанных GhostSocial-уведомлений
   startGSBadgePolling();
-  // Deep-link: ?to=username — открыть чат сразу. ?text=... — предзаполнить input.
   const params = new URLSearchParams(location.search);
   const to = params.get('to');
   const presetText = params.get('text');
@@ -4564,9 +4383,7 @@ async function onReady(){
         if (inp) {
           console.log('[deeplink] filling input, len=', presetText.length);
           inp.value = presetText;
-          // Принудительно активируем кнопку (input event может не сработать)
           if (btn) btn.disabled = false;
-          // И дергаем input для авто-роста textarea
           inp.style.height = '42px';
           inp.style.height = Math.min(140, inp.scrollHeight) + 'px';
           inp.focus();
@@ -4584,7 +4401,6 @@ async function onReady(){
   }
 }
 
-// Опрашиваем непрочитанные уведомления GhostSocial — бейдж на кнопке "В GhostSocial"
 let _gsBadgeTimer = 0;
 function startGSBadgePolling(){
   if (_gsBadgeTimer) return;
@@ -4612,7 +4428,6 @@ function isStandalone(){
          window.matchMedia('(display-mode: standalone)').matches;
 }
 function maybeShowInstallPrompt(){
-  // Показываем пункт в меню всем кроме standalone
   if (!isStandalone()) {
     const item = document.getElementById('sbInstallItem');
     if (item) item.style.display = '';
@@ -4660,16 +4475,11 @@ async function fetchPendingSealed(){
   }catch(e){ /* offline */ }
 }
 
-// Расшифровываем sealed envelope, восстанавливаем from_username из payload,
-// дальше идём через тот же ingestIncoming — все downstream-функции уже работают.
 async function ingestSealed(m){
-  // m: {id, ciphertext, created_at}
   let env;
   try { env = await decryptSealed(m.ciphertext); }
   catch(e) { console.warn('[sealed decrypt failed]', e); return false; }
   if (!env || !env.from_username) return false;
-  // Sealed delivered / read — операционные сообщения. target_sid это _payloadSid
-  // отправителя (тот что был внутри envelope при первой отправке).
   if (env.type === 'delivered' && env.target_sid != null) {
     const tgt = activeMessages.find(x => String(x._payloadSid) === String(env.target_sid));
     if (tgt) { tgt.delivered = true; renderMessages(); idbUpdateMessage(tgt.sid, { delivered: true }).catch(()=>{}); }
@@ -4691,8 +4501,6 @@ async function ingestSealed(m){
     created_at: m.created_at,
     _decrypted: env,  // подсказка для ingestIncoming чтобы не повторно decrypt-ить
   });
-  // После приёма — отправим sender'у sealed-delivered (если в envelope есть sid).
-  // Sender НЕ знает что сервер не передаёт sender_id, ему нужен сигнал из канала.
   if (ok && env.sid != null && env.from_username && env.from_username !== me.username) {
     try {
       const reply = await encryptSealed(env.from_username, { type: 'delivered', target_sid: env.sid });
@@ -4706,14 +4514,12 @@ async function ingestSealed(m){
 // INCOMING / OUTGOING
 // ════════════════════════════════════════════════════════════════════
 async function ingestIncoming(m){
-  // ─── Дедуп chat.echo (отправитель видит своё же сообщение через WS) ───
   if (m && m.id != null && (activeMessages || []).some(x => String(x.sid) === String(m.id))) {
     return false;
   }
   // Fallback: ищем pending-optimistic с тем же контентом (для своих сообщений).
   // Если нашли — присваиваем правильный sid и created_at, выходим без push.
   if (m && m.from_username === (me && me.username) && Array.isArray(activeMessages)) {
-    // Расшифровать payload чтоб сравнить контент
     let echoPayload = null;
     if (m._decrypted) {
       echoPayload = m._decrypted;
@@ -4733,7 +4539,6 @@ async function ingestIncoming(m){
         // (b) optimistic ещё без file_payload (WS echo обогнал POST response) —
         //     сравнить имя+размер из временного x.file (ставится при создании optimistic)
         if (echoFileId != null && x.file && x.file.name === echoFileName && Number(x.file.size||0) === echoFileSize) return true;
-        // (c) текстовое сообщение — сравнить текст
         if (echoFileId == null && (x.text || '') === echoText) return true;
         return false;
       });
@@ -4754,14 +4559,12 @@ async function ingestIncoming(m){
             ...(echoPayload.voice ? {voice: true, duration: Number(echoPayload.duration)||0} : {}),
           };
         }
-        // Сохраним в IDB (sendMessage сам сохранит после своего await — idbAddMessage дедупит)
         idbAddMessage(opt).catch(()=>{});
         if (typeof renderMessages === 'function') renderMessages();
         return false;
       }
     }
   }
-  // m: {id, from_username, from_display_name, to_username, ciphertext, created_at, _decrypted?}
   const isMine = m.from_username === me.username;
   const peerUsername = isMine ? m.to_username : m.from_username;
   const peerName = isMine ? null : m.from_display_name;
@@ -4779,8 +4582,6 @@ async function ingestIncoming(m){
     payload = parsePayload(raw);
   }
 
-  // Системка от ротации ключа: собеседник попросил стереть всю историю.
-  // Только от чужих сообщений (isMine == false), молча. Лог в консоль.
   if (payload.type === 'wipe_history' && !isMine) {
     console.log('[wipe-history] incoming request from @' + peerUsername);
     try { await wipeMessagesWithPeer(peerUsername); } catch(e){ console.warn('[wipe-history] failed', e); }
@@ -4790,7 +4591,6 @@ async function ingestIncoming(m){
     return true;
   }
 
-  // ── Операционные сообщения: edit / delete — применяем к существующему по sid ──
   if (payload.type === 'edit' && payload.target_sid != null) {
     const tsid = payload.target_sid;
     const target = await idbFindMessageBySid(tsid);
@@ -4818,15 +4618,12 @@ async function ingestIncoming(m){
     return true;
   }
 
-  // ── Реакция ──
   if (payload.type === 'react' && payload.target_sid != null) {
     const tsid = payload.target_sid;
     const target = await idbFindMessageBySid(tsid);
-    // Реакция от автора message — реагирует ОН сам; от собеседника — реагирует собеседник
     const reactorKey = isMine ? me.username : peerUsername;
     if (target && target.peer === peerUsername) {
       const reactions = target.reactions || {};
-      // Очистим прежнюю реакцию этого юзера (один юзер = одна реакция на сообщение)
       for (const e of Object.keys(reactions)) {
         reactions[e] = (reactions[e] || []).filter(u => u !== reactorKey);
         if (!reactions[e].length) delete reactions[e];
@@ -4843,7 +4640,6 @@ async function ingestIncoming(m){
     return true;
   }
 
-  // ── File / Voice сообщение ──
   if ((payload.type === 'file' || payload.type === 'voice') && payload.file_id != null) {
     const isVoice = payload.type === 'voice';
     const stored = {
@@ -4862,7 +4658,6 @@ async function ingestIncoming(m){
         ...(isVoice ? {voice: true, duration: Number(payload.duration) || 0} : {}),
       },
     };
-    // Sealed-meta для отправки read обратно
     if (m._decrypted) {
       stored._sealedFromUsername = m._decrypted.from_username;
       stored._sealedPayloadSid = m._decrypted.sid;
@@ -4991,16 +4786,11 @@ async function _sendSingleFile(f){
   renderMessages();
   scrollChatBottom(true);
   try {
-    // 1. Читаем файл как ArrayBuffer
     const plain = await f.arrayBuffer();
-    // 2. Генерим свежий AES-256 ключ + IV для этого файла
     const fileKey = await crypto.subtle.generateKey({name:'AES-GCM', length:256}, true, ['encrypt','decrypt']);
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    // 3. Шифруем
     const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, fileKey, plain);
-    // 4. Экспортируем ключ для передачи в сообщении
     const keyRaw = await crypto.subtle.exportKey('raw', fileKey);
-    // 5. Загружаем ciphertext blob через multipart
     const form = new FormData();
     form.append('to_username', activePeer.username);
     form.append('blob', new Blob([ct], {type:'application/octet-stream'}), 'enc');
@@ -5018,7 +4808,6 @@ async function _sendSingleFile(f){
     // Кэшируем encrypted blob у sender'а — чтобы после refresh переоткрыть
     // картинку/файл без зависимости от того, удалил ли сервер blob после ack.
     await idbCacheFile(file_id, ct, f.type || 'application/octet-stream');
-    // 6. Отправляем сообщение с metadata + ключом
     const payload = {
       type: 'file', file_id, file_name: f.name, mime: f.type || 'application/octet-stream',
       size: f.size, key: b64e(keyRaw), iv: b64e(iv),
@@ -5030,7 +4819,6 @@ async function _sendSingleFile(f){
     optimistic.pending = false;
     optimistic.file_payload = payload; // храним для рендера и скачивания
     await idbAddMessage(optimistic);
-    // Обновим dialog
     let d = dialogs.find(x => x.username === activePeer.username);
     if (!d) { d = { username: activePeer.username, display_name: activePeer.display_name || activePeer.username, unread: 0 }; dialogs.unshift(d); }
     d.last_text = '📎 ' + f.name; d.last_at = r.created_at; d.last_from_me = true;
@@ -5045,35 +4833,29 @@ async function _sendSingleFile(f){
   }
 }
 
-// Скачать и расшифровать файл по сообщению
 async function downloadFile(sid){
   const m = activeMessages.find(x => String(x.sid) === String(sid));
   const p = m && (m.file_payload || m.file);
   if (!p) return;
   try {
     showToast('Скачиваю...');
-    // cache-first: после refresh файла на сервере уже нет (мы ack-нули) →
-    // берём из локального IDB filecache.
     const ct = await fetchEncryptedFile(p.file_id, p.mime);
     if (!ct) { showToast('Файл удалён с сервера и нет локального кэша', true); return; }
     const key = await crypto.subtle.importKey('raw', b64d(p.key), {name:'AES-GCM'}, false, ['decrypt']);
     const iv = b64d(p.iv);
     const plain = await crypto.subtle.decrypt({name:'AES-GCM', iv}, key, ct);
-    // Сохраняем как файл через blob URL
     const blob = new Blob([plain], {type: p.mime || 'application/octet-stream'});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = p.file_name || 'file';
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
-    // ACK — пусть удалит с сервера (только если мы receiver, sender и так может перекачать)
     if (!m.from_me) {
       try { await fetch(CHAT_API + `/file/${p.file_id}/ack`, {method:'POST', headers:{'Authorization':'Bearer '+token}}); } catch(_){}
     }
   } catch(e) { showToast('Не удалось расшифровать: ' + e.message, true); }
 }
 
-// ─── Lightbox для медиа (изображений) ───
 function openMediaViewer(sid){
   const m = activeMessages.find(x => String(x.sid) === String(sid));
   if (!m || !m._imgUrl) return;
@@ -5097,7 +4879,6 @@ function openMediaViewer(sid){
   `;
   v.classList.add('open');
   v.onclick = (e) => { if (e.target === v) closeMediaViewer(); };
-  // Swipe down to close (mobile)
   let touchStartY = 0;
   v.ontouchstart = (e) => { touchStartY = e.touches[0].clientY; };
   v.ontouchend = (e) => {
@@ -5113,7 +4894,6 @@ function closeMediaViewer(){
 }
 function _mvKeyHandler(e){ if (e.key === 'Escape') closeMediaViewer(); }
 
-// Превью картинки inline — скачиваем + decrypt + показываем в bubble
 async function loadImgPreview(sid){
   const m = activeMessages.find(x => String(x.sid) === String(sid));
   if (!m || m._imgLoaded) return;
@@ -5142,7 +4922,6 @@ async function loadImgPreview(sid){
   } catch(e){ console.error('[media preview]', e); }
 }
 
-// Иконка отправки: микрофон когда нет текста (как в TG), стрелка когда есть
 function updateSendIcon(){
   const inp = document.getElementById('sendInput');
   const icon = document.getElementById('sendIcon');
@@ -5152,7 +4931,6 @@ function updateSendIcon(){
 }
 function onSendBtn(){
   const inp = document.getElementById('sendInput');
-  // В группах нет голосовых пока — клик всегда = sendMessage
   if (activeGroup) { sendMessage(); return; }
   if (inp && inp.value.trim()) sendMessage();
   else startRecord();
@@ -5207,7 +4985,6 @@ function updateRecTime(){
   const m = Math.floor(sec / 60), s = sec % 60;
   const el = document.getElementById('recTime');
   if (el) el.textContent = `${m}:${String(s).padStart(2, '0')}`;
-  // Авто-стоп через 5 минут
   if (sec > 300) stopAndSendRecord();
 }
 function _cleanupRecord(){
@@ -5225,7 +5002,6 @@ function cancelRecord(){
 async function stopAndSendRecord(){
   if (!_rec) return;
   const rec = _rec, peer = _recPeer, duration = Math.round((Date.now() - _recStart) / 1000);
-  // Ждём stop и финальный chunk
   const stoppedBlob = await new Promise(resolve => {
     rec.onstop = () => {
       const type = rec.mimeType || 'audio/webm';
@@ -5295,7 +5071,6 @@ async function sendVoiceBlob(blob, duration){
   }
 }
 
-// Воспроизведение голосового. Cached blob URL after first play.
 const _voiceAudios = new Map(); // sid -> {audio, url}
 async function toggleVoicePlay(sid){
   const m = activeMessages.find(x => String(x.sid) === String(sid));
@@ -5353,7 +5128,6 @@ async function toggleVoicePlay(sid){
       console.error('[audio.play]', playErr);
       showToast('Браузер заблокировал автозапуск, нажмите ещё раз', true);
     }
-    // ACK сервер (удалит blob, у нас уже в blob URL)
     if (!m.from_me) {
       try { fetch(CHAT_API + `/file/${p.file_id}/ack`, {method:'POST', headers:{'Authorization':'Bearer '+token}}); } catch(_){}
     }
@@ -5367,11 +5141,9 @@ function fmtVoiceTime(sec){
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-// Текстовое описание сообщения для reply-preview. Для медиа-only — «[Фото]» / «[Видео]» / «[Голосовое]» / «[Файл]».
 function makeReplyPreview(m) {
   const txt = (m && m.text || '').trim();
   if (txt) return txt.slice(0, 100);
-  // Нет текста — определяем по медиа
   if (m && m.file) {
     const t = (m.file.mime || m.file.type || '').toLowerCase();
     if (t.startsWith('image/')) return '[Фото]';
@@ -5385,7 +5157,6 @@ function makeReplyPreview(m) {
   return '[Сообщение]';
 }
 
-// Сейчас юзер отвечает на это сообщение (null если нет reply-mode)
 let replyingTo = null;
 function startReply(msg){
   replyingTo = msg;
@@ -5455,8 +5226,6 @@ async function sendMessage(){
     optimistic.sid = r.id;
     optimistic.created_at = r.created_at;
     optimistic.pending = false;
-    // Если получатель онлайн в момент отправки — он почти точно сделает /ack_sealed
-    // и пришлёт нам sealed-delivered. Оптимистично ставим delivered.
     if (r.recipient_online) optimistic.delivered = true;
     await idbAddMessage(optimistic);
     let d = dialogs.find(x => x.username === activePeer.username);
@@ -5473,7 +5242,6 @@ async function sendMessage(){
   }
 }
 
-// ─── Редактирование своего сообщения ───
 async function editMessage(sid){
   const m = activeMessages.find(x => String(x.sid) === String(sid));
   if (!m || !m.from_me || m.deleted) return;
@@ -5538,7 +5306,6 @@ async function loadSupportAdmin(){
 
 function renderDialogs(filter=''){
   const list = document.getElementById('sbList');
-  // Pinned-карточка «Поддержка GhostChat» — сверху списка.
   const isAdmin = _supportAdmin && _supportAdmin.is_me;
   const supportPinned = (!filter && (_supportAdmin || isAdmin)) ? [{
     username: _supportAdmin ? _supportAdmin.username : (me && me.username),
@@ -5553,7 +5320,6 @@ function renderDialogs(filter=''){
   let arr = supportPinned.concat(dialogs.filter(d => !_supportAdmin || d.username !== _supportAdmin.username));
   if (filter) {
     const f = filter.toLowerCase().replace(/^@+/, '');
-    // 1) substring match (как было)
     let primary = dialogs.filter(d => (d.username && d.username.toLowerCase().includes(f)) || (d.display_name && d.display_name.toLowerCase().includes(f)));
     // 2) fuzzy fallback: если substring мало (≤2) — подмешиваем по Левенштейну ≤ 2
     if (primary.length <= 2 && f.length >= 2){
@@ -5631,12 +5397,10 @@ function onLeftBtn(e){
   openProfileDrawer();
 }
 
-// ── Profile drawer (выезжающая шторка с аватарки) ──
 function openProfileDrawer(){
   const d = document.getElementById('pdDrawer');
   const b = document.getElementById('pdBackdrop');
   if (!d || !b) return;
-  // Заполняем имя/ник/аватар каждый раз — me может обновиться.
   const ava = document.getElementById('pdAva');
   const nm  = document.getElementById('pdName');
   const hd  = document.getElementById('pdHandle');
@@ -5649,15 +5413,11 @@ function openProfileDrawer(){
       ava.textContent = ini(me.display_name || me.username || '?');
     }
   }
-  // PWA-install пункт показываем только если есть deferred prompt.
   const ii = document.getElementById('pdInstallItem');
   if (ii) ii.style.display = (window._deferredInstallPrompt || window._pwaCanInstall) ? '' : 'none';
-  // Multi-account row внизу шторки справа: миниатюры ВСЕХ аккаунтов
-  // (текущий с подсветкой) + кнопка «+» если не достигнут лимит.
   try {
     const row = document.getElementById('pdAcctRow');
     if (row){
-      // Активный аккаунт должен быть в массиве — синхронизируем на лету.
       if (me && me.username && localStorage.getItem('gs_token')){
         accountsAddOrUpdate(localStorage.getItem('gs_token'), me);
       }
@@ -5757,16 +5517,13 @@ async function openChat(username, display_name){
   });
   renderChat();
   updateChatStatusBar();
-  // Чат поддержки: подтягиваем pending-логины (TDA) и рисуем карточки.
   if (activePeer && activePeer.is_support) { _loadTdaPendings(); }
   else { _tdaPendings = []; }
   const d = dialogs.find(x => x.username === username);
   if (d && d.unread > 0) { d.unread = 0; await idbPutDialog(d); }
   renderDialogs(document.getElementById('sbSearch').value);
   refreshContactBtn(username);
-  // Спросим у сервера, онлайн ли собеседник
   askPresence(username);
-  // Отправим read для всех непрочитанных входящих
   const unread = activeMessages.filter(m => !m.from_me && !m.read);
   if (unread.length) {
     // Legacy /read — sealed-read временно отключён (отладка)
@@ -5779,8 +5536,6 @@ async function openChat(username, display_name){
       idbUpdateMessage(m.sid, { read: true }).catch(()=>{});
     }
   }
-  // Догон delivered-статуса моих исходящих в этом чате (могли пропустить
-  // WS chat.delivered после refresh / отключения / переключения чатов)
   try { syncDeliveryStatus(); } catch(_){}
 }
 
@@ -5802,10 +5557,8 @@ async function refreshContactBtn(username){
   } catch(_) {}
 }
 
-// ─── Меню «...» в шапке чата: очистить историю / удалить чат ───
 function openChatActionsMenu(ev, username){
   ev.stopPropagation();
-  // Закрываем если уже открыто
   const existing = document.getElementById('chatActionsPopup');
   if (existing) { existing.remove(); return; }
   const pop = document.createElement('div');
@@ -5816,7 +5569,6 @@ function openChatActionsMenu(ev, username){
     <div class="sb-popup-item danger" onclick="closeChatActionsMenu();deleteChatDialog(${jsAttr(username)})"><i class="fa-solid fa-trash"></i> Удалить чат</div>
   `;
   document.body.appendChild(pop);
-  // Закрытие по клику вне
   setTimeout(() => {
     document.addEventListener('click', _closeChatActionsOnce, {once: true});
   }, 50);
@@ -5828,7 +5580,6 @@ function closeChatActionsMenu(){
 }
 function _closeChatActionsOnce(){ closeChatActionsMenu(); }
 
-// Очистка истории сообщений: удаляет messages + filecache, но оставляет dialog.
 async function clearChatHistory(username){
   if (!await Dialog.confirm(
     `Удалить ВСЮ историю переписки с @${username} у себя? Собеседник свои сообщения сохранит.`,
@@ -5836,15 +5587,12 @@ async function clearChatHistory(username){
   )) return;
   try {
     const cnt = await idbDeleteMessagesByPeer(username);
-    // Сбрасываем превью в диалоге
     const d = dialogs.find(x => x.username === username);
     if (d) {
       d.last_text = ''; d.last_at = null; d.last_from_me = false; d.unread = 0;
       await idbPutDialog(d);
     }
-    // Чистим активный чат если он был открыт
     if (activePeer && activePeer.username === username) {
-      // Cleanup blob/audio URL'ов
       try {
         for (const m of activeMessages) {
           if (m && m._imgUrl) { URL.revokeObjectURL(m._imgUrl); m._imgUrl = null; }
@@ -5867,8 +5615,6 @@ async function clearChatHistory(username){
   }
 }
 
-// Кастомная модалка удаления чата с чекбоксом «удалить и у собеседника».
-// Возвращает {confirmed: bool, both: bool}.
 function _deleteChatPrompt(username){
   return new Promise(res => {
     const ov = document.createElement('div');
@@ -5902,20 +5648,15 @@ function _deleteChatPrompt(username){
   });
 }
 
-// Удалить чат полностью: messages + dialog. Возврат в список.
-// both=true → также серверный буфер + WS-сигнал peer-у удалить у себя.
 async function deleteChatDialog(username){
   const {confirmed, both} = await _deleteChatPrompt(username);
   if (!confirmed) return;
   try {
-    // Серверная часть (зачистка pending + опционально notify peer-а)
     try {
       await chat(`/chat/with/${encodeURIComponent(username)}?both=${both ? 'true' : 'false'}`, 'DELETE');
     } catch(e) {
-      // Не фатально — локальное удаление всё равно сделаем
       console.warn('[delete chat] server cleanup failed:', e && e.message);
     }
-    // Локальная часть — всегда
     await idbDeleteMessagesByPeer(username);
     await idbDeleteDialog(username);
     dialogs = dialogs.filter(x => x.username !== username);
@@ -5930,8 +5671,6 @@ async function deleteChatDialog(username){
   }
 }
 
-// Локальная очистка чата без сервера — вызывается из WS-обработчика когда
-// собеседник попросил «удалить у обоих».
 async function _deleteChatLocally(username){
   try {
     await idbDeleteMessagesByPeer(username);
@@ -5978,7 +5717,6 @@ function backToList(){
     }
   } catch(_) {}
   activePeer = null; activeGroup = null; activeMessages = [];
-  // Сбросим chatMain на пустой экран
   const main = document.getElementById('chatMain');
   if (main) main.innerHTML = `<div class="chat-empty"><i class="fa-solid fa-ghost"></i><h3>Выберите чат</h3><p>Откройте диалог слева или начните новый.</p></div>`;
   renderDialogs(document.getElementById('sbSearch').value);
@@ -5987,9 +5725,6 @@ function backToList(){
 function renderChat(){
   const p = activePeer;
   const main = document.getElementById('chatMain');
-  // Для чата поддержки: аватарка-щит, подзаголовок без @username,
-  // кнопки «контакты / код безопасности / ключ» скрываем — это
-  // официальный канал, не личный собеседник.
   const avHtml = p.is_support
     ? `<div class="chat-av" onclick="openPeerProfile(${jsAttr(p.username)})" style="background:linear-gradient(135deg,#a855f7,#ec4899);"><i class="fa-solid fa-shield-halved" style="color:#fff;font-size:15px;"></i></div>`
     : `<div class="chat-av" onclick="openPeerProfile(${jsAttr(p.username)})">${ini(p.display_name)}</div>`;
@@ -6075,7 +5810,6 @@ function renderMessages(){
       ? '<i class="fa-regular fa-clock"></i>'
       : (m.edited ? '<span style="opacity:0.7;font-size:10px;">изм.</span>' : '')
         + (m.from_me ? ' ' + renderTicks(m) : '');
-    // Цитата (reply)
     let quoteHtml = '';
     if (m.reply_to != null && !m.deleted) {
       const target = activeMessages.find(x => String(x.sid) === String(m.reply_to));
@@ -6083,7 +5817,6 @@ function renderMessages(){
       const sid = String(m.reply_to).replace(/[^a-zA-Z0-9_-]/g, '');
       quoteHtml = `<div class="msg-quote" onclick="scrollToMsg('${sid}')">${esc(quoteText.slice(0, 80))}</div>`;
     }
-    // Bubble body
     let bubbleBody;
     if (m.deleted) {
       bubbleBody = `<span style="opacity:0.55;font-style:italic;font-size:13px;"><i class="fa-solid fa-ban" style="margin-right:5px;"></i>сообщение удалено</span>`;
@@ -6091,14 +5824,9 @@ function renderMessages(){
       const fp = m.file_payload || m.file;
       const isImg = fp.mime && fp.mime.startsWith('image/');
       const isVideo = fp.mime && fp.mime.startsWith('video/');
-      // Голосовое = записано через микрофон (помечено voice:true), круглый UI без названия.
-      // Аудио-файл = .mp3/.ogg/.wav прикреплён через attach, TG-style плеер с именем трека.
       const isVoice = !!fp.voice;
       const isAudioFile = !fp.voice && fp.mime && fp.mime.startsWith('audio/');
       const sidArg = JSON.stringify(String(m.sid)).replace(/"/g, '&quot;');
-      // Универсальные атрибуты для медиа: long-press / right-click → меню сообщения.
-      // На мобиле click срабатывает на сам элемент (play/lightbox/download), а
-      // долгое нажатие 500мс открывает меню (Reply/Edit/Delete/Forward/...).
       const mediaCtx = `oncontextmenu="event.preventDefault();event.stopPropagation();openMsgMenu(event,${sidArg})" ontouchstart="mediaTouchStart(event,${sidArg})" ontouchend="mediaTouchEnd()" ontouchcancel="mediaTouchEnd()" ontouchmove="mediaTouchMove(event)"`;
       if (isVoice) {
         const dur = fmtVoiceTime(fp.duration || 0);
@@ -6110,7 +5838,6 @@ function renderMessages(){
           </div>
         </div>`;
       } else if (isAudioFile) {
-        // TG-style audio file: play кнопка слева, справа — имя трека, прогресс-бар и размер
         const name = esc(fp.file_name || fp.name || 'audio');
         const size = fmtSize(fp.size || 0);
         bubbleBody = `<div class="msg-audio" ${mediaCtx}>
@@ -6162,14 +5889,12 @@ function renderMessages(){
   loadMsgPreviews();
 }
 
-// Статусы доставки:
 function renderTicks(m) {
   if (m.read) return '<i class="fa-solid fa-check-double" style="color:#22d3ee;"></i>';
   if (m.delivered) return '<i class="fa-solid fa-check"></i>';
   return '<i class="fa-solid fa-floppy-disk" style="opacity:0.75;"></i>';
 }
 
-// Чипы реакций под bubble
 function renderReactions(m) {
   if (!m.reactions || m.deleted) return '';
   const entries = Object.entries(m.reactions).filter(([_, users]) => users && users.length);
@@ -6193,15 +5918,12 @@ function scrollToMsg(sid){
     setTimeout(() => bubble.style.boxShadow = '', 1200); }
 }
 
-// ─── Тап = меню. Свайп вправо = reply. Скролл = ничего. ───
 let _swipeState = null;
 let _swipeSuppressClick = false;
 
 function msgBubbleClick(ev, sid){
   if (_swipeSuppressClick) return;
-  // Не открываем меню если кликнули на интерактивный элемент внутри bubble
   if (ev.target.closest('button, a, img, video, audio, input, .msg-quote, .msg-react-chip, .voice-play, .voice-bar, .msg-file, .msg-img, .msg-video, .msg-img-placeholder')) return;
-  // Не открываем меню если идёт выделение текста (пользователь копирует)
   const sel = window.getSelection();
   if (sel && sel.toString().length > 0) return;
   openMsgMenu(ev, sid);
@@ -6229,7 +5951,6 @@ function msgTouchMove(ev){
     if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
     _swipeState.isHoriz = Math.abs(dx) > Math.abs(dy);
     if (!_swipeState.isHoriz) {
-      // Вертикальный — это скролл, выходим
       _swipeState = null;
       return;
     }
@@ -6237,7 +5958,6 @@ function msgTouchMove(ev){
     _ensureSwipeIcon(_swipeState.msgEl);
   }
   if (!_swipeState.isHoriz) return;
-  // Свайп только вправо для reply
   const useDx = Math.max(0, dx) * 0.45;
   const capped = Math.min(useDx, 80);
   _swipeState.currentDx = capped;
@@ -6246,7 +5966,6 @@ function msgTouchMove(ev){
   if (icon) icon.style.opacity = Math.min(1, capped / 50);
 }
 
-// ─── Long-press на медиа (img/video/voice/file) → открыть меню сообщения ───
 let _mediaPressTimer = null;
 let _mediaPressOpened = false;
 let _mediaPressStart = null;
@@ -6261,7 +5980,6 @@ function mediaTouchStart(ev, sid){
   _mediaPressTimer = setTimeout(() => {
     _mediaPressTimer = null;
     _mediaPressOpened = true;
-    // Подавим последующий click чтоб не открылся lightbox после меню
     _swipeSuppressClick = true;
     setTimeout(() => { _swipeSuppressClick = false; }, 400);
     openMsgMenu({clientX: px, clientY: py, preventDefault(){}, stopPropagation(){}}, sid);
@@ -6272,7 +5990,6 @@ function mediaTouchMove(ev){
   const t = (ev.touches && ev.touches[0]) || ev;
   const dx = Math.abs(t.clientX - _mediaPressStart.x);
   const dy = Math.abs(t.clientY - _mediaPressStart.y);
-  // Если палец двинулся > 8px — это не long-press (свайп или скролл)
   if (dx > 8 || dy > 8) {
     clearTimeout(_mediaPressTimer); _mediaPressTimer = null;
   }
@@ -6280,7 +5997,6 @@ function mediaTouchMove(ev){
 function mediaTouchEnd(){
   if (_mediaPressTimer) { clearTimeout(_mediaPressTimer); _mediaPressTimer = null; }
   _mediaPressStart = null;
-  // Если меню было открыто — подавим click который вот-вот сработает
   if (_mediaPressOpened) {
     _mediaPressOpened = false;
   }
@@ -6291,7 +6007,6 @@ function msgTouchEnd(){
   const state = _swipeState;
   _swipeState = null;
   if (!state.isHoriz) return; // Простой тап — меню откроет onclick → msgBubbleClick
-  // Был свайп — обрабатываем и подавляем click
   const triggered = state.currentDx >= 45;
   state.msgEl.classList.remove('swiping');
   state.msgEl.classList.add('swipe-release');
@@ -6307,14 +6022,12 @@ function msgTouchEnd(){
   }
 }
 
-// Bottom sheet forward — выбор куда переслать
 let _fwdSid = null;
 function openForwardSheet(sid){
   _fwdSid = sid;
   const m = activeMessages.find(x => String(x.sid) === String(sid));
   if (!m) return;
   const list = document.getElementById('fwdList');
-  // DM-диалоги + группы (кроме текущего чата)
   const dItems = dialogs
     .filter(d => !(activePeer && activePeer.username === d.username))
     .map(d => `<div class="dialog" onclick="doForwardTo('dm', ${jsAttr(d.username)})">
@@ -6349,7 +6062,6 @@ async function doForwardTo(kind, target){
     let payload;
 
     if (isMedia) {
-      // ─── Пересылка медиа (картинка/видео/файл/голосовое) ───
       if (kind !== 'dm') {
         showToast('Пересылка файлов в группы пока не поддержана', true);
         return;
@@ -6357,15 +6069,12 @@ async function doForwardTo(kind, target){
       showToast('Пересылаю файл…');
       const encOriginal = await fetchEncryptedFile(fp.file_id, fp.mime);
       if (!encOriginal) throw new Error('Файл недоступен (удалён с сервера и нет локального кэша)');
-      // Decrypt оригинала
       const oldKey = await crypto.subtle.importKey('raw', b64d(fp.key), {name:'AES-GCM'}, false, ['decrypt']);
       const plain = await crypto.subtle.decrypt({name:'AES-GCM', iv: b64d(fp.iv)}, oldKey, encOriginal);
-      // Re-encrypt свежим ключом + IV для нового получателя
       const newKey = await crypto.subtle.generateKey({name:'AES-GCM', length:256}, true, ['encrypt','decrypt']);
       const newIv = crypto.getRandomValues(new Uint8Array(12));
       const newCt = await crypto.subtle.encrypt({name:'AES-GCM', iv: newIv}, newKey, plain);
       const newKeyRaw = await crypto.subtle.exportKey('raw', newKey);
-      // Upload re-encrypted blob с привязкой к новому получателю
       const form = new FormData();
       form.append('to_username', target);
       form.append('blob', new Blob([newCt], {type:'application/octet-stream'}), 'enc');
@@ -6378,7 +6087,6 @@ async function doForwardTo(kind, target){
         throw new Error(msg || 'upload failed');
       }
       const { file_id: newFileId } = await upRes.json();
-      // Кэшируем у себя (как при обычной отправке)
       await idbCacheFile(newFileId, newCt, fp.mime).catch(()=>{});
       payload = {
         type: fp.voice ? 'voice' : 'file',
@@ -6392,18 +6100,15 @@ async function doForwardTo(kind, target){
         forwarded_from: origAuthor || null,
       };
     } else {
-      // ─── Пересылка текста ───
       const text = (m.text || '').trim();
       if (!text) { showToast('Нечего пересылать (пустое сообщение)', true); return; }
       payload = { type: 'msg', text, forwarded_from: origAuthor || null };
     }
 
-    // ─── Отправка адресату ───
     if (kind === 'dm') {
       const ct = await encryptForPeer(target, payload);
       await chat('/send', 'POST', { to_username: target, ciphertext: ct });
     } else {
-      // group: только для текста (см. ранее)
       const g = groups.find(x => x.id === target);
       if (!g) return showToast('Группа не найдена', true);
       const info = await chat(`/group/${target}`);
@@ -6612,11 +6317,9 @@ function emojiInsert(emo) {
   const newPos = start + emo.length;
   inp.focus();
   inp.setSelectionRange(newPos, newPos);
-  // Триггерим input для авто-роста textarea
   inp.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
-// ── Контекстное меню кнопки "Отправить" (Фаза 3 каналов: + публикация в GS) ──
 let _sendLongPressTimer = null;
 function sendLongPressStart(ev) {
   if (_sendLongPressTimer) clearTimeout(_sendLongPressTimer);
@@ -6627,7 +6330,6 @@ function sendLongPressEnd() {
 }
 
 async function openSendOptions() {
-  // Только в активном канале (kind='channel') и у админа имеет смысл показывать опции
   const isChannel = activeGroup && activeGroup.kind === 'channel';
   if (!isChannel) return onSendBtn();
   const myMember = activeGroup.members && activeGroup.members.find(m => m.id === me.id);
@@ -6667,9 +6369,7 @@ async function openSendOptions() {
     overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); resolve(null); } });
   });
   if (!opts) return;
-  // Отправка в канал (как обычное сообщение)
   await onSendBtn();
-  // И если both — публикуем в GS
   if (opts === 'both') {
     try {
       await chat(`/group/${activeGroup.id}/publish_to_gs`, 'POST', { text });
@@ -6678,10 +6378,8 @@ async function openSendOptions() {
   }
 }
 
-// Bottom sheet attach
 function openAttachSheet(){
   if (activeGroup) {
-    // в группах файлы/голос пока не работают — сразу показываем msg
     showToast('Файлы и голос в группах — скоро. Пока только текст.', true);
     return;
   }
@@ -6706,12 +6404,10 @@ function openMsgMenu(ev, sid){
   closeMsgMenu();
   const m = activeMessages.find(x => String(x.sid) === String(sid));
   if (!m || m.deleted) return;
-  // Контейнер: emoji bar + menu
   const wrap = document.createElement('div');
   wrap.id = 'msgMenu';
   wrap.style.cssText = 'position:fixed;z-index:500;display:flex;flex-direction:column;gap:6px;align-items:flex-start;';
 
-  // Emoji-bar (реакции)
   const myReaction = _getMyReaction(m);
   const bar = document.createElement('div');
   bar.style.cssText = 'background:rgba(15,23,42,0.96);backdrop-filter:blur(10px);border:1px solid var(--border-strong);border-radius:32px;padding:6px 8px;display:flex;gap:2px;box-shadow:0 12px 32px rgba(0,0,0,0.45);';
@@ -6727,15 +6423,12 @@ function openMsgMenu(ev, sid){
   });
   wrap.appendChild(bar);
 
-  // Menu
   const menu = document.createElement('div');
   menu.style.cssText = 'background:rgba(15,23,42,0.96);backdrop-filter:blur(10px);border:1px solid var(--border-strong);border-radius:12px;padding:6px;box-shadow:0 12px 32px rgba(0,0,0,0.45);min-width:170px;';
   const items = [{icon:'fa-reply', label:'Ответить', cb:() => startReply(m)}];
-  // Копировать — только если есть текст
   if (!m.deleted && (m.text || '').trim()) {
     items.push({icon:'fa-copy', label:'Копировать', cb:() => copyMsgText(m)});
   }
-  // Переслать — для любого не-удалённого (текст ИЛИ медиа)
   if (!m.deleted && ((m.text || '').trim() || m.file_payload || m.file)) {
     items.push({icon:'fa-share', label:'Переслать', cb:() => openForwardSheet(sid)});
   }
@@ -6746,7 +6439,6 @@ function openMsgMenu(ev, sid){
   menu.innerHTML = items.map((it, i) => `<button data-i="${i}" style="display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;background:none;border:0;color:${it.danger ? 'var(--red)' : 'var(--text)'};font-size:13px;font-family:inherit;cursor:pointer;border-radius:8px;text-align:left;" onmouseover="this.style.background='rgba(255,255,255,0.06)'" onmouseout="this.style.background='none'"><i class="fa-solid ${it.icon}" style="width:14px;"></i>${esc(it.label)}</button>`).join('');
   wrap.appendChild(menu);
   document.body.appendChild(wrap);
-  // Позиционирование (wrap)
   const x = ev.clientX || (ev.touches && ev.touches[0]?.clientX) || 100;
   const y = ev.clientY || (ev.touches && ev.touches[0]?.clientY) || 100;
   const rect = wrap.getBoundingClientRect();
@@ -6761,7 +6453,6 @@ function openMsgMenu(ev, sid){
 }
 function closeMsgMenu(){ const m = document.getElementById('msgMenu'); if (m) m.remove(); }
 
-// Копировать текст сообщения в буфер.
 async function copyMsgText(m) {
   const txt = (m && m.text || '').toString();
   if (!txt) return;
@@ -6778,15 +6469,11 @@ async function copyMsgText(m) {
   }
 }
 
-// Закрываем msg-menu при скролле — используем требовательную проверку (не блокируем мобильный скролл)
 (function _wireMenuCloseOnScroll(){
   if (window._msgMenuScrollWired) return;
   window._msgMenuScrollWired = true;
-  // Слушаем scroll конкретно на body-чата (через delegation)
-  // Не используем capture:true — это ломает плавный скролл на мобильных
   document.addEventListener('scroll', (e) => {
     if (!document.getElementById('msgMenu')) return;
-    // Закрываем только если scroll НЕ внутри самого меню (а это вряд ли)
     const t = e.target;
     if (t && t.closest && t.closest('#msgMenu')) return;
     closeMsgMenu();
@@ -6818,14 +6505,12 @@ async function toggleReaction(sid, emoji) {
   m.reactions = reactions;
   await idbUpdateMessage(sid, { reactions });
   if (activeGroup) renderGroupMessages(); else renderMessages();
-  // Pop-анимация на свежепоявившейся chip-кнопке реакции.
   if (newEmoji){
     requestAnimationFrame(() => {
       const chip = document.querySelector(`.msg-react-chip[data-sid="${CSS.escape(String(sid))}"][data-emoji="${CSS.escape(newEmoji)}"]`);
       if (chip){ chip.classList.add('pop-anim'); setTimeout(() => chip.classList.remove('pop-anim'), 320); }
     });
   }
-  // Отправляем react-payload по тому же пути что edit/delete
   try {
     const payload = { type: 'react', target_sid: sid, emoji: newEmoji };
     if (activeGroup) {
@@ -6859,11 +6544,9 @@ function updateLastBubble(failed){renderMessages();scrollChatBottom(false);}
 
 function linkify(t){return esc(t).replace(/(https?:\/\/[^\s<>"']+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;opacity:0.85">$1</a>');}
 
-// ── Previews для ссылок в сообщениях ──────────────────────────────────────────
 const _gsPostCache = new Map();   // postId -> {username, display_name, content, ...} | null
 const _linkPrevCache = new Map(); // url -> {title, image, ...} | null
 const URL_RE = /\bhttps?:\/\/[^\s<>"']+/i;
-// /social#p=123 или абсолютная https://...duckdns.org/social#p=123 или /social/#p=123
 const GS_POST_RE = /(?:https?:\/\/[^\s<>"']*?\/social\/?#p=(\d+)|\/social\/?#p=(\d+))/i;
 
 function detectLink(text){
@@ -6889,7 +6572,6 @@ function previewPlaceholder(msg){
 }
 
 async function loadMsgPreviews(){
-  // GS post previews
   document.querySelectorAll('[data-prev-gs]').forEach(async el => {
     if (el._loading) return;
     el._loading = true;
@@ -6917,7 +6599,6 @@ async function loadMsgPreviews(){
         </div>
       </div>`;
   });
-  // External link previews
   document.querySelectorAll('[data-prev-url]').forEach(async el => {
     if (el._loading) return;
     el._loading = true;
@@ -6941,7 +6622,6 @@ async function loadMsgPreviews(){
 }
 function scrollChatBottom(smooth=true){const b=document.getElementById('chatBody');if(!b)return;b.scrollTo({top:b.scrollHeight, behavior:smooth?'smooth':'auto'});}
 
-// Подсветка скроллбара во время активного скролла (как в TG)
 let _scrollHideTimer = null;
 document.addEventListener('scroll', e => {
   const t = e.target;
@@ -6964,8 +6644,6 @@ async function openPeerProfile(username){
   main.style.display = 'none';
   prof.style.display = 'flex';
   document.getElementById('appGrid').classList.add('in-chat');
-  // Профиль чата поддержки — спецстраница, не идём в /prof/{admin}.
-  // Скрываем личность администратора, показываем что это за чат.
   if (_supportAdmin && username === _supportAdmin.username){
     const isAdminInbox = !!_supportAdmin.is_me;
     prof.innerHTML = `
@@ -7043,7 +6721,6 @@ function closePeerProfile(){
 async function openNewChat(){
   document.getElementById('newChatModal').classList.add('open');
   document.getElementById('newChatSearch').value='';
-  // Сначала показываем контакты
   try {
     const r = await wsContactsList();
     if (r && r.length) {
@@ -7059,13 +6736,11 @@ async function openNewChat(){
   setTimeout(()=>document.getElementById('newChatSearch').focus(),100);
 }
 function closeModal(id){document.getElementById(id).classList.remove('open');}
-// Закрытие модалок по клику на overlay — но НЕ для forceTagModal (его нельзя пропустить)
 document.querySelectorAll('.modal-overlay').forEach(el => {
   if (el.id === 'forceTagModal') return;
   el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
 });
 let _t=0;
-// Поиск каналов/групп по @тегу — если ввели @xxx и оно начинается на @, то ищем
 async function tryGroupByTag(tag) {
   try {
     const g = await chat(`/group/by_tag/${encodeURIComponent(tag.replace(/^@/,''))}`);
@@ -7087,9 +6762,6 @@ async function joinGroupByTag(gid) {
   } catch(e) { showToast(e.message || 'Ошибка', true); }
 }
 
-// Levenshtein distance — для fuzzy-поиска похожих имён при опечатках.
-// O(a.length * b.length). Используем только для коротких usernames (≤30 симв),
-// так что копейки.
 function _levenshtein(a, b){
   if (a === b) return 0;
   if (!a.length) return b.length;
@@ -7108,9 +6780,6 @@ function _levenshtein(a, b){
   return v0[b.length];
 }
 
-// Возвращает массив {username, display_name} из локальных dialogs + contacts,
-// чьи username/display_name похожи на query с расстоянием ≤ 2, не пересекаясь
-// с already (списком username которые уже в результатах с сервера).
 function _searchSimilarLocal(query, already){
   if (!query || query.length < 2) return [];
   const q = query.toLowerCase();
@@ -7121,7 +6790,6 @@ function _searchSimilarLocal(query, already){
     if (!username) return;
     const u = username.toLowerCase();
     if (have.has(u) || seen.has(u) || u === (me && me.username)) return;
-    // Расстояние Левенштейна до username и до display_name (если есть).
     const dn = (display_name || '').toLowerCase();
     const dist = Math.min(
       _levenshtein(u, q),
@@ -7133,7 +6801,6 @@ function _searchSimilarLocal(query, already){
     }
   };
   for (const d of (dialogs || [])) pushCandidate(d.username, d.display_name);
-  // Контакты — если есть глобальный кэш.
   if (typeof contactsCache !== 'undefined' && Array.isArray(contactsCache)){
     for (const c of contactsCache) pushCandidate(c.username, c.display_name);
   }
@@ -7154,14 +6821,11 @@ document.getElementById('newChatSearch').addEventListener('input', e => {
         soc(`/search?q=@${encodeURIComponent(cleanTag)}`).catch(()=>({results:[]})),
         /^[a-z0-9_]{3,20}$/.test(cleanTag) ? tryGroupByTag(cleanTag) : Promise.resolve(null),
       ]);
-      // Подмешиваем «похожих» по Левенштейну на основе локальных диалогов и
-      // контактов — если сервер вернул мало, юзер увидит подсказки с опечатками.
       const extraSimilar = _searchSimilarLocal(cleanTag, (searchD.results || []).map(u => u.username));
       if (extraSimilar.length) searchD.results = (searchD.results || []).concat(extraSimilar);
       const res = document.getElementById('newChatResults');
       const list = (searchD.results || []).filter(u => u.username !== me.username);
       let html = '';
-      // Группа/канал найдена по точному тегу — показываем первой
       if (groupG) {
         const inList = groups.some(x => x.id === groupG.id);
         html += `<div class="m-user" style="border-left:3px solid var(--primary);">
@@ -7175,7 +6839,6 @@ document.getElementById('newChatSearch').addEventListener('input', e => {
             : `<button onclick="joinGroupByTag(${groupG.id})" style="padding:6px 12px;border-radius:8px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">${groupG.is_public ? 'Войти' : 'Заявка'}</button>`}
         </div>`;
       }
-      // Юзеры
       html += list.map(u => `<div class="m-user" onclick="startChat(${jsAttr(u.username)},${jsAttr(u.display_name)})"><div class="av">${ini(u.display_name)}</div><div class="info"><div class="nm">${esc(u.display_name)}</div><div class="un">@${esc(u.username)}</div></div></div>`).join('');
       if (!html) { res.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px;">Никого не найдено</div>'; return; }
       res.innerHTML = html;
@@ -7198,10 +6861,8 @@ function _killStaleWs(reason) {
   console.warn('[ws] stale, reconnecting:', reason);
   clearInterval(pingTimer); clearTimeout(_pongTimeoutTimer);
   try { ws && ws.close(); } catch(_){}
-  // ws.onclose сам триггернёт reconnect
 }
 
-// ── WSS-over-encryption: дополнительный AES-GCM слой поверх TLS ──
 let _wsEphPriv = null;   // CryptoKey ECDH P-256 private
 let _wsEphPub = null;    // base64 my public
 let _wsAesKey = null;    // CryptoKey AES-GCM 256
@@ -7215,7 +6876,6 @@ function _resetWsCrypto(){
 _resetWsCrypto();
 
 async function _wsBeginHandshake(){
-  // Генерируем ephemeral P-256 пару и отправляем client_pub серверу.
   try {
     const pair = await crypto.subtle.generateKey({name:'ECDH', namedCurve:'P-256'}, true, ['deriveBits']);
     _wsEphPriv = pair.privateKey;
@@ -7268,7 +6928,6 @@ async function wsSendEnc(payload){
   catch(_){}
 }
 
-// Расшифровывает входящий cs.enc → возвращает inner JSON (или null).
 async function _wsDecryptFrame(data){
   if (!_wsAesKey || typeof data !== 'string') return null;
   try {
@@ -7283,8 +6942,6 @@ async function _wsDecryptFrame(data){
   }
 }
 
-// ── Hello promise: сервер шлёт hello с полным профилем сразу после accept.
-// init() ждёт это вместо HTTP /me. Resolve через handleWs() ниже.
 let _helloResolve = null, _helloReject = null;
 let _helloPromise = null;
 function _newHelloPromise(){
@@ -7292,9 +6949,6 @@ function _newHelloPromise(){
   return _helloPromise;
 }
 
-// ── WS RPC: request-response поверх websocket ──
-// Клиент шлёт {type, data:{...args, request_id}}, ждёт ответа с тем же
-// request_id (type обычно type+'.ok'/'.err'). Возвращает Promise.
 const _wsRpcPending = new Map(); // request_id → {resolve, reject, timer}
 let _wsRpcNextId = 1;
 function wsRpc(type, data, timeoutMs){
@@ -7345,7 +6999,6 @@ async function wsCall(action, data, fallbackHttp, timeoutMs){
   throw new Error('WS не подключён и нет fallback');
 }
 
-// Тонкие обёртки для каждой команды — каждая пробует WS, при падении
 async function wsKeysMe(){ return wsCall('keys.me', null, () => chat('/keys/me')); }
 async function wsKeysUpload(body){ return wsCall('keys.upload', body, () => chat('/keys/upload', 'POST', body)); }
 async function wsStorageModeGet(){ return wsCall('keys.storage_mode.get', null, () => chat('/keys/storage_mode')); }
@@ -7364,21 +7017,17 @@ async function wsContactsCheck(username){ return wsCall('contacts.check', {usern
 async function wsSupportAdmin(){ return wsCall('support_admin', null, () => chat('/support_admin')); }
 async function wsDeliveryStatus(ids){
   const r = await wsCall('delivery_status', {ids}, () => chat('/delivery_status', 'POST', {ids}));
-  // WS-ответ: {request_id, status:{...}}; HTTP-ответ: {...} напрямую.
   if (r && r.status) return r.status;
   return r || {};
 }
 async function wsProfGet(username, offset){ return wsCall('prof.get', {username, offset:offset||0}, () => soc('/prof/'+encodeURIComponent(username))); }
 
-// Fetch peer pub через WS (вместо GET /keys/{username}). Возвращает объект
-// формы {x25519_pub, device_pubkeys, username} — совместимый с HTTP-ответом.
 async function wsFetchPeerPub(username){
   if (ws && ws.readyState === 1){
     try { return await wsRpc('chat.peer_pub', { username }, 8000); } catch(_){}
   }
   return await chat(`/keys/${encodeURIComponent(username)}`);
 }
-// Fetch pending (накопленные сообщения) через WS. Совместим с HTTP-ответом.
 async function wsFetchPending(){
   if (ws && ws.readyState === 1){
     try { return await wsRpc('chat.pending', {}, 12000); } catch(_){}
@@ -7394,8 +7043,6 @@ async function wsRead(ids, fromUsername){
   try { return await chat('/read', 'POST', { ids, from_username: fromUsername }); } catch(_){ return { sent: 0 }; }
 }
 
-// Резолвит ожидающий RPC по request_id из incoming WS-сообщения.
-// Возвращает true если сообщение было RPC-ответом.
 function _wsRpcResolve(m){
   const d = m && m.data; if (!d || !d.request_id) return false;
   const p = _wsRpcPending.get(d.request_id);
@@ -7412,7 +7059,6 @@ function connectWS(){
   if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
   const base = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/soc/ws';
   const u = token ? `${base}?token=${encodeURIComponent(token)}` : base;
-  // Готовим новый hello-promise — init() ждёт его как ответ от сервера.
   _newHelloPromise();
   try { ws = new WebSocket(u); } catch(e) {
     if (_helloReject) { try { _helloReject(e); } catch(_){} _helloReject = null; }
@@ -7422,8 +7068,6 @@ function connectWS(){
   ws.onopen = async () => {
     wsReconnect = 1000;
     _lastWsRecvAt = Date.now();
-    // Сразу запускаем шифровальный handshake. До его завершения wsSendEnc
-    // ждёт _wsHandshakeReady, поэтому ничего не теряется.
     await _wsBeginHandshake();
     clearInterval(pingTimer);
     pingTimer = setInterval(() => {
@@ -7445,7 +7089,6 @@ function connectWS(){
     let m;
     try { m = JSON.parse(e.data); } catch(_){ return; }
     if (!m || !m.type) return;
-    // Handshake-обработка идёт ПЕРЕД handleWs.
     if (m.type === 'cs.hello.ok'){
       await _wsCompleteHandshake((m.data || {}).server_pub || '');
       return;
@@ -7470,9 +7113,6 @@ function connectWS(){
     if (ev && (ev.code === 1008 || ev.code === 4401 || ev.code === 4403)) {
       _wsAuthFail = true; return;
     }
-    // Если мы намеренно закрыли WS из-за скрытой вкладки — не реконнектим
-    // в фоне. Это сэкономит батарею + не будет идти зомби-handshake'ов.
-    // connectWS вызовется обратно когда vкладка станет visible.
     if (_wsPausedByVisibility) return;
     // Дебаунс reconnect: иначе onclose + _onWakeup + storage-event могут
     if (_wsReconnectScheduled) return;
@@ -7523,14 +7163,12 @@ function _doWakeup(){
   // wake-check на каждом visibilitychange/focus убивал свежий сокет, создавая
   // гонку: connectWS_1 → onopen→cs.hello → _doWakeup_2 → kill → connectWS_3 …
   if (ws && ws.readyState === 0) return;
-  // OPEN — живой если был приём <40с назад.
   const wsAlive = ws && ws.readyState === 1 && (now - _lastWsRecvAt < 40_000);
   if (!wsAlive) {
     if (ws && ws.readyState === 1) _killStaleWs('wake check');
     connectWS();
     return;
   }
-  // WS живой — догоним вручную с троттлингом
   if (now - _lastPendingAt > 10_000) {
     _lastPendingAt = now;
     _fetchPendingWithRetry();
@@ -7559,8 +7197,6 @@ function _fetchPendingWithRetry(){
   try { syncDeliveryStatus(); } catch(_){}
 }
 
-// Спрашивает сервер какие из моих !delivered сообщений уже доставлены.
-// Sender может пропустить WS chat.delivered если был offline в момент receiver/ack.
 async function syncDeliveryStatus(){
   try {
     // Берём свои сообщения которые ещё не прочитаны (нужны как delivered, так
@@ -7594,12 +7230,8 @@ window.addEventListener('focus', _onWakeup);
 window.addEventListener('online', _onWakeup);  // вернулся интернет
 
 async function handleWs(m){
-  // RPC-ответы перехватываем первыми — если сообщение адресовано
-  // ожидающему promise'у, не идём дальше в обычный switch.
   if (_wsRpcResolve(m)) return;
   const t = m.type, d = m.data || {};
-  // hello: сервер сразу прислал полный профиль — init() ждёт этого
-  // вместо HTTP /me. Resolve промиса с payload'ом.
   if (t === 'hello') {
     if (_helloResolve) { try { _helloResolve(d); } catch(_){} _helloResolve = null; _helloReject = null; }
     return;
@@ -7609,9 +7241,7 @@ async function handleWs(m){
     showLoginApprovalToast(d);
     return;
   }
-  // TDA новой UX: появился pending — добавить карточку если открыт чат поддержки.
   if (t === 'tda.pending.new') {
-    // Дедуп — на случай если пришло параллельно с tda.pending.list.list
     const rid = d.login_request_id || d.request_id;
     if (rid && !_tdaPendings.some(x => (x.request_id || x.login_request_id) === rid)) {
       _tdaPendings.unshift(d);
@@ -7625,13 +7255,11 @@ async function handleWs(m){
     _renderTdaPendings();
     return;
   }
-  // Кто-то revoke-нул устройство. Если это наше — force logout.
   if (t === 'device.revoked') {
     try {
       const r = await wsDevicesList();
       const cur = (r.devices || []).find(x => x.is_current);
       if (cur && cur.id === d.device_pk) {
-        // Это нас отключили.
         localStorage.removeItem('gs_token');
         localStorage.removeItem('gs_me');
         clearSsoCookie();
@@ -7639,27 +7267,23 @@ async function handleWs(m){
         location.reload();
         return;
       }
-      // Не нас — просто обновить список если открыт.
       if (document.getElementById('settingsModal').classList.contains('open')) {
         loadDevicesIntoSettings();
       }
     } catch(_){}
     return;
   }
-  // chat.sealed_new — sealed sender отключён, игнорируем
   if (t === 'chat.sealed_new') return;
   if (t === 'chat.new' || t === 'chat.echo') {
     const ok = await ingestIncoming(d);
     if (ok && t === 'chat.new') {
       try { await wsAck([d.id]); } catch(_) {}
-      // Если чат с этим юзером открыт ПРЯМО СЕЙЧАС → сразу отправим read
       if (activePeer && activePeer.username === d.from_username) {
         try { await wsRead([d.id], d.from_username); } catch(_) {}
       }
     }
   }
   else if (t === 'chat.delivered') {
-    // Мои сообщения дошли (двойная серая галочка)
     if (Array.isArray(d.ids)) {
       for (const id of d.ids) {
         const m = activeMessages.find(x => String(x.sid) === String(id));
@@ -7670,7 +7294,6 @@ async function handleWs(m){
     }
   }
   else if (t === 'chat.read') {
-    // Мои сообщения прочитали (двойная синяя)
     if (Array.isArray(d.ids)) {
       for (const id of d.ids) {
         const m = activeMessages.find(x => String(x.sid) === String(id));
@@ -7681,7 +7304,6 @@ async function handleWs(m){
     }
   }
   else if (t === 'chat.cleared_by_peer') {
-    // Собеседник нажал «удалить чат и у меня» → чистим всё локально.
     const peer = (d && d.by_username || '').toLowerCase();
     if (peer) {
       _deleteChatLocally(peer);
@@ -7689,13 +7311,11 @@ async function handleWs(m){
     }
   }
   else if (t === 'chat.typing') {
-    // Кто-то печатает мне
     if (activePeer && activePeer.username === d.from_username) {
       setChatTyping(d.is_typing);
     }
   }
   else if (t === 'presence') {
-    // Изменился онлайн-статус юзера
     if (activePeer && activePeer.username === d.username) {
       _peerOnline = d.online;
       // typing имеет приоритет, иначе обновим статус
@@ -7703,9 +7323,7 @@ async function handleWs(m){
     }
   }
   else if (t === 'group.added' || t === 'group.removed' || t === 'group.members_changed') {
-    // Состав или список групп изменился — перезагрузим
     try { await loadGroups(); } catch(_) {}
-    // Если открыт чат изменённой группы — обновим список участников
     if (activeGroup && d.group_id === activeGroup.id && t === 'group.members_changed') {
       try {
         const info = await chat(`/group/${activeGroup.id}`);
@@ -7716,7 +7334,6 @@ async function handleWs(m){
       } catch(_) {}
     }
     if (activeGroup && d.group_id === activeGroup.id && t === 'group.removed') {
-      // Меня кикнули или группа удалена
       activeGroup = null; activeMessages = [];
       const main = document.getElementById('chatMain');
       if (main) main.innerHTML = `<div class="chat-empty"><i class="fa-solid fa-ghost"></i><h3>Группа удалена</h3><p>Или вы были удалены из неё.</p></div>`;
@@ -7730,7 +7347,6 @@ async function handleWs(m){
   }
 }
 
-// ── Typing & Presence state ──
 let _peerTyping = false;
 let _peerTypingTimer = 0;
 let _peerOnline = false;
@@ -7741,7 +7357,6 @@ function setChatTyping(isTyping){
   updateChatStatusBar();
   clearTimeout(_peerTypingTimer);
   if (isTyping) {
-    // Авто-сброс если 4с не пришло обновлений
     _peerTypingTimer = setTimeout(() => { _peerTyping = false; updateChatStatusBar(); }, 4000);
   }
 }
@@ -7764,7 +7379,6 @@ function updateChatStatusBar(){
 function sendTyping(isTyping){
   if (!ws || ws.readyState !== 1 || !activePeer) return;
   const now = Date.now();
-  // Не чаще раза в 2с
   if (isTyping && now - _myTypingLastSent < 2000) return;
   _myTypingLastSent = now;
   try {
@@ -7850,7 +7464,6 @@ async function init(){
     })();
     return;
   }
-  // Первый вход на этом устройстве — нужен пароль один раз для расшифровки приватного ключа
   showAuth();
   document.getElementById('loginUsername').value = me.username;
   document.getElementById('loginUsername').disabled = true;
@@ -7866,14 +7479,11 @@ init();
 async function loadGroups(){
   try {
     const r = await wsCall('group.my', null, () => chat('/group/my'));
-    // WS ответ: {request_id, groups: [...]}; HTTP — массив напрямую.
     groups = Array.isArray(r) ? r : (r && Array.isArray(r.groups) ? r.groups : []);
     renderDialogs(document.getElementById('sbSearch').value);
-    // Подтянем pending для каждой группы параллельно (не блокируем UI)
     for (const g of groups) {
       fetchGroupPending(g.id).catch(()=>{});
     }
-    // Принудительный запрос тега для каналов-без-тега у владельца
     checkForceTagNeeded();
   } catch(e) {
     console.warn('[groups] load failed', e);
@@ -7881,7 +7491,6 @@ async function loadGroups(){
   }
 }
 
-// ── Принудительная установка @тега для своих каналов без тега ────────────────
 let _forceTagQueue = [];
 function checkForceTagNeeded(){
   const needsTag = groups.filter(g => g.is_owner && g.kind === 'channel' && !g.username);
@@ -7917,10 +7526,8 @@ async function submitForceTag(){
   btn.disabled = true; btn.textContent = 'Сохранение...';
   try {
     await chat(`/group/${g.id}/username`, 'POST', { username: tag });
-    // Обновим в локальном кэше
     const localG = groups.find(x => x.id === g.id);
     if (localG) localG.username = tag;
-    // Уберём из очереди и идём дальше
     _forceTagQueue.shift();
     document.getElementById('forceTagModal').classList.remove('open');
     showToast(`Тег @${tag} установлен`);
@@ -7936,7 +7543,6 @@ async function submitForceTag(){
   }
 }
 
-// Enter в input → submit
 document.addEventListener('DOMContentLoaded', () => {
   const inp = document.getElementById('ftInput');
   if (inp) inp.addEventListener('keydown', e => {
@@ -7958,7 +7564,6 @@ function openCreateGroup(kind){
   document.getElementById('cgName').value = '';
   document.getElementById('cgMembers').value = '';
   document.getElementById('cgError').style.display = 'none';
-  // Чекбокс публичности — только для канала, по умолчанию вкл (public)
   document.getElementById('cgPublicWrap').style.display = kind === 'channel' ? '' : 'none';
   document.getElementById('cgPublic').checked = true;
   document.getElementById('createGroupModal').classList.add('open');
@@ -7990,7 +7595,6 @@ async function doCreateGroup(){
     closeModal('createGroupModal');
     showToast(kind === 'channel' ? (is_public ? 'Публичный канал создан' : 'Приватный канал создан') : 'Группа создана');
     await loadGroups();
-    // Сразу открыть созданную группу
     if (r && r.id) openGroupChat(r.id, r.name, kind);
   } catch(e) {
     errBox.textContent = e.message || 'Ошибка';
@@ -8017,14 +7621,12 @@ async function doCreateGroup(){
 //   3. Импортируем как AES-GCM → расшифровываем общий ciphertext
 // ════════════════════════════════════════════════════════════════════
 async function encryptForGroup(members, payload){
-  // Генерим общий случайный AES-256 ключ для этого сообщения
   const sharedKeyBytes = crypto.getRandomValues(new Uint8Array(32));
   const sharedKey = await crypto.subtle.importKey('raw', sharedKeyBytes,
     {name:'AES-GCM', length:256}, false, ['encrypt']);
   const raw = (typeof payload === 'object' && payload !== null) ? JSON.stringify(payload) : String(payload);
   const ciphertext = await encryptText(sharedKey, raw);
 
-  // Для каждого участника — упакуем sharedKeyBytes через ECDH-derived key
   const envelope_keys = {};
   for (const m of members) {
     if (m.id === me.id) continue;
@@ -8032,7 +7634,6 @@ async function encryptForGroup(members, payload){
     try {
       const theirPub = await importPub(m.x25519_pub);
       const wrapKey = await deriveShared(myPriv, theirPub);
-      // Шифруем 32 байта общего ключа этим wrap-ключом
       const iv = crypto.getRandomValues(new Uint8Array(12));
       const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, wrapKey, sharedKeyBytes);
       const out = new Uint8Array(12 + ct.byteLength);
@@ -8042,7 +7643,6 @@ async function encryptForGroup(members, payload){
       console.warn('[group-encrypt] не удалось упаковать для', m.username, e);
     }
   }
-  // Сохраним sharedKeyBytes локально на случай если придёт echo и нужно дешифровать своё
   return { ciphertext, envelope_keys, sharedKeyBytes };
 }
 
@@ -8085,7 +7685,6 @@ const _myGroupSharedKeys = new Map();  // msg_id → Uint8Array(32)
 // ════════════════════════════════════════════════════════════════════
 const _grpKey = gid => 'g:' + gid;
 
-// Цвет для имени отправителя в группе (по hash username — стабильно)
 function userColor(username){
   const colors = ['#a855f7','#ec4899','#22d3ee','#f59e0b','#10b981','#f43f5e','#6366f1','#84cc16','#0ea5e9','#fb7185'];
   let h = 0;
@@ -8097,7 +7696,6 @@ async function openGroupChat(gid, name, kind){
   if (typeof gid === 'string') gid = parseInt(gid, 10);
   try {
     const info = await chat(`/group/${gid}`);
-    // Cleanup blob/voice URL'ов от предыдущего чата (см. openChat)
     try {
       for (const m of activeMessages) {
         if (m && m._imgUrl) { URL.revokeObjectURL(m._imgUrl); m._imgUrl = null; }
@@ -8113,20 +7711,15 @@ async function openGroupChat(gid, name, kind){
     activePeer = null;
     activeGroup = info;
     document.getElementById('appGrid').classList.add('in-chat');
-    // Загрузить историю из IDB
     activeMessages = (await idbGetMessages(_grpKey(gid))) || [];
-    // created_at может быть ISO-string или unix-int — сортируем через .getTime()
     activeMessages.sort((a,b) => {
       const av = a.created_at ? new Date(typeof a.created_at === 'number' ? a.created_at * 1000 : a.created_at).getTime() : 0;
       const bv = b.created_at ? new Date(typeof b.created_at === 'number' ? b.created_at * 1000 : b.created_at).getTime() : 0;
       return av - bv;
     });
-    // Сначала отрисуем шапку + body
     renderGroupChat();
-    // Сбросим unread для группы (если был)
     const g = groups.find(x => x.id === gid);
     if (g) { g.unread = 0; renderDialogs(document.getElementById('sbSearch').value); }
-    // Подтянуть pending с сервера
     fetchGroupPending(gid).catch(()=>{});
   } catch(e) {
     showToast(e.message || 'Не удалось открыть', true);
@@ -8206,7 +7799,6 @@ function renderGroupMessages(){
       ? '<i class="fa-regular fa-clock"></i>'
       : (m.edited ? '<span style="opacity:0.7;font-size:10px;">изм.</span>' : '')
         + (m.from_me ? ' ' + renderTicks(m) : '');
-    // Имя отправителя — только для ЧУЖИХ сообщений и только если первое в серии
     let senderName = '';
     if (!m.from_me && !sameSenderPrev && m.sender_username) {
       const c = userColor(m.sender_username);
@@ -8226,7 +7818,6 @@ function renderGroupMessages(){
     } else {
       bubbleBody = linkify(m.text || '');
     }
-    // Аватарка чужого юзера слева от bubble (только last/solo — низ серии)
     const showAvatar = !m.from_me && (cls.includes('last') || cls.includes('solo')) && m.sender_username;
     const avatarSlot = !m.from_me ? (showAvatar
       ? `<div class="grp-av" style="background:linear-gradient(135deg,${userColor(m.sender_username)},${userColor(m.sender_username)}cc);">${ini(m.sender_display_name||m.sender_username)}</div>`
@@ -8243,7 +7834,6 @@ function renderGroupMessages(){
   body.innerHTML = html;
 }
 
-// Sender: шифруем + отправляем в группу
 async function sendGroupMessage(){
   const inp = document.getElementById('sendInput');
   if (!inp) return;
@@ -8282,7 +7872,6 @@ async function sendGroupMessage(){
     _myGroupSharedKeys.set(r.id, sharedKeyBytes);
     setTimeout(() => _myGroupSharedKeys.delete(r.id), 60000);
     await idbAddMessage(optimistic);
-    // Обновим last_text/at у группы (если она в groups)
     const g = groups.find(x => x.id === activeGroup.id);
     if (g) { g.last_text = text; g.last_at = r.created_at; renderDialogs(document.getElementById('sbSearch').value); }
     renderGroupMessages();
@@ -8294,16 +7883,13 @@ async function sendGroupMessage(){
   }
 }
 
-// Receiver: WS group.new / group.echo / pending
 async function ingestGroupIncoming(m){
-  // m: {id, group_id, sender_id, from_username, from_display_name, ciphertext, envelope_keys, created_at}
   const gid = m.group_id;
   const isMine = m.sender_id === me.id;
   let text = '';
   let payload = null;
   try {
     if (isMine) {
-      // echo — берём из локального кэша если есть
       const cached = _myGroupSharedKeys.get(m.id);
       if (cached) {
         const raw = await decryptGroupCiphertext(cached, m.ciphertext);
@@ -8327,7 +7913,6 @@ async function ingestGroupIncoming(m){
     _maybeAskRecreateKey(m.from_username);
   }
 
-  // Edit/Delete операции
   if (payload && payload.type === 'edit' && payload.target_sid != null) {
     const tsid = payload.target_sid;
     const target = await idbFindMessageBySid(tsid);
@@ -8353,7 +7938,6 @@ async function ingestGroupIncoming(m){
     return true;
   }
 
-  // Реакция в группе
   if (payload && payload.type === 'react' && payload.target_sid != null) {
     const tsid = payload.target_sid;
     const target = await idbFindMessageBySid(tsid);
@@ -8376,7 +7960,6 @@ async function ingestGroupIncoming(m){
     return true;
   }
 
-  // Обычное сообщение
   const stored = {
     sid: m.id, peer: _grpKey(gid), from_me: isMine, text,
     sender_username: m.from_username,
@@ -8393,7 +7976,6 @@ async function ingestGroupIncoming(m){
   const added = await idbAddMessage(stored);
   if (!added) return false;
 
-  // Обновим preview группы в sidebar
   const g = groups.find(x => x.id === gid);
   if (g) {
     g.last_text = text;
@@ -8494,7 +8076,6 @@ function openGroupMembers(){
         </div>` : ''}
       </div>
     </div>`;
-  // Удалим прошлую модалку если есть
   const old = document.getElementById('grpMembersModal');
   if (old) old.remove();
   document.body.insertAdjacentHTML('beforeend', html);
@@ -8526,7 +8107,6 @@ async function openSetGroupTag(){
     showToast('Тег установлен: @' + newTag);
     closeModal('grpMembersModal');
     openGroupMembers();
-    // Обновить шапку
     renderGroupChat();
   } catch(e) { showToast(e.message || 'Ошибка', true); }
 }
@@ -8602,7 +8182,6 @@ async function decideJoinReq(reqId, accept) {
     document.getElementById('jrModal')?.remove();
     setTimeout(() => openJoinRequests(), 200);
     if (accept) {
-      // обновим список участников
       const info = await chat(`/group/${activeGroup.id}`);
       activeGroup.members = info.members;
     }
@@ -8680,12 +8259,10 @@ async function confirmDeleteGroup(gid, name){
   }
 }
 
-// Полный перехват renderDialogs: показываем группы + DM единым списком.
 renderDialogs = function(filter=''){
   const list = document.getElementById('sbList');
   const f = (filter || '').toLowerCase().replace(/^@/, '');
 
-  // Фильтры
   let dArr = dialogs;
   let gArr = groups.slice();
   if (f) {
@@ -8729,8 +8306,6 @@ renderDialogs = function(filter=''){
     if (_supportAdmin) dArr = dArr.filter(d => d.username !== _supportAdmin.username);
   }
 
-  // Пустое состояние — только если совсем нет ни диалогов, ни групп.
-  // Если есть PINNED — рисуем её + краткую подсказку «начните чат», без скучной заглушки.
   if (!dArr.length && !gArr.length) {
     if (f) {
       list.innerHTML = supportHtml + `<div class="sb-empty"><i class="fa-regular fa-comments"></i>Ничего не найдено</div>`;
@@ -8757,7 +8332,6 @@ renderDialogs = function(filter=''){
 
   let html = supportHtml;
 
-  // Блок групп/каналов
   if (gArr.length) {
     html += `<div style="font-size:10px;color:var(--muted);font-weight:700;letter-spacing:0.08em;padding:14px 14px 6px;text-transform:uppercase;">Группы и каналы</div>`;
     html += gArr.map(g => `
@@ -8778,7 +8352,6 @@ renderDialogs = function(filter=''){
     `).join('');
   }
 
-  // Блок личных диалогов
   if (dArr.length) {
     if (gArr.length) html += `<div style="font-size:10px;color:var(--muted);font-weight:700;letter-spacing:0.08em;padding:14px 14px 6px;text-transform:uppercase;">Личные</div>`;
     html += dArr.map(d => `
