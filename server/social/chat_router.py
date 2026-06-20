@@ -25,10 +25,6 @@ import base64, time
 from social_router import auth_member, db, ws_hub, _rate_limit
 
 # Лимиты по плану Premium (см. https://t.me/waki_one):
-#   Base (без премиума): ЛС 100 MB, группы/каналы 50 MB
-#   Premium: ЛС 500 MB, группы 200 MB (×5 base)
-# Сейчас premium-проверка не реализована — используем base ЛС лимит.
-# nginx должен быть >= 110M (сейчас 55M — надо поднять, см. ниже).
 MAX_FILE_SIZE = 100 * 1024 * 1024
 FILE_TTL_DAYS = 7
 
@@ -125,12 +121,6 @@ def upload_keys(body: KeysUploadBody, authorization: Optional[str] = Header(None
             (body.x25519_pub, dev["id"]),
         )
         # v1: на пару users.x25519_pub смотрят все собеседники через legacy
-        # /keys/{username}. Если non-owner устройство сделает rotate и мы НЕ
-        # обновим users.x25519_pub — клиент после reload увидит mismatch
-        # между IDB (свой свежий pub) и сервером (чужой/старый), _checkLocalPubMatchesServer
-        # тихо wipe-ает IDB → бесконечный banner «Приватный ключ не загружен».
-        # Поэтому любое устройство, делающее upload, перезаписывает users.x25519_pub.
-        # Multi-device полноценный приедет в v2 (envelope-per-device).
         c.execute(
             "UPDATE users SET x25519_pub=?, encrypted_private_key=?, key_salt=?, in_ghostchat=1, key_storage_mode=? WHERE id=?",
             (body.x25519_pub, priv_to_store, salt_to_store, mode, user["id"]),
@@ -875,11 +865,6 @@ def send_sealed(body: SendSealedBody, authorization: Optional[str] = Header(None
         c.close()
         raise HTTPException(400, "У получателя ещё нет E2E-ключей")
     # Анти-targeted-spam: per-pair лимит. Сам отправитель скрыт от сервера за
-    # счёт sealed, но сервер всё равно видит (sender_token, recipient_id) пару
-    # и должен не давать одному юзеру заливать одного получателя. 30 sealed за
-    # 5 минут от одной пары — достаточно для любого живого диалога, но кладёт
-    # на лопатки любой автоматизированный спам. В жёстком sealed (с blind
-    # token-ами) это перестанет работать — там нужны будут групповые лимиты.
     _rate_limit(f"sealpair:{user['id']}:{to_user['id']}", limit=30, window=300)
     now = int(time.time())
     c.execute(

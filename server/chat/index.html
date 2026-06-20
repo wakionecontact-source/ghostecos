@@ -1681,9 +1681,6 @@ try { me = JSON.parse(localStorage.getItem('gs_me')||'null'); }
 catch(_) { localStorage.removeItem('gs_me'); me=null; }
 
 // ── Multi-account storage ────────────────────────────────────────────
-// gs_accounts: массив активных аккаунтов [{token, id, username, display_name}, ...]
-// gs_token / gs_me — legacy одиночные ключи; синхронно отражают активный аккаунт
-// (это нужно чтобы остальной код, читающий localStorage.gs_token, работал без правок).
 function accountsLoad(){
   try { return JSON.parse(localStorage.getItem('gs_accounts') || '[]') || []; }
   catch(_){ return []; }
@@ -2078,10 +2075,6 @@ async function wipeKeysIDB(){
 }
 
 // ── Модалка обязательного выбора хранения приватного ключа ──
-// Возвращает Promise<'server'|'local'>, открывает экран выбора, ждёт пока
-// юзер раскроет карточку (это же = выбор) и нажмёт «Продолжить».
-// Аккордеон-логика: открыта всегда только одна. Повторный клик не закрывает,
-// чтобы юзер случайно не снял выбор.
 let _ksResolve = null;
 function ksTogglePick(btn){
   document.querySelectorAll('#keyStorageModal .ks-card').forEach(c => {
@@ -2109,12 +2102,6 @@ function pickKeyStorageMode(){
 }
 
 // ── Init / restore keys ──
-// Двухветочный поток в зависимости от выбора юзера (см. модалку выше):
-//   storage_mode='server' — старое поведение: приватник зашифрован паролем
-//                           и лежит в users.encrypted_private_key.
-//   storage_mode='local'  — приватник никогда не покидает устройство;
-//                           на сервер уходит только x25519_pub. На новом
-//                           устройстве — требуется синхронизация через QR.
 async function ensureKeys(password){
   console.log('[E2E] checking storage mode...');
   let modeRes;
@@ -2232,11 +2219,6 @@ async function _checkLocalPubMatchesServer(){
 }
 
 // Режим «Только на устройстве»: приватник никогда не уходит на сервер.
-//   (a) Уже в памяти — продолжаем, синхронизируем pubkey на сервер на всякий случай.
-//   (b) Есть в IDB — поднимаем оттуда.
-//   (c) На сервере есть pub юзера, в IDB пусто — это новое устройство, нужен QR
-//       (Фаза 3, пока не готова — честно сообщаем и блокируем вход).
-//   (d) Новый юзер — генерим пару, аплоадим только pubkey.
 async function _ensureKeysLocal(password, modeRes){
   // (a) Ключи уже в памяти (init подтянул их из IDB до doLogin).
   if (myPriv && myPub){
@@ -2266,9 +2248,6 @@ async function _ensureKeysLocal(password, modeRes){
     console.warn('[E2E] mode=local — IDB load failed:', e);
   }
   // (c) Нет priv нигде — новое устройство. Если на сервере pub есть — НЕ
-  // генерируем автоматом (это перезаписало бы pub другого устройства и убило
-  // его ключ через стрелку из _checkLocalPubMatchesServer). Показываем banner,
-  // юзер сам решит: QR с другого устройства / файл / rotate.
   if (modeRes.has_pub){
     myPub = (modeRes && modeRes.x25519_pub) || null;
     try {
@@ -2705,9 +2684,6 @@ async function v2DoRecover(){
 }
 
 // Auto-prompt v2 identity при первом входе. Без вопросов «хочешь ли» —
-// тихо открываем нужный экран (создание seed или восстановление).
-// Цель: чтобы все юзеры быстро получили v2 identity, на её основе включим
-// настоящий multi-device send (sender шифрует N конвертов per device).
 async function _ensureV2Identity(){
   let serverId;
   try { serverId = await chat('/v2/identity/me'); }
@@ -2963,9 +2939,6 @@ function openSettings(){
 }
 
 // Drill-down навигация в Settings.
-// 'root' — главный экран со списком категорий-кнопок.
-// 'security' / 'devices' — внутренние экраны категорий.
-// При входе в категорию: показываем back-кнопку, меняем заголовок.
 const _SETTINGS_TITLES = {
   root:     { icon: 'fa-gear',           text: 'Настройки' },
   security: { icon: 'fa-shield-halved',  text: 'Безопасность' },
@@ -2992,9 +2965,6 @@ function closeSettings(){
 }
 
 // Параллакс-glow: радиальная подсветка следует за курсором в liquid-glass
-// карточках. Один listener на document — рассчёт только если hover внутри
-// .set-row (cheap). Координаты пишутся в CSS-переменные --mx/--my, дальше
-// чисто GPU-композит через radial-gradient.
 (function _liquidGlassParallax(){
   let _rafQueued = false, _lastEv = null;
   document.addEventListener('mousemove', (e) => {
@@ -3813,9 +3783,6 @@ function openIDB(){
   if (_idb) return Promise.resolve(_idb);
   return new Promise((res, rej) => {
     // v3: peerkeys для TOFU-пиннинга
-    // v4: filecache — хранит зашифрованные blob'ы файлов/голосовых локально,
-    //     чтобы при refresh страницы повторно открывать без запроса к серверу
-    //     (сервер удаляет blob после ack от receiver, и второе открытие = 404)
     const req = indexedDB.open('ghostchat-' + (me && me.username || 'anon'), 4);
     // Timeout 8 секунд — если что-то блокирует апгрейд (другая вкладка с v2),
     // лучше показать ошибку чем вечный спиннер.
@@ -3865,9 +3832,6 @@ function openIDB(){
 }
 
 // ── TOFU pinning публичных ключей собеседников ──
-// При первом получении ключа собеседника — сохраняем. При следующем — сверяем.
-// Если поменялся — предупреждаем юзера (могла быть смена устройства/пароля
-// собеседника или подмена ключа сервером).
 async function pinnedPubKey(username){
   const db = await openIDB();
   if (!db.objectStoreNames.contains('peerkeys')) return null;
@@ -3894,10 +3858,6 @@ async function pinPubKey(username, pub, accepted=true){
 // либо юзер согласился принять изменённый ключ.
 async function verifyAndPinPub(username, pub){
   // По решению waki: «у того кто пересоздал ключ — того ключ главнее».
-  // Любой новый pub автопиннится молча, без модалки. Это убирает
-  // постоянное «изменился ключ собеседника» при rotate/смене устройства.
-  // Если ты хочешь убедиться что MITM нет — есть кнопка-щит «Код безопасности»
-  // в шапке чата с 60-цифровым сравнением.
   const existing = await pinnedPubKey(username);
   if (!existing || existing.pub !== pub){
     await pinPubKey(username, pub, true);
@@ -3994,9 +3954,6 @@ async function idbGetCachedFile(file_id){
 }
 
 // Универсальный «cache-first, server-fallback» загрузчик зашифрованного blob'а.
-// Возвращает ArrayBuffer или null если файла нет нигде.
-// После успешного скачивания с сервера сохраняет в IDB ДО ack — чтобы повторное
-// открытие после refresh уже не зависело от наличия файла на сервере.
 async function fetchEncryptedFile(file_id, mime){
   const cached = await idbGetCachedFile(file_id);
   if (cached && cached.bytes) {
@@ -4092,11 +4049,6 @@ function showAuth(){
   const lu = document.getElementById('loginUsername');
   if (lu) lu.disabled = false;
   // Префилл username из локальных данных — БЕЗ запроса к серверу.
-  // Берём по приоритету:
-  //   1) текущий me (если init успел его поставить)
-  //   2) последний сохранённый gs_me
-  //   3) первый аккаунт из gs_accounts (multi-account)
-  // Если поле уже заполнено юзером — не трогаем.
   try {
     if (lu && !lu.value){
       let saved = null;
@@ -4118,9 +4070,6 @@ function showApp(){document.getElementById('authScreen').style.display='none';do
 function showBoot(title, msg){document.getElementById('bootTitle').textContent=title;document.getElementById('bootMsg').textContent=msg;document.getElementById('boot').classList.add('open');}
 
 // Fallback: если init не закончился за 20 сек (сетевая ошибка, JS-баг,
-// что угодно) — выпускаем юзера к форме логина чтобы не было вечного boot.
-// 10с было слишком жёстко при медленных сетях — успешный hello прилетал
-// уже после fallback'а и юзер видел auth-форму вместо чата.
 (function(){
   setTimeout(() => {
     const boot = document.getElementById('boot');
@@ -4493,9 +4442,6 @@ window.addEventListener('storage', e => {
     return;
   }
   // Account switch в другой вкладке → newValue не пуст и отличается от текущего.
-  // Старое поведение: считали это logout'ом и кикали. Новое: подтягиваем
-  // новый активный аккаунт через reload — все вкладки синхронно показывают
-  // того же юзера, multi-account это прозрачно поддерживает.
   if (e.newValue && e.newValue !== token){
     location.reload();
   }
@@ -4520,15 +4466,6 @@ window.addEventListener('storage', e => {
 })();
 
 // Scroll-guard: чат — single-viewport SPA, внешний scroll невозможен по дизайну.
-// Любой сдвиг scrollY / documentElement.scrollTop возвращаем в 0.
-// А также сбрасываем застрявшие inline-стили body, которые могут расширить
-// его за пределы viewport (paddingTop, marginTop и т.п.).
-// Scroll-guard полностью удалён. body уже `overflow:hidden + height:100dvh +
-// position:relative` — он физически не скроллится, нечего лочить.
-// Раньше listeners на scroll/click/keydown/focusin/resize вызывали lock(),
-// который читал scrollY+scrollTop+scrollTop трижды = layout thrashing на КАЖДОЕ
-// нажатие клавиши. Это держало INP keyboard 250+мс. Если когда-то всплывёт
-// дрифт вверх — починим точечно в проблемной модалке, а не глобально.
 
 async function onReady(){
   console.log('[onReady] start');
@@ -4745,12 +4682,6 @@ async function ingestSealed(m){
 // ════════════════════════════════════════════════════════════════════
 async function ingestIncoming(m){
   // ─── Дедуп chat.echo (отправитель видит своё же сообщение через WS) ───
-  // Backend шлёт echo всем сокетам отправителя для multi-tab. Текущая вкладка
-  // уже имеет optimistic в activeMessages. Два варианта race-окна:
-  //  (а) HTTP-ответ /send пришёл раньше echo → optimistic.sid уже = r.id →
-  //      дедуп по sid срабатывает.
-  //  (б) WS echo пришёл раньше HTTP-ответа → optimistic.sid всё ещё "tmp-..."
-  //      → дедуп по sid пропустит. Нужен fallback по from_me+pending+content.
   if (m && m.id != null && (activeMessages || []).some(x => String(x.sid) === String(m.id))) {
     return false;
   }
@@ -5582,10 +5513,6 @@ async function loadSupportAdmin(){
 function renderDialogs(filter=''){
   const list = document.getElementById('sbList');
   // Pinned-карточка «Поддержка GhostChat» — сверху списка.
-  // У админа карточка показывает «Inbox поддержки» (свой угол куда летят
-  // вопросы), у обычного юзера — «Сюда — вопросы и одобрение входов».
-  // Раньше у админа было скрыто, но waki справедливо заметил что без
-  // карточки непонятно куда смотреть.
   const isAdmin = _supportAdmin && _supportAdmin.is_me;
   const supportPinned = (!filter && (_supportAdmin || isAdmin)) ? [{
     username: _supportAdmin ? _supportAdmin.username : (me && me.username),
@@ -5753,9 +5680,6 @@ function applyLeftBtn(){
 // ════════════════════════════════════════════════════════════════════
 async function openChat(username, display_name){
   // Чистим blob-URL'ы и Audio-объекты от ПРЕДЫДУЩЕГО чата — иначе при долгой
-  // сессии открытий 10+ чатов RAM растёт неограниченно. Та же логика как в
-  // backToList() — повторяем здесь чтобы покрыть переход chat→chat без возврата
-  // в список.
   try {
     for (const m of activeMessages) {
       if (m && m._imgUrl) { URL.revokeObjectURL(m._imgUrl); m._imgUrl = null; }
@@ -6213,10 +6137,6 @@ function renderMessages(){
 }
 
 // Статусы доставки:
-//   pending (POST ещё не дошёл)        → fa-clock (выше в meta)
-//   !pending !delivered                 → дискета (сохранено на серве, ждём receiver)
-//   delivered (receiver сделал /ack)    → ✓ одна галочка
-//   read (receiver открыл чат)          → ✓✓ синие
 function renderTicks(m) {
   if (m.read) return '<i class="fa-solid fa-check-double" style="color:#22d3ee;"></i>';
   if (m.delivered) return '<i class="fa-solid fa-check"></i>';
@@ -6248,9 +6168,6 @@ function scrollToMsg(sid){
 }
 
 // ─── Тап = меню. Свайп вправо = reply. Скролл = ничего. ───
-// Открытие меню по простому клику/тапу (без 500ms задержки). Чтобы клики
-// внутри bubble на интерактивных элементах (voice/img/file/links/reactions)
-// не открывали меню — фильтр по target.closest. Свайп подавляет click.
 let _swipeState = null;
 let _swipeSuppressClick = false;
 
@@ -6304,9 +6221,6 @@ function msgTouchMove(ev){
 }
 
 // ─── Long-press на медиа (img/video/voice/file) → открыть меню сообщения ───
-// На bubble (текстовом) меню открывается по простому тапу. На медиа click
-// зарезервирован за play/lightbox/download, поэтому для меню используем
-// длинное нажатие 500мс или контекстное меню (правый клик / Apple Pencil).
 let _mediaPressTimer = null;
 let _mediaPressOpened = false;
 let _mediaPressStart = null;
@@ -6410,9 +6324,6 @@ async function doForwardTo(kind, target){
 
     if (isMedia) {
       // ─── Пересылка медиа (картинка/видео/файл/голосовое) ───
-      // Сервер не отдаёт /file/{id} никому кроме (sender, receiver) → C получит
-      // 403 если просто переадресовать file_id. Нужен decrypt+re-encrypt+re-upload
-      // с новым ключом и для нового получателя.
       if (kind !== 'dm') {
         showToast('Пересылка файлов в группы пока не поддержана', true);
         return;
@@ -7265,10 +7176,6 @@ function _killStaleWs(reason) {
 }
 
 // ── WSS-over-encryption: дополнительный AES-GCM слой поверх TLS ──
-// При WS connect клиент генерит ephemeral P-256 keypair, шлёт public серверу
-// (cs.hello). Сервер шлёт свой public (cs.hello.ok). ECDH+HKDF → AES-256-GCM
-// key. Дальше все WS-фреймы оборачиваются в cs.enc {data:<base64(iv||ct)>}.
-// Защищает от компрометации TLS (rogue CA в корпсети, государство, MITM).
 let _wsEphPriv = null;   // CryptoKey ECDH P-256 private
 let _wsEphPub = null;    // base64 my public
 let _wsAesKey = null;    // CryptoKey AES-GCM 256
@@ -7388,10 +7295,6 @@ async function wsAck(ids){
   try { return await chat('/ack', 'POST', { ids }); } catch(_){ return { deleted: 0 }; }
 }
 // Универсальный wsCall: пробует WS RPC, при закрытом WS — fallback на REST.
-// fallbackHttp — функция возвращающая Promise (через fetch/https).
-// Если WS открыт но handshake-крипта не готова — короткое ожидание (1.5с),
-// потом всё равно через WS с увеличенным timeout. Так избегаем массовых
-// REST-fallback'ов сразу после reconnect'а (handshake занимает 200-500мс).
 async function wsCall(action, data, fallbackHttp, timeoutMs){
   // Если WS открывается — подождать чуть-чуть, не падать в REST сразу.
   if (ws && ws.readyState === 0){
@@ -7415,9 +7318,6 @@ async function wsCall(action, data, fallbackHttp, timeoutMs){
 }
 
 // Тонкие обёртки для каждой команды — каждая пробует WS, при падении
-// или закрытом соединении использует HTTP fallback. Контракт ответа
-// совместим с HTTP-ответами; где сервер заворачивает массив/мап —
-// здесь же разворачиваем.
 async function wsKeysMe(){ return wsCall('keys.me', null, () => chat('/keys/me')); }
 async function wsKeysUpload(body){ return wsCall('keys.upload', body, () => chat('/keys/upload', 'POST', body)); }
 async function wsStorageModeGet(){ return wsCall('keys.storage_mode.get', null, () => chat('/keys/storage_mode')); }
@@ -7547,9 +7447,6 @@ function connectWS(){
     // connectWS вызовется обратно когда vкладка станет visible.
     if (_wsPausedByVisibility) return;
     // Дебаунс reconnect: иначе onclose + _onWakeup + storage-event могут
-    // запланировать несколько setTimeout(connectWS) одновременно — открывается
-    // 2-3 сокета подряд, каждый закрывается следующим (WebSocket is closed
-    // before the connection is established в console). Один pending — хватит.
     if (_wsReconnectScheduled) return;
     _wsReconnectScheduled = true;
     setTimeout(() => { _wsReconnectScheduled = false; connectWS(); }, wsReconnect);
@@ -7582,10 +7479,6 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // При возврате на вкладку (browser suspended → wake) проверяем WS и догоняем
-// pending. Без этого juзер видел "залипшие" сообщения — пришедшие пока tab
-// был в фоне DM-ы не подтягивались до полного перезаhrузки страницы.
-// Дебаунс: focus + visibilitychange срабатывают вместе → не делаем 2 запроса.
-// Троттлинг: loadGroups/fetchPending не чаще раза в N секунд.
 let _wakeupTimer = null;
 let _lastPendingAt = 0;
 let _lastGroupsAt = 0;
@@ -7863,13 +7756,6 @@ async function init(){
   if (!token) { showAuth(); return; }
   setSsoCookie(token);
   // Открываем WS первым — сервер пришлёт hello с полным профилем
-  // → не нужен HTTP /me. Стратегия ожидания:
-  //   1) Promise.race с 8с таймаутом.
-  //   2) Если timeout сработал И WS открыт (readyState=1) — продолжаем
-  //      ждать без timeout. WS работает, hello просто задерживается
-  //      (медленная сеть / handshake) — HTTP /me не быстрее, нет смысла
-  //      падать в REST.
-  //   3) Если WS не открылся за 8с — HTTP /me fallback.
   connectWS();
   let d;
   try {

@@ -436,10 +436,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
             data = ev.get("data") or {}
 
             # ── cs.hello: handshake (один раз на коннект, опционально) ──
-            # Клиент шлёт {client_pub: <base64 P-256 uncompressed 65 bytes>}.
-            # Сервер генерит свою ephemeral пару, делает ECDH+HKDF → AES-GCM key,
-            # отвечает cs.hello.ok с server_pub. Это последнее plain сообщение —
-            # дальше всё через cs.enc.
             if t == "cs.hello" and _aesgcm is None:
                 try:
                     import os as _os, base64 as _b64
@@ -509,9 +505,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                         "is_typing": bool(data.get("is_typing", True)),
                     })
             # ── chat.send: отправка DM через WS (вместо POST /send) ──
-            # data: {to_username, ciphertext, request_id}
-            # Ответ: {type:'chat.send.ok', data:{request_id, id, created_at, recipient_online}}
-            #        или {type:'chat.send.err', data:{request_id, error}}
             elif t == "chat.send" and uid:
                 rid = data.get("request_id")
                 to_username = (data.get("to_username") or "").lower().strip().lstrip("@")
@@ -2323,9 +2316,6 @@ def init():
     except sqlite3.OperationalError: pass
 
     # ── Хранение приватного ключа: явный выбор юзера ──
-    # NULL = выбор ещё не сделан (показать экран при следующем входе)
-    # 'server' = приватник лежит в users.encrypted_private_key (зашифрован паролем юзера)
-    # 'local'  = приватника на сервере нет, только на устройствах юзера (синхр. через QR)
     try: c.execute("ALTER TABLE users ADD COLUMN key_storage_mode TEXT DEFAULT NULL")
     except sqlite3.OperationalError: pass
 
@@ -3021,10 +3011,6 @@ def login(body: LoginBody, request: Request):
             )
             c.commit()
             # WS-уведомление trusted-устройствам этого юзера.
-            # Шлём ДВА события:
-            #   login.pending — legacy модалка одобрения (старая UX).
-            #   tda.pending.new — карточка в чате поддержки (новая UX:
-            #     запрос хранится как сообщение, не транзитная нотификация).
             push_data = {
                 "request_id": request_id,
                 "login_request_id": request_id,  # явное имя для tda.* handler'ов
@@ -3319,10 +3305,6 @@ def get_posts(
     offset = max(0, min(int(offset or 0), 100000))
     c = db()
     # ── Алгоритм ранжирования постов ──
-    # activity (0..1000) — главный коэффициент видимости (модерация + автомод)
-    # reactions — социальное доказательство
-    # recency — свежесть (чем старее, тем меньше веса; полураспад ~48ч для top)
-    # views — уже виденные постом юзером уходят ниже (только для top/смешанной сортировки)
     if sort == "top":
         # top = реакции × activity × recency_decay
         order = (
@@ -3416,10 +3398,6 @@ def get_feed_candidates(
         excl_params = excluded
 
     # Пропорции candidate-pool:
-    # 30% follow — посты от тех на кого подписан (если есть подписки)
-    # 30% fresh — свежие за 24ч с боустом activity
-    # 25% top — топ по weighted score (реакции × activity × recency)
-    # 15% random — discovery
     n_follow = max(1, int(limit * 0.30))
     n_new = max(1, int(limit * 0.30))
     n_top = max(1, int(limit * 0.25))
@@ -3873,9 +3851,6 @@ def search(q: str = Query(..., max_length=120), offset: int = Query(0), authoriz
     user = auth(authorization)
     uid = user["id"]
     # DoS guard: внешний security audit (Воlдемар Домиров, 2026-06-20) показал
-    # что массовая отправка /search кладёт сервер. Каждый запрос делает 2
-    # SQL FULLTEXT-like через ci_contains. Лимит: 30 запросов/мин на юзера
-    # (для гостей uid=0 — общий пул).
     _rate_limit(f"search:{uid}", limit=30, window=60)
     q = q.strip()
     if not q:
@@ -4413,9 +4388,6 @@ def get_comments(post_id: int, offset: int = Query(0), limit: int = Query(10),
     limit = max(1, min(50, limit))
     c = db()
     # AUDIT-2 fix: вместо коррелированных subquery'ев в ORDER BY (O(N²))
-    # — derived tables c GROUP BY, JOIN'ятся один раз (O(N) к страйджу).
-    # Замечание: для ОЧЕНЬ горячих постов стоит денормализовать top_score
-    # колонкой и обновлять триггерами, но в текущем масштабе LEFT JOIN ок.
     if sort == "top":
         order_sql = "ORDER BY top_score DESC, cm.created_at DESC"
     else:
@@ -4501,9 +4473,6 @@ def write_comment(post_id: int, body: CommentBody, authorization: Optional[str] 
         c.close()
         raise HTTPException(404, "Post not found")
     # parent_comment_id: проверим что коммент существует И принадлежит ЭТОМУ посту.
-    # AUDIT-4 note: prow["post_id"] != post_id даёт 400. Поскольку reply_to_id =
-    # body.parent_comment_id (= тот же id), он проверен той же проверкой —
-    # cross-post quote невозможен.
     parent_id = body.parent_comment_id  # после flatten будет top-level
     reply_to_id = body.parent_comment_id  # ОРИГИНАЛ — то на что юзер реально ответил
     parent_author_id = None
@@ -8649,11 +8618,6 @@ def giveaway_delete(gid: int, token: str = Query(...)):
 
 
 # ============================================================
-# v10b — Сохранённое (сервер) + Отреагированное
-# Дописано в КОНЕЦ social_router.py. Ничего выше не меняется.
-# Приватность: только свои данные (auth_member, нет /user/{name}/saved).
-# Таблица soc_saved создаётся лениво — не трогаем блок миграций.
-# ============================================================
 
 def _ensure_saved_table():
     c = db()
@@ -8762,11 +8726,6 @@ def my_reacted(offset: int = Query(0), limit: int = Query(20), authorization: Op
     c.close()
     return out
 
-# ============================================================================
-#  GhostSocial v11b — миниска-карусель (массив медиа: фото + ≤1 видео, ≤5)
-#  Дописывается В КОНЕЦ /opt/ghostchat/social_router.py (append-only).
-#  Старая /miniska/new остаётся для совместимости со старыми APK.
-#  После добавления: systemctl restart ghostsocial.service
 # ============================================================================
 
 class MiniskaV2Item(BaseModel):

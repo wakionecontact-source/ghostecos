@@ -92,9 +92,6 @@ class _GlobalRateLimitMiddleware(BaseHTTPMiddleware):
 app.add_middleware(_GlobalRateLimitMiddleware)
 
 # CORS: явный whitelist наших доменов.
-# Раньше было allow_origins=["*"] + allow_credentials=True — это нарушение спеки CORS
-# (браузеры это игнорируют, но это сигнал что safety не продумана).
-# Теперь только наш домен — нет ни одного легитимного origin кроме самого сайта.
 _ALLOWED_ORIGINS = [
     "https://ghostecos.duckdns.org",
     # Локальные dev-серверы для разработки (на проде nginx всё равно режет посторонние)
