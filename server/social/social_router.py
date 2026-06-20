@@ -1288,6 +1288,165 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 c.close()
                 await websocket.send_json({"type": "contacts.check.ok", "data": {"request_id": rid, "in_contacts": r is not None}})
 
+            # ── tda.pending.list: pending-логины текущего юзера ──
+            elif t == "tda.pending.list" and uid:
+                rid = data.get("request_id")
+                now_ = int(time.time())
+                c = db()
+                rows = c.execute(
+                    "SELECT request_id, device_id, device_name, phase, created_at, expires_at "
+                    "FROM pending_logins WHERE username=? AND phase='pending' AND expires_at > ? "
+                    "ORDER BY created_at DESC",
+                    (username, now_),
+                ).fetchall()
+                c.close()
+                await websocket.send_json({"type": "tda.pending.list.ok", "data": {
+                    "request_id": rid,
+                    "pending": [dict(r) for r in rows],
+                }})
+
+            # ── tda.approve: {request_id, code} ──
+            elif t == "tda.approve" and uid:
+                rid = data.get("request_id")
+                target_rid = data.get("login_request_id") or ""
+                code = (data.get("code") or "").strip()
+                if not target_rid or not code:
+                    await websocket.send_json({"type": "tda.approve.err", "data": {"request_id": rid, "error": "request_id и code обязательны"}})
+                    continue
+                try:
+                    from .chat_router import _rate_limit as _rl
+                    _rl(f"tda_appr:{uid}", limit=30, window=3600)
+                except HTTPException as he:
+                    await websocket.send_json({"type": "tda.approve.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    continue
+                try:
+                    from security import verify_argon2 as _verify
+                except Exception:
+                    from social_router import verify_argon2 as _verify
+                import device_auth as _da
+                c = db()
+                try:
+                    r = c.execute(
+                        "SELECT * FROM pending_logins WHERE request_id=? AND username=? LIMIT 1",
+                        (target_rid, username),
+                    ).fetchone()
+                    if not r:
+                        await websocket.send_json({"type": "tda.approve.err", "data": {"request_id": rid, "error": "Запрос не найден"}})
+                        continue
+                    if r["phase"] != "pending":
+                        await websocket.send_json({"type": "tda.approve.err", "data": {"request_id": rid, "error": "Запрос уже обработан"}})
+                        continue
+                    if int(r["expires_at"]) < int(time.time()):
+                        await websocket.send_json({"type": "tda.approve.err", "data": {"request_id": rid, "error": "Срок запроса истёк"}})
+                        continue
+                    if int(r["attempt_count"]) >= 5:
+                        c.execute("UPDATE pending_logins SET phase='denied' WHERE id=?", (r["id"],))
+                        c.commit()
+                        try: ws_hub.send_to(uid, "tda.pending.gone", {"login_request_id": target_rid, "phase": "denied", "reason": "too_many_attempts"})
+                        except Exception: pass
+                        await websocket.send_json({"type": "tda.approve.err", "data": {"request_id": rid, "error": "Превышен лимит попыток — запрос отклонён"}})
+                        continue
+                    if not _verify(code, r["code_hash"]):
+                        c.execute("UPDATE pending_logins SET attempt_count=attempt_count+1 WHERE id=?", (r["id"],))
+                        c.commit()
+                        await websocket.send_json({"type": "tda.approve.err", "data": {"request_id": rid, "error": "Неверный код"}})
+                        continue
+                    d = _da.register_device(c, uid, r["device_id"], r["device_name"], None, is_owner=False)
+                    c.execute(
+                        "UPDATE pending_logins SET phase='approved', granted_token=? WHERE id=?",
+                        (d["token"], r["id"]),
+                    )
+                    c.commit()
+                    # Уведомляем все trusted-устройства юзера: pending исчез (карточку убрать).
+                    try: ws_hub.send_to(uid, "tda.pending.gone", {"login_request_id": target_rid, "phase": "approved", "device_name": r["device_name"]})
+                    except Exception: pass
+                    await websocket.send_json({"type": "tda.approve.ok", "data": {"request_id": rid, "device_name": r["device_name"]}})
+                finally:
+                    c.close()
+
+            # ── tda.block: {login_request_id} — отклонить + заблокировать device навсегда ──
+            elif t == "tda.block" and uid:
+                rid = data.get("request_id")
+                target_rid = data.get("login_request_id") or ""
+                if not target_rid:
+                    await websocket.send_json({"type": "tda.block.err", "data": {"request_id": rid, "error": "request_id обязателен"}})
+                    continue
+                try:
+                    from .chat_router import _rate_limit as _rl
+                    _rl(f"tda_block:{uid}", limit=30, window=3600)
+                except HTTPException as he:
+                    await websocket.send_json({"type": "tda.block.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    continue
+                c = db()
+                try:
+                    r = c.execute(
+                        "SELECT id, phase, device_id, device_name FROM pending_logins "
+                        "WHERE request_id=? AND username=? LIMIT 1",
+                        (target_rid, username),
+                    ).fetchone()
+                    if not r:
+                        await websocket.send_json({"type": "tda.block.err", "data": {"request_id": rid, "error": "Запрос не найден"}})
+                        continue
+                    # 1) Pending — в denied (как обычный deny).
+                    if r["phase"] == "pending":
+                        c.execute("UPDATE pending_logins SET phase='denied' WHERE id=?", (r["id"],))
+                    # 2) Блокируем device_id у этого юзера.
+                    #    Если запись была — UPDATE; если нет — INSERT с is_active=0, is_blocked=1.
+                    dev = c.execute(
+                        "SELECT id FROM user_devices WHERE user_id=? AND device_id=? LIMIT 1",
+                        (uid, r["device_id"]),
+                    ).fetchone()
+                    if dev:
+                        c.execute(
+                            "UPDATE user_devices SET is_blocked=1, is_active=0 WHERE id=?",
+                            (dev["id"],),
+                        )
+                    else:
+                        c.execute(
+                            "INSERT INTO user_devices (user_id, device_id, device_name, platform, is_active, is_blocked, is_owner) "
+                            "VALUES (?, ?, ?, NULL, 0, 1, 0)",
+                            (uid, r["device_id"], (r["device_name"] or "Заблокировано")),
+                        )
+                    c.commit()
+                    try: ws_hub.send_to(uid, "tda.pending.gone", {"login_request_id": target_rid, "phase": "blocked", "device_name": r["device_name"]})
+                    except Exception: pass
+                    await websocket.send_json({"type": "tda.block.ok", "data": {"request_id": rid, "device_name": r["device_name"]}})
+                finally:
+                    c.close()
+
+            # ── tda.deny: {request_id} ──
+            elif t == "tda.deny" and uid:
+                rid = data.get("request_id")
+                target_rid = data.get("login_request_id") or ""
+                if not target_rid:
+                    await websocket.send_json({"type": "tda.deny.err", "data": {"request_id": rid, "error": "request_id обязателен"}})
+                    continue
+                try:
+                    from .chat_router import _rate_limit as _rl
+                    _rl(f"tda_deny:{uid}", limit=30, window=3600)
+                except HTTPException as he:
+                    await websocket.send_json({"type": "tda.deny.err", "data": {"request_id": rid, "error": str(he.detail)}})
+                    continue
+                c = db()
+                try:
+                    r = c.execute(
+                        "SELECT id, phase, device_name FROM pending_logins WHERE request_id=? AND username=? LIMIT 1",
+                        (target_rid, username),
+                    ).fetchone()
+                    if not r:
+                        await websocket.send_json({"type": "tda.deny.err", "data": {"request_id": rid, "error": "Запрос не найден"}})
+                        continue
+                    if r["phase"] != "pending":
+                        await websocket.send_json({"type": "tda.deny.err", "data": {"request_id": rid, "error": "Запрос уже обработан"}})
+                        continue
+                    c.execute("UPDATE pending_logins SET phase='denied' WHERE id=?", (r["id"],))
+                    c.commit()
+                    try: ws_hub.send_to(uid, "tda.pending.gone", {"login_request_id": target_rid, "phase": "denied", "device_name": r["device_name"]})
+                    except Exception: pass
+                    await websocket.send_json({"type": "tda.deny.ok", "data": {"request_id": rid, "device_name": r["device_name"]}})
+                finally:
+                    c.close()
+
             # ── support_admin: данные о support-юзере для PINNED-карточки ──
             elif t == "support_admin" and uid:
                 rid = data.get("request_id")
@@ -2726,6 +2885,15 @@ def login(body: LoginBody, request: Request):
     # device-уровневый токен. Если нет — legacy fallback на soc_tokens.
     import device_auth as _da
     if getattr(body, 'device_id', None):
+        # Проверка блокировки: если юзер с trusted-устройства когда-то нажал
+        # «Заблокировать» для этого device_id — отбиваем сразу с 403.
+        blocked = c.execute(
+            "SELECT id FROM user_devices WHERE user_id=? AND device_id=? AND is_blocked=1 LIMIT 1",
+            (u["id"], body.device_id),
+        ).fetchone()
+        if blocked:
+            c.close()
+            raise HTTPException(403, "Это устройство заблокировано владельцем аккаунта")
         # Уже зарегистрированное устройство — обычный путь (без TDA).
         already = c.execute(
             "SELECT id FROM user_devices WHERE user_id=? AND device_id=? LIMIT 1",
@@ -2759,14 +2927,25 @@ def login(body: LoginBody, request: Request):
             )
             c.commit()
             # WS-уведомление trusted-устройствам этого юзера.
+            # Шлём ДВА события:
+            #   login.pending — legacy модалка одобрения (старая UX).
+            #   tda.pending.new — карточка в чате поддержки (новая UX:
+            #     запрос хранится как сообщение, не транзитная нотификация).
+            push_data = {
+                "request_id": request_id,
+                "login_request_id": request_id,  # явное имя для tda.* handler'ов
+                "device_name": body.device_name or "Новое устройство",
+                "platform": getattr(body, 'platform', None) or "unknown",
+                "ip": _client_ip(request),
+                "ts": now_,
+                "expires_at": now_ + 300,
+            }
             try:
-                ws_hub.send_to(u["id"], "login.pending", {
-                    "request_id": request_id,
-                    "device_name": body.device_name or "Новое устройство",
-                    "platform": getattr(body, 'platform', None) or "unknown",
-                    "ip": _client_ip(request),
-                    "ts": now_,
-                })
+                ws_hub.send_to(u["id"], "login.pending", push_data)
+            except Exception:
+                pass
+            try:
+                ws_hub.send_to(u["id"], "tda.pending.new", push_data)
             except Exception:
                 pass
             c.close()

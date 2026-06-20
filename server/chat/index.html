@@ -217,6 +217,32 @@ button,input,textarea{font-family:inherit;}
 
 /* ── TG-style кастомный скроллбар ───────────────────────────────────── */
 .chat-body{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 14px 6px;display:flex;flex-direction:column;gap:2px;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(168,85,247,0.2) transparent;}
+
+/* TDA pending — карточки запросов на вход в чате поддержки. */
+.tda-pendings-box{padding:10px 14px 0;display:flex;flex-direction:column;gap:10px;flex-shrink:0;}
+.tda-pendings-box:empty{display:none;}
+.tda-card{
+  background: var(--gl-grad), linear-gradient(135deg, rgba(244,114,182,0.10) 0%, rgba(168,85,247,0.06) 100%), rgba(20,18,42,0.55);
+  border:1px solid rgba(244,114,182,0.30);
+  border-radius:14px;padding:14px 14px 12px;position:relative;overflow:hidden;
+  box-shadow: var(--gl-inset), 0 8px 22px -8px rgba(244,114,182,0.30);
+}
+.tda-card-head{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+.tda-card-icon{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#f472b6,#a855f7);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;flex-shrink:0;box-shadow:inset 1px 1px 0 rgba(255,255,255,0.22);}
+.tda-card-title{flex:1;min-width:0;font-size:14px;font-weight:700;color:var(--text);}
+.tda-card-time{font-size:11px;color:var(--sub);flex-shrink:0;}
+.tda-card-meta{font-size:12px;color:var(--sub);margin-bottom:10px;line-height:1.45;}
+.tda-card-meta b{color:var(--text);font-weight:600;}
+.tda-card-row{display:flex;gap:7px;align-items:center;flex-wrap:wrap;}
+.tda-code-input{flex:1;min-width:120px;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.10);border-radius:9px;padding:9px 12px;color:var(--text);font-size:14px;font-weight:700;letter-spacing:.16em;text-align:center;outline:none;font-family:inherit;box-shadow:inset 1px 1px 0 rgba(0,0,0,0.20);}
+.tda-code-input:focus{border-color:rgba(168,85,247,0.5);}
+.tda-btn{border:none;border-radius:9px;padding:9px 13px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;transition:transform 80ms,opacity .15s;}
+.tda-btn:active{transform:scale(0.96);}
+.tda-btn.ok{background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;}
+.tda-btn.deny{background:rgba(255,255,255,0.07);color:var(--text);border:1px solid rgba(255,255,255,0.12);}
+.tda-btn.block{background:rgba(244,63,94,0.16);color:#f43f5e;border:1px solid rgba(244,63,94,0.35);}
+.tda-btn:disabled{opacity:0.45;cursor:not-allowed;}
+.tda-empty{padding:24px 18px;color:var(--sub);font-size:12.5px;text-align:center;}
 .chat-body:hover, .chat-body.scrolling{scrollbar-color:rgba(168,85,247,0.55) transparent;}
 .chat-body::-webkit-scrollbar{width:10px;}
 .chat-body::-webkit-scrollbar-track{background:transparent;}
@@ -2919,6 +2945,121 @@ async function quickDenyPending(rid){
   }
 }
 
+// ── TDA: pending-карточки в чате поддержки ──
+// _tdaPendings — массив текущих запросов. Загружается при openChat(support)
+// через wsCall('tda.pending.list') и обновляется по WS push'ам tda.pending.new/gone.
+let _tdaPendings = [];
+
+function _tdaTimeStr(ts){
+  const dt = new Date(ts * 1000);
+  return dt.getHours().toString().padStart(2,'0') + ':' + dt.getMinutes().toString().padStart(2,'0');
+}
+function _tdaExpiresIn(expires_at){
+  const sec = Math.max(0, expires_at - Math.floor(Date.now()/1000));
+  if (sec >= 60) return Math.ceil(sec/60) + ' мин';
+  return sec + ' сек';
+}
+
+function _renderTdaPendings(){
+  const box = document.getElementById('tdaPendingsBox');
+  if (!box) return;
+  if (!_tdaPendings.length) { box.innerHTML = ''; return; }
+  box.innerHTML = _tdaPendings.map(p => `
+    <div class="tda-card" data-rid="${esc(p.request_id || p.login_request_id || '')}">
+      <div class="tda-card-head">
+        <div class="tda-card-icon"><i class="fa-solid fa-key"></i></div>
+        <div class="tda-card-title">Попытка входа в аккаунт</div>
+        <div class="tda-card-time">${_tdaTimeStr(p.ts || p.created_at || Math.floor(Date.now()/1000))}</div>
+      </div>
+      <div class="tda-card-meta">
+        Устройство: <b>${esc(p.device_name || 'Новое устройство')}</b>${p.platform ? ' · ' + esc(p.platform) : ''}${p.ip ? ' · IP ' + esc(p.ip) : ''}<br>
+        Если это ты — введи 6-значный код, который видишь на новом устройстве. Если не ты — отклони или заблокируй устройство навсегда.
+        ${p.expires_at ? '<br><span style="opacity:.7">Срок: ' + _tdaExpiresIn(p.expires_at) + '</span>' : ''}
+      </div>
+      <div class="tda-card-row" style="margin-bottom:7px;">
+        <input class="tda-code-input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000" data-tda-code>
+        <button class="tda-btn ok" onclick="tdaApprove(this)"><i class="fa-solid fa-check"></i> Одобрить</button>
+      </div>
+      <div class="tda-card-row">
+        <button class="tda-btn deny" onclick="tdaDeny(this)" style="flex:1;justify-content:center;"><i class="fa-solid fa-xmark"></i> Отклонить</button>
+        <button class="tda-btn block" onclick="tdaBlock(this)" style="flex:1;justify-content:center;"><i class="fa-solid fa-ban"></i> Заблокировать</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function _loadTdaPendings(){
+  try {
+    const r = await wsCall('tda.pending.list', null, () => chat('/devices/pending'));
+    _tdaPendings = (r && r.pending) || [];
+    _renderTdaPendings();
+  } catch(e){
+    console.warn('[tda] pending.list err', e.message);
+  }
+}
+
+function _findTdaCardRid(btn){
+  const card = btn.closest('.tda-card');
+  return card ? card.dataset.rid : null;
+}
+
+async function tdaApprove(btn){
+  const rid = _findTdaCardRid(btn);
+  const card = btn.closest('.tda-card');
+  const input = card ? card.querySelector('[data-tda-code]') : null;
+  const code = (input && input.value || '').trim();
+  if (!/^\d{6}$/.test(code)) {
+    await appAlert('Код', 'Введи 6 цифр.');
+    if (input) input.focus();
+    return;
+  }
+  btn.disabled = true;
+  try {
+    await wsCall('tda.approve', { login_request_id: rid, code }, () =>
+      chat('/devices/pending/' + encodeURIComponent(rid) + '/approve', 'POST', { code })
+    );
+    _tdaPendings = _tdaPendings.filter(x => (x.request_id || x.login_request_id) !== rid);
+    _renderTdaPendings();
+    showToast('Устройство одобрено');
+  } catch(e){
+    btn.disabled = false;
+    await appAlert('Ошибка', e.message || 'Не удалось одобрить');
+  }
+}
+
+async function tdaDeny(btn){
+  const rid = _findTdaCardRid(btn);
+  const ok = await appConfirm('Отклонить запрос?', 'Это устройство может попытаться войти снова. Если ты хочешь запретить любые будущие попытки — нажми «Заблокировать».', 'Отклонить');
+  if (!ok) return;
+  btn.disabled = true;
+  try {
+    await wsCall('tda.deny', { login_request_id: rid }, () =>
+      chat('/devices/pending/' + encodeURIComponent(rid) + '/deny', 'POST', {})
+    );
+    _tdaPendings = _tdaPendings.filter(x => (x.request_id || x.login_request_id) !== rid);
+    _renderTdaPendings();
+  } catch(e){
+    btn.disabled = false;
+    await appAlert('Ошибка', e.message || 'Не удалось отклонить');
+  }
+}
+
+async function tdaBlock(btn){
+  const rid = _findTdaCardRid(btn);
+  const ok = await appConfirm('Заблокировать устройство?', 'Любые будущие попытки входа с этого устройства будут отклоняться сразу — даже если кто-то знает твой пароль. Снять блок можно вручную через настройки.', 'Заблокировать');
+  if (!ok) return;
+  btn.disabled = true;
+  try {
+    await wsCall('tda.block', { login_request_id: rid });
+    _tdaPendings = _tdaPendings.filter(x => (x.request_id || x.login_request_id) !== rid);
+    _renderTdaPendings();
+    showToast('Устройство заблокировано');
+  } catch(e){
+    btn.disabled = false;
+    await appAlert('Ошибка', e.message || 'Не удалось заблокировать');
+  }
+}
+
 // ── TDA: WS-уведомление и модалка одобрения на trusted устройстве ──
 let _approveRid = null;
 function showLoginApprovalToast(d){
@@ -5421,6 +5562,9 @@ async function openChat(username, display_name){
   });
   renderChat();
   updateChatStatusBar();
+  // Чат поддержки: подтягиваем pending-логины (TDA) и рисуем карточки.
+  if (activePeer && activePeer.is_support) { _loadTdaPendings(); }
+  else { _tdaPendings = []; }
   const d = dialogs.find(x => x.username === username);
   if (d && d.unread > 0) { d.unread = 0; await idbPutDialog(d); }
   renderDialogs(document.getElementById('sbSearch').value);
@@ -5673,6 +5817,7 @@ function renderChat(){
       <button class="chat-menu" onclick="openPeerProfile(${jsAttr(p.username)})" title="Профиль"><i class="fa-solid fa-user"></i></button>
       <button class="chat-menu" onclick="openChatActionsMenu(event,${jsAttr(p.username)})" title="Ещё"><i class="fa-solid fa-ellipsis-vertical"></i></button>
     </div>
+    ${p.is_support ? '<div id="tdaPendingsBox" class="tda-pendings-box"></div>' : ''}
     <div class="chat-body" id="chatBody"></div>
     <div id="replyBar"></div>
     <div class="rec-bar" id="recBar">
@@ -7242,14 +7387,25 @@ async function handleWs(m){
     if (_helloResolve) { try { _helloResolve(d); } catch(_){} _helloResolve = null; _helloReject = null; }
     return;
   }
-  // TDA: новое устройство хочет войти.
+  // TDA: новое устройство хочет войти (legacy модалка).
   if (t === 'login.pending') {
-    // У не-админа TDA-запрос приходит в его собственный аккаунт — у него
-    // никогда нет support_admin (он сам с собой не переписывается). У админа
-    // — старая модалка одобрения. У обычного юзера, если запрос внезапно
-    // дошёл (например, его аккаунт пытаются взломать) — показываем модалку
-    // и не пишем в поддержку.
     showLoginApprovalToast(d);
+    return;
+  }
+  // TDA новой UX: появился pending — добавить карточку если открыт чат поддержки.
+  if (t === 'tda.pending.new') {
+    // Дедуп — на случай если пришло параллельно с tda.pending.list.list
+    const rid = d.login_request_id || d.request_id;
+    if (rid && !_tdaPendings.some(x => (x.request_id || x.login_request_id) === rid)) {
+      _tdaPendings.unshift(d);
+    }
+    _renderTdaPendings();
+    return;
+  }
+  if (t === 'tda.pending.gone') {
+    const rid = d.login_request_id || d.request_id;
+    _tdaPendings = _tdaPendings.filter(x => (x.request_id || x.login_request_id) !== rid);
+    _renderTdaPendings();
     return;
   }
   // Кто-то revoke-нул устройство. Если это наше — force logout.
