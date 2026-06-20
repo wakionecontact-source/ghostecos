@@ -947,7 +947,8 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 .pd-ava{width:78px;height:78px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;color:#fff;font-size:32px;font-weight:700;box-shadow:0 8px 28px rgba(168,85,247,0.35);margin-bottom:12px;overflow:hidden;}
 /* Ряд аккаунтов сверху шторки — мини-аватарки + кнопка «+» как в TG.
    Скрыто если аккаунт всего один (только текущий) — нечего показывать. */
-.pd-acct-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;padding:8px 14px;border-top:1px solid var(--border);background:linear-gradient(180deg, transparent 0%, rgba(255,255,255,0.025) 100%);}
+/* Ряд аккаунтов — правый нижний угол карточки профиля (.pd-head). */
+.pd-acct-row{position:absolute;bottom:14px;right:14px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;max-width:60%;}
 .pd-acct-row:empty{display:none;}
 .pd-acct{
   width:32px;height:32px;border-radius:50%;border:2px solid transparent;cursor:pointer;
@@ -1149,6 +1150,8 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
       <div class="pd-ava" id="pdAva">?</div>
       <div class="pd-name" id="pdName">—</div>
       <div class="pd-handle" id="pdHandle">@—</div>
+      <!-- Переключатель аккаунтов — в правом нижнем углу карточки профиля. -->
+      <div class="pd-acct-row" id="pdAcctRow"></div>
     </div>
     <nav class="pd-list">
       <button class="pd-item" onclick="closeProfileDrawer();openSettings()"><i class="fa-solid fa-gear"></i> Настройки</button>
@@ -1161,8 +1164,6 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
       <div class="pd-divider"></div>
       <button class="pd-item danger" onclick="closeProfileDrawer();doLogout()"><i class="fa-solid fa-right-from-bracket"></i> Выйти</button>
     </nav>
-    <!-- Ряд аккаунтов внизу шторки, справа: мини-аватарки + кнопка «+». -->
-    <div class="pd-acct-row" id="pdAcctRow"></div>
     <div class="pd-foot">GhostChat · приватный мессенджер</div>
   </aside>
 
