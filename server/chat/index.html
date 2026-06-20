@@ -4087,25 +4087,48 @@ function showAuth(){
     const adding = sessionStorage.getItem('gs_adding_account') === '1';
     if (bk) bk.style.display = adding ? 'flex' : 'none';
   } catch(_){}
-  // По умолчанию поле username активно. Это явно сбрасывается, иначе
-  // disabled из «confirm password»-сценария мог остаться с прошлого вызова
-  // showAuth — в incognito юзер бы видел заблокированное поле.
+  // По умолчанию поле username активно (раньше disabled из «confirm
+  // password»-сценария мог остаться с прошлого showAuth).
   const lu = document.getElementById('loginUsername');
   if (lu) lu.disabled = false;
+  // Префилл username из локальных данных — БЕЗ запроса к серверу.
+  // Берём по приоритету:
+  //   1) текущий me (если init успел его поставить)
+  //   2) последний сохранённый gs_me
+  //   3) первый аккаунт из gs_accounts (multi-account)
+  // Если поле уже заполнено юзером — не трогаем.
+  try {
+    if (lu && !lu.value){
+      let saved = null;
+      if (me && me.username) saved = me.username;
+      else {
+        try { const lm = JSON.parse(localStorage.getItem('gs_me') || 'null'); if (lm && lm.username) saved = lm.username; } catch(_){}
+      }
+      if (!saved){
+        try {
+          const arr = JSON.parse(localStorage.getItem('gs_accounts') || '[]');
+          if (arr.length && arr[0] && arr[0].username) saved = arr[0].username;
+        } catch(_){}
+      }
+      if (saved) lu.value = saved;
+    }
+  } catch(_){}
 }
 function showApp(){document.getElementById('authScreen').style.display='none';document.getElementById('app').style.display='block';document.getElementById('boot').classList.remove('open');}
 function showBoot(title, msg){document.getElementById('bootTitle').textContent=title;document.getElementById('bootMsg').textContent=msg;document.getElementById('boot').classList.add('open');}
 
-// Fallback: если init не закончился за 10 сек (сетевая ошибка, JS-баг,
+// Fallback: если init не закончился за 20 сек (сетевая ошибка, JS-баг,
 // что угодно) — выпускаем юзера к форме логина чтобы не было вечного boot.
+// 10с было слишком жёстко при медленных сетях — успешный hello прилетал
+// уже после fallback'а и юзер видел auth-форму вместо чата.
 (function(){
   setTimeout(() => {
     const boot = document.getElementById('boot');
     if (boot && boot.classList.contains('open') && document.getElementById('app').style.display !== 'block'){
-      console.warn('[boot] timeout 10s — фолбэк на форму логина');
+      console.warn('[boot] timeout 20s — фолбэк на форму логина');
       showAuth();
     }
-  }, 10000);
+  }, 20000);
 })();
 
 // ════════════════════════════════════════════════════════════════════
