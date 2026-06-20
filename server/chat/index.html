@@ -3925,7 +3925,16 @@ async function idbGetDialogs(){
 // ════════════════════════════════════════════════════════════════════
 // AUTH
 // ════════════════════════════════════════════════════════════════════
-function showAuth(){document.getElementById('authScreen').style.display='flex';document.getElementById('app').style.display='none';document.getElementById('boot').classList.remove('open');}
+function showAuth(){
+  document.getElementById('authScreen').style.display='flex';
+  document.getElementById('app').style.display='none';
+  document.getElementById('boot').classList.remove('open');
+  // По умолчанию поле username активно. Это явно сбрасывается, иначе
+  // disabled из «confirm password»-сценария мог остаться с прошлого вызова
+  // showAuth — в incognito юзер бы видел заблокированное поле.
+  const lu = document.getElementById('loginUsername');
+  if (lu) lu.disabled = false;
+}
 function showApp(){document.getElementById('authScreen').style.display='none';document.getElementById('app').style.display='block';document.getElementById('boot').classList.remove('open');}
 function showBoot(title, msg){document.getElementById('bootTitle').textContent=title;document.getElementById('bootMsg').textContent=msg;document.getElementById('boot').classList.add('open');}
 
