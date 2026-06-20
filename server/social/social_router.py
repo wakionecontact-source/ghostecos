@@ -4710,7 +4710,9 @@ def _safe_url(u: str) -> Optional[str]:
 @router.get("/linkpreview")
 async def link_preview(url: str = Query(..., max_length=2000), authorization: Optional[str] = Header(None)):
     """OG/Twitter meta preview. SSRF-safe, кэш 24ч."""
-    auth(authorization)  # любой авторизованный, включая гостя
+    u = auth(authorization)
+    # DoS guard: без лимита flood с разными URL → flood httpx-запросов наружу.
+    _rate_limit(f"linkprev:{u.get('id', 0)}", limit=30, window=60)
     safe = _safe_url(url)
     if not safe:
         raise HTTPException(400, "Невалидный URL")
