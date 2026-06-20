@@ -7837,20 +7837,40 @@ async function init(){
   if (!token) { showAuth(); return; }
   setSsoCookie(token);
   // Открываем WS первым — сервер пришлёт hello с полным профилем
-  // → не нужен HTTP /me. Если за 4с не получили hello, fallback на HTTP.
+  // → не нужен HTTP /me. Стратегия ожидания:
+  //   1) Promise.race с 8с таймаутом.
+  //   2) Если timeout сработал И WS открыт (readyState=1) — продолжаем
+  //      ждать без timeout. WS работает, hello просто задерживается
+  //      (медленная сеть / handshake) — HTTP /me не быстрее, нет смысла
+  //      падать в REST.
+  //   3) Если WS не открылся за 8с — HTTP /me fallback.
   connectWS();
   let d;
   try {
     d = await Promise.race([
       _helloPromise || Promise.reject(new Error('no hello promise')),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('hello timeout')), 4000)),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('hello timeout')), 8000)),
     ]);
   } catch(_) {
-    try { d = await soc('/me'); }
-    catch(e) {
-      token=null; me=null;
-      localStorage.removeItem('gs_token'); localStorage.removeItem('gs_me'); clearSsoCookie();
-      showAuth(); return;
+    if (ws && ws.readyState === 1 && _helloPromise){
+      // WS открыт — ждём hello без таймаута. Если разорвётся, _helloReject
+      // вызовется в connectWS на следующем reconnect.
+      try { d = await _helloPromise; }
+      catch(_){
+        try { d = await soc('/me'); }
+        catch(e){
+          token=null; me=null;
+          localStorage.removeItem('gs_token'); localStorage.removeItem('gs_me'); clearSsoCookie();
+          showAuth(); return;
+        }
+      }
+    } else {
+      try { d = await soc('/me'); }
+      catch(e) {
+        token=null; me=null;
+        localStorage.removeItem('gs_token'); localStorage.removeItem('gs_me'); clearSsoCookie();
+        showAuth(); return;
+      }
     }
   }
   try {
