@@ -6,6 +6,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -669,25 +670,31 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
-  // Мягкий край под шапкой: градиент-затемнение, гаснущее вниз (не резкая прямая
-  // линия). БЕЗ BackdropFilter — он пересчитывал блюр КАЖДЫЙ кадр над анимир.
-  // mesh и дико лагал с фото. Дёшево: один градиент, ноль per-frame работы.
+  // «Мыло» под шапкой: BackdropFilter размывает сообщения, уезжающие вверх под
+  // шапку, + градиент-тинт для мягкого края (не резкая прямая линия). Раньше
+  // дико лагало НЕ из-за этого блюра (он мелкий), а из-за расшифровки фото на
+  // главном потоке — её вынесли в изолят, так что блюр теперь по карману.
   Widget _topBlurFade() {
     return Positioned(
       top: 0,
       left: 0,
       right: 0,
-      height: 38,
+      height: 52,
       child: IgnorePointer(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                GE.bgDeep.withValues(alpha: 0.92),
-                GE.bg.withValues(alpha: 0.0),
-              ],
+        child: ClipRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    GE.bgDeep.withValues(alpha: 0.55),
+                    GE.bg.withValues(alpha: 0.0),
+                  ],
+                ),
+              ),
             ),
           ),
         ),

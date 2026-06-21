@@ -41,14 +41,19 @@ class ChatRepo {
 
   /// Состояние синхронизации E2E-ключей. UI (KeyGate) подписывается: при
   /// needChooseMode показывает выбор режима, при needPassword запрашивает пароль.
-  final ValueNotifier<KeySyncOutcome> keySyncNotifier = ValueNotifier(KeySyncOutcome.ok);
+  final ValueNotifier<KeySyncOutcome> keySyncNotifier = ValueNotifier(
+    KeySyncOutcome.ok,
+  );
 
   /// Online/offline статус пиров. Подписка через `watchPresence(username)`.
   /// Запрашивается через WS `presence.ask`, обновляется через WS `presence`.
   final Map<String, ValueNotifier<bool>> _presenceByPeer = {};
 
   ValueNotifier<bool> watchPresence(String username) {
-    final notif = _presenceByPeer.putIfAbsent(username, () => ValueNotifier(false));
+    final notif = _presenceByPeer.putIfAbsent(
+      username,
+      () => ValueNotifier(false),
+    );
     // Запрашиваем у сервера актуальное состояние
     try {
       _ws.send('presence.ask', {'username': username});
@@ -58,6 +63,7 @@ class ChatRepo {
 
   /// Сообщения по peer. Каждый ChatScreen подписывается на свой.
   final Map<String, ValueNotifier<List<StoredMessage>>> _msgsByPeer = {};
+
   /// Какие peer-ы уже подгружены из БД — чтобы не дёргать SQL на каждый getter.
   final Set<String> _msgsLoadedFromDb = {};
 
@@ -73,9 +79,11 @@ class ChatRepo {
 
   /// Кэш одного pubkey (legacy: owner-device) пира в RAM.
   final Map<String, Uint8List> _peerPubCache = {};
+
   /// TDA-4: кэш ВСЕХ device-pubkey'ев пира. При peer.devices_changed WS-event
   /// сбрасываем для конкретного юзера.
   final Map<String, List<Uint8List>> _peerDevicePubsCache = {};
+
   /// Кэш моих other-device pubkey'ев (self-echo на свои устройства).
   List<Uint8List> _myOtherDevicePubs = const [];
 
@@ -106,7 +114,7 @@ class ChatRepo {
     _subs.addAll([
       _ws.on('chat.new', _onChatNew),
       _ws.on('chat.echo', _onChatEcho),
-      _ws.on('chat.sealed_new', _onChatSealedNew),         // ← real-time sealed
+      _ws.on('chat.sealed_new', _onChatSealedNew), // ← real-time sealed
       _ws.on('chat.delivered', _onChatDelivered),
       _ws.on('chat.read', _onChatRead),
       _ws.on('chat.cleared_by_peer', _onChatClearedByPeer),
@@ -123,7 +131,9 @@ class ChatRepo {
 
   Future<void> dispose() async {
     for (final s in _subs) {
-      try { s.cancel(); } catch (_){}
+      try {
+        s.cancel();
+      } catch (_) {}
     }
     _subs.clear();
     _peerPubCache.clear();
@@ -160,7 +170,7 @@ class ChatRepo {
   Future<String> regenerateKeys() async {
     try {
       await _crypto.wipe();
-      await _crypto.ensureKeys();        // сгенерит новую пару
+      await _crypto.ensureKeys(); // сгенерит новую пару
       return await forcePublishMyPubKey();
     } catch (e) {
       return 'Не удалось перегенерить: $e';
@@ -176,7 +186,10 @@ class ChatRepo {
   ///
   /// [password]   — пароль аккаунта (нужен только server-режиму).
   /// [chosenMode] — выбор из модалки, если режим ещё не выбран.
-  Future<KeySyncOutcome> syncKeys({String? password, String? chosenMode}) async {
+  Future<KeySyncOutcome> syncKeys({
+    String? password,
+    String? chosenMode,
+  }) async {
     try {
       final myPubB64 = base64Encode(await _crypto.myPublicKeyRaw());
 
@@ -209,7 +222,13 @@ class ChatRepo {
       } catch (_) {}
 
       return mode == 'server'
-          ? await _syncServerMode(myPubB64, serverPub, encPriv, keySalt, password)
+          ? await _syncServerMode(
+              myPubB64,
+              serverPub,
+              encPriv,
+              keySalt,
+              password,
+            )
           : await _syncLocalMode(myPubB64, serverPub);
     } catch (e) {
       if (kDebugMode) print('[ChatRepo] syncKeys error: $e');
@@ -219,8 +238,13 @@ class ChatRepo {
 
   /// server-режим: одна identity на всех устройствах, приватник под паролем
   /// лежит на сервере. Сверяем pub → восстанавливаем/публикуем приватник.
-  Future<KeySyncOutcome> _syncServerMode(String myPubB64, String? serverPub,
-      String? encPriv, String? keySalt, String? password) async {
+  Future<KeySyncOutcome> _syncServerMode(
+    String myPubB64,
+    String? serverPub,
+    String? encPriv,
+    String? keySalt,
+    String? password,
+  ) async {
     final hasServerPub = serverPub != null && serverPub.isNotEmpty;
 
     // Публичный совпал → локальный приватник и есть серверный. Готово.
@@ -228,23 +252,29 @@ class ChatRepo {
 
     // На сервере ДРУГАЯ identity с восстановимым приватником → принимаем серверную.
     if (hasServerPub &&
-        encPriv != null && encPriv.isNotEmpty &&
-        keySalt != null && keySalt.isNotEmpty) {
+        encPriv != null &&
+        encPriv.isNotEmpty &&
+        keySalt != null &&
+        keySalt.isNotEmpty) {
       if (password == null) return KeySyncOutcome.needPassword;
       try {
-        final recovered =
-            base64Encode(await _crypto.importServerPriv(encPriv, keySalt, password));
+        final recovered = base64Encode(
+          await _crypto.importServerPriv(encPriv, keySalt, password),
+        );
         _peerPubCache.clear();
         if (recovered != serverPub) {
           // Восстановленный приватник не даёт серверный pub — битый блоб
           // (например наша же старая заглушка). Нужен ручной перезалив.
-          if (kDebugMode) print('[ChatRepo] recovered pub != server pub (битый блоб?)');
+          if (kDebugMode)
+            print('[ChatRepo] recovered pub != server pub (битый блоб?)');
           return KeySyncOutcome.needPassword;
         }
-        if (kDebugMode) print('[ChatRepo] server-режим: приватник восстановлен с сервера');
+        if (kDebugMode)
+          print('[ChatRepo] server-режим: приватник восстановлен с сервера');
         return KeySyncOutcome.ok;
       } catch (e) {
-        if (kDebugMode) print('[ChatRepo] importServerPriv failed (пароль?): $e');
+        if (kDebugMode)
+          print('[ChatRepo] importServerPriv failed (пароль?): $e');
         return KeySyncOutcome.needPassword;
       }
     }
@@ -259,21 +289,26 @@ class ChatRepo {
       'storage_mode': 'server',
     });
     _peerPubCache.clear();
-    if (kDebugMode) print('[ChatRepo] server-режим: приватник опубликован на сервер');
+    if (kDebugMode)
+      print('[ChatRepo] server-режим: приватник опубликован на сервер');
     return KeySyncOutcome.ok;
   }
 
   /// local-режим: приватник НИКОГДА не уходит с устройства. На сервер — только
   /// pub. Бэкенд сам решает: owner-device обновит users.x25519_pub, доп.устройство
   /// зарегистрирует свой device-pub, НЕ трогая owner-pub. Заглушек нет.
-  Future<KeySyncOutcome> _syncLocalMode(String myPubB64, String? serverPub) async {
+  Future<KeySyncOutcome> _syncLocalMode(
+    String myPubB64,
+    String? serverPub,
+  ) async {
     if (serverPub == myPubB64) return KeySyncOutcome.ok; // уже в синхроне
     await _api.chatPost('/keys/upload', {
       'x25519_pub': myPubB64,
       'storage_mode': 'local',
     });
     _peerPubCache.clear();
-    if (kDebugMode) print('[ChatRepo] local-режим: pub опубликован (без приватника)');
+    if (kDebugMode)
+      print('[ChatRepo] local-режим: pub опубликован (без приватника)');
     return KeySyncOutcome.ok;
   }
 
@@ -409,9 +444,17 @@ class ChatRepo {
     final cipher = d['ciphertext'] as String?;
     final createdAt = d['created_at'];
     if (id is! int || cipher == null) return;
-    final ok = await _ingestSealed(id: id, cipher: cipher, createdAt: createdAt);
+    final ok = await _ingestSealed(
+      id: id,
+      cipher: cipher,
+      createdAt: createdAt,
+    );
     if (ok) {
-      try { await _api.chatPost('/ack_sealed', {'ids': [id]}); } catch (_) {}
+      try {
+        await _api.chatPost('/ack_sealed', {
+          'ids': [id],
+        });
+      } catch (_) {}
     }
   }
 
@@ -429,7 +472,11 @@ class ChatRepo {
         final cipher = m['ciphertext'] as String?;
         if (id == null || cipher == null) continue;
         try {
-          final ok = await _ingestSealed(id: id, cipher: cipher, createdAt: m['created_at']);
+          final ok = await _ingestSealed(
+            id: id,
+            cipher: cipher,
+            createdAt: m['created_at'],
+          );
           if (ok) ackIds.add(id);
         } catch (e) {
           if (kDebugMode) print('[fetchPendingSealed] decrypt fail $id: $e');
@@ -448,7 +495,11 @@ class ChatRepo {
   }
 
   /// Inject sealed-сообщение в локальное состояние.
-  Future<bool> _ingestSealed({required int id, required String cipher, dynamic createdAt}) async {
+  Future<bool> _ingestSealed({
+    required int id,
+    required String cipher,
+    dynamic createdAt,
+  }) async {
     Map<String, dynamic> env;
     try {
       env = await _crypto.decryptSealed(cipher);
@@ -462,23 +513,30 @@ class ChatRepo {
     // TDA-4 self-echo: я отправлял с другого устройства → here I'm receiver,
     // но peer диалога — это `peer_hint` (с кем шла реальная переписка), а
     // fromMe=true. Кладём в БД с peer=peer_hint, fromMe=true.
-    final isSelfEcho = (env['self_echo'] == true) && (fromUsername == _myUsername);
+    final isSelfEcho =
+        (env['self_echo'] == true) && (fromUsername == _myUsername);
     final peerHint = env['peer_hint'] as String?;
     if (isSelfEcho && peerHint != null) {
       final t = env['type'] as String? ?? 'msg';
       if (t == 'msg') {
         final localSid = _sealedSid(id);
         if (await _db.messageExists(peerHint, localSid)) return true;
-        await _db.upsertMessage(StoredMessage(
-          sid: localSid,
-          peer: peerHint,
-          fromMe: true,
-          text: (env['text'] as String?) ?? '',
-          createdAt: createdAt,
-        ));
+        await _db.upsertMessage(
+          StoredMessage(
+            sid: localSid,
+            peer: peerHint,
+            fromMe: true,
+            text: (env['text'] as String?) ?? '',
+            createdAt: createdAt,
+          ),
+        );
         await _refreshMessages(peerHint);
-        await _bumpDialog(peerHint, lastText: (env['text'] as String?) ?? '',
-            fromMe: true, lastAt: createdAt);
+        await _bumpDialog(
+          peerHint,
+          lastText: (env['text'] as String?) ?? '',
+          fromMe: true,
+          lastAt: createdAt,
+        );
         return true;
       }
     }
@@ -519,7 +577,9 @@ class ChatRepo {
       final sid = env['sid'];
       if (sid is int) {
         await _db.updateMessageFlags(fromUsername, _sealedSid(sid), {
-          'deleted': 1, 'text': '', 'file_payload': null,
+          'deleted': 1,
+          'text': '',
+          'file_payload': null,
         });
         await _refreshMessages(fromUsername);
       }
@@ -529,7 +589,12 @@ class ChatRepo {
       final sid = env['sid'];
       final emoji = env['emoji'] as String?;
       if (sid is int && emoji != null) {
-        await _toggleReactionLocal(fromUsername, _sealedSid(sid), emoji, fromUsername);
+        await _toggleReactionLocal(
+          fromUsername,
+          _sealedSid(sid),
+          emoji,
+          fromUsername,
+        );
         await _refreshMessages(fromUsername);
       }
       return true;
@@ -564,10 +629,17 @@ class ChatRepo {
     await _db.upsertMessage(stored);
     await _refreshMessages(fromUsername);
     final preview = isFile
-        ? (type == 'voice' ? '[Голосовое]' : '[Файл: ${env['file_name'] ?? ''}]')
+        ? (type == 'voice'
+              ? '[Голосовое]'
+              : '[Файл: ${env['file_name'] ?? ''}]')
         : stored.text;
-    await _bumpDialog(fromUsername, lastText: preview, fromMe: false,
-        lastAt: createdAt, incUnread: true);
+    await _bumpDialog(
+      fromUsername,
+      lastText: preview,
+      fromMe: false,
+      lastAt: createdAt,
+      incUnread: true,
+    );
 
     // После приёма — sealed-delivered обратно отправителю с target_sid внутри
     final senderSid = env['sid'];
@@ -619,25 +691,30 @@ class ChatRepo {
     final tempSidId = -DateTime.now().microsecondsSinceEpoch;
     final tmpKey = 'tmp-$tempSidId';
     // Оптимистично показываем в чате (без file_id ещё)
-    await _db.upsertMessage(StoredMessage(
-      sid: tempSidId,
-      peer: toUsername,
-      fromMe: true,
-      text: '',
-      createdAt: DateTime.now().toUtc().toIso8601String(),
-      pending: true,
-      tempSid: tmpKey,
-      filePayload: {
-        'file_name': fileName,
-        'mime': mime,
-        'size': bytes.length,
-        if (voice) 'voice': true,
-        if (voice) 'duration': duration,
-      },
-    ));
+    await _db.upsertMessage(
+      StoredMessage(
+        sid: tempSidId,
+        peer: toUsername,
+        fromMe: true,
+        text: '',
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+        pending: true,
+        tempSid: tmpKey,
+        filePayload: {
+          'file_name': fileName,
+          'mime': mime,
+          'size': bytes.length,
+          if (voice) 'voice': true,
+          if (voice) 'duration': duration,
+        },
+      ),
+    );
     await _refreshMessages(toUsername);
-    await _bumpDialog(toUsername,
-        lastText: voice ? '[Голосовое]' : '[Файл: $fileName]', fromMe: true);
+    await _bumpDialog(
+      toUsername,
+      lastText: voice ? '[Голосовое]' : '[Файл: $fileName]',
+      fromMe: true,
+    );
 
     try {
       // 1. Шифруем blob свежим AES-256 ключом
@@ -667,7 +744,9 @@ class ChatRepo {
         if (voice) 'duration': duration,
       };
       final ciphertext = await _crypto.encryptFor(
-        theirPubRaw: peerPub, plaintext: jsonEncode(payload));
+        theirPubRaw: peerPub,
+        plaintext: jsonEncode(payload),
+      );
       final resp = await _api.chatPost('/send', {
         'to_username': toUsername,
         'ciphertext': ciphertext,
@@ -676,7 +755,11 @@ class ChatRepo {
       final createdAt = resp['created_at'];
       final recipientOnline = (resp['recipient_online'] as bool?) ?? false;
       await _db.promoteOptimistic(
-          peer: toUsername, tempSid: tmpKey, realSid: realSid, createdAt: createdAt);
+        peer: toUsername,
+        tempSid: tmpKey,
+        realSid: realSid,
+        createdAt: createdAt,
+      );
       // Заполним file_payload реальным file_id
       await _db.updateMessageFlags(toUsername, realSid, {
         'file_payload': jsonEncode({
@@ -711,7 +794,13 @@ class ChatRepo {
     final aesKey = Uint8List.fromList(base64Decode(keyB64));
     final iv = Uint8List.fromList(base64Decode(ivB64));
     try {
-      return _aesGcmDecryptBytes(aesKey, iv, encBytes);
+      // Расшифровка в ИЗОЛЯТЕ (compute): pointycastle GCM — чистый Dart, и на
+      // главном потоке он морозил UI на секунды при открытии чата с фото.
+      return await compute(_gcmDecryptIso, <String, dynamic>{
+        'key': aesKey,
+        'iv': iv,
+        'ct': encBytes,
+      });
     } catch (e) {
       if (kDebugMode) print('[decryptMediaBlob] $e');
       return null;
@@ -731,6 +820,22 @@ class ChatRepo {
     return cipher.process(ct);
   }
 
+  // Для compute(): GCM-расшифровка в фоновом изоляте, чтобы не морозить UI на
+  // расшифровке многомегабайтного фото при открытии чата.
+  static Uint8List _gcmDecryptIso(Map<String, dynamic> p) {
+    final cipher = GCMBlockCipher(AESEngine())
+      ..init(
+        false,
+        AEADParameters(
+          KeyParameter(p['key'] as Uint8List),
+          128,
+          p['iv'] as Uint8List,
+          Uint8List(0),
+        ),
+      );
+    return cipher.process(p['ct'] as Uint8List);
+  }
+
   Uint8List _randomBytes(int n) {
     final r = Random.secure();
     return Uint8List.fromList(List<int>.generate(n, (_) => r.nextInt(256)));
@@ -740,8 +845,12 @@ class ChatRepo {
   //     ОТКЛЮЧЁН: см. chat/index.html — для отправки используется /send,
   //     /send_sealed только для delivered-echo. Чтобы веб-получатель видел
   //     мои сообщения, шлём legacy способом.) ──────────────────────────────
-  Future<void> sendDmText(String toUsername, String text,
-      {int? replyTo, String? replyPreview}) async {
+  Future<void> sendDmText(
+    String toUsername,
+    String text, {
+    int? replyTo,
+    String? replyPreview,
+  }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
     final tempSid = -DateTime.now().microsecondsSinceEpoch;
@@ -775,7 +884,9 @@ class ChatRepo {
       // device-копии отправляются параллельно через sealed-канал.
       final firstPub = peerDevPubs.first;
       final firstCt = await _crypto.encryptFor(
-          theirPubRaw: firstPub, plaintext: payload);
+        theirPubRaw: firstPub,
+        plaintext: payload,
+      );
       final resp = await _api.chatPost('/send', {
         'to_username': toUsername,
         'ciphertext': firstCt,
@@ -793,16 +904,26 @@ class ChatRepo {
         await _db.updateMessageFlags(toUsername, realSid, {'delivered': 1});
       }
       await _refreshMessages(toUsername);
-      await _bumpDialog(toUsername,
-          lastText: trimmed, fromMe: true, lastAt: createdAt);
+      await _bumpDialog(
+        toUsername,
+        lastText: trimmed,
+        fromMe: true,
+        lastAt: createdAt,
+      );
 
       // Доп. копии для остальных device-pubkey'ев пира (если их >1) — sealed.
       // Sealed envelope содержит from_username внутри → получатель знает кто я.
       if (peerDevPubs.length > 1) {
         final me = _myUsername ?? await AuthService.username() ?? '';
         for (var i = 1; i < peerDevPubs.length; i++) {
-          unawaited(_fanoutSealed(
-              toUsername: toUsername, pub: peerDevPubs[i], me: me, text: trimmed));
+          unawaited(
+            _fanoutSealed(
+              toUsername: toUsername,
+              pub: peerDevPubs[i],
+              me: me,
+              text: trimmed,
+            ),
+          );
         }
       }
 
@@ -810,9 +931,16 @@ class ChatRepo {
       if (_myOtherDevicePubs.isNotEmpty) {
         final me = _myUsername ?? await AuthService.username() ?? '';
         for (final pub in _myOtherDevicePubs) {
-          unawaited(_fanoutSealed(
-              toUsername: me, pub: pub, me: me, text: trimmed,
-              selfEcho: true, peerHint: toUsername));
+          unawaited(
+            _fanoutSealed(
+              toUsername: me,
+              pub: pub,
+              me: me,
+              text: trimmed,
+              selfEcho: true,
+              peerHint: toUsername,
+            ),
+          );
         }
       }
     } catch (e) {
@@ -844,7 +972,10 @@ class ChatRepo {
         if (selfEcho) 'self_echo': true,
       };
       final ct = await _crypto.encryptSealed(
-          receiverPubRaw: pub, payload: payload, fromUsername: me);
+        receiverPubRaw: pub,
+        payload: payload,
+        fromUsername: me,
+      );
       await _api.chatPost('/send_sealed', {
         'to_username': toUsername,
         'ciphertext': ct,
@@ -876,7 +1007,11 @@ class ChatRepo {
     await _ingestIncoming(d, fromPending: false);
     final id = d['id'] as int?;
     if (id != null) {
-      try { await _api.chatPost('/ack', {'ids': [id]}); } catch (_){}
+      try {
+        await _api.chatPost('/ack', {
+          'ids': [id],
+        });
+      } catch (_) {}
     }
   }
 
@@ -939,24 +1074,35 @@ class ChatRepo {
   }
 
   // ─── Расшифровка и сохранение входящего ───────────────────────────────
-  Future<void> _ingestIncoming(Map<String, dynamic> m, {required bool fromPending}) async {
+  Future<void> _ingestIncoming(
+    Map<String, dynamic> m, {
+    required bool fromPending,
+  }) async {
     final isMine = m['from_username'] == _myUsername;
-    final peerUsername = isMine ? m['to_username'] as String : m['from_username'] as String;
+    final peerUsername = isMine
+        ? m['to_username'] as String
+        : m['from_username'] as String;
     // Pubkey пира одинаков и для исходящего, и для входящего (DM один общий
     // ECDH с peer.static_pub). Раньше тут был баг с бессмысленным тернарником.
     final senderPub = await getPeerPub(peerUsername);
     final cipher = m['ciphertext'] as String;
     String plainJson;
     try {
-      plainJson = await _crypto.decryptFrom(theirPubRaw: senderPub, envelopeB64: cipher);
+      plainJson = await _crypto.decryptFrom(
+        theirPubRaw: senderPub,
+        envelopeB64: cipher,
+      );
     } catch (e) {
       if (kDebugMode) {
-        print('[ChatRepo._ingestIncoming] decrypt fail (peer=$peerUsername): $e');
+        print(
+          '[ChatRepo._ingestIncoming] decrypt fail (peer=$peerUsername): $e',
+        );
       }
       // Возможно ключ пира сменился — перепиновываем, чтобы СЛЕДУЮЩЕЕ
       // сообщение могло расшифроваться.
       unawaited(_refreshPeerPubAfterDecryptFail(peerUsername));
-      plainJson = '{"type":"msg","text":"[не удалось расшифровать — ключ собеседника мог измениться]"}';
+      plainJson =
+          '{"type":"msg","text":"[не удалось расшифровать — ключ собеседника мог измениться]"}';
     }
     final payload = _parsePayload(plainJson);
     final type = payload['type'] as String? ?? 'msg';
@@ -1024,7 +1170,9 @@ class ChatRepo {
     await _db.upsertMessage(stored);
     await _refreshMessages(peerUsername);
     final preview = isFile
-        ? (type == 'voice' ? '[Голосовое]' : '[Файл: ${payload['file_name'] ?? ''}]')
+        ? (type == 'voice'
+              ? '[Голосовое]'
+              : '[Файл: ${payload['file_name'] ?? ''}]')
         : stored.text;
     await _bumpDialog(
       peerUsername,
@@ -1037,13 +1185,21 @@ class ChatRepo {
 
   /// Локально применить toggle реакции к сообщению.
   Future<void> _toggleReactionLocal(
-      String peer, int sid, String emoji, String actor) async {
+    String peer,
+    int sid,
+    String emoji,
+    String actor,
+  ) async {
     final list = await _db.getMessages(peer);
-    final m = list.firstWhere((x) => x.sid == sid,
-        orElse: () => StoredMessage(sid: -1, peer: peer, fromMe: false, createdAt: ''));
+    final m = list.firstWhere(
+      (x) => x.sid == sid,
+      orElse: () =>
+          StoredMessage(sid: -1, peer: peer, fromMe: false, createdAt: ''),
+    );
     if (m.sid == -1) return;
     final reactions = Map<String, List<String>>.from(
-        m.reactions ?? <String, List<String>>{});
+      m.reactions ?? <String, List<String>>{},
+    );
     final users = List<String>.from(reactions[emoji] ?? const []);
     if (users.contains(actor)) {
       users.remove(actor);
@@ -1069,7 +1225,9 @@ class ChatRepo {
     final peerPub = await getPeerPub(toUsername);
     final payload = jsonEncode({'type': 'edit', 'sid': sid, 'text': newText});
     final ciphertext = await _crypto.encryptFor(
-        theirPubRaw: peerPub, plaintext: payload);
+      theirPubRaw: peerPub,
+      plaintext: payload,
+    );
     await _api.chatPost('/send', {
       'to_username': toUsername,
       'ciphertext': ciphertext,
@@ -1088,7 +1246,9 @@ class ChatRepo {
     final peerPub = await getPeerPub(toUsername);
     final payload = jsonEncode({'type': 'delete', 'sid': sid});
     final ciphertext = await _crypto.encryptFor(
-        theirPubRaw: peerPub, plaintext: payload);
+      theirPubRaw: peerPub,
+      plaintext: payload,
+    );
     await _api.chatPost('/send', {
       'to_username': toUsername,
       'ciphertext': ciphertext,
@@ -1111,7 +1271,9 @@ class ChatRepo {
     final peerPub = await getPeerPub(toUsername);
     final payload = jsonEncode({'type': 'react', 'sid': sid, 'emoji': emoji});
     final ciphertext = await _crypto.encryptFor(
-        theirPubRaw: peerPub, plaintext: payload);
+      theirPubRaw: peerPub,
+      plaintext: payload,
+    );
     await _api.chatPost('/send', {
       'to_username': toUsername,
       'ciphertext': ciphertext,
@@ -1135,7 +1297,8 @@ class ChatRepo {
     if (original.filePayload != null) {
       // Перешифровываем blob новым ключом для нового адресата
       final plainBytes = await decryptMediaBlob(original);
-      if (plainBytes == null) throw Exception('Не удалось расшифровать оригинал');
+      if (plainBytes == null)
+        throw Exception('Не удалось расшифровать оригинал');
       final fp = original.filePayload!;
       final isVoice = fp['voice'] == true || fp['voice'] == 1;
       await sendDmFile(
@@ -1171,7 +1334,9 @@ class ChatRepo {
       'forwarded_from': originalAuthor,
     });
     final ciphertext = await _crypto.encryptFor(
-        theirPubRaw: peerPub, plaintext: payload);
+      theirPubRaw: peerPub,
+      plaintext: payload,
+    );
     final resp = await _api.chatPost('/send', {
       'to_username': toUsername,
       'ciphertext': ciphertext,
@@ -1190,8 +1355,9 @@ class ChatRepo {
   Map<String, dynamic> _parsePayload(String raw) {
     final t = raw.trimLeft();
     if (t.startsWith('{')) {
-      try { return Map<String, dynamic>.from(jsonDecode(t) as Map); }
-      catch (_) {}
+      try {
+        return Map<String, dynamic>.from(jsonDecode(t) as Map);
+      } catch (_) {}
     }
     return {'type': 'msg', 'text': raw};
   }
@@ -1231,7 +1397,10 @@ class ChatRepo {
     // Сообщим серверу что прочитал входящие (он пингует sender'у двойную галку).
     try {
       final msgs = await _db.getMessages(peer);
-      final theirIds = msgs.where((m) => !m.fromMe && !m.read).map((m) => m.sid).toList();
+      final theirIds = msgs
+          .where((m) => !m.fromMe && !m.read)
+          .map((m) => m.sid)
+          .toList();
       if (theirIds.isNotEmpty) {
         await _api.chatPost('/read', {'ids': theirIds, 'from_username': peer});
         for (final id in theirIds) {
