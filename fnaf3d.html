@@ -56,6 +56,13 @@
     letter-spacing:.05em;background:var(--glass);border:1px solid var(--line);border-radius:20px;padding:6px 16px;backdrop-filter:blur(6px);text-align:center;max-width:80vw}
   #mini{position:absolute;left:16px;top:14px;width:182px;height:150px;background:rgba(6,8,12,.66);
     border:1px solid var(--line);border-radius:10px}
+  /* оверлей захвата мыши */
+  #clickcap{position:fixed;inset:0;z-index:9;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;
+    background:rgba(0,0,0,.5);backdrop-filter:blur(2px);cursor:pointer;color:#cdd5df;text-align:center}
+  #clickcap svg{width:40px;height:40px;opacity:.85;margin-bottom:8px;animation:capb 1.6s infinite}
+  @keyframes capb{50%{transform:translateY(-5px)}}
+  #clickcap .cbig{font-size:21px;letter-spacing:.05em;color:#fff}
+  #clickcap .csm{font-size:13px;color:#8b97a6;line-height:1.7;margin-top:4px}
 
   /* ---- меню / оверлеи ---- */
   .ov{position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -119,6 +126,13 @@
     <div id="obj"></div>
     <div id="danger"></div><div id="hideov"></div>
     <div id="vig"></div><div id="grain"></div>
+  </div>
+
+  <!-- захват мыши -->
+  <div id="clickcap" class="hidden">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="6" y="2.5" width="12" height="19" rx="6"/><line x1="12" y1="6" x2="12" y2="10"/></svg>
+    <div class="cbig">Кликни, чтобы захватить мышь</div>
+    <div class="csm">мышь — обзор · WASD — ходить · F — фонарь · Esc — отпустить<br>не хочешь мышь? крути стрелками ← → ↑ ↓</div>
   </div>
 
   <!-- ТИТУЛ -->
@@ -246,8 +260,8 @@ renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(innerWidt
 const scene=new THREE.Scene(); scene.background=new THREE.Color(0x04050a);
 scene.fog=new THREE.FogExp2(0x04050a,0.05);
 const camera=new THREE.PerspectiveCamera(76,innerWidth/innerHeight,0.05,80); camera.rotation.order='YXZ';
-const amb=new THREE.AmbientLight(0x5566aa,0.28); scene.add(amb);
-const hemi=new THREE.HemisphereLight(0x223044,0x05060a,0.30); scene.add(hemi);
+const amb=new THREE.AmbientLight(0x2a3a55,0.07); scene.add(amb);   // почти темно — фонарь обязателен
+const hemi=new THREE.HemisphereLight(0x1a2740,0x04060a,0.08); scene.add(hemi);
 const flash=new THREE.SpotLight(0xfff2cc,0,RANGE+6,CONE+0.05,0.5,1.0);
 const flashTarget=new THREE.Object3D(); scene.add(flashTarget); flash.target=flashTarget;
 camera.add(flash); scene.add(camera);
@@ -357,7 +371,7 @@ const keys={}; let yaw=0,pitch=0;
 const chars={}; ['bonnie','chica','foxy','freddy'].forEach(n=>{const b=buildChar(n);chars[n]=b;b.group.visible=false;scene.add(b.group);});
 
 function startNight(night){
-  G={night,t:0,flashOn:false,batt:100,stam:100,canRun:true,over:false,won:false,paused:false,
+  G={night,t:0,flashOn:false,batt:100,stam:100,canRun:true,over:false,won:false,paused:false,everLocked:false,
      anims:[],pathTimer:0,footT:0,hidden:false,hideLocker:null,hideTime:0,nearLocker:null,moveDir:{x:0,z:1},blackoutT:rnd(18,38),hbT:0,breathT:0,danger:0};
   NIGHTS[night].forEach(cfg=>{const s=startCell(cfg.n);const w=cellWorld(s[0],s[1]);
     const a={cfg,name:cfg.n,x:w.x,z:w.z,heading:0,active:false,frozen:false,state:'idle',lastSeen:null,wanderTo:null,
@@ -369,7 +383,7 @@ function startNight(night){
   const ps=cellWorld(22,22);camera.position.set(ps.x,EYE,ps.z);yaw=Math.PI*1.1;pitch=0;
   G.flashOn=false;setFlash(false);
   showOverlay(null);$('hud').classList.remove('hidden');$('clockN').textContent='Ночь '+night;$('obj').textContent=TIPS[night];
-  startAmbient();requestLock();
+  startAmbient();$('clickcap').classList.remove('hidden');requestLock();
 }
 function startCell(n){return n==='foxy'?[13,21]:n==='chica'?[5,2]:n==='bonnie'?[2,2]:[4,2];}
 
@@ -383,9 +397,16 @@ addEventListener('mousemove',e=>{if(!locked||!G||G.over||G.won)return;   // об
   yaw-=e.movementX*0.0022;pitch=clamp(pitch-e.movementY*0.0022,-1.4,1.4);});
 addEventListener('mousedown',e=>{if(locked&&G&&!G.over&&!G.won&&!G.hidden&&e.button===2)toggleFlash();});
 addEventListener('contextmenu',e=>e.preventDefault());
-function requestLock(){renderer.domElement.requestPointerLock?.();}
+function requestLock(){const el=renderer.domElement;if(el.requestPointerLock){const p=el.requestPointerLock();if(p&&p.catch)p.catch(()=>{});}}
 document.addEventListener('pointerlockchange',()=>{locked=document.pointerLockElement===renderer.domElement;
-  if(!locked&&G&&!G.over&&!G.won){G.paused=true;showOverlay('pause');}else if(locked&&G){G.paused=false;showOverlay(null);}});
+  if(!G)return;
+  if(locked){G.everLocked=true;G.paused=false;$('clickcap').classList.add('hidden');showOverlay(null);}
+  else if(!G.over&&!G.won){
+    if(G.everLocked){G.paused=true;showOverlay('pause');}   // Esc посреди игры — пауза
+    else $('clickcap').classList.remove('hidden');          // ещё не начинали — показать «кликни»
+  }});
+document.addEventListener('pointerlockerror',()=>{if(G&&!G.over&&!G.won&&!G.paused)$('clickcap').classList.remove('hidden');});
+$('clickcap').onclick=()=>requestLock();
 renderer.domElement.addEventListener('click',()=>{if(G&&!G.over&&!G.won&&!locked)requestLock();});
 function toggleFlash(){if(G.batt<=0)G.flashOn=false;else G.flashOn=!G.flashOn;setFlash(G.flashOn);sfxClick();}
 function setFlash(on){flash.intensity=on?150:0;$('flag').textContent=on?'фонарь вкл':'фонарь выкл';$('flag').className=on?'flagOn':'flagOff';}
@@ -432,6 +453,9 @@ function animHears(a,d){ if(G.hidden)return false; if(!(keys['ShiftLeft']||keys[
   return d<9&&los(a.x,a.z,camera.position.x,camera.position.z); }
 // Фредди замирает под взглядом
 function isWatchedFreddy(a){const{dist,ang}=lookInfo(a);return ang<0.5&&dist<24&&los(a.x,a.z,camera.position.x,camera.position.z);}
+// дальняя проходимая точка по направлению (не залезая в стену)
+function farPoint(ox,oz,dx,dz,maxd){ const d=Math.hypot(dx,dz)||1; dx/=d;dz/=d; let best={x:ox,z:oz};
+  for(let s=1;s<=maxd;s++){ if(isWall(ox+dx*s,oz+dz*s))break; best={x:ox+dx*s,z:oz+dz*s}; } return best; }
 // шаг по пути со срезанием углов -> единичное направление
 function pathStep(a,tx,tz,dt){ a.pathAge+=dt;
   const ac=worldCell(a.x,a.z),tc=worldCell(tx,tz);
@@ -475,10 +499,14 @@ function updateAnim(a,dt){
   else if(a.lastSeen){                                      // потерял -> к месту, потом по направлению ухода
     a.state='search';
     if(a.searchPhase!==1){ a.searchPhase=0; tx=a.lastSeen.x; tz=a.lastSeen.z;
-      if(!G.hidden && Math.hypot(a.x-tx,a.z-tz)<0.9){ a.searchPhase=1; a.searchT=0;
-        a.predict={x:a.lastSeen.x+(a.seenDir?a.seenDir.x:0)*6, z:a.lastSeen.z+(a.seenDir?a.seenDir.z:0)*6}; } }
+      if(!G.hidden && Math.hypot(a.x-tx,a.z-tz)<0.9){ a.searchPhase=1; a.searchT=0;   // дошёл — решает, куда дальше
+        let dx=a.seenDir?a.seenDir.x:0, dz=a.seenDir?a.seenDir.z:0;
+        const roll=Math.random();
+        if(roll<0.4){dx=-dx;dz=-dz;}                  // резко развернулся и пошёл назад
+        else if(roll<0.58){const t=dx;dx=-dz;dz=t;}   // свернул вбок
+        a.predict=farPoint(a.lastSeen.x,a.lastSeen.z,dx,dz,6); } }   // иначе — дальше по ходу ухода
     else { a.searchT+=dt; tx=a.predict?a.predict.x:a.lastSeen.x; tz=a.predict?a.predict.z:a.lastSeen.z;
-      if(a.searchT>4 || Math.hypot(a.x-tx,a.z-tz)<0.9){ a.lastSeen=null; a.state='wander'; } }
+      if(a.searchT>4.5 || Math.hypot(a.x-tx,a.z-tz)<0.9){ a.lastSeen=null; a.state='wander'; } }
   } else {                                                  // патруль
     if(!a.wanderTo||Math.hypot(a.x-a.wanderTo.x,a.z-a.wanderTo.z)<0.8){const f=floorCells[(Math.random()*floorCells.length)|0];a.wanderTo=cellWorld(f[0],f[1]);}
     tx=a.wanderTo.x; tz=a.wanderTo.z;
@@ -605,11 +633,11 @@ function updateMini(){const w=364,h=300,cw=w/W,ch=h/Hh;mctx.clearRect(0,0,w,h);
 function jumpscare(name){if(G.over||G.won)return;G.over=true;document.exitPointerLock?.();stopAmbient();
   $('scareSvg').innerHTML=charSVG(name);$('scare').classList.add('go');$('redflash').style.opacity=.5;playScream();
   if(navigator.vibrate)try{navigator.vibrate([90,40,160]);}catch(e){}
-  setTimeout(()=>{$('scare').classList.remove('go');$('redflash').style.opacity=0;$('hud').classList.add('hidden');$('hideov').classList.remove('on');
+  setTimeout(()=>{$('scare').classList.remove('go');$('redflash').style.opacity=0;$('hud').classList.add('hidden');$('hideov').classList.remove('on');$('clickcap').classList.add('hidden');
     $('overSub').textContent='Ночь '+G.night+'. '+NAMES[name]+' добрался до тебя.';showOverlay('over');},1250);}
 function winNight(){if(G.over||G.won)return;G.won=true;document.exitPointerLock?.();stopAmbient();playChime();
   if(G.night>=unlocked&&G.night<5){unlocked=G.night+1;try{localStorage.setItem('fnaf3d_unlocked',unlocked);}catch(e){}}
-  $('hud').classList.add('hidden');
+  $('hud').classList.add('hidden');$('clickcap').classList.add('hidden');
   if(G.night>=5){$('winSub').textContent='Все пять ночей позади. Ты прошёл смену в пиццерии Фредди.';$('btnNext').textContent='Финал';}
   else{$('winSub').textContent='Ночь '+G.night+' пройдена. Батарея под утро: '+Math.round(G.batt)+'%.';$('btnNext').textContent='Ночь '+(G.night+1);}
   showOverlay('win');}
@@ -657,7 +685,7 @@ function charSVG(name){let body='';const eye=cx=>`<ellipse cx="${cx}" cy="100" r
 
 /* ===================== МЕНЮ ===================== */
 function showOverlay(id){['title','pause','over','win'].forEach(s=>$(s).classList.toggle('hidden',s!==id));}
-function toMenu(){if(G)G.over=true;stopAmbient();document.exitPointerLock?.();G=null;$('hud').classList.add('hidden');$('hideov').classList.remove('on');buildTitle();showOverlay('title');}
+function toMenu(){if(G)G.over=true;stopAmbient();document.exitPointerLock?.();G=null;$('hud').classList.add('hidden');$('hideov').classList.remove('on');$('clickcap').classList.add('hidden');buildTitle();showOverlay('title');}
 function buildTitle(){const box=$('nightSelect');box.innerHTML='';
   for(let n=1;n<=5;n++){const c=document.createElement('button');c.className='nightchip'+(n<=unlocked?'':' locked')+(n===unlocked?' on':'');c.textContent=n;
     if(n<=unlocked)c.onclick=()=>{ensureAudio();startNight(n);};box.appendChild(c);}
