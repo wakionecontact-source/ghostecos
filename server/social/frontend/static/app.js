@@ -2245,6 +2245,15 @@ window.addEventListener('scroll', () => {
     if (scrolled > total - 400 && feedHasMore && !feedLoading) loadFeed(true);
     const vis = feedPosts.length - renderStart;
     if (vis > WIN && scrolled > 700) { renderStart = feedPosts.length - WIN; renderFeed(); scrollTo(0, 350); }
+    // Backward windowing: если юзер скроллит вверх и renderStart > 0 —
+    // подгружаем обратно отброшенные верхние посты, сохраняя scroll position.
+    if (scrolled < 200 && renderStart > 0) {
+      const oldH = document.body.scrollHeight;
+      renderStart = Math.max(0, renderStart - PAGE);
+      renderFeed();
+      const newH = document.body.scrollHeight;
+      window.scrollTo(0, scrolled + (newH - oldH));
+    }
   }
   // Профиль: автоподгрузка
   if (document.getElementById('screenFullProfile').classList.contains('active')) {
