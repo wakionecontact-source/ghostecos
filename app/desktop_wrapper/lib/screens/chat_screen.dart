@@ -554,11 +554,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       Colors.white.withValues(alpha: 0.16),
       GE.bgDeep,
     );
+    // Верхний отступ ленты при extendBodyBehindAppBar: статус-бар + высота шапки
+    // (64), чтобы первое сообщение стартовало под шапкой, но скроллило ЗА неё.
+    final headerPad = MediaQuery.of(context).padding.top + 64 + 8;
     return MeshBackground(
       particleCount: 16,
       child: Scaffold(
         backgroundColor: Colors.transparent,
         resizeToAvoidBottomInset: true,
+        // Сообщения скроллят ЗА шапку → BackdropFilter шапки размывает их =
+        // настоящее матовое стекло. Лента получает верхний отступ (headerPad).
+        extendBodyBehindAppBar: true,
         appBar: PreferredSize(
           preferredSize: const Size.fromHeight(64),
           // Стекло-фон САМОЙ шапки (frosted-бар): тинт читается на тёмном +
@@ -568,18 +574,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  // Непрерывный градиент стекла: сверху полностью → к нижнему
-                  // краю в ноль (стекло распыляется, не плоский серый верх).
+                  // Стекло РАВНОМЕРНОЕ по всей шапке (одинаковый тинт), и только
+                  // у нижнего края — распыление (фейд в ноль). Не градиент
+                  // сверху-вниз: размытие везде одинаковое, гаснет лишь низ.
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: [
-                      glassTint.withValues(alpha: 0.78),
-                      glassTint.withValues(alpha: 0.58),
-                      glassTint.withValues(alpha: 0.28),
+                      glassTint.withValues(alpha: 0.6),
+                      glassTint.withValues(alpha: 0.6),
                       glassTint.withValues(alpha: 0.0),
                     ],
-                    stops: const [0.0, 0.45, 0.78, 1.0],
+                    stops: const [0.0, 0.74, 1.0],
                   ),
                 ),
                 child: _ChatHeader(
@@ -616,10 +622,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           });
                           return ListView.builder(
                             controller: _scrollCtrl,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 12,
-                            ),
+                            padding: EdgeInsets.fromLTRB(12, headerPad, 12, 12),
                             itemCount: msgs.length,
                             itemBuilder: (_, i) {
                               final m = msgs[i];
