@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>GhostEcos · Тестовая панель мульти-аккаунтов</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+:root{
+  --bg:#020617; --bg-deep:#060a1a;
+  --text:#f1f5f9; --sub:#94a3b8; --muted:#475569;
+  --primary:#a855f7; --primary2:#7c3aed;
+  --border:rgba(255,255,255,0.08); --border-strong:rgba(255,255,255,0.16);
+  --red:#f43f5e; --green:#22c55e;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;overflow:hidden;}
+body{display:grid;grid-template-rows:auto 1fr;}
+
+/* ── Top panel ── */
+.tm-top{
+  display:flex;align-items:center;gap:12px;padding:10px 14px;
+  background:linear-gradient(135deg, rgba(255,255,255,0.045), rgba(255,255,255,0.010)), rgba(10,8,22,0.96);
+  border-bottom:1px solid var(--border);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.10);
+  min-height:54px;flex-wrap:wrap;
+}
+.tm-logo{font-weight:800;font-size:15px;background:linear-gradient(135deg,#a855f7,#ec4899);-webkit-background-clip:text;background-clip:text;color:transparent;margin-right:8px;}
+.tm-tag{font-size:10px;font-weight:800;padding:3px 8px;border-radius:99px;background:linear-gradient(95deg,#a855f7,#ec4899);color:#fff;letter-spacing:.5px;}
+
+/* segmented control: chat/social */
+.tm-seg{display:flex;background:rgba(15,15,30,0.55);border:1px solid var(--border);border-radius:11px;padding:3px;gap:3px;}
+.tm-seg button{
+  background:transparent;border:none;color:var(--sub);font-weight:700;font-size:13px;
+  padding:7px 13px;border-radius:8px;cursor:pointer;font-family:inherit;
+  display:inline-flex;align-items:center;gap:6px;transition:background .18s,color .18s;
+}
+.tm-seg button.active{
+  color:#fff;
+  background:linear-gradient(135deg, rgba(168,85,247,0.30), rgba(236,72,153,0.18));
+  box-shadow:inset 1px 1px 0 rgba(255,255,255,0.18);
+}
+.tm-seg button:hover:not(.active){background:rgba(255,255,255,0.04);color:var(--text);}
+
+/* account chips */
+.tm-accts{display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1;min-width:0;}
+.tm-acct{
+  display:inline-flex;align-items:center;gap:8px;padding:6px 10px 6px 6px;
+  background:rgba(15,15,30,0.55);border:1px solid var(--border);border-radius:99px;
+  cursor:pointer;font-size:13px;color:var(--text);transition:background .15s,border-color .15s,transform .15s;
+}
+.tm-acct:hover{background:rgba(255,255,255,0.04);}
+.tm-acct.active{background:linear-gradient(135deg, rgba(168,85,247,0.22), rgba(236,72,153,0.06));border-color:rgba(168,85,247,0.45);}
+.tm-acct .av{width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;flex-shrink:0;}
+.tm-acct .nm{font-weight:700;}
+.tm-acct .un{color:var(--sub);font-weight:500;font-size:11.5px;}
+.tm-acct .rm{
+  background:transparent;border:none;color:var(--sub);font-size:11px;cursor:pointer;padding:2px 4px;
+  border-radius:50%;opacity:0;transition:opacity .15s, background .15s, color .15s;
+}
+.tm-acct:hover .rm{opacity:1;}
+.tm-acct .rm:hover{background:rgba(244,63,94,0.20);color:var(--red);}
+
+.tm-btn{
+  background:linear-gradient(135deg,var(--primary),var(--primary2));border:none;color:#fff;
+  padding:8px 14px;border-radius:11px;font-weight:700;font-size:13px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:7px;font-family:inherit;
+  box-shadow:inset 1px 1px 0 rgba(255,255,255,0.20),0 6px 14px -4px rgba(168,85,247,0.45);
+  transition:transform .12s;
+}
+.tm-btn:hover{transform:translateY(-1px);}
+.tm-btn:active{transform:scale(.97);}
+.tm-btn.subtle{background:rgba(15,15,30,0.55);border:1px solid var(--border);box-shadow:none;}
+
+/* ── iframe area ── */
+.tm-stage{position:relative;overflow:hidden;background:var(--bg-deep);}
+.tm-stage iframe{width:100%;height:100%;border:none;display:block;}
+.tm-stage .empty{
+  position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;padding:30px;color:var(--sub);gap:14px;
+}
+.tm-stage .empty i{font-size:42px;background:linear-gradient(135deg,#a855f7,#ec4899);-webkit-background-clip:text;background-clip:text;color:transparent;}
+.tm-stage .empty h2{font-size:18px;color:var(--text);margin:0;}
+.tm-stage .empty p{margin:0;max-width:460px;line-height:1.5;font-size:13px;}
+
+/* ── login modal ── */
+.tm-mask{
+  position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:100;
+  display:none;align-items:center;justify-content:center;padding:20px;
+}
+.tm-mask.open{display:flex;}
+.tm-modal{
+  width:100%;max-width:380px;
+  background:linear-gradient(135deg, rgba(255,255,255,0.05), rgba(255,255,255,0.010)), rgba(12,10,28,0.96);
+  border:1px solid var(--border-strong);border-radius:18px;padding:22px;
+  box-shadow:inset 1px 1px 0 rgba(255,255,255,0.16),0 22px 50px rgba(0,0,0,0.50);
+}
+.tm-modal h3{margin:0 0 14px;font-size:17px;}
+.tm-modal label{display:block;font-size:11.5px;color:var(--sub);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin:8px 0 4px;}
+.tm-modal input{
+  width:100%;background:rgba(0,0,0,0.30);border:1px solid var(--border);border-radius:10px;
+  padding:11px 14px;color:var(--text);font-size:14px;outline:none;font-family:inherit;
+}
+.tm-modal input:focus{border-color:rgba(168,85,247,0.5);}
+.tm-modal .row{display:flex;gap:8px;margin-top:14px;}
+.tm-modal .row button{flex:1;}
+.tm-modal .err{color:var(--red);font-size:12px;margin-top:8px;min-height:16px;}
+.tm-modal .tabs{display:flex;background:rgba(15,15,30,0.55);border:1px solid var(--border);border-radius:10px;padding:3px;gap:3px;margin-bottom:10px;}
+.tm-modal .tabs button{flex:1;background:transparent;border:none;color:var(--sub);font-weight:700;padding:8px;border-radius:7px;cursor:pointer;font-family:inherit;font-size:12.5px;}
+.tm-modal .tabs button.active{background:rgba(168,85,247,0.20);color:var(--text);}
+
+/* device hint */
+.tm-hint{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.45;}
+</style>
+</head>
+<body>
+
+<div class="tm-top">
+  <span class="tm-logo">GhostEcos</span>
+  <span class="tm-tag">TEST MULTI-ACCOUNT</span>
+  <div class="tm-seg" id="segView">
+    <button data-v="chat" class="active"><i class="fa-solid fa-comments"></i> Чат</button>
+    <button data-v="social"><i class="fa-solid fa-hashtag"></i> Социалка</button>
+  </div>
+  <div class="tm-accts" id="acctsBox"></div>
+  <button class="tm-btn" onclick="openAddModal()"><i class="fa-solid fa-plus"></i> Добавить аккаунт</button>
+</div>
+
+<div class="tm-stage" id="stage">
+  <div class="empty" id="emptyState">
+    <i class="fa-solid fa-user-astronaut"></i>
+    <h2>Нет добавленных аккаунтов</h2>
+    <p>Нажми <b>«Добавить аккаунт»</b> справа сверху. Введи логин/пароль или зарегистрируй новый — токен сохранится в этой панели, можно держать сколько угодно аккаунтов и переключаться кликом.</p>
+  </div>
+</div>
+
+<!-- Add account modal -->
+<div class="tm-mask" id="addMask">
+  <div class="tm-modal">
+    <h3 id="addTitle">Добавить аккаунт</h3>
+    <div class="tabs">
+      <button data-m="login" class="active" onclick="modalSwitch('login')">Войти</button>
+      <button data-m="reg" onclick="modalSwitch('reg')">Регистрация</button>
+    </div>
+    <div id="loginPane">
+      <label>Имя пользователя</label>
+      <input id="lU" autocomplete="off" autocapitalize="none" placeholder="username">
+      <label>Пароль</label>
+      <input id="lP" type="password" autocomplete="off" placeholder="••••••••">
+      <div class="err" id="lErr"></div>
+      <div class="row">
+        <button class="tm-btn subtle" onclick="closeAddModal()">Отмена</button>
+        <button class="tm-btn" onclick="doLogin()" id="lBtn">Войти</button>
+      </div>
+    </div>
+    <div id="regPane" style="display:none;">
+      <label>Имя пользователя</label>
+      <input id="rU" autocomplete="off" autocapitalize="none" placeholder="username">
+      <label>Отображаемое имя</label>
+      <input id="rN" autocomplete="off" placeholder="Display name">
+      <label>Пароль (мин 8)</label>
+      <input id="rP" type="password" autocomplete="off" placeholder="••••••••">
+      <div class="tm-hint">Реальный аккаунт в боевой БД. Для тестов лучше регистрировать `test_xxxx`.</div>
+      <div class="err" id="rErr"></div>
+      <div class="row">
+        <button class="tm-btn subtle" onclick="closeAddModal()">Отмена</button>
+        <button class="tm-btn" onclick="doReg()" id="rBtn">Создать</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────
+// LocalStorage ключ для массива test-аккаунтов. Раздельно от продакшн
+// gs_token (он используется как «активный» при загрузке iframe).
+const TM_LS = 'tm_accounts';        // [{token, username, display_name, id?}]
+const TM_AI = 'tm_active_idx';      // индекс активного
+
+let accounts = [];
+let activeIdx = -1;
+let view = 'chat';                  // 'chat' | 'social'
+
+function load(){
+  try { accounts = JSON.parse(localStorage.getItem(TM_LS) || '[]') || []; }
+  catch(_){ accounts = []; }
+  const ai = parseInt(localStorage.getItem(TM_AI), 10);
+  activeIdx = Number.isFinite(ai) && ai >= 0 && ai < accounts.length ? ai : (accounts.length ? 0 : -1);
+}
+function save(){
+  localStorage.setItem(TM_LS, JSON.stringify(accounts));
+  localStorage.setItem(TM_AI, String(activeIdx));
+}
+
+// ── Device ID per account (нужен для TDA-1, т.к. /login создаёт device)
+function genDid(){
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return 'tm-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+// ── Render ───────────────────────────────────────────────────────────
+function ini(s){ s = (s || '').trim(); return (s[0] || '?').toUpperCase(); }
+function esc(s){ return (s+'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function renderAccounts(){
+  const box = document.getElementById('acctsBox');
+  if (!accounts.length){ box.innerHTML = ''; return; }
+  box.innerHTML = accounts.map((a, i) => `
+    <div class="tm-acct ${i === activeIdx ? 'active' : ''}" onclick="setActive(${i})">
+      <div class="av">${esc(ini(a.display_name || a.username))}</div>
+      <div>
+        <div class="nm">${esc(a.display_name || a.username)}</div>
+        <div class="un">@${esc(a.username)}</div>
+      </div>
+      <button class="rm" onclick="event.stopPropagation();removeAccount(${i})" title="Убрать из панели"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+  `).join('');
+}
+
+function renderStage(){
+  const st = document.getElementById('stage');
+  if (activeIdx < 0 || !accounts[activeIdx]){
+    st.innerHTML = `
+      <div class="empty">
+        <i class="fa-solid fa-user-astronaut"></i>
+        <h2>Нет добавленных аккаунтов</h2>
+        <p>Нажми <b>«Добавить аккаунт»</b> справа сверху. Токен сохранится тут, можно переключаться кликом.</p>
+      </div>`;
+    return;
+  }
+  const a = accounts[activeIdx];
+  const meJson = JSON.stringify({
+    id: a.id || 0, user_id: a.id || 0,
+    username: a.username, display_name: a.display_name || a.username,
+    is_guest: false,
+  });
+  const base = view === 'chat' ? '/chat/' : '/social/';
+  const src = base + '?_test_token=' + encodeURIComponent(a.token) + '&_test_me=' + encodeURIComponent(meJson);
+  // Чистим прежний iframe полностью, чтобы не было общего localStorage-state
+  // от предыдущего аккаунта (хоть он и one origin — IDB разный по username).
+  st.innerHTML = '<iframe id="stageFrame" src="' + src + '"></iframe>';
+}
+
+function rerender(){
+  renderAccounts();
+  renderStage();
+}
+
+// ── Actions ──────────────────────────────────────────────────────────
+function setActive(i){
+  if (i < 0 || i >= accounts.length) return;
+  activeIdx = i; save(); rerender();
+}
+function removeAccount(i){
+  if (i < 0 || i >= accounts.length) return;
+  accounts.splice(i, 1);
+  if (activeIdx === i) activeIdx = accounts.length ? 0 : -1;
+  else if (activeIdx > i) activeIdx--;
+  save(); rerender();
+}
+
+function setView(v){
+  view = v;
+  document.querySelectorAll('#segView button').forEach(b => b.classList.toggle('active', b.dataset.v === v));
+  renderStage();
+}
+document.querySelectorAll('#segView button').forEach(b => b.addEventListener('click', () => setView(b.dataset.v)));
+
+// ── Add-account modal ───────────────────────────────────────────────
+function openAddModal(){
+  document.getElementById('addMask').classList.add('open');
+  modalSwitch('login');
+  setTimeout(() => document.getElementById('lU').focus(), 50);
+}
+function closeAddModal(){
+  document.getElementById('addMask').classList.remove('open');
+  ['lU','lP','rU','rN','rP'].forEach(id => document.getElementById(id).value = '');
+  ['lErr','rErr'].forEach(id => document.getElementById(id).textContent = '');
+}
+function modalSwitch(m){
+  document.querySelectorAll('#addMask .tabs button').forEach(b => b.classList.toggle('active', b.dataset.m === m));
+  document.getElementById('loginPane').style.display = m === 'login' ? '' : 'none';
+  document.getElementById('regPane').style.display = m === 'reg' ? '' : 'none';
+  document.getElementById('addTitle').textContent = m === 'reg' ? 'Регистрация' : 'Добавить аккаунт';
+}
+
+function _pushAccount(token, body){
+  // body: {id, username, display_name}
+  // Дедуп: если username уже есть — заменить токен.
+  const existing = accounts.findIndex(a => a.username === body.username);
+  const acc = {
+    token,
+    id: body.id || body.user_id || 0,
+    username: body.username,
+    display_name: body.display_name || body.username,
+  };
+  if (existing >= 0){ accounts[existing] = acc; activeIdx = existing; }
+  else { accounts.push(acc); activeIdx = accounts.length - 1; }
+  save(); rerender();
+}
+
+async function doLogin(){
+  const u = document.getElementById('lU').value.trim();
+  const p = document.getElementById('lP').value;
+  const err = document.getElementById('lErr');
+  const btn = document.getElementById('lBtn');
+  err.textContent = '';
+  if (!u || !p){ err.textContent = 'Введи логин и пароль'; return; }
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/soc/login', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        username: u, password: p,
+        device_id: genDid(), device_name: 'Test panel · ' + (navigator.platform || ''),
+        platform: 'test_panel',
+      }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok){
+      err.textContent = d.detail || ('Ошибка ' + r.status);
+      btn.disabled = false; return;
+    }
+    if (d.requires_approval){
+      err.textContent = 'Аккаунт требует TDA-одобрения с другого устройства. Тестовая панель пока не поддерживает.';
+      btn.disabled = false; return;
+    }
+    _pushAccount(d.token, d);
+    closeAddModal();
+  } catch(e){
+    err.textContent = 'Сеть: ' + (e.message || e);
+    btn.disabled = false;
+  }
+}
+
+async function doReg(){
+  const u = document.getElementById('rU').value.trim().toLowerCase();
+  const n = document.getElementById('rN').value.trim() || u;
+  const p = document.getElementById('rP').value;
+  const err = document.getElementById('rErr');
+  const btn = document.getElementById('rBtn');
+  err.textContent = '';
+  if (!u || !p){ err.textContent = 'Введи username и пароль'; return; }
+  if (p.length < 8){ err.textContent = 'Пароль минимум 8 символов'; return; }
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/soc/register', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        username: u, display_name: n, password: p,
+        age_18_confirm: true,
+        device_id: genDid(), device_name: 'Test panel · ' + (navigator.platform || ''),
+        platform: 'test_panel',
+      }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok){
+      err.textContent = d.detail || ('Ошибка ' + r.status);
+      btn.disabled = false; return;
+    }
+    _pushAccount(d.token, d);
+    closeAddModal();
+  } catch(e){
+    err.textContent = 'Сеть: ' + (e.message || e);
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('addMask').addEventListener('click', e => {
+  if (e.target.id === 'addMask') closeAddModal();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeAddModal();
+});
+
+// ── Boot ────────────────────────────────────────────────────────────
+load();
+rerender();
+</script>
+</body>
+</html>

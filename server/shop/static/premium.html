@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Premium · GhostChat</title>
+  <link rel="icon" type="image/png" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="{{PREFIX}}/static/common.css">
+  <style>
+    .price-row {
+      display: flex; align-items: center; gap: 14px; margin: 18px 0 22px;
+      flex-wrap: wrap;
+    }
+    .price-main {
+      font-size: 44px; font-weight: 800;
+      background: linear-gradient(90deg, var(--primary), var(--primary2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      letter-spacing: -1px;
+    }
+    .price-old { font-size: 22px; color: var(--muted); text-decoration: line-through; }
+    .discount-timer {
+      font-size: 13px; color: var(--yellow);
+      background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.25);
+      padding: 6px 12px; border-radius: 999px;
+    }
+    .feat-list { list-style: none; padding: 0; margin: 14px 0 4px; }
+    .feat-list li {
+      padding: 8px 0; color: var(--text); font-size: 15px;
+      display: flex; align-items: flex-start; gap: 10px;
+    }
+    .feat-list li i { color: var(--green); margin-top: 4px; }
+
+    /* Chat */
+    .chat {
+      background: rgba(2, 6, 23, 0.45);
+      border: 1px solid var(--border-strong);
+      border-radius: 14px; padding: 14px; height: 340px; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .msg {
+      max-width: 85%; padding: 10px 14px; border-radius: 14px; font-size: 14px;
+      line-height: 1.5; white-space: pre-wrap; word-wrap: break-word;
+    }
+    .msg-user   { align-self: flex-end;
+      background: linear-gradient(135deg, var(--primary), var(--primary2));
+      color: white; border-bottom-right-radius: 4px;
+      box-shadow: 0 6px 18px rgba(168, 85, 247, 0.3);
+    }
+    .msg-admin  { align-self: flex-start; background: rgba(30, 41, 59, 0.75);
+      backdrop-filter: blur(12px); border-bottom-left-radius: 4px;
+    }
+    .msg-system { align-self: center; background: transparent; color: var(--muted);
+      font-size: 12px; font-style: italic; max-width: 100%; text-align: center; padding: 4px 8px;
+    }
+    .msg-time { font-size: 10px; opacity: 0.6; margin-top: 4px; display: block; }
+
+    .copy-block {
+      background: rgba(2, 6, 23, 0.5);
+      border: 1px solid var(--border-strong);
+      border-radius: 12px; padding: 12px 14px; margin: 12px 0;
+      font-family: 'Courier New', monospace; font-size: 13px;
+      white-space: pre-wrap; position: relative; cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    .copy-block:hover { border-color: rgba(168, 85, 247, 0.5); }
+    .copy-block::after {
+      content: 'нажми чтобы скопировать'; position: absolute;
+      top: 6px; right: 10px; font-size: 10px; color: var(--muted);
+    }
+
+    .pay-btns { display: flex; gap: 12px; flex-wrap: wrap; }
+    .pay-btn {
+      flex: 1; min-width: 200px; padding: 18px 20px; border-radius: 14px;
+      background: rgba(15, 23, 42, 0.4);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-strong);
+      color: var(--text); font-size: 15px; font-weight: 600; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      font-family: inherit; transition: all 0.2s;
+      text-align: center;
+    }
+    .pay-btn:hover {
+      border-color: rgba(168, 85, 247, 0.5);
+      transform: translateY(-2px);
+      background: rgba(15, 23, 42, 0.6);
+    }
+    .pay-btn .pay-icon { font-size: 22px; }
+    .pay-btn.send .pay-icon  { color: #60a5fa; }
+    .pay-btn.donate .pay-icon { color: #f97316; }
+    .pay-btn-sub { font-size: 12px; color: var(--muted); font-weight: 500; margin-top: 2px; }
+
+    .ticket-head {
+      display: flex; align-items: center; gap: 12px; margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+    .ticket-id {
+      font-family: 'Courier New', monospace; font-weight: 700; font-size: 16px;
+      color: var(--text);
+    }
+
+    .pay-step {
+      display: flex; gap: 10px; margin: 10px 0; align-items: flex-start;
+    }
+    .pay-step-n {
+      flex-shrink: 0; width: 24px; height: 24px; border-radius: 50%;
+      background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.3);
+      color: var(--primary); font-size: 12px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      margin-top: 1px;
+    }
+    .pay-step-body { flex: 1; color: var(--text); font-size: 14px; line-height: 1.6; }
+    .pay-step-body b { color: var(--text); }
+
+    .open-link-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: 8px;
+      background: rgba(168, 85, 247, 0.12);
+      border: 1px solid rgba(168, 85, 247, 0.3);
+      color: var(--primary); font-size: 13px; font-weight: 600;
+      text-decoration: none; margin: 0 2px;
+      transition: background 0.2s;
+    }
+    .open-link-btn:hover { background: rgba(168, 85, 247, 0.22); }
+
+    /* ── Назад кнопка в тикете ── */
+    .back-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 12px; border-radius: 10px; cursor: pointer;
+      background: rgba(255,255,255,0.04); border: 1px solid var(--border-strong);
+      color: var(--sub); font-size: 13px; font-weight: 500; font-family: inherit;
+      transition: color 0.2s, border-color 0.2s, background 0.2s;
+      margin-bottom: 16px;
+    }
+    .back-btn:hover { color: var(--text); border-color: rgba(168,85,247,0.4); background: rgba(255,255,255,0.07); }
+
+    /* ── Fixed "Перейти в тикет" pill ── */
+    #ticketPill {
+      display: none;
+      position: fixed; bottom: 28px; right: 28px; z-index: 500;
+      padding: 13px 22px; border-radius: 999px;
+      background: linear-gradient(90deg, var(--primary), var(--primary2));
+      color: white; font-size: 14px; font-weight: 700; font-family: inherit;
+      border: none; cursor: pointer;
+      box-shadow: 0 12px 36px rgba(168,85,247,0.45);
+      display: none; align-items: center; gap: 8px;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    #ticketPill:hover { transform: translateY(-2px); box-shadow: 0 16px 44px rgba(168,85,247,0.55); }
+    #ticketPill.visible { display: flex; }
+    @media (max-width: 500px) {
+      #ticketPill { bottom: 16px; right: 16px; padding: 12px 18px; font-size: 13px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="/">GhostChat</a>
+  <div class="nav-links">
+    <a href="{{PREFIX}}/premium" class="active">Premium</a>
+  </div>
+  <div class="nav-right"></div>
+</nav>
+
+<!-- Fixed pill: "Перейти в тикет" -->
+<button id="ticketPill">
+  <i class="fa-solid fa-ticket"></i> Перейти в тикет
+</button>
+
+<div class="page" style="max-width: 820px;">
+  <h1><span class="grad">Premium</span><br>по предзаказу</h1>
+  <p style="margin-bottom:20px;">
+    Разовая оплата — <b>12 месяцев</b> доступа с момента релиза Premium в GhostChat.
+  </p>
+
+  <!-- Offer card -->
+  <div id="offerCard" class="card" style="margin-bottom: 18px;">
+    <div class="price-row">
+      <div class="price-main" id="priceMain">— ₽</div>
+      <div class="price-old" id="priceOld" style="display:none;"></div>
+      <span class="badge badge-purple">предзаказ · 12 мес</span>
+      <span id="discBadge" style="display:none;" class="discount-timer">
+        <i class="fa-solid fa-fire"></i> скидка 50% · <span id="timer">—</span>
+      </span>
+    </div>
+
+    <h3 style="margin-top:4px;">Что входит</h3>
+    <ul class="feat-list">
+      <li><i class="fa-solid fa-check"></i> Свои аватарки (до 3)</li>
+      <li><i class="fa-solid fa-check"></i> Больше 5 групп и каналов</li>
+      <li><i class="fa-solid fa-check"></i> Файлы до 500 МБ в ЛС, до 200 МБ в группах/каналах</li>
+      <li><i class="fa-solid fa-check"></i> До 10 аккаунтов на устройство, до 15 устройств на аккаунт</li>
+      <li><i class="fa-solid fa-check"></i> Приоритет при нагрузке на сервер</li>
+      <li><i class="fa-solid fa-check"></i> Дополнительные визуальные и кастомные фишки</li>
+      <li><i class="fa-solid fa-check"></i> Работает во всей экосистеме Ghost</li>
+    </ul>
+    <p class="muted" style="margin-top:8px;">
+      Основной функционал GhostChat остаётся бесплатным. Premium — только расширенные лимиты и плюшки.
+    </p>
+
+    <div style="margin-top:22px;">
+      <button id="btnBuy" class="btn btn-primary" style="font-size:16px; padding:14px 28px;">
+        <i class="fa-solid fa-crown"></i> Оформить предзаказ
+      </button>
+    </div>
+  </div>
+
+  <!-- Already has premium -->
+  <div id="alreadyCard" class="card" style="display:none; margin-bottom:18px;">
+    <div style="display:flex; align-items:center; gap:14px;">
+      <div style="
+        width:56px; height:56px; border-radius:14px;
+        background: rgba(74, 222, 128, 0.15); border: 1px solid rgba(74, 222, 128, 0.3);
+        display:flex; align-items:center; justify-content:center; font-size:26px; color:var(--green);
+      "><i class="fa-solid fa-check"></i></div>
+      <div>
+        <h2>Предзаказ оформлен</h2>
+        <p>Доступ активируется, как только Premium выйдет в GhostChat.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ticket -->
+  <div id="ticketCard" class="card" style="display:none;">
+    <!-- Кнопка назад -->
+    <button id="btnBackTicket" class="back-btn">
+      <i class="fa-solid fa-arrow-left"></i> <span id="backBtnLabel">Назад</span>
+    </button>
+
+    <div class="ticket-head">
+      <i class="fa-solid fa-ticket" style="color:var(--primary); font-size:18px;"></i>
+      <span class="ticket-id" id="tTicketId">—</span>
+      <span id="tStatus" class="badge badge-purple">—</span>
+    </div>
+
+    <!-- Способы оплаты -->
+    <div id="payChoice" style="display:none; margin-bottom: 16px;">
+      <h3 style="margin-bottom: 12px;">Выбери способ оплаты</h3>
+      <div class="pay-btns">
+        <button class="pay-btn send" id="btnPaySend">
+          <i class="fa-brands fa-telegram pay-icon"></i>
+          <div style="display:flex; flex-direction:column; align-items:flex-start;">
+            <span>@send · <span id="sendAmt">—</span> USDT</span>
+            <span class="pay-btn-sub">крипта в Telegram</span>
+          </div>
+        </button>
+        <button class="pay-btn donate" id="btnPayDonate">
+          <i class="fa-solid fa-heart pay-icon"></i>
+          <div style="display:flex; flex-direction:column; align-items:flex-start;">
+            <span>DonationAlerts · <span id="donateAmt">—</span> ₽</span>
+            <span class="pay-btn-sub">карта, СБП, кошельки</span>
+          </div>
+        </button>
+      </div>
+    </div>
+
+    <!-- @send инструкции -->
+    <div id="sendInfo" style="display:none; margin-bottom:14px;">
+      <h3>Оплата через @send</h3>
+      <div class="pay-step">
+        <div class="pay-step-n">1</div>
+        <div class="pay-step-body">
+          Открой <a id="sendLink" class="open-link-btn" target="_blank" rel="noopener"><i class="fa-brands fa-telegram"></i> @send</a>
+          и отправь <b><span id="sendAmtInfo">—</span> USDT</b> на кошелёк <a id="walletLink" class="open-link-btn" target="_blank" rel="noopener"><span id="walletName">—</span></a>.
+        </div>
+      </div>
+      <div class="pay-step">
+        <div class="pay-step-n">2</div>
+        <div class="pay-step-body">
+          В поле <b>«Комментарий»</b> вставь:
+          <div class="copy-block" id="commentBlock">—</div>
+        </div>
+      </div>
+      <div class="pay-step">
+        <div class="pay-step-n">3</div>
+        <div class="pay-step-body">
+          Нажми «Я оплатил» — владелец подтвердит оплату вручную в чате ниже.
+        </div>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:16px;">
+        <button id="btnPaidSend" class="btn btn-primary">
+          <i class="fa-solid fa-check"></i> Я оплатил
+        </button>
+        <button id="btnCancelPaySend" class="btn btn-ghost">← Другой способ</button>
+      </div>
+    </div>
+
+    <!-- DonationAlerts инструкции -->
+    <div id="donateInfo" style="display:none; margin-bottom:14px;">
+      <h3>Оплата через DonationAlerts</h3>
+      <div class="pay-step">
+        <div class="pay-step-n">1</div>
+        <div class="pay-step-body">
+          Открой <a id="donateLink" class="open-link-btn" target="_blank" rel="noopener"><i class="fa-solid fa-heart"></i> DonationAlerts</a>
+          и отправь <b><span id="donateAmtInfo">—</span> ₽</b>.
+        </div>
+      </div>
+      <div class="pay-step">
+        <div class="pay-step-n">2</div>
+        <div class="pay-step-body">
+          В поле <b>«Сообщение»</b> (или в комментарии к донату) вставь:
+          <div class="copy-block" id="donateCommentBlock">—</div>
+        </div>
+      </div>
+      <div class="pay-step">
+        <div class="pay-step-n">3</div>
+        <div class="pay-step-body">
+          Нажми «Я оплатил» — владелец подтвердит оплату вручную в чате ниже.
+        </div>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:16px;">
+        <button id="btnPaidDonate" class="btn btn-primary">
+          <i class="fa-solid fa-check"></i> Я оплатил
+        </button>
+        <button id="btnCancelPayDonate" class="btn btn-ghost">← Другой способ</button>
+      </div>
+    </div>
+
+    <!-- Ждём подтверждение -->
+    <div id="waitingCard" style="display:none; margin-bottom:14px;">
+      <div style="
+        padding:14px 16px; border-radius:14px;
+        background: rgba(251, 191, 36, 0.08);
+        border: 1px solid rgba(251, 191, 36, 0.25);
+        display:flex; gap:12px; align-items:flex-start;
+      ">
+        <i class="fa-solid fa-hourglass-half" style="color:var(--yellow); font-size:18px; margin-top:2px;"></i>
+        <div style="flex:1;">
+          <b style="color:var(--text);">Ожидаем подтверждение оплаты</b>
+          <p style="margin-top:4px; font-size:13px;">
+            Как только владелец проверит платёж — Premium активируется и появится статус «оплачено».
+            Если передумал — можно отменить и выбрать другой способ.
+          </p>
+        </div>
+      </div>
+      <div style="margin-top:12px;">
+        <button id="btnCancelPaid" class="btn btn-danger">
+          <i class="fa-solid fa-xmark"></i> Отменить подтверждение
+        </button>
+      </div>
+    </div>
+
+    <h3 style="margin: 22px 0 8px;">Чат с поддержкой</h3>
+    <div class="chat" id="chat"></div>
+    <div style="display:flex; gap:8px; margin-top: 10px;">
+      <input id="chatInput" class="input" placeholder="Сообщение..." maxlength="2000" style="flex:1;" enterkeyhint="send"/>
+      <button id="btnSend" class="btn btn-primary" style="padding:12px 16px;">
+        <i class="fa-solid fa-paper-plane"></i>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>window.SHOP_PREFIX = "{{PREFIX}}";</script>
+<script src="{{PREFIX}}/static/mesh.js"></script>
+<script src="{{PREFIX}}/static/common.js"></script>
+<script>
+(async function () {
+  const me = await SHOP.tryAuth ? await SHOP.tryAuth() : null;
+  
+  SHOP.renderNav(me);
+
+  // Откуда пришёл пользователь
+  const _fromProfile = (document.referrer || '').includes('/profile');
+
+  // --- Offer ---
+  let pricing = null;
+  try { pricing = await SHOP.api("/api/pricing"); } catch (_) {}
+  if (pricing) {
+    document.getElementById("priceMain").textContent = pricing.rub + " ₽";
+    if (pricing.discount_active) {
+      document.getElementById("priceOld").style.display = "";
+      document.getElementById("priceOld").textContent = pricing.full_rub + " ₽";
+      document.getElementById("discBadge").style.display = "";
+      startTimer(pricing.discount_ends_at);
+    }
+  }
+
+  function startTimer(endsAt) {
+    const t = document.getElementById("timer");
+    function tick() {
+      const left = endsAt - Math.floor(Date.now()/1000);
+      if (left <= 0) { location.reload(); return; }
+      const d = Math.floor(left/86400), h = Math.floor((left%86400)/3600), m = Math.floor((left%3600)/60);
+      t.textContent = (d > 0 ? d+"д " : "") + h + "ч " + m + "м";
+    }
+    tick(); setInterval(tick, 30000);
+  }
+
+  // --- Fixed pill: "Перейти в тикет" ---
+  let _pillTicketId = null;
+  let _ticketSource = 'offer'; // 'offer' | 'existing' | 'premium'
+
+  function showTicketPill(ticketId, source) {
+    _pillTicketId = ticketId;
+    _ticketSource = source || 'existing';
+    document.getElementById('ticketPill').classList.add('visible');
+  }
+
+  function goToTicket() {
+    if (_pillTicketId) openTicket(_pillTicketId, _ticketSource);
+  }
+  document.getElementById('ticketPill').addEventListener('click', goToTicket);
+  document.getElementById('btnBackTicket').addEventListener('click', backFromTicket);
+
+  // --- Back from ticket ---
+  function backFromTicket() {
+    if (_fromProfile) {
+      location.href = SHOP.url('/profile');
+      return;
+    }
+    // Обратно на premium страницу (скрываем тикет, показываем оффер или alreadyCard)
+    document.getElementById('ticketCard').style.display = 'none';
+    if (me.has_premium) {
+      document.getElementById('alreadyCard').style.display = '';
+    } else {
+      document.getElementById('offerCard').style.display = '';
+    }
+    if (_pillTicketId) {
+      document.getElementById('ticketPill').classList.add('visible');
+    }
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  // --- Already purchased? ---
+  if (me.has_premium) {
+    document.getElementById("offerCard").style.display = "none";
+    document.getElementById("alreadyCard").style.display = "";
+    if (me.premium_ticket_id) {
+      // Показываем pill, но НЕ открываем тикет автоматически
+      showTicketPill(me.premium_ticket_id, 'premium');
+    }
+    return;
+  }
+
+  // --- Buy ---
+  document.getElementById("btnBuy").addEventListener("click", async () => {
+    const btn = document.getElementById("btnBuy");
+    btn.disabled = true;
+    try {
+      const r = await SHOP.api("/api/tickets", { method: "POST" });
+      await openTicket(r.ticket_id, 'offer');
+    } catch (e) {
+      if (e.status === 409) SHOP.toast("Premium уже куплен", "error");
+      else SHOP.toast(e.message || "Ошибка", "error");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // --- Ticket state ---
+  let currentTicket = null;
+  let pollTimer = null;
+  let lastMsgId = 0;
+
+  async function openTicket(ticketId, source) {
+    _ticketSource = source || 'existing';
+    document.getElementById("offerCard").style.display = "none";
+    document.getElementById("alreadyCard").style.display = "none";
+    document.getElementById('ticketPill').classList.remove('visible');
+
+    // Настраиваем кнопку назад
+    const backLabel = _fromProfile ? 'Профиль' : 'Назад к Premium';
+    document.getElementById('backBtnLabel').textContent = backLabel;
+
+    const card = document.getElementById("ticketCard");
+    card.style.display = "";
+    currentTicket = ticketId;
+    document.getElementById("tTicketId").textContent = ticketId;
+
+    let t;
+    try { t = await SHOP.api("/api/tickets/" + encodeURIComponent(ticketId)); }
+    catch (e) { SHOP.toast("Тикет недоступен", "error"); return; }
+
+    renderTicket(t);
+    lastMsgId = t.messages.length ? t.messages[t.messages.length-1].id : 0;
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(pollMessages, 4000);
+  }
+
+  function renderTicket(t) {
+    const st = t.status;
+    const sEl = document.getElementById("tStatus");
+    const map = {
+      open:         ['badge-purple', 'ожидает оплаты'],
+      payment_sent: ['badge-yellow', 'проверяем оплату'],
+      confirmed:    ['badge-green',  'оплачено ✓'],
+      cancelled:    ['badge-red',    'отменён'],
+      rejected:     ['badge-red',    'отклонён'],
+    };
+    const [cls, label] = map[st] || ['badge-purple', st];
+    sEl.className = 'badge ' + cls;
+    sEl.textContent = label;
+
+    const isOpen = (st === "open");
+    const isPaymentSent = (st === "payment_sent");
+
+    document.getElementById("payChoice").style.display = isOpen ? "" : "none";
+    document.getElementById("waitingCard").style.display = isPaymentSent ? "" : "none";
+    if (!isOpen) {
+      document.getElementById("sendInfo").style.display = "none";
+      document.getElementById("donateInfo").style.display = "none";
+    }
+
+    document.getElementById("btnPaidSend").disabled = false;
+    document.getElementById("btnPaidDonate").disabled = false;
+
+    if (pricing) {
+      document.getElementById("sendAmt").textContent = pricing.usdt;
+      document.getElementById("donateAmt").textContent = pricing.rub;
+    }
+
+    const chat = document.getElementById("chat");
+    chat.innerHTML = "";
+    for (const m of t.messages) appendMsg(m);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function appendMsg(m) {
+    const el = document.createElement("div");
+    el.className = "msg msg-" + m.sender;
+    const time = new Date(m.sent_at * 1000).toLocaleTimeString("ru-RU", { hour: '2-digit', minute: '2-digit' });
+    el.innerHTML = SHOP.escape(m.body) + '<span class="msg-time">' + time + '</span>';
+    document.getElementById("chat").appendChild(el);
+  }
+
+  async function pollMessages() {
+    if (!currentTicket) return;
+    try {
+      const r = await SHOP.api("/api/tickets/" + encodeURIComponent(currentTicket)
+        + "/messages?after=" + lastMsgId);
+      if (r.messages.length) {
+        const chat = document.getElementById("chat");
+        const atBottom = chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 20;
+        for (const m of r.messages) {
+          appendMsg(m);
+          lastMsgId = m.id;
+        }
+        if (atBottom) chat.scrollTop = chat.scrollHeight;
+      }
+      const sEl = document.getElementById("tStatus");
+      const map = {
+        open: 'ожидает оплаты', payment_sent: 'проверяем оплату',
+        confirmed: 'оплачено ✓', cancelled: 'отменён', rejected: 'отклонён',
+      };
+      if (r.status && sEl.textContent !== map[r.status]) {
+        const t = await SHOP.api("/api/tickets/" + encodeURIComponent(currentTicket));
+        renderTicket(t);
+        lastMsgId = t.messages.length ? t.messages[t.messages.length-1].id : 0;
+        if (r.status === "confirmed") {
+          clearInterval(pollTimer); pollTimer = null;
+          setTimeout(() => location.reload(), 1500);
+        }
+      }
+    } catch (_) {}
+  }
+
+  // --- Send message ---
+  document.getElementById("btnSend").addEventListener("click", sendMsg);
+  document.getElementById("chatInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+  });
+  async function sendMsg() {
+    const inp = document.getElementById("chatInput");
+    const body = inp.value.trim();
+    if (!body || !currentTicket) return;
+    inp.value = "";
+    try {
+      await SHOP.api("/api/tickets/" + encodeURIComponent(currentTicket) + "/messages",
+        { method: "POST", body: { body: body } });
+      await pollMessages();
+    } catch (e) { SHOP.toast(e.message || "Ошибка", "error"); inp.value = body; }
+  }
+
+  // --- Pay: @send ---
+  document.getElementById("btnPaySend").addEventListener("click", async () => {
+    try {
+      const r = await SHOP.api("/api/tickets/" + encodeURIComponent(currentTicket) + "/pay/send",
+        { method: "POST" });
+      document.getElementById("payChoice").style.display = "none";
+      document.getElementById("sendInfo").style.display = "";
+      document.getElementById("sendAmtInfo").textContent = r.amount_usdt;
+      document.getElementById("walletName").textContent = "@" + r.wallet;
+      document.getElementById("walletLink").href = r.wallet_link;
+      document.getElementById("sendLink").href = r.send_link;
+      document.getElementById("commentBlock").textContent = r.comment;
+    } catch (e) { SHOP.toast(e.message || "Ошибка", "error"); }
+  });
+  document.getElementById("btnCancelPaySend").addEventListener("click", () => {
+    document.getElementById("sendInfo").style.display = "none";
+    document.getElementById("payChoice").style.display = "";
+  });
+
+  // --- Pay: DonationAlerts ---
+  document.getElementById("btnPayDonate").addEventListener("click", async () => {
+    try {
+      const r = await SHOP.api("/api/tickets/" + encodeURIComponent(currentTicket) + "/pay/donate",
+        { method: "POST" });
+      document.getElementById("payChoice").style.display = "none";
+      document.getElementById("donateInfo").style.display = "";
+      document.getElementById("donateAmtInfo").textContent = r.amount_rub;
+      document.getElementById("donateLink").href = r.donate_url;
+      document.getElementById("donateCommentBlock").textContent = r.comment;
+    } catch (e) { SHOP.toast(e.message || "Ошибка", "error"); }
+  });
+  document.getElementById("btnCancelPayDonate").addEventListener("click", () => {
+    document.getElementById("donateInfo").style.display = "none";
+    document.getElementById("payChoice").style.display = "";
+  });
+
+  // Копирование по клику
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      SHOP.toast("Скопировано", "success");
+    } catch (_) {
+      const ta = document.createElement("textarea");
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); SHOP.toast("Скопировано", "success"); } catch (_) {}
+      document.body.removeChild(ta);
+    }
+  }
+  document.getElementById("commentBlock").addEventListener("click", () =>
+    copyText(document.getElementById("commentBlock").textContent));
+  document.getElementById("donateCommentBlock").addEventListener("click", () =>
+    copyText(document.getElementById("donateCommentBlock").textContent));
+
+  // --- "Я оплатил" ---
+  async function markPaid(btn) {
+    btn.disabled = true;
+    try {
+      await SHOP.api("/api/tickets/" + encodeURIComponent(currentTicket) + "/paid",
+        { method: "POST" });
+      SHOP.toast("Отправлено на проверку", "success");
+      await pollMessages();
+      const t = await SHOP.api("/api/tickets/" + encodeURIComponent(currentTicket));
+      renderTicket(t);
+    } catch (e) { SHOP.toast(e.message || "Ошибка", "error"); btn.disabled = false; }
+  }
+  document.getElementById("btnPaidSend").addEventListener("click",
+    () => markPaid(document.getElementById("btnPaidSend")));
+  document.getElementById("btnPaidDonate").addEventListener("click",
+    () => markPaid(document.getElementById("btnPaidDonate")));
+
+  // --- "Отменить подтверждение" ---
+  document.getElementById("btnCancelPaid").addEventListener("click", async () => {
+    const btn = document.getElementById("btnCancelPaid");
+    btn.disabled = true;
+    try {
+      await SHOP.api("/api/tickets/" + encodeURIComponent(currentTicket) + "/cancel_payment",
+        { method: "POST" });
+      SHOP.toast("Подтверждение отменено", "success");
+      const t = await SHOP.api("/api/tickets/" + encodeURIComponent(currentTicket));
+      renderTicket(t);
+      lastMsgId = t.messages.length ? t.messages[t.messages.length-1].id : 0;
+    } catch (e) {
+      SHOP.toast(e.message || "Ошибка", "error");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // Если уже есть открытый тикет — показываем pill, НЕ переходим автоматически
+  try {
+    const lst = await SHOP.api("/api/tickets");
+    const open = (lst.tickets || []).find(x => x.status !== "cancelled" && x.status !== "rejected");
+    if (open) showTicketPill(open.ticket_id, 'existing');
+  } catch (_) {}
+})();
+</script>
+</body>
+</html>

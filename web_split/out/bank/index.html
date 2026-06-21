@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>GhostBank</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/bank/manifest.json">
+<meta name="theme-color" content="#7c3aed">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="GhostBank">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+  <link rel="stylesheet" href="/liquid.css">
+  <link rel="stylesheet" href="/bank/static/style.css">
+</head>
+<body>
+
+<div id="mesh-bg"></div>
+<script src="/mesh.js"></script>
+<script src="/dialog.js"></script>
+
+<header>
+  <div class="header-top">
+    <div class="header-brand"><i class="fa-solid fa-wallet"></i><span>GhostBank</span></div>
+    <div class="h-avatar" id="hAvatar">?</div>
+  </div>
+</header>
+
+<main>
+  <div id="authScreen">
+    <div class="auth-logo">GhostBank</div>
+    <p class="auth-sub">Аккаунт общий с GhostSocial и GhostChat. Войдите там — баланс появится сразу.</p>
+    <a href="/social/" class="auth-btn"><i class="fa-solid fa-arrow-right"></i> Открыть GhostSocial</a>
+  </div>
+
+  <div id="app" style="display:none">
+
+    <!-- CURRENCY SWITCHER -->
+    <div class="cur-switcher">
+      <div class="cur-card" data-currency="gost" onclick="selectCurrency('gost')">
+        <div class="cc-head"><div class="cc-icon"><i class="fa-solid fa-ghost"></i></div><div class="cc-name">Gost</div></div>
+        <div class="cc-balance" id="bGost">0</div>
+        <div class="cc-sub">За активность</div>
+      </div>
+      <div class="cur-card active" data-currency="soul" onclick="selectCurrency('soul')">
+        <div class="cc-head"><div class="cc-icon"><i class="fa-solid fa-fire"></i></div><div class="cc-name">Soul</div></div>
+        <div class="cc-balance" id="bSoul">0</div>
+        <div class="cc-sub">Основная · переводы · NFT</div>
+      </div>
+      <div class="cur-card" data-currency="prem" onclick="selectCurrency('prem')">
+        <div class="cc-head"><div class="cc-icon"><i class="fa-solid fa-crown"></i></div><div class="cc-name">Prem</div><span class="cc-soon">скоро</span></div>
+        <div class="cc-balance" id="bPrem">0</div>
+        <div class="cc-sub">Премиум-украшения</div>
+      </div>
+    </div>
+
+    <!-- PANEL GOST -->
+    <div class="panel" data-panel="gost">
+      <div class="section">
+        <div class="section-title"><i class="fa-solid fa-gift"></i>Ежедневный бонус</div>
+        <button class="claim-btn" id="claimBtn" onclick="claimDaily()">
+          <i class="fa-solid fa-gift"></i><span>Получить <b id="claimAmt">10</b> Gost</span>
+        </button>
+        <div class="claim-hint" id="claimHint" style="display:none;">Следующий бонус через <b id="claimCd">--:--:--</b></div>
+      </div>
+      <div class="section">
+        <div class="section-title"><i class="fa-solid fa-bolt"></i>Как заработать</div>
+        <div class="sources">
+          <div class="src"><i class="fa-solid fa-gift"></i><span class="label">Ежедневный бонус</span><b>+10</b></div>
+          <div class="src"><i class="fa-solid fa-pen"></i><span class="label">Свой пост</span><b>+5</b></div>
+          <div class="src"><i class="fa-solid fa-heart"></i><span class="label">Лайк на твой пост</span><b>+1</b></div>
+          <div class="src"><i class="fa-solid fa-comment"></i><span class="label">Коммент</span><b>+2</b></div>
+          <div class="src"><i class="fa-solid fa-user-plus"></i><span class="label">Подписчик</span><b>+5</b></div>
+          <div class="src"><i class="fa-solid fa-user-group"></i><span class="label">Приведённый друг</span><b>+10</b></div>
+          <div class="src"><i class="fa-solid fa-trophy"></i><span class="label">Welcome</span><b>+100</b></div>
+        </div>
+      </div>
+      <!-- Реферальная программа -->
+      <div class="section" id="refSection" style="display:none;">
+        <div class="section-title"><i class="fa-solid fa-share-nodes"></i>Пригласи друзей<span class="right" id="refStats" style="font-size:10px;color:var(--sub);font-weight:600;"></span></div>
+        <div style="background:linear-gradient(135deg,rgba(168,85,247,0.10),rgba(236,72,153,0.10));border:1px solid rgba(168,85,247,0.30);border-radius:14px;padding:14px;">
+          <div style="font-size:12px;color:var(--sub);margin-bottom:8px;line-height:1.5;">
+            Делись ссылкой — друг получит <b style="color:var(--primary);">+30 Gost</b> при регистрации, ты — <b style="color:var(--primary);">+10 Gost</b> за каждого.
+          </div>
+          <div style="display:flex;gap:6px;margin-bottom:10px;">
+            <input id="refLinkInp" readonly style="flex:1;padding:9px 11px;border-radius:8px;border:1px solid var(--border-strong);background:rgba(0,0,0,0.25);color:var(--text);font-family:'SF Mono',Menlo,monospace;font-size:12px;">
+            <button onclick="copyRefLink()" id="refCopyBtn" style="padding:9px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;"><i class="fa-solid fa-copy"></i></button>
+          </div>
+          <button onclick="shareRefLink()" style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;">
+            <i class="fa-solid fa-share"></i>&nbsp; Поделиться
+          </button>
+          <div id="refInvitedList" style="margin-top:12px;"></div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title"><i class="fa-solid fa-clock-rotate-left"></i>История Gost</div>
+        <div class="tx-list" id="txList"><div class="loader"><div class="spinner"></div>Загрузка...</div></div>
+      </div>
+    </div>
+
+    <!-- PANEL SOUL -->
+    <div class="panel active" data-panel="soul">
+      <!-- Курс + system_balance -->
+      <div class="soul-rate">
+        <div>
+          <div class="l">Курс Soul</div>
+          <div class="v"><span id="soulRate">—</span> <span style="font-size:11px;color:var(--sub);font-weight:600;">Gost / 1 Soul</span></div>
+        </div>
+        <div style="text-align:right;">
+          <div class="l">В системе</div>
+          <div class="v" style="font-size:14px;"><span id="sysBal">—</span> <span style="font-size:10px;color:var(--sub);">/ <span id="sysCap">—</span></span></div>
+          <div class="small">Сожжено: <span id="burnedTotal">0</span></div>
+        </div>
+      </div>
+      <!-- Action buttons -->
+      <div class="actions-row" style="grid-template-columns:1fr 1fr;">
+        <button class="act-btn" onclick="openTransferSoul()"><i class="fa-solid fa-paper-plane"></i>Перевести</button>
+        <button class="act-btn" onclick="openInvoiceCreate()"><i class="fa-solid fa-receipt"></i>Счёт</button>
+        <button class="act-btn" onclick="openMintNft()"><i class="fa-solid fa-plus"></i>Создать NFT</button>
+        <button class="act-btn" onclick="openUsername()"><i class="fa-solid fa-at"></i>Username</button>
+      </div>
+      <!-- Мои инвойсы -->
+      <div class="section">
+        <div class="section-title"><i class="fa-solid fa-receipt"></i>Мои счета<span class="right" id="myInvCount" style="font-size:10px;color:var(--sub);font-weight:600;"></span></div>
+        <div id="myInvList"></div>
+      </div>
+      <!-- История Soul -->
+      <div class="section">
+        <div class="section-title"><i class="fa-solid fa-clock-rotate-left"></i>История Soul</div>
+        <div class="tx-list" id="soulTxList"><div class="loader"><div class="spinner"></div>Загрузка...</div></div>
+      </div>
+    </div>
+
+    <!-- PANEL PREM -->
+    <div class="panel" data-panel="prem">
+      <div class="section">
+        <div class="section-title"><i class="fa-solid fa-crown"></i>Премиум-валюта</div>
+        <div class="soon-card">
+          <div class="badge" style="background:rgba(251,191,36,0.2);color:var(--prem);">скоро</div>
+          <h3>Для тех, кто всё успел</h3>
+          <p>Prem — украшения профиля, Premium-подписка, эксклюзивные рамки и эффекты. Получают через конвертацию Soul при смене сезона: <code>(soul^1.1) × 0.9</code></p>
+          <div class="feats">
+            <div class="feat"><i class="fa-solid fa-medal"></i>Premium-подписка GhostChat</div>
+            <div class="feat"><i class="fa-solid fa-palette"></i>Цветные ники, рамки, фоны</div>
+            <div class="feat"><i class="fa-solid fa-gift"></i>Эксклюзивные NFT-подарки</div>
+            <div class="feat"><i class="fa-solid fa-arrow-trend-up"></i>Награды за HODL Soul</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ───────── МОЯ КОЛЛЕКЦИЯ NFT ───────── -->
+    <div class="section">
+      <div class="section-title">
+        <i class="fa-solid fa-images"></i>Моя коллекция
+        <span class="right"><span id="myNftCount" style="font-size:10px;color:var(--sub);font-weight:600;">0</span></span>
+      </div>
+      <div id="myNftList"><div class="loader"><div class="spinner"></div>Загрузка...</div></div>
+    </div>
+
+    <!-- ───────── КАТАЛОГ ───────── -->
+    <div class="section">
+      <div class="section-title"><i class="fa-solid fa-th-large"></i>Каталог GhostEcos · стартовая коллекция</div>
+      <div class="cat-grid" id="catGrid"><div class="loader" style="grid-column:1/-1;"><div class="spinner"></div></div></div>
+      <p style="margin-top:14px;font-size:11px;color:var(--sub);text-align:center;line-height:1.5;">
+        10 типов NFT от <b style="color:var(--text);">@ghostecos</b> <i class="fa-solid fa-circle-check" style="color:var(--soul);font-size:10px;"></i> · по 100 экз каждого
+      </p>
+    </div>
+
+    <!-- ───────── МАРКЕТ ───────── -->
+    <div class="section" id="marketSection">
+      <div class="section-title"><i class="fa-solid fa-store"></i>NFT-маркет</div>
+      <div class="market-filters" id="marketFilters">
+        <button class="mf-chip active" data-slug="">Все</button>
+      </div>
+      <div class="list-grid" id="marketGrid"><div class="loader" style="grid-column:1/-1;"><div class="spinner"></div></div></div>
+    </div>
+
+  </div>
+</main>
+
+<nav id="appNav">
+  <a href="/social/"><i class="fa-solid fa-house"></i>Лента</a>
+  <a href="/social/#screenMinisky"><i class="fa-solid fa-video"></i>Миниски</a>
+  <a href="#" class="active"><i class="fa-solid fa-wallet"></i>Банк</a>
+  <a href="/chat/"><i class="fa-solid fa-comments"></i>Чаты</a>
+  <a href="/"><i class="fa-solid fa-ghost"></i>Главная</a>
+</nav>
+
+<div class="toast" id="toast"></div>
+
+<!-- ─── Modal: NFT details / buy / list / transfer ─── -->
+<div class="modal-overlay" id="nftModal" onclick="if(event.target===this)closeModal('nftModal')">
+  <div class="modal" id="nftModalContent"></div>
+</div>
+
+<!-- ─── Modal: Transfer Soul ─── -->
+<div class="modal-overlay" id="transferModal" onclick="if(event.target===this)closeModal('transferModal')">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">Перевод Soul</div>
+      <button class="modal-close" onclick="closeModal('transferModal')"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="field"><label>Получатель (username)</label><input id="trUser" placeholder="username" autocomplete="off"></div>
+    <div class="field"><label>Сумма (Soul)</label><input id="trAmount" type="number" min="1" placeholder="1"><div class="hint">Комиссия 3% сверху</div></div>
+    <div class="field"><label>Заметка (опц.)</label><input id="trNote" placeholder="за что..." maxlength="200"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal('transferModal')">Отмена</button>
+      <button class="btn primary" id="trSubmit" onclick="doTransferSoul()">Отправить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Modal: Create invoice ─── -->
+<div class="modal-overlay" id="invCreateModal" onclick="if(event.target===this)closeModal('invCreateModal')">
+  <div class="modal">
+    <div class="modal-head"><div class="modal-title">Новый счёт</div><button class="modal-close" onclick="closeModal('invCreateModal')"><i class="fa-solid fa-xmark"></i></button></div>
+    <p style="color:var(--sub);font-size:12px;margin-bottom:14px;">Получите ссылку — другие смогут платить по ней Soul. Действует 7 дней.</p>
+    <div class="field"><label>Сумма (Soul)</label><input id="invcAmount" type="number" min="1" placeholder="10"></div>
+    <div class="field"><label>За что (опц.)</label><input id="invcNote" placeholder="например: за чай" maxlength="200"></div>
+    <div class="modal-row"><span>Создание счёта</span><b>100 Gost</b></div>
+    <div class="modal-row"><span>Комиссия при оплате</span><b>5%</b></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal('invCreateModal')">Отмена</button>
+      <button class="btn primary" onclick="doCreateInvoice()">Создать (100 Gost)</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Modal: Pay invoice ─── -->
+<div class="modal-overlay" id="invPayModal" onclick="if(event.target===this)closeModal('invPayModal')">
+  <div class="modal" id="invPayContent"></div>
+</div>
+
+<!-- ─── Modal: Username управление ─── -->
+<div class="modal-overlay" id="usernameModal" onclick="if(event.target===this)closeModal('usernameModal')">
+  <div class="modal" id="usernameContent"></div>
+</div>
+
+<!-- ─── Modal: Mint NFT ─── -->
+<div class="modal-overlay" id="mintModal" onclick="if(event.target===this)closeModal('mintModal')">
+  <div class="modal">
+    <div class="modal-head"><div class="modal-title">Создать свой NFT</div><button class="modal-close" onclick="closeModal('mintModal')"><i class="fa-solid fa-xmark"></i></button></div>
+    <div class="modal-art" id="mintPreview" style="background:#a855f7;border-radius:18px;color:#fff;font-size:36px;font-weight:800;">?</div>
+    <div class="field"><label>Эмодзи (1-6 символов)</label><input id="mintEmoji" placeholder="🐱 или GS" maxlength="6" oninput="updateMintPreview()"></div>
+    <div class="field"><label>Цвет фона</label><input id="mintBg" type="color" value="#a855f7" oninput="updateMintPreview()" style="height:42px;padding:4px;cursor:pointer;"></div>
+    <div class="field"><label>Slug (a-z, цифры)</label><input id="mintSlug" placeholder="my-cat" maxlength="32"></div>
+    <div class="field"><label>Название</label><input id="mintName" placeholder="Мой кот" maxlength="60"></div>
+    <div class="field"><label>Тираж (100-10000)</label><input id="mintSupply" type="number" min="100" max="10000" value="100" oninput="updateMintCost()"></div>
+    <div class="field"><label>Сколько штук выкупить себе (опц.)</label><input id="mintAutoBuy" type="number" min="0" value="0" oninput="updateMintCost()"><div class="hint">Система выкупит у тебя M штук за Soul. Цена = поле ниже.</div></div>
+    <div class="field"><label>Цена на маркете (Soul за штуку)</label><input id="mintSellPrice" type="number" min="1" value="1" oninput="updateMintCost()"></div>
+    <div class="modal-row"><span>Стоимость создания</span><b id="mintCostG">— Gost</b></div>
+    <div class="modal-row"><span>Получите за автовыкуп</span><b id="mintPayout">0 Soul</b></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal('mintModal')">Отмена</button>
+      <button class="btn primary" onclick="doMintNft()">Создать NFT</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Modal: Seed phrase show (после регистрации/regen) ─── -->
+<div class="modal-overlay" id="seedModal" onclick="if(event.target===this)closeModal('seedModal')">
+  <div class="modal">
+    <div class="modal-head"><div class="modal-title" style="color:var(--yellow);"><i class="fa-solid fa-key"></i> Recovery seed</div></div>
+    <p style="color:var(--sub);font-size:12px;margin-bottom:14px;">Сохраните эту фразу. С ней можно восстановить доступ, если забудете пароль.<br><b style="color:var(--red);">НЕ показывайте её никому.</b></p>
+    <div id="seedDisplay" style="background:rgba(2,6,23,0.8);border:2px dashed var(--yellow);border-radius:12px;padding:18px;text-align:center;font-family:'Courier New',monospace;font-size:22px;font-weight:800;letter-spacing:3px;color:var(--yellow);margin-bottom:14px;word-break:break-all;"></div>
+    <div class="modal-actions">
+      <button class="btn primary" onclick="copySeed()"><i class="fa-solid fa-copy"></i> Скопировать</button>
+      <button class="btn ghost" onclick="closeModal('seedModal')">Я сохранил</button>
+    </div>
+  </div>
+</div>
+
+
+  <script src="/liquid.js" defer></script>
+  <script src="/bank/static/app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+[Unit]
+Description=GhostChat Shop Web
+After=network.target ghostchat.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/shop_bot
+Environment="GC_API_URL=http://127.0.0.1:8000"
+# SECURITY (C1): должен совпадать с GC_INTERNAL_KEY в ghostchat.service. Задаётся на сервере.
+Environment="GC_INTERNAL_KEY=<set-on-server-MUST-match-ghostchat>"
+ExecStart=/opt/shop_bot/venv/bin/python web_only.py
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

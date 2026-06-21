@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>GhostSocial</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<!-- PWA -->
+<link rel="manifest" href="/social/manifest.json">
+<meta name="theme-color" content="#7c3aed">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="GhostSocial">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+  <link rel="stylesheet" href="/social/assets/style.css">
+  <link rel="stylesheet" href="/liquid.css">
+</head>
+<body>
+<canvas id="mesh-bg"></canvas>
+
+<!-- ── AUTH SCREEN ── -->
+<div id="authScreen">
+  <div class="auth-card">
+    <div class="auth-logo">GhostSocial</div>
+    <div class="auth-tagline">Открытая социальная сеть</div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tabLogin" onclick="switchTab('login')">Войти</button>
+      <button class="auth-tab" id="tabReg" onclick="switchTab('reg')">Регистрация</button>
+    </div>
+
+    <!-- Login -->
+    <div id="loginForm">
+      <input class="auth-input" id="loginUsername" placeholder="Имя пользователя" autocomplete="username" autocapitalize="none">
+      <input class="auth-input" id="loginPassword" type="password" placeholder="Пароль" autocomplete="current-password">
+      <button class="auth-btn" id="loginBtn" onclick="doLogin()">Войти</button>
+      <button class="auth-btn ghost" id="guestBtn" onclick="doGuest()" type="button">Войти как гость</button>
+      <div class="auth-error" id="loginError"></div>
+      <p class="auth-disclaimer" style="font-size:11px;color:var(--sub);text-align:center;margin-top:14px;line-height:1.55;">
+        Входя или регистрируя аккаунт вы соглашаетесь с
+        <a href="/terms" target="_blank" style="color:var(--primary);text-decoration:none;">Условиями пользования</a>
+        и
+        <a href="/privacy" target="_blank" style="color:var(--primary);text-decoration:none;">Политикой приватности</a>
+      </p>
+    </div>
+
+    <!-- Register -->
+    <div id="regForm" style="display:none">
+      <p class="auth-hint">Имя пользователя: латиница, цифры, _ и точка</p>
+      <input class="auth-input" id="regUsername" placeholder="username" autocomplete="username" autocapitalize="none">
+      <input class="auth-input" id="regName" placeholder="Отображаемое имя (2–100 символов)" autocomplete="name">
+      <input class="auth-input" id="regPassword" type="password" placeholder="Пароль (минимум 8 символов)" autocomplete="new-password">
+      <input class="auth-input" id="regPasswordConfirm" type="password" placeholder="Повторите пароль" autocomplete="new-password">
+      <label style="display:flex;align-items:flex-start;gap:8px;margin:12px 2px 4px;font-size:13px;color:var(--sub);cursor:pointer;line-height:1.5;">
+        <input type="checkbox" id="regAge18" style="margin-top:3px;width:16px;height:16px;accent-color:var(--primary);cursor:pointer;flex-shrink:0;">
+        <span>Подтверждаю, что мне исполнилось <b>18 лет</b>, и согласен с <a href="/terms" target="_blank" style="color:var(--primary);text-decoration:none;">условиями пользования</a> и <a href="/privacy" target="_blank" style="color:var(--primary);text-decoration:none;">политикой приватности</a></span>
+      </label>
+      <button class="auth-btn" id="regBtn" onclick="doRegister()">Зарегистрироваться</button>
+      <div class="auth-error" id="regError"></div>
+      <p class="auth-disclaimer" style="font-size:11px;color:var(--sub);text-align:center;margin-top:14px;line-height:1.55;">
+        Входя или регистрируя аккаунт вы соглашаетесь с
+        <a href="/terms" target="_blank" style="color:var(--primary);text-decoration:none;">Условиями пользования</a>
+        и
+        <a href="/privacy" target="_blank" style="color:var(--primary);text-decoration:none;">Политикой приватности</a>
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ── MAIN APP ── -->
+<header id="appHeader" style="display:none">
+  <div class="header-top">
+    <div class="header-brand">
+      <span>GhostSocial</span>
+    </div>
+    <div class="header-right">
+      <div class="new-pill" id="newPill" onclick="onNewPill()">
+        <i class="fa-solid fa-arrow-up" style="font-size:11px"></i>
+        <span>Новые посты</span>
+      </div>
+      <a class="gost-pill" id="gostPill" href="/bank/?from=/social" title="GhostBank — кошелёк">
+        <i class="fa-solid fa-ghost"></i>
+        <span id="gostPillVal">0</span>
+      </a>
+      <div class="h-avatar" id="hAvatar" onclick="goProfile()">?</div>
+    </div>
+  </div>
+  <div class="filters" id="headerFilters">
+    <button class="filter-btn foryou-btn" data-sort="foryou"><i class="fa-solid fa-wand-magic-sparkles ico"></i>Для вас</button>
+    <button class="filter-btn active" data-sort="new">Новые</button>
+    <button class="filter-btn" data-sort="top">Топ</button>
+    <button class="filter-btn" data-sort="following"><i class="fa-solid fa-user-group ico"></i>Подписки</button>
+    <button class="filter-btn" data-sort="random"><i class="fa-solid fa-shuffle ico"></i>Рандом</button>
+    <button class="filter-btn" data-sort="old">Старые</button>
+  </div>
+</header>
+
+<main id="appMain" style="display:none">
+  <div class="screen active" id="screenFeed">
+    <div id="feedContext"></div>
+    <div id="feedList"><div class="loader"><div class="spinner"></div><div class="loader-text">Загрузка...</div></div></div>
+    <div id="feedLoader" style="display:none;text-align:center;padding:16px"><div class="spinner spinner-sm" style="margin:0 auto"></div></div>
+  </div>
+
+  <div class="screen" id="screenCreate">
+    <div class="create-card">
+      <!-- Mode-indicator: видна только когда включён NSFW или миниска -->
+      <div id="composerModeIndicator" style="display:none;font-size:11px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;padding:6px 10px;border-radius:8px;margin-bottom:10px;"></div>
+
+      <!-- Скрытые тумблеры (логика их использует) -->
+      <input type="checkbox" id="miniskaToggle" style="display:none;" onchange="onMiniskaToggle(this.checked); refreshComposerMode();">
+      <input type="checkbox" id="nsfwToggle" style="display:none;" onchange="refreshComposerMode();">
+
+      <textarea id="postText" placeholder="Что на уме?" maxlength="1000"></textarea>
+      <div id="mediaPreviewList"></div>
+      <div id="pollEditor"></div>
+
+      <!-- Хэштеги для миниски (минимум 3, до 10) -->
+      <div id="miniskaTagsBlock" style="display:none;">
+        <div style="font-size:12px;font-weight:700;color:var(--sub);letter-spacing:0.4px;text-transform:uppercase;margin:14px 0 8px;display:flex;justify-content:space-between;align-items:center;">
+          <span>Хэштеги · минимум 3</span>
+          <span id="miniskaTagsCount" style="color:var(--primary);font-weight:700;">0/10</span>
+        </div>
+        <div id="miniskaTagsList" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+        <button type="button" id="miniskaAddTagBtn" onclick="addMiniskaTag()" style="margin-top:8px;background:transparent;border:1px dashed var(--border-strong);border-radius:10px;padding:8px 12px;color:var(--sub);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;">
+          <i class="fa-solid fa-plus" style="font-size:10px;"></i> Добавить хэштег
+        </button>
+      </div>
+
+      <div class="create-footer">
+        <div class="create-left">
+          <button class="attach-btn" id="attachBtn" title="Прикрепить файл"><i class="fa-solid fa-paperclip"></i></button>
+          <button class="attach-btn" id="pollBtn" title="Добавить опрос"><i class="fa-solid fa-chart-simple"></i></button>
+          <button class="attach-btn" id="nsfwBtn" title="Пометить 18+ (NSFW)" onclick="toggleNsfw()"><i class="fa-solid fa-eye-slash"></i></button>
+          <button class="attach-btn" id="miniskaBtn" title="Сделать миниской (видео 48ч)" onclick="toggleMiniska()"><i class="fa-solid fa-video"></i></button>
+          <span class="char-count" id="charCount">0 / 1000</span>
+        </div>
+        <button class="pub-btn" id="pubBtn" disabled>Опубликовать</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Экран модерации (заявки + overwatch queue для модераторов; админ-панель для owner) -->
+  <div class="screen" id="screenModeration">
+    <div style="max-width:760px;margin:0 auto;padding:14px 12px 80px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+        <h2 style="font-size:22px;font-weight:700;flex:1;">Модерация</h2>
+        <span id="modBadge" style="font-size:11px;padding:4px 10px;border-radius:8px;background:rgba(168,85,247,0.15);color:var(--primary);font-weight:600;"></span>
+      </div>
+      <div id="modContent" style="display:flex;flex-direction:column;gap:14px;">
+        <div style="text-align:center;color:var(--sub);padding:30px;">Загрузка...</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="screen" id="screenProfile">
+    <div class="profile-card">
+      <div class="prof-av" id="profAv">?</div>
+      <div class="prof-name" id="profName">—</div>
+      <div class="prof-username" id="profUser">—</div>
+      <div id="profStatus" class="daily-status" style="display:none;"></div>
+      <div id="profReputation" class="rep-badge" style="display:none;"></div>
+      <div class="stats-row">
+        <div class="stat-box"><div class="stat-val" id="sPosts">0</div><div class="stat-lbl">постов</div></div>
+        <div class="stat-box"><div class="stat-val" id="sFollowers">0</div><div class="stat-lbl">подписчиков</div></div>
+        <div class="stat-box"><div class="stat-val" id="sFollowing">0</div><div class="stat-lbl">подписок</div></div>
+        <div class="stat-box"><div class="stat-val" id="sReceived">0</div><div class="stat-lbl">реакций</div></div>
+      </div>
+      <div class="prof-actions">
+        <button class="prof-action-btn" onclick="openEditProfile()"><i class="fa-solid fa-pen"></i> Изменить</button>
+        <button class="prof-action-btn" onclick="shareMyProfile()"><i class="fa-solid fa-share-nodes"></i> Поделиться</button>
+        <button class="prof-action-btn" onclick="openAlgoSettings()"><i class="fa-solid fa-wand-magic-sparkles"></i> Алгоритм</button>
+        <button class="prof-action-btn danger" onclick="doLogout()"><i class="fa-solid fa-right-from-bracket"></i> Выйти</button>
+      </div>
+      <a href="/chat/?from=/social" class="prof-action-btn" style="text-decoration:none;width:100%;margin-top:8px;justify-content:center;background:rgba(168,85,247,0.1);border-color:rgba(168,85,247,0.3);color:var(--primary);position:relative;">
+        <i class="fa-solid fa-comments"></i> Открыть GhostChat
+        <span class="notif-badge" id="profChatBadge" style="position:static;margin-left:6px;"></span>
+      </a>
+      <button class="prof-action-btn" onclick="openModerationOrAdmin()" style="width:100%;margin-top:8px;justify-content:center;">
+        <i class="fa-solid fa-shield"></i> Модерация
+      </button>
+      <button class="prof-action-btn" id="profInstallBtn" onclick="openInstall()" style="width:100%;margin-top:8px;justify-content:center;display:none;">
+        <i class="fa-solid fa-mobile-screen"></i> Установить как приложение
+      </button>
+    </div>
+    <div class="prof-tabs">
+      <button class="prof-tab active" data-tab="posts" onclick="switchProfTab('prof', 'posts')">Посты</button>
+      <button class="prof-tab" data-tab="reposts" onclick="switchProfTab('prof', 'reposts')">Репосты</button>
+    </div>
+    <div id="profList"></div>
+  </div>
+
+  <div class="screen" id="screenSearch">
+    <div class="search-bar">
+      <i class="fa-solid fa-magnifying-glass search-icon"></i>
+      <input class="search-input" id="searchInput" placeholder="Поиск постов или @пользователей">
+      <button class="search-clear" id="searchClear"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="search-results" id="searchResults"></div>
+  </div>
+
+  <div class="screen" id="screenFullProfile">
+    <div class="full-profile-header">
+      <button class="back-btn" id="fullProfBack"><i class="fa-solid fa-arrow-left"></i></button>
+      <div style="font-size:16px;font-weight:700;">Профиль</div>
+    </div>
+    <div class="profile-card">
+      <div class="prof-av" id="fpAv">?</div>
+      <div class="prof-name" id="fpName">—</div>
+      <div class="prof-username" id="fpUser">—</div>
+      <div id="fpStatus" class="daily-status" style="display:none;"></div>
+      <div id="fpReputation" class="rep-badge" style="display:none;"></div>
+      <div class="stats-row">
+        <div class="stat-box"><div class="stat-val" id="fpPosts">0</div><div class="stat-lbl">постов</div></div>
+        <div class="stat-box"><div class="stat-val" id="fpFollowers">0</div><div class="stat-lbl">подписчиков</div></div>
+        <div class="stat-box"><div class="stat-val" id="fpFollowing">0</div><div class="stat-lbl">подписок</div></div>
+        <div class="stat-box"><div class="stat-val" id="fpReceived">0</div><div class="stat-lbl">реакций</div></div>
+      </div>
+      <div id="fpFollowWrap" style="display:none;width:100%;margin-top:4px">
+        <button class="follow-btn" id="fpFollowBtn" style="width:100%"></button>
+      </div>
+      <div id="fpMessageWrap" style="display:none;width:100%;margin-top:8px">
+        <a id="fpMessageBtn" href="#" class="follow-btn" style="width:100%;text-decoration:none;background:rgba(168,85,247,0.1);color:var(--primary);border:1px solid rgba(168,85,247,0.3);display:flex;align-items:center;justify-content:center;gap:8px;">
+          <i class="fa-solid fa-comment"></i> Написать
+        </a>
+      </div>
+      <div style="width:100%;margin-top:8px;display:flex;gap:8px;">
+        <button class="follow-btn" onclick="shareForeignProfile()" style="flex:1;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);color:var(--text);display:flex;align-items:center;justify-content:center;gap:6px;">
+          <i class="fa-solid fa-share-nodes"></i> Поделиться
+        </button>
+        <a class="follow-btn" id="fpWrappedBtn" target="_blank" rel="noopener" style="flex:1;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);color:var(--text);display:flex;align-items:center;justify-content:center;gap:6px;text-decoration:none;">
+          <i class="fa-solid fa-chart-pie"></i> Wrapped
+        </a>
+      </div>
+    </div>
+    <div class="prof-tabs">
+      <button class="prof-tab active" data-tab="posts" onclick="switchProfTab('fp', 'posts')">Посты</button>
+      <button class="prof-tab" data-tab="reposts" onclick="switchProfTab('fp', 'reposts')">Репосты</button>
+    </div>
+    <div id="fpList"></div>
+  </div>
+
+  <div class="screen" id="screenMinisky">
+    <div class="msk-feed" id="mskFeed"></div>
+    <button class="msk-back" onclick="switchScreen('screenFeed')" title="Назад"><i class="fa-solid fa-arrow-left"></i></button>
+    <button class="msk-fab" id="mskFab" onclick="switchScreen('screenCreate'); setTimeout(()=>{document.getElementById('miniskaToggle').checked=true;onMiniskaToggle(true);},100);" title="Создать миниску"><i class="fa-solid fa-plus"></i></button>
+  </div>
+
+  <div class="screen" id="screenNotif">
+    <h2 style="font-size:18px;font-weight:700;margin-bottom:14px;padding:0 2px;">Уведомления</h2>
+    <div id="notifList"><div class="loader"><div class="spinner"></div></div></div>
+  </div>
+
+  <!-- ─── КОШЕЛЁК ─────────────────────────────────────────────────────────── -->
+  <div class="screen" id="screenWallet">
+    <h2 style="font-size:20px;font-weight:800;margin:0 0 4px;padding:0 2px;">Кошелёк</h2>
+    <p style="color:var(--sub);font-size:12px;margin:0 0 16px;padding:0 2px;">Экономика GhostEcos · бета</p>
+
+    <!-- Карточки балансов -->
+    <div class="wallet-cards">
+      <div class="wallet-card wallet-card-gost">
+        <div class="wc-head">
+          <i class="fa-solid fa-ghost"></i>
+          <span class="wc-name">Gost</span>
+        </div>
+        <div class="wc-balance" id="walGost">0</div>
+        <div class="wc-sub">Бесплатная — за активность</div>
+      </div>
+      <div class="wallet-card wallet-card-soul locked">
+        <div class="wc-head">
+          <i class="fa-solid fa-fire"></i>
+          <span class="wc-name">Soul</span>
+          <span class="wc-soon">скоро</span>
+        </div>
+        <div class="wc-balance" id="walSoul">0</div>
+        <div class="wc-sub">Основная · с курсом · переводы</div>
+      </div>
+      <div class="wallet-card wallet-card-prem locked">
+        <div class="wc-head">
+          <i class="fa-solid fa-crown"></i>
+          <span class="wc-name">Prem</span>
+          <span class="wc-soon">скоро</span>
+        </div>
+        <div class="wc-balance" id="walPrem">0</div>
+        <div class="wc-sub">Премиум-украшения</div>
+      </div>
+    </div>
+
+    <!-- Daily claim -->
+    <div class="wallet-section">
+      <div class="wallet-section-title">Ежедневный бонус</div>
+      <button class="wallet-claim-btn" id="walClaimBtn" onclick="claimDaily()">
+        <i class="fa-solid fa-gift"></i>
+        <span id="walClaimText">Получить <span id="walDailyAmt">10</span> Gost</span>
+      </button>
+      <div class="wallet-claim-hint" id="walClaimHint" style="display:none;">Следующий бонус через <span id="walClaimCountdown">--:--:--</span></div>
+    </div>
+
+    <!-- Как заработать -->
+    <div class="wallet-section">
+      <div class="wallet-section-title">Как заработать Gost</div>
+      <div class="wallet-sources">
+        <div class="wal-src"><i class="fa-solid fa-gift"></i><span>Ежедневный бонус</span><b>+10</b></div>
+        <div class="wal-src"><i class="fa-solid fa-pen"></i><span>Свой пост</span><b>+5</b></div>
+        <div class="wal-src"><i class="fa-solid fa-heart"></i><span>Лайк на твой пост</span><b>+1</b></div>
+        <div class="wal-src"><i class="fa-solid fa-comment"></i><span>Коммент на твой пост</span><b>+2</b></div>
+        <div class="wal-src"><i class="fa-solid fa-user-plus"></i><span>Новый подписчик</span><b>+5</b></div>
+      </div>
+    </div>
+
+    <!-- История транзакций -->
+    <div class="wallet-section">
+      <div class="wallet-section-title">История</div>
+      <div id="walTxList"><div class="loader"><div class="spinner spinner-sm"></div></div></div>
+    </div>
+  </div>
+</main>
+
+<aside class="dt-side-left" id="dtSideLeft" style="display:none">
+  <div style="font-size:22px;font-weight:800;letter-spacing:0.5px;background:linear-gradient(90deg,var(--primary),var(--primary2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;padding:6px 16px 14px;">GhostSocial</div>
+  <button class="dt-nav-btn active" data-screen="screenFeed"><i class="fa-solid fa-house"></i> Лента</button>
+  <button class="dt-nav-btn" data-screen="screenMinisky"><i class="fa-solid fa-video"></i> Миниски</button>
+  <button class="dt-nav-btn" data-screen="screenSearch"><i class="fa-solid fa-magnifying-glass"></i> Поиск</button>
+  <button class="dt-nav-btn" data-screen="screenNotif"><span class="nav-icon-wrap"><i class="fa-solid fa-bell"></i><span class="notif-badge" id="dtNotifBadge"></span></span> Уведомления</button>
+  <a class="dt-nav-btn" href="/bank/?from=/social" style="text-decoration:none;"><i class="fa-solid fa-wallet"></i> GhostBank</a>
+  <button class="dt-nav-btn" data-screen="screenProfile"><i class="fa-solid fa-user"></i> Профиль</button>
+  <a class="dt-nav-btn" id="dtChatLink" href="/chat/?from=/social" style="text-decoration:none;">
+    <span class="nav-icon-wrap"><i class="fa-solid fa-comments"></i><span class="notif-badge" id="dtChatBadge"></span></span>
+    GhostChat
+  </a>
+  <button class="dt-create-btn" data-screen="screenCreate"><i class="fa-solid fa-pen"></i> Создать пост</button>
+  <div class="dt-side-foot">GhostEcos · 2026</div>
+</aside>
+
+<nav id="appNav" style="display:none">
+  <button class="nav-btn active" data-screen="screenFeed" id="navFeed"><i class="fa-solid fa-house"></i>Лента</button>
+  <button class="nav-btn" data-screen="screenMinisky" id="navMinisky"><i class="fa-solid fa-video"></i>Миниски</button>
+  <button class="nav-btn" data-screen="screenSearch" id="navSearch"><i class="fa-solid fa-magnifying-glass"></i>Поиск</button>
+  <button class="nav-btn" data-screen="screenCreate" id="navCreate"><i class="fa-solid fa-pen"></i>Пост</button>
+  <button class="nav-btn" data-screen="screenNotif" id="navNotif">
+    <span class="nav-icon-wrap"><i class="fa-solid fa-bell"></i><span class="notif-badge" id="notifBadge"></span></span>
+    Уведомления
+  </button>
+  <button class="nav-btn" data-screen="screenProfile" id="navProfile"><i class="fa-solid fa-user"></i>Профиль</button>
+</nav>
+
+<!-- ATTACH MENU -->
+<div class="attach-menu-overlay" id="attachOverlay">
+  <div class="attach-menu" id="attachMenu">
+    <div class="attach-menu-item" onclick="pickFile('image')"><i class="fa-solid fa-image"></i>Фото</div>
+    <div class="attach-menu-item" onclick="pickFile('video')"><i class="fa-solid fa-video"></i>Видео</div>
+    <div class="attach-menu-item" onclick="pickFile('audio')"><i class="fa-solid fa-music"></i>Аудио</div>
+  </div>
+</div>
+<input type="file" id="fileInput" style="display:none">
+
+<!-- FULLSCREEN VIEWER -->
+<div class="viewer-overlay" id="viewerOverlay">
+  <div class="viewer-header">
+    <button class="viewer-back" onclick="closeViewer()"><i class="fa-solid fa-arrow-left"></i></button>
+    <button class="viewer-dl" id="viewerDl"><i class="fa-solid fa-download"></i></button>
+  </div>
+  <div class="viewer-body" id="viewerBody"></div>
+  <div class="viewer-controls" id="viewerControls" style="display:none">
+    <div class="viewer-timeline" id="viewerTimeline">
+      <div class="viewer-timeline-fill" id="viewerFill"></div>
+    </div>
+    <div class="viewer-time-row">
+      <button class="viewer-play" id="viewerPlay"><i class="fa-solid fa-play"></i></button>
+      <span class="viewer-timer" id="viewerTimer">0:00 / 0:00</span>
+    </div>
+  </div>
+</div>
+
+<!-- CONTEXT MENU (dynamic) -->
+<div class="ctx-menu" id="ctxMenu"></div>
+
+<!-- COMMENTS MODAL -->
+<div class="modal-overlay" id="commentsModal">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title">Комментарии</div>
+      <button class="close-btn" onclick="closeModal('commentsModal')"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div id="commentsList"></div>
+    <div id="commentsMore"></div>
+    <div class="comment-input-row">
+      <input class="comment-input" id="commentInput" placeholder="Написать..." maxlength="500">
+      <button class="comment-send" id="commentSend">Отправить</button>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT PROFILE MODAL -->
+<div class="modal-overlay" id="editProfileModal">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title">Редактировать профиль</div>
+      <button class="close-btn" onclick="closeModal('editProfileModal')"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <div class="edit-section-label">Отображаемое имя</div>
+    <input class="modal-input" id="editDisplayName" placeholder="Имя (2–100 символов)" maxlength="100">
+
+    <div class="edit-section-label" style="margin-top:14px">Тег (username)</div>
+    <input class="modal-input" id="editUsername" placeholder="username (a-z, 0-9, _, .)" autocapitalize="none" maxlength="64">
+
+    <div class="edit-section-label" style="margin-top:14px">Новый пароль <span style="color:#475569;font-weight:400">(оставьте пустым чтобы не менять)</span></div>
+    <input class="modal-input" id="editNewPassword" type="password" placeholder="Новый пароль (мин. 8 символов)">
+    <input class="modal-input" id="editConfirmPassword" type="password" placeholder="Повторите новый пароль">
+
+    <div id="editOldPwdWrap" style="display:none">
+      <div class="edit-section-label" style="margin-top:14px;color:var(--primary)"><i class="fa-solid fa-lock" style="font-size:12px"></i> Текущий пароль для подтверждения</div>
+      <input class="modal-input" id="editOldPassword" type="password" placeholder="Текущий пароль">
+    </div>
+
+    <div class="modal-err" id="editProfileErr"></div>
+    <button class="modal-save-btn" id="editProfileBtn">Сохранить</button>
+  </div>
+</div>
+
+<!-- EDIT POST MODAL -->
+<div class="modal-overlay" id="editPostModal">
+  <div class="modal-sheet" style="max-height:85vh;overflow-y:auto;">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title">Редактировать пост</div>
+      <button class="close-btn" onclick="closeModal('editPostModal')"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <p style="color:var(--sub);font-size:12px;margin-bottom:10px;line-height:1.5;">
+      Можно менять раз в 30 минут. Медиа удаляются, добавлять нельзя.
+    </p>
+    <textarea id="editPostText" class="modal-input" rows="6" maxlength="1000" placeholder="Что на уме?" style="resize:vertical;min-height:120px;font-family:inherit;"></textarea>
+    <div id="editPostMediaList" style="display:flex;flex-direction:column;gap:8px;margin-top:10px;"></div>
+    <div class="modal-err" id="editPostErr"></div>
+    <button class="modal-save-btn" id="editPostBtn" onclick="submitEditPost()">Сохранить</button>
+  </div>
+</div>
+
+<!-- ALGO SETTINGS — прозрачный алгоритм -->
+<div class="modal-overlay" id="algoModal">
+  <div class="modal-sheet" style="max-height:85vh;overflow-y:auto;">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title"><i class="fa-solid fa-wand-magic-sparkles" style="color:var(--primary);margin-right:7px;"></i>Ваш алгоритм</div>
+      <button class="close-btn" onclick="closeModal('algoModal')"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <p style="color:var(--sub);font-size:13px;margin-bottom:14px;line-height:1.5;">
+      Всё хранится только на вашем устройстве. Сервер не знает ваших предпочтений.
+    </p>
+    <div id="algoBody"></div>
+    <div style="display:flex;gap:8px;margin-top:14px;">
+      <button class="prof-action-btn" onclick="openSurvey()" style="flex:1;"><i class="fa-solid fa-graduation-cap"></i> Обучить</button>
+      <button class="prof-action-btn danger" onclick="algoReset()" style="flex:1;"><i class="fa-solid fa-rotate-left"></i> Сбросить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ALGO SURVEY (что вам интересно) -->
+<!-- SHARE TO CHAT modal -->
+<div class="modal-overlay" id="shareModal">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title"><i class="fa-solid fa-comment" style="color:var(--primary);margin-right:7px"></i>Отправить в чат</div>
+      <button class="close-btn" onclick="closeModal('shareModal')"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div style="position:relative;margin-bottom:12px;">
+      <i class="fa-solid fa-magnifying-glass" style="position:absolute;left:14px;top:50%;transform:translateY(-50%);color:#475569;font-size:13px;"></i>
+      <input id="shareSearch" oninput="_shareOnSearch(this.value)" placeholder="Поиск среди контактов или по @username"
+             style="width:100%;background:rgba(15,23,42,0.7);border:1px solid var(--border-strong);border-radius:12px;padding:11px 14px 11px 40px;color:var(--text);font-size:14px;outline:none;">
+    </div>
+    <div id="shareList" style="max-height:60vh;overflow-y:auto;"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="surveyModal">
+  <div class="modal-sheet" style="max-height:85vh;overflow-y:auto;">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title"><i class="fa-solid fa-wand-magic-sparkles" style="color:var(--primary);margin-right:7px;"></i>Что вам интересно?</div>
+      <button class="close-btn" onclick="closeModal('surveyModal')"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <p style="color:var(--sub);font-size:13px;margin-bottom:14px;line-height:1.5;">
+      Выберите 1–5 интересных постов. Алгоритм запомнит и начнёт подбирать похожее.
+    </p>
+    <div id="surveyList"><div class="loader"><div class="spinner"></div></div></div>
+    <div style="display:flex;gap:10px;margin-top:14px;">
+      <button class="prof-action-btn" onclick="closeModal('surveyModal')" style="flex:1;">Пропустить</button>
+      <button class="prof-action-btn" id="surveyDone" onclick="surveySubmit()" style="flex:2;background:linear-gradient(90deg,var(--primary),var(--primary2));color:#fff;border-color:transparent;">Готово</button>
+    </div>
+  </div>
+</div>
+
+<!-- CONFIRM DIALOG -->
+<div class="confirm-overlay" id="confirmModal">
+  <div class="confirm-box">
+    <div class="confirm-icon danger" id="confirmIcon"><i class="fa-solid fa-trash-can"></i></div>
+    <div class="confirm-title" id="confirmTitle">Удалить?</div>
+    <div class="confirm-msg" id="confirmMsg"></div>
+    <div class="confirm-actions">
+      <button class="confirm-btn cancel" id="confirmCancel">Отмена</button>
+      <button class="confirm-btn ok danger" id="confirmOk">Удалить</button>
+    </div>
+  </div>
+</div>
+
+<div class="ptr-indicator" id="ptrIndicator"><i class="fa-solid fa-arrow-down"></i></div>
+<button class="scroll-top" id="scrollTopBtn" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Наверх"><i class="fa-solid fa-arrow-up"></i></button>
+
+<!-- iOS install instructions -->
+<div class="install-overlay" id="installModal">
+  <div class="install-box">
+    <button class="install-close" onclick="closeInstall(false)"><i class="fa-solid fa-xmark"></i></button>
+    <div class="install-icon"><img src="/apple-touch-icon.png" alt="" style="width:62px;height:62px;border-radius:14px;"></div>
+    <h2 class="install-title">Установите GhostSocial</h2>
+    <p class="install-sub">Откроется как приложение — без браузерной строки, с иконкой на экране Домой.</p>
+    <div class="install-steps">
+      <div class="install-step"><span class="install-num">1</span><div>Тапните <b><i class="fa-solid fa-arrow-up-from-bracket" style="color:#3b82f6"></i> Поделиться</b> внизу Safari</div></div>
+      <div class="install-step"><span class="install-num">2</span><div>Прокрутите и выберите <b>«На экран Домой»</b></div></div>
+      <div class="install-step"><span class="install-num">3</span><div>Нажмите <b>«Добавить»</b> справа сверху</div></div>
+    </div>
+    <button class="install-got" onclick="closeInstall(true)">Понятно</button>
+  </div>
+  <div class="install-arrow"><i class="fa-solid fa-arrow-down"></i></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/mesh.js"></script>
+<script src="/dialog.js"></script>
+
+  <script src="/liquid.js" defer></script>
+  <script src="/social/assets/app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,4371 @@
+// ════════════════════════════════════════════════════════════════════
+// GhostChat web — E2E-зашифрованный мессенджер
+// ════════════════════════════════════════════════════════════════════
+const API='/api/soc', CHAT_API='/api/chat';
+let token=localStorage.getItem('gs_token');
+let me=null;
+try { me = JSON.parse(localStorage.getItem('gs_me')||'null'); }
+catch(_) { localStorage.removeItem('gs_me'); me=null; }
+let myPriv=null;             // CryptoKey (X25519 приватный) на сессию
+let myPub=null;              // base64 публичного
+let pubCache=new Map();      // username -> base64 pub
+let dialogs=[];              // [{username, display_name, last_text, last_at, last_from_me, unread}]
+let groups=[];               // [{id, name, kind, owner_id, is_admin, is_owner, members_count, created_at}]
+let activeGroup=null;        // {id, name, kind, owner_id, members: [{id, username, display_name, x25519_pub, is_admin, is_owner}]}
+let activePeer=null;         // {username, display_name}
+let activeMessages=[];       // расшифрованные сообщения активного чата
+let ws=null, wsReconnect=1000, pingTimer=null;
+
+// ── tiny helpers ──
+const u8=s=>new TextEncoder().encode(s);
+const b64e=buf=>btoa(String.fromCharCode(...new Uint8Array(buf)));
+const b64d=s=>{const bin=atob(s);const out=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)out[i]=bin.charCodeAt(i);return out;};
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+// jsAttr: безопасная вставка ЛЮБОЙ строки внутрь onclick="foo(...)". JSON.stringify
+// делает её JS-литералом + esc нейтрализует кавычки HTML-атрибута. Используй вместо
+// `'${esc(s)}'` — там esc() даёт &#39; которое HTML декодит обратно в ' → JS-break.
+function jsAttr(v){return esc(JSON.stringify(v == null ? null : String(v)));}
+function ini(n){return n?n[0].toUpperCase():'?';}
+function showToast(m, err=false){const t=document.getElementById('toast');t.textContent=m;t.className='toast'+(err?' err':'');t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400);}
+// Парсит ts → Date. Поддерживает строку '2026-...' (legacy chat_dm) и unix int (sealed).
+function _toDate(ts){
+  if (typeof ts === 'number') return new Date(ts * 1000);  // unix секунды (sealed)
+  if (typeof ts === 'string') {
+    return new Date(ts.includes('Z')||ts.includes('+')?ts:ts+'Z');
+  }
+  return new Date();
+}
+function timeShort(ts){const d=_toDate(ts);return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;}
+function dateKey(ts){const d=_toDate(ts);return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;}
+function dateLong(ts){const d=_toDate(ts);const t=new Date();t.setHours(0,0,0,0);const x=new Date(d);x.setHours(0,0,0,0);const dd=Math.floor((t-x)/86400000);if(dd===0)return'сегодня';if(dd===1)return'вчера';const mn=['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];return `${d.getDate()} ${mn[d.getMonth()]}${d.getFullYear()!==t.getFullYear()?' '+d.getFullYear():''}`;}
+function timeOrDate(ts){const d=_toDate(ts);const n=new Date();if(d.toDateString()===n.toDateString())return timeShort(ts);const days=['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];const diff=(n-d)/86400000;if(diff<7)return days[d.getDay()];return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}`;}
+
+function setSsoCookie(t){if(!t||t.startsWith('guest_'))return;document.cookie=`gs_token=${encodeURIComponent(t)}; path=/; max-age=31536000; SameSite=Lax; Secure`;}
+function clearSsoCookie(){document.cookie='gs_token=; path=/; max-age=0; SameSite=Lax; Secure';}
+
+async function apiCall(base, path, method='GET', body=null){
+  const h={'Content-Type':'application/json'};
+  if(token)h['Authorization']='Bearer '+token;
+  // Тайм-аут 20с чтобы fetch не висел вечно если сервер не отвечает
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 20000);
+  const o={method, headers:h, signal: ctrl.signal};
+  if(body)o.body=JSON.stringify(body);
+  let r;
+  try { r = await fetch(base+path, o); }
+  finally { clearTimeout(tid); }
+  if(!r.ok){
+    const t=await r.text();let m=t;try{m=JSON.parse(t).detail||t;}catch(e){}
+    const err = new Error(m); err.status = r.status; throw err;
+  }
+  return r.json();
+}
+const soc=(p,m,b)=>apiCall(API,p,m,b);
+const chat=(p,m,b)=>apiCall(CHAT_API,p,m,b);
+
+// ════════════════════════════════════════════════════════════════════
+// CRYPTO: X25519 + AES-GCM. Приватный ключ зашифрован паролем через PBKDF2
+// ════════════════════════════════════════════════════════════════════
+async function deriveMasterKey(password, salt){
+  const base = await crypto.subtle.importKey('raw', u8(password), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    {name:'PBKDF2', salt, iterations:260000, hash:'SHA-256'},
+    base, {name:'AES-GCM', length:256}, false, ['encrypt','decrypt']
+  );
+}
+
+// P-256 ECDH (поддерживается во всех браузерах с 2015г)
+// Тот же security model что и X25519 — 128-bit security
+const ECDH_ALGO = {name:'ECDH', namedCurve:'P-256'};
+
+async function genECDHPair(){
+  return crypto.subtle.generateKey(ECDH_ALGO, true, ['deriveBits']);
+}
+
+async function importPub(b64){
+  // P-256 raw public key: 65 байт (0x04 + 32 X + 32 Y)
+  return crypto.subtle.importKey('raw', b64d(b64), ECDH_ALGO, false, []);
+}
+
+async function deriveShared(myPrivKey, theirPubKey){
+  const bits = await crypto.subtle.deriveBits({name:'ECDH', public: theirPubKey}, myPrivKey, 256);
+  const baseKey = await crypto.subtle.importKey('raw', bits, 'HKDF', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    {name:'HKDF', hash:'SHA-256', salt: new Uint8Array(32), info: u8('ghostchat-msg-v1')},
+    baseKey, {name:'AES-GCM', length:256}, false, ['encrypt','decrypt']
+  );
+}
+
+async function encryptText(aesKey, text){
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, aesKey, u8(text));
+  const out = new Uint8Array(12 + ct.byteLength);
+  out.set(iv); out.set(new Uint8Array(ct), 12);
+  return b64e(out);
+}
+
+async function decryptText(aesKey, b64){
+  const raw = b64d(b64);
+  const iv = raw.slice(0, 12);
+  const ct = raw.slice(12);
+  const pt = await crypto.subtle.decrypt({name:'AES-GCM', iv}, aesKey, ct);
+  return new TextDecoder().decode(pt);
+}
+
+// Зашифровать сообщение для конкретного получателя по username
+// payload: либо строка (legacy plain text), либо объект {type, ...} для нового формата
+async function encryptForPeer(peerUsername, payload){
+  let pub = pubCache.get(peerUsername);
+  if (!pub) {
+    const r = await chat(`/keys/${encodeURIComponent(peerUsername)}`);
+    if (!r.x25519_pub) throw new Error('У получателя ещё нет E2E-ключей');
+    pub = r.x25519_pub;
+    const trusted = await verifyAndPinPub(peerUsername, pub);
+    if (!trusted) throw new Error('Отправка отменена: ключ собеседника не принят');
+    pubCache.set(peerUsername, pub);
+  }
+  const theirPub = await importPub(pub);
+  const aes = await deriveShared(myPriv, theirPub);
+  // Если объект — сериализуем в JSON. Если строка — оборачиваем в стандартный msg-payload.
+  const raw = (typeof payload === 'object' && payload !== null) ? JSON.stringify(payload) : String(payload);
+  return encryptText(aes, raw);
+}
+
+// Парсим расшифрованный raw в payload {type, ...}. Legacy plain text → {type:'msg', text}
+function parsePayload(raw){
+  if (typeof raw !== 'string') return {type:'msg', text:''};
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('{')) {
+    try {
+      const obj = JSON.parse(trimmed);
+      if (obj && typeof obj === 'object' && typeof obj.type === 'string') return obj;
+    } catch(_){}
+  }
+  return {type:'msg', text: raw};
+}
+
+// ── Sealed Sender ────────────────────────────────────────────────────────────
+// Sender генерит одноразовую ECDH-пару на каждое сообщение. Public
+// прикладывается к envelope в открытом виде, но НЕ идентифицирует sender'а.
+// Внутри AES-GCM ciphertext — настоящий from_username и payload.
+// Receiver расшифровывает СВОИМ приватным ключом + ephemeral_pub из envelope,
+// не зная заранее кто sender. Внутри расшифрованного envelope — кто.
+//
+// Envelope формат (binary): ephemeral_pub(65) || iv(12) || aes_gcm_ciphertext
+//
+// ⚠️ v1 без подписи: receiver не может верифицировать что from_username не
+// подделан. В будущем — Ed25519-sign(envelope) с persistent identity.
+
+async function encryptSealed(receiverUsername, payload) {
+  let pub = pubCache.get(receiverUsername);
+  if (!pub) {
+    const r = await chat(`/keys/${encodeURIComponent(receiverUsername)}`);
+    if (!r.x25519_pub) throw new Error('У получателя ещё нет E2E-ключей');
+    pub = r.x25519_pub;
+    const trusted = await verifyAndPinPub(receiverUsername, pub);
+    if (!trusted) throw new Error('Отправка отменена: ключ собеседника не принят');
+    pubCache.set(receiverUsername, pub);
+  }
+  const receiverPub = await importPub(pub);
+  // Одноразовая ECDH-пара (P-256)
+  const eph = await crypto.subtle.generateKey(ECDH_ALGO, true, ['deriveBits']);
+  const ephPubRaw = new Uint8Array(await crypto.subtle.exportKey('raw', eph.publicKey));
+  // Shared = ECDH(eph_priv, receiver_pub) → 32 bytes
+  const shared = await crypto.subtle.deriveBits({name:'ECDH', public: receiverPub}, eph.privateKey, 256);
+  const aesKey = await crypto.subtle.importKey('raw', shared, {name:'AES-GCM'}, false, ['encrypt']);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const envBody = { ...payload, from_username: me.username, ts: Math.floor(Date.now()/1000) };
+  const pt = new TextEncoder().encode(JSON.stringify(envBody));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM', iv}, aesKey, pt));
+  const out = new Uint8Array(ephPubRaw.length + iv.length + ct.length);
+  out.set(ephPubRaw, 0);
+  out.set(iv, ephPubRaw.length);
+  out.set(ct, ephPubRaw.length + iv.length);
+  return b64e(out);
+}
+
+async function decryptSealed(cipherB64) {
+  const env = new Uint8Array(b64d(cipherB64));
+  if (env.length < 65 + 12 + 16) throw new Error('sealed envelope too short');
+  const ephPubRaw = env.slice(0, 65);
+  const iv = env.slice(65, 65 + 12);
+  const ct = env.slice(65 + 12);
+  const ephPub = await crypto.subtle.importKey('raw', ephPubRaw, ECDH_ALGO, false, []);
+  const shared = await crypto.subtle.deriveBits({name:'ECDH', public: ephPub}, myPriv, 256);
+  const aesKey = await crypto.subtle.importKey('raw', shared, {name:'AES-GCM'}, false, ['decrypt']);
+  const pt = new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM', iv}, aesKey, ct));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+
+async function decryptFromPeer(peerUsername, cipherB64){
+  let pub = pubCache.get(peerUsername);
+  if (!pub) {
+    const r = await chat(`/keys/${encodeURIComponent(peerUsername)}`);
+    if (!r.x25519_pub) throw new Error('Нет ключа отправителя');
+    pub = r.x25519_pub;
+    const existing = await pinnedPubKey(peerUsername);
+    if (existing && existing.pub !== pub) {
+      // Ключ собеседника изменился — НЕ молчим. Просим подтверждения через TOFU-UI.
+      const trusted = await verifyAndPinPub(peerUsername, pub);
+      if (!trusted) throw new Error(`Ключ @${peerUsername} изменился, доверие не подтверждено`);
+    } else if (!existing) {
+      await pinPubKey(peerUsername, pub, true);
+    }
+    pubCache.set(peerUsername, pub);
+  }
+  const theirPub = await importPub(pub);
+  const aes = await deriveShared(myPriv, theirPub);
+  return decryptText(aes, cipherB64);
+}
+
+// ── Сохранение/загрузка приватного ключа в IDB ──
+// Храним pkcs8-байты приватного ключа. При load импортируем с extractable=false
+// — это значит XSS не сможет re-export через crypto.subtle.exportKey() уже импортированный
+// ключ. (Полная защита от XSS требовала бы session-key wrapping — TODO в будущем.)
+// pkcs8-в-IDB совместимо со всеми браузерами (Safari/iOS не поддерживает
+// structured-clone CryptoKey-объектов — было причиной вечного спиннера).
+async function saveKeysToIDB(pkcs8Bytes){
+  const db = await openIDB();
+  if (!db.objectStoreNames.contains('keys')) return;
+  const tx = db.transaction('keys', 'readwrite');
+  if (pkcs8Bytes) {
+    await new Promise((res, rej) => {
+      const r = tx.objectStore('keys').put({ id: 'priv', data: pkcs8Bytes });
+      r.onsuccess = () => res(); r.onerror = () => rej(r.error);
+    });
+  }
+  if (myPub) {
+    await new Promise((res, rej) => {
+      const r = tx.objectStore('keys').put({ id: 'pub', data: myPub });
+      r.onsuccess = () => res(); r.onerror = () => rej(r.error);
+    });
+  }
+}
+async function loadKeysFromIDB(){
+  const db = await openIDB();
+  if (!db.objectStoreNames.contains('keys')) return false;
+  const tx = db.transaction('keys', 'readonly');
+  const priv = await new Promise(r => { const q = tx.objectStore('keys').get('priv'); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
+  const pub = await new Promise(r => { const q = tx.objectStore('keys').get('pub'); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
+  if (!priv || !pub) return false;
+  try {
+    let bytes = null;
+    if (priv.data) bytes = priv.data;
+    else if (priv.key) {
+      // Legacy: сохраняли CryptoKey-объект (Safari/iOS не работало). Удалим запись.
+      await wipeKeysIDB();
+      return false;
+    }
+    if (!bytes) return false;
+    // extractable=false — XSS не сможет вытащить через exportKey
+    myPriv = await crypto.subtle.importKey('pkcs8', bytes, ECDH_ALGO, false, ['deriveBits']);
+    myPub = pub.data;
+    return true;
+  } catch(e) { console.error('[E2E] load from IDB failed:', e); return false; }
+}
+async function wipeKeysIDB(){
+  try {
+    const db = await openIDB();
+    if (!db.objectStoreNames.contains('keys')) return;
+    const tx = db.transaction('keys', 'readwrite');
+    tx.objectStore('keys').clear();
+  } catch(_) {}
+}
+
+// ── Init / restore keys ──
+async function ensureKeys(password){
+  console.log('[E2E] checking remote keys...');
+  const remote = await chat('/keys/me');
+  // Если сервер вернул ДРУГОЙ pubkey чем в IDB — пароль/устройство менялись.
+  // Чистим локальный priv и peerkey-pins (последние более-менее устаревают,
+  // но TOFU перепиннит их по необходимости с подтверждением).
+  if (myPub && remote.x25519_pub && remote.x25519_pub !== myPub) {
+    console.warn('[E2E] server pub != local pub → wiping IDB keys');
+    await wipeKeysIDB();
+    myPriv = null; myPub = null;
+  }
+  // Если на сервере ключи занулены (после смены пароля) — генерируем заново ниже.
+  if (remote.x25519_pub && remote.encrypted_private_key && remote.key_salt) {
+    console.log('[E2E] found remote keys, decrypting with password...');
+    try {
+      const salt = b64d(remote.key_salt);
+      const master = await deriveMasterKey(password, salt);
+      const enc = b64d(remote.encrypted_private_key);
+      const iv = enc.slice(0, 12);
+      const ct = enc.slice(12);
+      const privBytes = await crypto.subtle.decrypt({name:'AES-GCM', iv}, master, ct);
+      // extractable=false: после импорта байты ключа недоступны JS через exportKey.
+      myPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
+      myPub = remote.x25519_pub;
+      // Сохраним pkcs8 в IDB — следующий заход не будет требовать пароль
+      await saveKeysToIDB(privBytes);
+      console.log('[E2E] keys decrypted OK');
+      return;
+    } catch(e) {
+      console.error('[E2E] decrypt failed:', e);
+      throw new Error('Неверный пароль для расшифровки ключей');
+    }
+  }
+  console.log('[E2E] no remote keys, generating new ECDH pair (P-256)...');
+  // ВАЖНО: на момент генерации ключ должен быть extractable, чтобы мы могли
+  // зашифровать его паролем и отправить на сервер для recovery с других устройств.
+  // СРАЗУ ПОСЛЕ — переимпортируем как non-extractable для рабочего использования.
+  const pair = await crypto.subtle.generateKey(ECDH_ALGO, true, ['deriveBits']);
+  const pubBytes = await crypto.subtle.exportKey('raw', pair.publicKey);
+  myPub = b64e(pubBytes);
+  console.log('[E2E] pub generated, len=', pubBytes.byteLength);
+  const privBytes = await crypto.subtle.exportKey('pkcs8', pair.privateKey);
+  // Шифруем pkcs8 паролем для отправки на сервер
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const master = await deriveMasterKey(password, salt);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, master, privBytes);
+  const enc = new Uint8Array(12 + ct.byteLength);
+  enc.set(iv); enc.set(new Uint8Array(ct), 12);
+  console.log('[E2E] uploading encrypted keys...');
+  await chat('/keys/upload', 'POST', {
+    x25519_pub: myPub,
+    encrypted_private_key: b64e(enc),
+    key_salt: b64e(salt),
+  });
+  // Переимпортируем priv как non-extractable.
+  myPriv = await crypto.subtle.importKey('pkcs8', privBytes, ECDH_ALGO, false, ['deriveBits']);
+  // Сохраним pkcs8 в IDB для следующих заходов (БЕЗ пароля).
+  await saveKeysToIDB(privBytes);
+  console.log('[E2E] upload OK, priv is non-extractable, saved to IDB');
+}
+
+// ════════════════════════════════════════════════════════════════════
+// INDEXED DB: история и метаданные диалогов
+// ════════════════════════════════════════════════════════════════════
+let _idb = null;
+function openIDB(){
+  if (_idb) return Promise.resolve(_idb);
+  return new Promise((res, rej) => {
+    // v3: peerkeys для TOFU-пиннинга
+    // v4: filecache — хранит зашифрованные blob'ы файлов/голосовых локально,
+    //     чтобы при refresh страницы повторно открывать без запроса к серверу
+    //     (сервер удаляет blob после ack от receiver, и второе открытие = 404)
+    const req = indexedDB.open('ghostchat-' + (me && me.username || 'anon'), 4);
+    // Timeout 8 секунд — если что-то блокирует апгрейд (другая вкладка с v2),
+    // лучше показать ошибку чем вечный спиннер.
+    const tid = setTimeout(() => {
+      try { req.onsuccess = null; req.onerror = null; req.onblocked = null; } catch(_){}
+      rej(new Error('IndexedDB заблокирована другой вкладкой. Закрой все открытые вкладки GhostChat и попробуй снова.'));
+    }, 8000);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains('messages')) {
+        const s = db.createObjectStore('messages', { keyPath: 'id', autoIncrement: true });
+        s.createIndex('peer', 'peer', { unique: false });
+        s.createIndex('sid', 'sid', { unique: true });
+      }
+      if (!db.objectStoreNames.contains('dialogs')) {
+        db.createObjectStore('dialogs', { keyPath: 'username' });
+      }
+      if (!db.objectStoreNames.contains('keys')) {
+        db.createObjectStore('keys', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('peerkeys')) {
+        // {username, pub, first_seen, accepted}
+        db.createObjectStore('peerkeys', { keyPath: 'username' });
+      }
+      if (!db.objectStoreNames.contains('filecache')) {
+        // {file_id (string), bytes (ArrayBuffer, encrypted), mime, cached_at}
+        // Хранит ЗАшифрованный blob — мы не доверяем IDB plaintext, к тому же
+        // ключ файла остаётся в file_payload сообщения (тоже зашифрован)
+        const s = db.createObjectStore('filecache', { keyPath: 'file_id' });
+        s.createIndex('cached_at', 'cached_at', { unique: false });
+      }
+    };
+    req.onblocked = () => {
+      // Другая вкладка держит старую версию открытой → апгрейд завис.
+      clearTimeout(tid);
+      rej(new Error('Другая вкладка GhostChat блокирует обновление базы. Закрой её и обнови страницу.'));
+    };
+    req.onsuccess = e => {
+      clearTimeout(tid);
+      _idb = e.target.result;
+      // Если в будущем третья вкладка откроет с версией выше — закрываем тихо
+      _idb.onversionchange = () => { try { _idb.close(); } catch(_){} _idb = null; };
+      res(_idb);
+    };
+    req.onerror = e => { clearTimeout(tid); rej(e.target.error || new Error('Ошибка открытия IndexedDB')); };
+  });
+}
+
+// ── TOFU pinning публичных ключей собеседников ──
+// При первом получении ключа собеседника — сохраняем. При следующем — сверяем.
+// Если поменялся — предупреждаем юзера (могла быть смена устройства/пароля
+// собеседника или подмена ключа сервером).
+async function pinnedPubKey(username){
+  const db = await openIDB();
+  if (!db.objectStoreNames.contains('peerkeys')) return null;
+  const tx = db.transaction('peerkeys', 'readonly');
+  return new Promise(r => {
+    const q = tx.objectStore('peerkeys').get(username);
+    q.onsuccess = () => r(q.result || null);
+    q.onerror = () => r(null);
+  });
+}
+async function pinPubKey(username, pub, accepted=true){
+  const db = await openIDB();
+  if (!db.objectStoreNames.contains('peerkeys')) return;
+  const tx = db.transaction('peerkeys', 'readwrite');
+  await new Promise(r => {
+    const q = tx.objectStore('peerkeys').put({
+      username, pub, accepted: accepted ? 1 : 0,
+      first_seen: new Date().toISOString(),
+    });
+    q.onsuccess = () => r(); q.onerror = () => r();
+  });
+}
+// Возвращает true если ключ либо новый (и пиннится), либо совпадает с пинном,
+// либо юзер согласился принять изменённый ключ.
+async function verifyAndPinPub(username, pub){
+  const existing = await pinnedPubKey(username);
+  if (!existing) {
+    // TOFU: первый раз видим — доверяем и пиннем.
+    await pinPubKey(username, pub, true);
+    return true;
+  }
+  if (existing.pub === pub) return true;
+  // Ключ изменился. Спрашиваем юзера.
+  const ok = await Dialog.confirm(
+    `Ключ шифрования собеседника @${username} изменился.\n\n` +
+    `Это может означать:\n` +
+    `  • Собеседник зашёл с нового устройства / сменил пароль (нормально)\n` +
+    `  • Кто-то подменяет ключ на сервере (опасно — ваши сообщения могут читать)\n\n` +
+    `Доверять новому ключу?`,
+    { title: 'Изменился ключ', okText: 'Доверять', danger: true }
+  );
+  if (ok) {
+    await pinPubKey(username, pub, true);
+    return true;
+  }
+  return false;
+}
+async function wipePeerKeysIDB(){
+  try {
+    const db = await openIDB();
+    if (!db.objectStoreNames.contains('peerkeys')) return;
+    const tx = db.transaction('peerkeys', 'readwrite');
+    tx.objectStore('peerkeys').clear();
+  } catch(_) {}
+}
+function idbReq(tx, fn){
+  return new Promise((res, rej) => {
+    const req = fn(tx);
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+async function idbAddMessage(m){
+  const db = await openIDB();
+  const tx = db.transaction('messages', 'readwrite');
+  const store = tx.objectStore('messages');
+  // дедуп по sid
+  if (m.sid) {
+    const idx = store.index('sid');
+    const exists = await new Promise(r => { const q = idx.get(m.sid); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
+    if (exists) return false;
+  }
+  await idbReq(tx, t => t.objectStore('messages').add(m));
+  return true;
+}
+// Поиск сообщения по sid (для edit/delete операций)
+async function idbFindMessageBySid(sid){
+  const db = await openIDB();
+  const tx = db.transaction('messages', 'readonly');
+  const idx = tx.objectStore('messages').index('sid');
+  return new Promise(r => { const q = idx.get(sid); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
+}
+// Обновить существующее сообщение в IDB по sid (для edit/delete)
+async function idbUpdateMessage(sid, patch){
+  const db = await openIDB();
+  const tx = db.transaction('messages', 'readwrite');
+  const store = tx.objectStore('messages');
+  const idx = store.index('sid');
+  const found = await new Promise(r => { const q = idx.get(sid); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
+  if (!found) return false;
+  Object.assign(found, patch);
+  await idbReq(tx, t => t.objectStore('messages').put(found));
+  return true;
+}
+async function idbGetMessages(peer){
+  const db = await openIDB();
+  const tx = db.transaction('messages', 'readonly');
+  const idx = tx.objectStore('messages').index('peer');
+  return new Promise(res => {
+    const out = [];
+    const cur = idx.openCursor(IDBKeyRange.only(peer));
+    cur.onsuccess = e => { const c = e.target.result; if (c) { out.push(c.value); c.continue(); } else res(out); };
+  });
+}
+// ─── filecache: encrypted blob'ы файлов/голосовых, кэшируем после первого
+//     успешного скачивания. Сервер удаляет файл после ack от receiver →
+//     второе открытие падало с 404. Теперь IDB-cache, server-fallback.
+async function idbCacheFile(file_id, bytes, mime){
+  try {
+    const db = await openIDB();
+    if (!db.objectStoreNames.contains('filecache')) return;
+    const tx = db.transaction('filecache', 'readwrite');
+    await idbReq(tx, t => t.objectStore('filecache').put({
+      file_id: String(file_id),
+      bytes,                // ArrayBuffer (зашифрован, ключ в file_payload)
+      mime: mime || 'application/octet-stream',
+      cached_at: Date.now(),
+    }));
+  } catch(e) {
+    console.warn('[filecache] put failed', e && e.message);
+  }
+}
+
+async function idbGetCachedFile(file_id){
+  try {
+    const db = await openIDB();
+    if (!db.objectStoreNames.contains('filecache')) return null;
+    const tx = db.transaction('filecache', 'readonly');
+    return await new Promise(res => {
+      const req = tx.objectStore('filecache').get(String(file_id));
+      req.onsuccess = () => res(req.result || null);
+      req.onerror = () => res(null);
+    });
+  } catch(_) { return null; }
+}
+
+// Универсальный «cache-first, server-fallback» загрузчик зашифрованного blob'а.
+// Возвращает ArrayBuffer или null если файла нет нигде.
+// После успешного скачивания с сервера сохраняет в IDB ДО ack — чтобы повторное
+// открытие после refresh уже не зависело от наличия файла на сервере.
+async function fetchEncryptedFile(file_id, mime){
+  const cached = await idbGetCachedFile(file_id);
+  if (cached && cached.bytes) {
+    return cached.bytes;
+  }
+  try {
+    const r = await fetch(CHAT_API + `/file/${file_id}`, {
+      headers: {'Authorization': 'Bearer ' + token}
+    });
+    if (!r.ok) return null;
+    const ct = await r.arrayBuffer();
+    // Сохраняем в IDB ДО возврата — даже если caller сразу же сделает /file/ack
+    // и сервер удалит, у нас локально уже всё есть.
+    await idbCacheFile(file_id, ct, mime);
+    return ct;
+  } catch(e) {
+    console.warn('[fetchEncryptedFile] failed', file_id, e && e.message);
+    return null;
+  }
+}
+
+async function idbPutDialog(d){
+  const db = await openIDB();
+  const tx = db.transaction('dialogs', 'readwrite');
+  await idbReq(tx, t => t.objectStore('dialogs').put(d));
+}
+
+// Удалить все сообщения с указанным peer (DM-юзер или group-key вида 'g:42')
+async function idbDeleteMessagesByPeer(peer){
+  const db = await openIDB();
+  const tx = db.transaction('messages', 'readwrite');
+  const idx = tx.objectStore('messages').index('peer');
+  const fileIdsToCleanup = [];
+  await new Promise((res, rej) => {
+    const cur = idx.openCursor(IDBKeyRange.only(peer));
+    cur.onsuccess = e => {
+      const c = e.target.result;
+      if (c) {
+        const v = c.value;
+        const fp = v.file_payload || v.file;
+        if (fp && fp.file_id) fileIdsToCleanup.push(String(fp.file_id));
+        c.delete();
+        c.continue();
+      } else res();
+    };
+    cur.onerror = () => rej(cur.error);
+  });
+  // Заодно почистим filecache для этих сообщений (медиа уже не нужны)
+  if (fileIdsToCleanup.length && db.objectStoreNames.contains('filecache')) {
+    try {
+      const ftx = db.transaction('filecache', 'readwrite');
+      const fs = ftx.objectStore('filecache');
+      for (const fid of fileIdsToCleanup) {
+        try { fs.delete(fid); } catch(_){}
+      }
+    } catch(_){}
+  }
+  return fileIdsToCleanup.length;
+}
+
+// Удалить запись dialog (превью чата в списке) по username
+async function idbDeleteDialog(username){
+  const db = await openIDB();
+  const tx = db.transaction('dialogs', 'readwrite');
+  await idbReq(tx, t => t.objectStore('dialogs').delete(username));
+}
+async function idbGetDialogs(){
+  const db = await openIDB();
+  const tx = db.transaction('dialogs', 'readonly');
+  return new Promise(res => {
+    const out = [];
+    const cur = tx.objectStore('dialogs').openCursor();
+    cur.onsuccess = e => { const c = e.target.result; if (c) { out.push(c.value); c.continue(); } else res(out); };
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════
+// AUTH
+// ════════════════════════════════════════════════════════════════════
+function showAuth(){document.getElementById('authScreen').style.display='flex';document.getElementById('app').style.display='none';document.getElementById('boot').classList.remove('open');}
+function showApp(){document.getElementById('authScreen').style.display='none';document.getElementById('app').style.display='block';document.getElementById('boot').classList.remove('open');}
+function showBoot(title, msg){document.getElementById('bootTitle').textContent=title;document.getElementById('bootMsg').textContent=msg;document.getElementById('boot').classList.add('open');}
+function switchTab(t){
+  document.getElementById('loginForm').style.display=t==='login'?'block':'none';
+  document.getElementById('regForm').style.display=t==='reg'?'block':'none';
+  document.getElementById('tabLogin').classList.toggle('active',t==='login');
+  document.getElementById('tabReg').classList.toggle('active',t==='reg');
+  document.getElementById('loginError').textContent='';document.getElementById('regError').textContent='';
+}
+async function doLogin(){
+  const btn=document.getElementById('loginBtn'),err=document.getElementById('loginError');
+  const u=document.getElementById('loginUsername').value.trim();
+  const p=document.getElementById('loginPassword').value;
+  err.textContent='';if(!u||!p){err.textContent='Заполните все поля';return;}
+  btn.disabled=true;btn.textContent='...';
+  try{
+    const d=await soc('/login','POST',{username:u,password:p});
+    token=d.token;me=d;
+    localStorage.setItem('gs_token',token);localStorage.setItem('gs_me',JSON.stringify(me));setSsoCookie(token);
+    showBoot('Подготовка чата', 'Минуточку…');
+    await ensureKeys(p);
+    // ensureKeys уже сохраняет pkcs8 в IDB внутри
+    try { await onReady(); }
+    catch(rdyErr){
+      console.error('[onReady FAILED]', rdyErr);
+      err.textContent = 'Сбой инициализации чата: ' + (rdyErr.message || rdyErr);
+      showAuth();
+      return;
+    }
+  }catch(e){console.error('[doLogin FAILED]', e);err.textContent=e.message||'Ошибка входа';showAuth();}
+  btn.disabled=false;btn.textContent='Войти';
+}
+async function doRegister(){
+  const btn=document.getElementById('regBtn'),err=document.getElementById('regError');
+  const u=document.getElementById('regUsername').value.trim();
+  const n=document.getElementById('regName').value.trim();
+  const p=document.getElementById('regPassword').value;
+  const c=document.getElementById('regPasswordConfirm').value;
+  const age18 = !!document.getElementById('regAge18').checked;
+  err.textContent='';if(!u||!n||!p||!c){err.textContent='Заполните все поля';return;}
+  if(p!==c){err.textContent='Пароли не совпадают';return;}
+  if(!age18){err.textContent='Подтвердите, что вам исполнилось 18 лет';return;}
+  btn.disabled=true;btn.textContent='...';
+  // Реф: сначала из URL, потом из localStorage (лендинг мог сохранить)
+  let ref = (new URLSearchParams(location.search)).get('ref') || localStorage.getItem('gs_ref') || null;
+  if (ref) ref = ref.trim().replace(/^@/, '').toLowerCase();
+  try{
+    const d=await soc('/register','POST',{username:u,display_name:n,password:p,ref:ref||undefined,age_18_confirm:age18});
+    if (ref) localStorage.removeItem('gs_ref');
+    token=d.token;me=d;
+    localStorage.setItem('gs_token',token);localStorage.setItem('gs_me',JSON.stringify(me));setSsoCookie(token);
+    showBoot('Настройка профиля', 'Минуточку…');
+    await ensureKeys(p);
+    // ensureKeys уже сохраняет pkcs8 в IDB внутри
+    try { await onReady(); }
+    catch(rdyErr){
+      console.error('[onReady FAILED]', rdyErr);
+      err.textContent = 'Сбой инициализации чата: ' + (rdyErr.message || rdyErr);
+      showAuth();
+      return;
+    }
+  }catch(e){console.error('[doRegister FAILED]', e);err.textContent=e.message||'Ошибка регистрации';showAuth();}
+  btn.disabled=false;btn.textContent='Зарегистрироваться';
+}
+['loginUsername','loginPassword'].forEach(id=>document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();}));
+['regUsername','regName','regPassword','regPasswordConfirm'].forEach(id=>document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')doRegister();}));
+
+function showConfirm({title='Подтвердите',msg='',okText='Ок',onOk}){
+  const ov=document.getElementById('confirmModal');
+  document.getElementById('confirmTitle').textContent=title;
+  document.getElementById('confirmMsg').textContent=msg;
+  const ok=document.getElementById('confirmOk');ok.textContent=okText;
+  ov.classList.add('open');
+  const close=()=>ov.classList.remove('open');
+  ok.onclick=()=>{close();onOk&&onOk();};
+  document.getElementById('confirmCancel').onclick=close;
+  ov.onclick=e=>{if(e.target===ov)close();};
+}
+function doLogout(){
+  showConfirm({
+    title:'Выйти из аккаунта?',
+    msg:'Вы выйдете во всех вкладках GhostEcos — соцсеть, чат и магазин.',
+    okText:'Выйти',
+    onOk:async()=>{
+      await wipeKeysIDB();
+      token=null;me=null;myPriv=null;myPub=null;
+      localStorage.removeItem('gs_token');localStorage.removeItem('gs_me');clearSsoCookie();
+      try{ws&&ws.close();}catch(e){}
+      showAuth();switchTab('login');showToast('Вы вышли');
+    }
+  });
+}
+
+// SSO sync
+window.addEventListener('storage',e=>{
+  if(e.key==='gs_token'&&!e.newValue&&token){
+    token=null;me=null;myPriv=null;myPub=null;clearSsoCookie();try{ws&&ws.close();}catch(e){}showAuth();switchTab('login');
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════
+// READY: загружаем диалоги из IDB, забираем pending, открываем WS
+// ════════════════════════════════════════════════════════════════════
+async function onReady(){
+  console.log('[onReady] start');
+  showApp();
+  applyLeftBtn();
+  try { maybeShowInstallPrompt(); } catch(e) { console.warn('[onReady] install prompt err', e); }
+  console.log('[onReady] opening IDB');
+  await openIDB();
+  console.log('[onReady] loading dialogs');
+  dialogs = (await idbGetDialogs()) || [];
+  // last_at может быть строкой (legacy ISO) или числом (unix-int от sealed) —
+  // сравниваем через Date.getTime() чтобы не падать с .localeCompare
+  dialogs.sort((a,b) => {
+    const av = a.last_at ? new Date(typeof a.last_at === 'number' ? a.last_at * 1000 : a.last_at).getTime() : 0;
+    const bv = b.last_at ? new Date(typeof b.last_at === 'number' ? b.last_at * 1000 : b.last_at).getTime() : 0;
+    return bv - av;  // DESC: новые сверху
+  });
+  renderDialogs();
+  // Groups + WS + pending — параллельно в фоне, не блокируем UI открытие
+  console.log('[onReady] connectWS');
+  connectWS();
+  console.log('[onReady] loadGroups + fetchPending in background');
+  loadGroups().catch(e => console.warn('[onReady] groups err', e));
+  fetchPending().catch(e => console.warn('[onReady] pending err', e));
+  // Бейдж непрочитанных GhostSocial-уведомлений
+  startGSBadgePolling();
+  // Deep-link: ?to=username — открыть чат сразу. ?text=... — предзаполнить input.
+  const params = new URLSearchParams(location.search);
+  const to = params.get('to');
+  const presetText = params.get('text');
+  console.log('[deeplink] to=', to, 'text length=', presetText ? presetText.length : 0);
+  if (to) {
+    const ex = dialogs.find(d => d.username === to);
+    if (ex) {
+      console.log('[deeplink] found existing dialog');
+      await openChat(to, ex.display_name);
+    } else {
+      try {
+        console.log('[deeplink] resolving via /prof');
+        const r = await soc(`/prof/${encodeURIComponent(to)}`);
+        await openChat(r.username, r.display_name);
+      } catch(e) { console.error('[deeplink] prof failed', e); showToast('Юзер не найден', true); }
+    }
+    if (presetText) {
+      const tryFill = (tries) => {
+        const inp = document.getElementById('sendInput');
+        const btn = document.getElementById('sendBtn');
+        if (inp) {
+          console.log('[deeplink] filling input, len=', presetText.length);
+          inp.value = presetText;
+          // Принудительно активируем кнопку (input event может не сработать)
+          if (btn) btn.disabled = false;
+          // И дергаем input для авто-роста textarea
+          inp.style.height = '42px';
+          inp.style.height = Math.min(140, inp.scrollHeight) + 'px';
+          inp.focus();
+          inp.setSelectionRange(inp.value.length, inp.value.length);
+        } else if (tries > 0) {
+          requestAnimationFrame(() => tryFill(tries - 1));
+        } else {
+          console.error('[deeplink] sendInput not found after retries');
+        }
+      };
+      requestAnimationFrame(() => tryFill(10));
+    }
+    const cleanSearch = ['from'].map(k => { const v = params.get(k); return v ? `${k}=${encodeURIComponent(v)}` : null; }).filter(Boolean).join('&');
+    history.replaceState(null, '', location.pathname + (cleanSearch ? '?'+cleanSearch : ''));
+  }
+}
+
+// Опрашиваем непрочитанные уведомления GhostSocial — бейдж на кнопке "В GhostSocial"
+let _gsBadgeTimer = 0;
+function startGSBadgePolling(){
+  if (_gsBadgeTimer) return;
+  const tick = async () => {
+    try {
+      const d = await soc('/notif/unread');
+      const badge = document.getElementById('sbFootBadge');
+      if (!badge) return;
+      const cnt = d.count || 0;
+      badge.textContent = cnt > 99 ? '99+' : cnt;
+      badge.classList.toggle('show', cnt > 0);
+    } catch(_) {}
+  };
+  tick();
+  _gsBadgeTimer = setInterval(tick, 20000);
+}
+
+// ── PWA install prompt (iOS Safari) ──
+function isIOS(){
+  const ua = navigator.userAgent || '';
+  return /iPad|iPhone|iPod/.test(ua) || (ua.includes('Mac') && 'ontouchend' in document);
+}
+function isStandalone(){
+  return window.navigator.standalone === true ||
+         window.matchMedia('(display-mode: standalone)').matches;
+}
+function maybeShowInstallPrompt(){
+  // Показываем пункт в меню всем кроме standalone
+  if (!isStandalone()) {
+    const item = document.getElementById('sbInstallItem');
+    if (item) item.style.display = '';
+  }
+  if (isStandalone()) return;
+  if (!isIOS()) return; // Android-Chrome покажет свой banner сам через beforeinstallprompt
+  if (localStorage.getItem('install_seen')) return;
+  setTimeout(openInstall, 2000);
+}
+function openInstall(){
+  document.getElementById('installModal').classList.add('open');
+}
+function closeInstall(remember){
+  document.getElementById('installModal').classList.remove('open');
+  if (remember) localStorage.setItem('install_seen', '1');
+}
+
+async function fetchPending(){
+  try{
+    const d = await chat('/pending');
+    if (!d.messages || !d.messages.length) return;
+    // Параллельный decrypt всех pending — раньше последовательно тормозило на 50+ сообщениях
+    const results = await Promise.all(d.messages.map(m =>
+      ingestIncoming(m).catch(e => { console.warn('[ingest] err', e); return false; })
+    ));
+    const ackIds = d.messages.filter((_, i) => results[i]).map(m => m.id);
+    if (ackIds.length) {
+      try { await chat('/ack', 'POST', { ids: ackIds }); } catch(_) {}
+    }
+  }catch(e){ /* offline */ }
+}
+
+async function fetchPendingSealed(){
+  try{
+    const d = await chat('/pending_sealed');
+    if (!d.messages || !d.messages.length) return;
+    const ackIds = [];
+    for (const m of d.messages) {
+      const ok = await ingestSealed(m);
+      if (ok) ackIds.push(m.id);
+    }
+    if (ackIds.length) {
+      try { await chat('/ack_sealed', 'POST', { ids: ackIds }); } catch(_) {}
+    }
+  }catch(e){ /* offline */ }
+}
+
+// Расшифровываем sealed envelope, восстанавливаем from_username из payload,
+// дальше идём через тот же ingestIncoming — все downstream-функции уже работают.
+async function ingestSealed(m){
+  // m: {id, ciphertext, created_at}
+  let env;
+  try { env = await decryptSealed(m.ciphertext); }
+  catch(e) { console.warn('[sealed decrypt failed]', e); return false; }
+  if (!env || !env.from_username) return false;
+  // Sealed delivered / read — операционные сообщения. target_sid это _payloadSid
+  // отправителя (тот что был внутри envelope при первой отправке).
+  if (env.type === 'delivered' && env.target_sid != null) {
+    const tgt = activeMessages.find(x => String(x._payloadSid) === String(env.target_sid));
+    if (tgt) { tgt.delivered = true; renderMessages(); idbUpdateMessage(tgt.sid, { delivered: true }).catch(()=>{}); }
+    return true;
+  }
+  if (env.type === 'read' && env.target_sid != null) {
+    const tgt = activeMessages.find(x => String(x._payloadSid) === String(env.target_sid));
+    if (tgt) { tgt.delivered = true; tgt.read = true; renderMessages(); idbUpdateMessage(tgt.sid, { delivered: true, read: true }).catch(()=>{}); }
+    return true;
+  }
+  // Обычное text/edit/delete — переиспользуем legacy-pipeline через ingestIncoming
+  // Подделываем формат: text внутри envelope.text, ciphertext не нужен (уже decrypted)
+  const ok = await ingestIncoming({
+    id: m.id,
+    from_username: env.from_username,
+    from_display_name: env.from_username,  // имя можно подтянуть через /prof позже
+    to_username: me.username,
+    ciphertext: '',  // не используется — мы передаём _decrypted
+    created_at: m.created_at,
+    _decrypted: env,  // подсказка для ingestIncoming чтобы не повторно decrypt-ить
+  });
+  // После приёма — отправим sender'у sealed-delivered (если в envelope есть sid).
+  // Sender НЕ знает что сервер не передаёт sender_id, ему нужен сигнал из канала.
+  if (ok && env.sid != null && env.from_username && env.from_username !== me.username) {
+    try {
+      const reply = await encryptSealed(env.from_username, { type: 'delivered', target_sid: env.sid });
+      await chat('/send_sealed', 'POST', { to_username: env.from_username, ciphertext: reply });
+    } catch(e) { console.warn('[sealed delivered failed]', e); }
+  }
+  return ok;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// INCOMING / OUTGOING
+// ════════════════════════════════════════════════════════════════════
+async function ingestIncoming(m){
+  // ─── Дедуп chat.echo (отправитель видит своё же сообщение через WS) ───
+  // Backend шлёт echo всем сокетам отправителя для multi-tab. Текущая вкладка
+  // уже имеет optimistic в activeMessages. Два варианта race-окна:
+  //  (а) HTTP-ответ /send пришёл раньше echo → optimistic.sid уже = r.id →
+  //      дедуп по sid срабатывает.
+  //  (б) WS echo пришёл раньше HTTP-ответа → optimistic.sid всё ещё "tmp-..."
+  //      → дедуп по sid пропустит. Нужен fallback по from_me+pending+content.
+  if (m && m.id != null && (activeMessages || []).some(x => String(x.sid) === String(m.id))) {
+    return false;
+  }
+  // Fallback: ищем pending-optimistic с тем же контентом (для своих сообщений).
+  // Если нашли — присваиваем правильный sid и created_at, выходим без push.
+  if (m && m.from_username === (me && me.username) && Array.isArray(activeMessages)) {
+    // Расшифровать payload чтоб сравнить контент
+    let echoPayload = null;
+    if (m._decrypted) {
+      echoPayload = m._decrypted;
+    } else {
+      try { echoPayload = parsePayload(await decryptFromPeer(m.to_username, m.ciphertext)); }
+      catch(_) { echoPayload = null; }
+    }
+    if (echoPayload) {
+      const echoText = String(echoPayload.text || '');
+      const echoFileId = echoPayload.file_id;
+      const echoFileName = echoPayload.file_name || '';
+      const echoFileSize = Number(echoPayload.size || 0);
+      const opt = activeMessages.find(x => {
+        if (!x.pending || !x.from_me || !String(x.sid || '').startsWith('tmp-')) return false;
+        // (a) optimistic уже получил file_payload (HTTP response успел) — сравнить file_id
+        if (echoFileId != null && x.file_payload && x.file_payload.file_id === echoFileId) return true;
+        // (b) optimistic ещё без file_payload (WS echo обогнал POST response) —
+        //     сравнить имя+размер из временного x.file (ставится при создании optimistic)
+        if (echoFileId != null && x.file && x.file.name === echoFileName && Number(x.file.size||0) === echoFileSize) return true;
+        // (c) текстовое сообщение — сравнить текст
+        if (echoFileId == null && (x.text || '') === echoText) return true;
+        return false;
+      });
+      if (opt) {
+        opt.sid = m.id;
+        opt.created_at = m.created_at;
+        opt.pending = false;
+        // Если это echo файла и у optimistic ещё нет file_payload (POST /send не
+        // успел вернуться) — заполним сами, чтобы sendFileMessage не создал второй.
+        if (echoFileId != null && !opt.file_payload && echoPayload.key && echoPayload.iv) {
+          opt.file_payload = {
+            file_id: echoFileId,
+            file_name: echoFileName,
+            mime: echoPayload.mime || 'application/octet-stream',
+            size: echoFileSize,
+            key: echoPayload.key,
+            iv: echoPayload.iv,
+            ...(echoPayload.voice ? {voice: true, duration: Number(echoPayload.duration)||0} : {}),
+          };
+        }
+        // Сохраним в IDB (sendMessage сам сохранит после своего await — idbAddMessage дедупит)
+        idbAddMessage(opt).catch(()=>{});
+        if (typeof renderMessages === 'function') renderMessages();
+        return false;
+      }
+    }
+  }
+  // m: {id, from_username, from_display_name, to_username, ciphertext, created_at, _decrypted?}
+  const isMine = m.from_username === me.username;
+  const peerUsername = isMine ? m.to_username : m.from_username;
+  const peerName = isMine ? null : m.from_display_name;
+  let payload;
+  if (m._decrypted) {
+    payload = m._decrypted;  // sealed уже расшифровано в ingestSealed
+  } else {
+    let raw = '';
+    try {
+      raw = await decryptFromPeer(peerUsername, m.ciphertext);
+    } catch(e) {
+      raw = '[не удалось расшифровать]';
+    }
+    payload = parsePayload(raw);
+  }
+
+  // ── Операционные сообщения: edit / delete — применяем к существующему по sid ──
+  if (payload.type === 'edit' && payload.target_sid != null) {
+    const tsid = payload.target_sid;
+    const target = await idbFindMessageBySid(tsid);
+    if (target && target.peer === peerUsername && target.from_me === isMine) {
+      await idbUpdateMessage(tsid, {text: String(payload.new_text || ''), edited: true});
+      if (activePeer && activePeer.username === peerUsername) {
+        const i = activeMessages.findIndex(x => String(x.sid) === String(tsid));
+        if (i >= 0) { activeMessages[i].text = String(payload.new_text || ''); activeMessages[i].edited = true; renderMessages(); }
+      }
+      const d = dialogs.find(x => x.username === peerUsername);
+      if (d && d.last_text === target.text) { d.last_text = String(payload.new_text || ''); await idbPutDialog(d); renderDialogs(document.getElementById('sbSearch').value); }
+    }
+    return true;
+  }
+  if (payload.type === 'delete' && payload.target_sid != null) {
+    const tsid = payload.target_sid;
+    const target = await idbFindMessageBySid(tsid);
+    if (target && target.peer === peerUsername && target.from_me === isMine) {
+      await idbUpdateMessage(tsid, {text: '', deleted: true});
+      if (activePeer && activePeer.username === peerUsername) {
+        const i = activeMessages.findIndex(x => String(x.sid) === String(tsid));
+        if (i >= 0) { activeMessages[i].text = ''; activeMessages[i].deleted = true; renderMessages(); }
+      }
+    }
+    return true;
+  }
+
+  // ── Реакция ──
+  if (payload.type === 'react' && payload.target_sid != null) {
+    const tsid = payload.target_sid;
+    const target = await idbFindMessageBySid(tsid);
+    // Реакция от автора message — реагирует ОН сам; от собеседника — реагирует собеседник
+    const reactorKey = isMine ? me.username : peerUsername;
+    if (target && target.peer === peerUsername) {
+      const reactions = target.reactions || {};
+      // Очистим прежнюю реакцию этого юзера (один юзер = одна реакция на сообщение)
+      for (const e of Object.keys(reactions)) {
+        reactions[e] = (reactions[e] || []).filter(u => u !== reactorKey);
+        if (!reactions[e].length) delete reactions[e];
+      }
+      if (payload.emoji) {
+        reactions[payload.emoji] = [...(reactions[payload.emoji] || []), reactorKey];
+      }
+      await idbUpdateMessage(tsid, { reactions });
+      if (activePeer && activePeer.username === peerUsername) {
+        const i = activeMessages.findIndex(x => String(x.sid) === String(tsid));
+        if (i >= 0) { activeMessages[i].reactions = reactions; renderMessages(); }
+      }
+    }
+    return true;
+  }
+
+  // ── File / Voice сообщение ──
+  if ((payload.type === 'file' || payload.type === 'voice') && payload.file_id != null) {
+    const isVoice = payload.type === 'voice';
+    const stored = {
+      sid: m.id,
+      peer: peerUsername,
+      from_me: isMine,
+      text: '',
+      created_at: m.created_at,
+      file_payload: {
+        file_id: payload.file_id,
+        file_name: String(payload.file_name || (isVoice ? 'voice' : 'file')),
+        mime: String(payload.mime || (isVoice ? 'audio/webm' : 'application/octet-stream')),
+        size: Number(payload.size) || 0,
+        key: String(payload.key || ''),
+        iv: String(payload.iv || ''),
+        ...(isVoice ? {voice: true, duration: Number(payload.duration) || 0} : {}),
+      },
+    };
+    // Sealed-meta для отправки read обратно
+    if (m._decrypted) {
+      stored._sealedFromUsername = m._decrypted.from_username;
+      stored._sealedPayloadSid = m._decrypted.sid;
+    }
+    const added = await idbAddMessage(stored);
+    if (!added) return false;
+    let d = dialogs.find(x => x.username === peerUsername);
+    const preview = isVoice ? 'Голосовое' : ('Файл: ' + stored.file_payload.file_name);
+    if (!d) {
+      d = { username: peerUsername, display_name: peerName || peerUsername, last_text: preview, last_at: m.created_at, last_from_me: isMine, unread: 0 };
+      dialogs.unshift(d);
+    } else {
+      if (peerName) d.display_name = peerName;
+      d.last_text = preview;
+      d.last_at = m.created_at;
+      d.last_from_me = isMine;
+      dialogs = [d, ...dialogs.filter(x => x.username !== peerUsername)];
+    }
+    if (!isMine && (!activePeer || activePeer.username !== peerUsername)) d.unread = (d.unread || 0) + 1;
+    await idbPutDialog(d);
+    renderDialogs(document.getElementById('sbSearch').value);
+    if (activePeer && activePeer.username === peerUsername) {
+      activeMessages.push(stored);
+      renderMessages();
+      scrollChatBottom(true);
+    }
+    return true;
+  }
+
+  // ── Обычное сообщение (или legacy plain text) ──
+  const text = String(payload.text || '');
+  const stored = {
+    sid: m.id,
+    peer: peerUsername,
+    from_me: isMine,
+    text,
+    created_at: m.created_at,
+  };
+  // Для sealed-сообщений сохраняем sender + sid из envelope чтобы потом отправить sealed-read
+  if (m._decrypted) {
+    stored._sealedFromUsername = m._decrypted.from_username;
+    stored._sealedPayloadSid = m._decrypted.sid;
+  }
+  if (payload.reply_to) {
+    stored.reply_to = payload.reply_to;
+    stored.reply_preview = String(payload.reply_preview || '').slice(0, 100);
+  }
+  if (payload.forwarded_from) {
+    stored.forwarded_from = String(payload.forwarded_from).slice(0, 50);
+  }
+  const added = await idbAddMessage(stored);
+  if (!added) return false;
+  let d = dialogs.find(x => x.username === peerUsername);
+  if (!d) {
+    d = { username: peerUsername, display_name: peerName || peerUsername, last_text: text, last_at: m.created_at, last_from_me: isMine, unread: 0 };
+    dialogs.unshift(d);
+  } else {
+    if (peerName) d.display_name = peerName;
+    d.last_text = text;
+    d.last_at = m.created_at;
+    d.last_from_me = isMine;
+    dialogs = [d, ...dialogs.filter(x => x.username !== peerUsername)];
+  }
+  if (!isMine && (!activePeer || activePeer.username !== peerUsername)) {
+    d.unread = (d.unread || 0) + 1;
+  }
+  await idbPutDialog(d);
+  renderDialogs(document.getElementById('sbSearch').value);
+  if (activePeer && activePeer.username === peerUsername) {
+    activeMessages.push(stored);
+    appendMessage(stored);
+  }
+  return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// E2E файлы — клиент шифрует blob AES-GCM свежим ключом, загружает
+// ciphertext, в сообщении передаёт {type:'file', file_id, key, iv, ...}
+// Сервер хранит только ciphertext blob — не знает имя, тип, содержимое.
+// ═══════════════════════════════════════════════════════════════════
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // base лимит ЛС (premium = 500 MB, реализация позже)
+
+function fmtSize(n){
+  if (n < 1024) return n + ' Б';
+  if (n < 1048576) return Math.round(n / 102.4) / 10 + ' КБ';
+  return Math.round(n / 104857.6) / 10 + ' МБ';
+}
+const FILE_EXT_ICON = {
+  pdf:'fa-file-pdf', doc:'fa-file-word', docx:'fa-file-word', xls:'fa-file-excel', xlsx:'fa-file-excel',
+  zip:'fa-file-zipper', rar:'fa-file-zipper', '7z':'fa-file-zipper',
+  mp3:'fa-file-audio', wav:'fa-file-audio', ogg:'fa-file-audio',
+  mp4:'fa-file-video', mov:'fa-file-video', webm:'fa-file-video', avi:'fa-file-video',
+  jpg:'fa-file-image', jpeg:'fa-file-image', png:'fa-file-image', gif:'fa-file-image', webp:'fa-file-image',
+  txt:'fa-file-lines', md:'fa-file-lines',
+};
+function fileIcon(name){
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  return FILE_EXT_ICON[ext] || 'fa-file';
+}
+
+async function pickAndSendFile(input){
+  const files = Array.from(input.files || []);
+  input.value = ''; // сброс чтобы можно было загрузить тот же файл снова
+  if (!files.length || !activePeer) return;
+  // Каждый файл = отдельное сообщение (как в TG для non-album файлов).
+  // Отправляем последовательно чтобы не превысить per-pair rate-limit и
+  // сохранить порядок появления у получателя.
+  for (const f of files) {
+    if (f.size > MAX_FILE_SIZE) {
+      showToast(`«${f.name}» слишком большой (${fmtSize(f.size)}, макс ${fmtSize(MAX_FILE_SIZE)})`, true);
+      continue;
+    }
+    await _sendSingleFile(f);
+  }
+}
+
+async function _sendSingleFile(f){
+  if (!activePeer) return;
+  const tempId = 'tmp-' + Date.now() + '-' + Math.floor(Math.random()*10000);
+  const optimistic = {
+    sid: tempId, peer: activePeer.username, from_me: true,
+    text: '', created_at: new Date().toISOString(), pending: true,
+    file: {name: f.name, mime: f.type || 'application/octet-stream', size: f.size},
+  };
+  activeMessages.push(optimistic);
+  renderMessages();
+  scrollChatBottom(true);
+  try {
+    // 1. Читаем файл как ArrayBuffer
+    const plain = await f.arrayBuffer();
+    // 2. Генерим свежий AES-256 ключ + IV для этого файла
+    const fileKey = await crypto.subtle.generateKey({name:'AES-GCM', length:256}, true, ['encrypt','decrypt']);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    // 3. Шифруем
+    const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, fileKey, plain);
+    // 4. Экспортируем ключ для передачи в сообщении
+    const keyRaw = await crypto.subtle.exportKey('raw', fileKey);
+    // 5. Загружаем ciphertext blob через multipart
+    const form = new FormData();
+    form.append('to_username', activePeer.username);
+    form.append('blob', new Blob([ct], {type:'application/octet-stream'}), 'enc');
+    const upRes = await fetch(CHAT_API + '/file/upload', {
+      method:'POST',
+      headers: { 'Authorization': 'Bearer ' + token },
+      body: form,
+    });
+    if (!upRes.ok) {
+      const text = await upRes.text();
+      let msg = text; try { msg = JSON.parse(text).detail || text; } catch(e){}
+      throw new Error(msg);
+    }
+    const { file_id } = await upRes.json();
+    // Кэшируем encrypted blob у sender'а — чтобы после refresh переоткрыть
+    // картинку/файл без зависимости от того, удалил ли сервер blob после ack.
+    await idbCacheFile(file_id, ct, f.type || 'application/octet-stream');
+    // 6. Отправляем сообщение с metadata + ключом
+    const payload = {
+      type: 'file', file_id, file_name: f.name, mime: f.type || 'application/octet-stream',
+      size: f.size, key: b64e(keyRaw), iv: b64e(iv),
+    };
+    const cmsg = await encryptForPeer(activePeer.username, payload);
+    const r = await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: cmsg });
+    optimistic.sid = r.id;
+    optimistic.created_at = r.created_at;
+    optimistic.pending = false;
+    optimistic.file_payload = payload; // храним для рендера и скачивания
+    await idbAddMessage(optimistic);
+    // Обновим dialog
+    let d = dialogs.find(x => x.username === activePeer.username);
+    if (!d) { d = { username: activePeer.username, display_name: activePeer.display_name || activePeer.username, unread: 0 }; dialogs.unshift(d); }
+    d.last_text = '📎 ' + f.name; d.last_at = r.created_at; d.last_from_me = true;
+    dialogs = [d, ...dialogs.filter(x => x.username !== activePeer.username)];
+    await idbPutDialog(d);
+    renderDialogs(document.getElementById('sbSearch').value);
+    renderMessages();
+  } catch(e) {
+    optimistic.failed = true;
+    renderMessages();
+    showToast(e.message || 'Не удалось отправить файл', true);
+  }
+}
+
+// Скачать и расшифровать файл по сообщению
+async function downloadFile(sid){
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
+  const p = m && (m.file_payload || m.file);
+  if (!p) return;
+  try {
+    showToast('Скачиваю...');
+    // cache-first: после refresh файла на сервере уже нет (мы ack-нули) →
+    // берём из локального IDB filecache.
+    const ct = await fetchEncryptedFile(p.file_id, p.mime);
+    if (!ct) { showToast('Файл удалён с сервера и нет локального кэша', true); return; }
+    const key = await crypto.subtle.importKey('raw', b64d(p.key), {name:'AES-GCM'}, false, ['decrypt']);
+    const iv = b64d(p.iv);
+    const plain = await crypto.subtle.decrypt({name:'AES-GCM', iv}, key, ct);
+    // Сохраняем как файл через blob URL
+    const blob = new Blob([plain], {type: p.mime || 'application/octet-stream'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = p.file_name || 'file';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    // ACK — пусть удалит с сервера (только если мы receiver, sender и так может перекачать)
+    if (!m.from_me) {
+      try { await fetch(CHAT_API + `/file/${p.file_id}/ack`, {method:'POST', headers:{'Authorization':'Bearer '+token}}); } catch(_){}
+    }
+  } catch(e) { showToast('Не удалось расшифровать: ' + e.message, true); }
+}
+
+// ─── Lightbox для медиа (изображений) ───
+function openMediaViewer(sid){
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
+  if (!m || !m._imgUrl) return;
+  const fp = m.file_payload || m.file || {};
+  let v = document.getElementById('mediaViewer');
+  if (!v) {
+    v = document.createElement('div');
+    v.id = 'mediaViewer';
+    document.body.appendChild(v);
+  }
+  v.innerHTML = `
+    <div class="mv-top">
+      <div class="mv-info">
+        <div class="nm">${esc(fp.file_name || fp.name || 'Изображение')}</div>
+        <div class="sub">${fmtSize(fp.size || 0)} · ${esc(fp.mime || 'image')}</div>
+      </div>
+      <button class="mv-btn" onclick="event.stopPropagation();downloadFile(${jsAttr(sid)})" title="Скачать"><i class="fa-solid fa-download"></i></button>
+      <button class="mv-btn" onclick="closeMediaViewer()" title="Закрыть"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <img class="mv-img" src="${m._imgUrl}" alt="${esc(fp.file_name || '')}">
+  `;
+  v.classList.add('open');
+  v.onclick = (e) => { if (e.target === v) closeMediaViewer(); };
+  // Swipe down to close (mobile)
+  let touchStartY = 0;
+  v.ontouchstart = (e) => { touchStartY = e.touches[0].clientY; };
+  v.ontouchend = (e) => {
+    const dy = (e.changedTouches[0].clientY - touchStartY);
+    if (dy > 80) closeMediaViewer();
+  };
+  document.addEventListener('keydown', _mvKeyHandler);
+}
+function closeMediaViewer(){
+  const v = document.getElementById('mediaViewer');
+  if (v) v.classList.remove('open');
+  document.removeEventListener('keydown', _mvKeyHandler);
+}
+function _mvKeyHandler(e){ if (e.key === 'Escape') closeMediaViewer(); }
+
+// Превью картинки inline — скачиваем + decrypt + показываем в bubble
+async function loadImgPreview(sid){
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
+  if (!m || m._imgLoaded) return;
+  const p = m.file_payload || m.file;
+  if (!p) return;
+  const isImg = p.mime && p.mime.startsWith('image/');
+  const isVideo = p.mime && p.mime.startsWith('video/');
+  if (!isImg && !isVideo) return;
+  try {
+    const ct = await fetchEncryptedFile(p.file_id, p.mime);
+    if (!ct) { console.warn('[media preview] not available'); return; }
+    const key = await crypto.subtle.importKey('raw', b64d(p.key), {name:'AES-GCM'}, false, ['decrypt']);
+    const plain = await crypto.subtle.decrypt({name:'AES-GCM', iv: b64d(p.iv)}, key, ct);
+    const blob = new Blob([plain], {type: p.mime});
+    const url = URL.createObjectURL(blob);
+    m._imgLoaded = true;
+    m._imgUrl = url;
+    const safeSid = String(sid).replace(/[^a-zA-Z0-9_-]/g, '');
+    const el = document.querySelector(`.msg[data-sid="${safeSid}"] .msg-img-placeholder`);
+    if (!el) return;
+    if (isVideo) {
+      el.outerHTML = `<video class="msg-video" src="${url}" controls preload="metadata"></video>`;
+    } else {
+      el.outerHTML = `<img class="msg-img" src="${url}" alt="${esc(p.file_name)}" onclick="openMediaViewer('${safeSid}')">`;
+    }
+  } catch(e){ console.error('[media preview]', e); }
+}
+
+// Иконка отправки: микрофон когда нет текста (как в TG), стрелка когда есть
+function updateSendIcon(){
+  const inp = document.getElementById('sendInput');
+  const icon = document.getElementById('sendIcon');
+  if (!inp || !icon) return;
+  const hasText = inp.value.trim().length > 0;
+  icon.className = hasText ? 'fa-solid fa-paper-plane' : 'fa-solid fa-microphone';
+}
+function onSendBtn(){
+  const inp = document.getElementById('sendInput');
+  // В группах нет голосовых пока — клик всегда = sendMessage
+  if (activeGroup) { sendMessage(); return; }
+  if (inp && inp.value.trim()) sendMessage();
+  else startRecord();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Голосовые сообщения. MediaRecorder в браузере → AES-GCM blob →
+// тот же /file/upload что для файлов. Payload type='voice' + duration.
+// ═══════════════════════════════════════════════════════════════════
+let _rec = null;          // MediaRecorder instance
+let _recStream = null;    // MediaStream (микрофон)
+let _recChunks = [];      // accumulating audio chunks
+let _recStart = 0;        // timestamp начала
+let _recTimerId = null;
+let _recPeer = null;      // на случай если юзер сменил чат во время записи
+
+async function startRecord(){
+  if (!activePeer) { showToast('Откройте чат сначала', true); return; }
+  if (_rec) return; // уже идёт запись
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation:true, noiseSuppression:true}});
+  } catch(e) {
+    if (e.name === 'NotAllowedError') showToast('Доступ к микрофону отклонён', true);
+    else showToast('Микрофон недоступен: ' + e.message, true);
+    return;
+  }
+  // Лучший формат — opus в webm. Safari требует mp4.
+  let mime = 'audio/webm;codecs=opus';
+  if (!MediaRecorder.isTypeSupported(mime)) mime = 'audio/webm';
+  if (!MediaRecorder.isTypeSupported(mime)) mime = 'audio/mp4';
+  if (!MediaRecorder.isTypeSupported(mime)) mime = '';
+  try {
+    _rec = mime ? new MediaRecorder(stream, {mimeType: mime}) : new MediaRecorder(stream);
+  } catch(e) {
+    showToast('Запись не поддерживается: ' + e.message, true);
+    stream.getTracks().forEach(t => t.stop());
+    return;
+  }
+  _recStream = stream;
+  _recChunks = [];
+  _recPeer = activePeer;
+  _rec.ondataavailable = e => { if (e.data && e.data.size > 0) _recChunks.push(e.data); };
+  _rec.start();
+  _recStart = Date.now();
+  document.getElementById('recBar').classList.add('on');
+  _recTimerId = setInterval(updateRecTime, 250);
+  updateRecTime();
+}
+function updateRecTime(){
+  const sec = Math.floor((Date.now() - _recStart) / 1000);
+  const m = Math.floor(sec / 60), s = sec % 60;
+  const el = document.getElementById('recTime');
+  if (el) el.textContent = `${m}:${String(s).padStart(2, '0')}`;
+  // Авто-стоп через 5 минут
+  if (sec > 300) stopAndSendRecord();
+}
+function _cleanupRecord(){
+  clearInterval(_recTimerId); _recTimerId = null;
+  if (_recStream) { _recStream.getTracks().forEach(t => t.stop()); _recStream = null; }
+  _rec = null;
+  document.getElementById('recBar').classList.remove('on');
+}
+function cancelRecord(){
+  if (!_rec) return;
+  try { _rec.stop(); } catch(_){}
+  _recChunks = [];
+  _cleanupRecord();
+}
+async function stopAndSendRecord(){
+  if (!_rec) return;
+  const rec = _rec, peer = _recPeer, duration = Math.round((Date.now() - _recStart) / 1000);
+  // Ждём stop и финальный chunk
+  const stoppedBlob = await new Promise(resolve => {
+    rec.onstop = () => {
+      const type = rec.mimeType || 'audio/webm';
+      resolve(new Blob(_recChunks, {type}));
+    };
+    try { rec.stop(); } catch(_) { resolve(new Blob(_recChunks, {type:'audio/webm'})); }
+  });
+  _cleanupRecord();
+  if (!stoppedBlob || stoppedBlob.size === 0) { showToast('Пустая запись', true); return; }
+  if (!peer || !activePeer || peer.username !== activePeer.username) {
+    showToast('Чат был сменён, отмена', true); return;
+  }
+  await sendVoiceBlob(stoppedBlob, duration);
+}
+
+async function sendVoiceBlob(blob, duration){
+  const mime = blob.type || 'audio/webm';
+  const tempId = 'tmp-' + Date.now();
+  const optimistic = {
+    sid: tempId, peer: activePeer.username, from_me: true,
+    text: '', created_at: new Date().toISOString(), pending: true,
+    file_payload: {file_id: null, file_name: 'voice', mime, size: blob.size, duration, voice: true},
+  };
+  activeMessages.push(optimistic);
+  renderMessages(); scrollChatBottom(true);
+  try {
+    const plain = await blob.arrayBuffer();
+    const k = await crypto.subtle.generateKey({name:'AES-GCM', length:256}, true, ['encrypt','decrypt']);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, k, plain);
+    const keyRaw = await crypto.subtle.exportKey('raw', k);
+    const form = new FormData();
+    form.append('to_username', activePeer.username);
+    form.append('blob', new Blob([ct], {type:'application/octet-stream'}), 'voice');
+    const upRes = await fetch(CHAT_API + '/file/upload', {
+      method:'POST', headers:{'Authorization':'Bearer '+token}, body: form,
+    });
+    if (!upRes.ok) throw new Error((await upRes.text()) || 'upload failed');
+    const {file_id} = await upRes.json();
+    // Кэшируем encrypted blob у sender'а тоже — чтобы после refresh страницы
+    // мог переслушать своё голосовое (на сервере его уже могло не быть после
+    // receiver-ack). ct — тот же зашифрованный ArrayBuffer что мы аплодили.
+    await idbCacheFile(file_id, ct, mime);
+    const payload = {
+      type:'voice', file_id, file_name:'voice', mime, size: blob.size,
+      duration, key: b64e(keyRaw), iv: b64e(iv),
+    };
+    const cmsg = await encryptForPeer(activePeer.username, payload);
+    const r = await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: cmsg });
+    optimistic.sid = r.id;
+    optimistic.created_at = r.created_at;
+    optimistic.pending = false;
+    optimistic.file_payload = {...payload, voice: true};
+    await idbAddMessage(optimistic);
+    let d = dialogs.find(x => x.username === activePeer.username);
+    if (!d) { d = {username: activePeer.username, display_name: activePeer.display_name||activePeer.username, unread:0}; dialogs.unshift(d); }
+    d.last_text = 'Голосовое';
+    d.last_at = r.created_at; d.last_from_me = true;
+    dialogs = [d, ...dialogs.filter(x => x.username !== activePeer.username)];
+    await idbPutDialog(d);
+    renderDialogs(document.getElementById('sbSearch').value);
+    renderMessages();
+  } catch(e) {
+    optimistic.failed = true;
+    renderMessages();
+    showToast(e.message || 'Не удалось отправить голос', true);
+  }
+}
+
+// Воспроизведение голосового. Cached blob URL after first play.
+const _voiceAudios = new Map(); // sid -> {audio, url}
+async function toggleVoicePlay(sid){
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
+  const p = m && (m.file_payload || m.file);
+  if (!p) { console.warn('[voice] no payload for sid', sid); return; }
+  if (!p.file_id || !p.key || !p.iv) {
+    console.warn('[voice] payload incomplete', p);
+    showToast('Голосовое не готово (ещё отправляется)', true);
+    return;
+  }
+  const cached = _voiceAudios.get(String(sid));
+  if (cached) {
+    if (cached.audio.paused) cached.audio.play();
+    else cached.audio.pause();
+    return;
+  }
+  try {
+    // cache-first: пробуем IDB filecache, иначе сервер (и кэшируем оттуда).
+    // Без этого после refresh страницы /file/ack уже был сделан → сервер вернёт 404.
+    const ct = await fetchEncryptedFile(p.file_id, p.mime);
+    if (!ct) { showToast('Голос удалён с сервера и нет локального кэша', true); return; }
+    const k = await crypto.subtle.importKey('raw', b64d(p.key), {name:'AES-GCM'}, false, ['decrypt']);
+    const plain = await crypto.subtle.decrypt({name:'AES-GCM', iv: b64d(p.iv)}, k, ct);
+    const blob = new Blob([plain], {type: p.mime || 'audio/webm'});
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    _voiceAudios.set(String(sid), {audio, url});
+    const safeSid = String(sid).replace(/[^a-zA-Z0-9_-]/g, '');
+    audio.addEventListener('timeupdate', () => {
+      const bar = document.querySelector(`.msg[data-sid="${safeSid}"] .voice-bar-fill`);
+      if (bar) bar.style.width = ((audio.currentTime / Math.max(0.001, audio.duration)) * 100) + '%';
+      const t = document.querySelector(`.msg[data-sid="${safeSid}"] .voice-time`);
+      if (t) t.textContent = fmtVoiceTime(audio.currentTime);
+    });
+    audio.addEventListener('ended', () => {
+      const ic = document.querySelector(`.msg[data-sid="${safeSid}"] .voice-play i`);
+      if (ic) ic.className = 'fa-solid fa-play';
+      const bar = document.querySelector(`.msg[data-sid="${safeSid}"] .voice-bar-fill`);
+      if (bar) bar.style.width = '0%';
+      const t = document.querySelector(`.msg[data-sid="${safeSid}"] .voice-time`);
+      if (t) t.textContent = fmtVoiceTime(p.duration || 0);
+    });
+    audio.addEventListener('play', () => {
+      const ic = document.querySelector(`.msg[data-sid="${safeSid}"] .voice-play i`);
+      if (ic) ic.className = 'fa-solid fa-pause';
+    });
+    audio.addEventListener('pause', () => {
+      if (audio.ended) return;
+      const ic = document.querySelector(`.msg[data-sid="${safeSid}"] .voice-play i`);
+      if (ic) ic.className = 'fa-solid fa-play';
+    });
+    try {
+      await audio.play();
+    } catch(playErr) {
+      console.error('[audio.play]', playErr);
+      showToast('Браузер заблокировал автозапуск, нажмите ещё раз', true);
+    }
+    // ACK сервер (удалит blob, у нас уже в blob URL)
+    if (!m.from_me) {
+      try { fetch(CHAT_API + `/file/${p.file_id}/ack`, {method:'POST', headers:{'Authorization':'Bearer '+token}}); } catch(_){}
+    }
+  } catch(e) {
+    console.error('[voice play]', e);
+    showToast('Не удалось воспроизвести: ' + (e.message || e), true);
+  }
+}
+function fmtVoiceTime(sec){
+  const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+// Текстовое описание сообщения для reply-preview. Для медиа-only — «[Фото]» / «[Видео]» / «[Голосовое]» / «[Файл]».
+function makeReplyPreview(m) {
+  const txt = (m && m.text || '').trim();
+  if (txt) return txt.slice(0, 100);
+  // Нет текста — определяем по медиа
+  if (m && m.file) {
+    const t = (m.file.mime || m.file.type || '').toLowerCase();
+    if (t.startsWith('image/')) return '[Фото]';
+    if (t.startsWith('video/')) return '[Видео]';
+    if (t.startsWith('audio/')) return '[Голосовое]';
+    return '[Файл' + (m.file.name ? ': ' + m.file.name.slice(0, 30) : '') + ']';
+  }
+  if (m && m.voice) return '[Голосовое]';
+  if (m && m.image) return '[Фото]';
+  if (m && m.video) return '[Видео]';
+  return '[Сообщение]';
+}
+
+// Сейчас юзер отвечает на это сообщение (null если нет reply-mode)
+let replyingTo = null;
+function startReply(msg){
+  replyingTo = msg;
+  renderReplyBar();
+  const inp = document.getElementById('sendInput'); if (inp) inp.focus();
+}
+function cancelReply(){
+  replyingTo = null;
+  renderReplyBar();
+}
+function renderReplyBar(){
+  const bar = document.getElementById('replyBar');
+  if (!bar) return;
+  if (!replyingTo) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  const who = replyingTo.from_me ? 'Вы' : '@' + (activePeer?.username || '');
+  const preview = (replyingTo.text || '').slice(0, 60);
+  bar.innerHTML = `
+    <div style="flex:1;min-width:0;border-left:3px solid var(--primary);padding:4px 10px;">
+      <div style="font-size:11px;color:var(--primary);font-weight:700;">Ответ ${esc(who)}</div>
+      <div style="font-size:13px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(preview)}</div>
+    </div>
+    <button onclick="cancelReply()" style="background:none;border:none;color:var(--sub);cursor:pointer;padding:8px;font-size:14px;"><i class="fa-solid fa-xmark"></i></button>`;
+}
+
+async function sendMessage(){
+  if (activeGroup) { return sendGroupMessage(); }
+  const inp = document.getElementById('sendInput');
+  const text = inp.value.trim();
+  if (!text || !activePeer) return;
+  inp.value = ''; inp.style.height = '42px';
+  document.getElementById('sendBtn').disabled = true;
+  sendTyping(false);
+  const currentReply = replyingTo;
+  cancelReply();
+  const tempId = 'tmp-' + Date.now();
+  const optimistic = {
+    sid: tempId, peer: activePeer.username, from_me: true, text,
+    created_at: new Date().toISOString(), pending: true,
+  };
+  if (currentReply) {
+    optimistic.reply_to = currentReply.sid;
+    optimistic.reply_preview = makeReplyPreview(currentReply);
+  }
+  activeMessages.push(optimistic);
+  appendMessage(optimistic);
+  try {
+    const payload = { type: 'msg', text };
+    if (currentReply) {
+      payload.reply_to = currentReply.sid;
+      payload.reply_preview = optimistic.reply_preview;
+    }
+    // Legacy /send (sealed sender временно отключён — было слишком много багов,
+    // вернёмся когда отладим schema совместимости).
+    const ct = await encryptForPeer(activePeer.username, payload);
+    const r = await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: ct });
+    optimistic.sid = r.id;
+    optimistic.created_at = r.created_at;
+    optimistic.pending = false;
+    // Если получатель онлайн в момент отправки — он почти точно сделает /ack_sealed
+    // и пришлёт нам sealed-delivered. Оптимистично ставим delivered.
+    if (r.recipient_online) optimistic.delivered = true;
+    await idbAddMessage(optimistic);
+    let d = dialogs.find(x => x.username === activePeer.username);
+    if (!d) { d = { username: activePeer.username, display_name: activePeer.display_name || activePeer.username, unread: 0 }; dialogs.unshift(d); }
+    d.last_text = text; d.last_at = r.created_at; d.last_from_me = true;
+    dialogs = [d, ...dialogs.filter(x => x.username !== activePeer.username)];
+    await idbPutDialog(d);
+    renderDialogs(document.getElementById('sbSearch').value);
+    updateLastBubble(false);
+  } catch(e) {
+    optimistic.failed = true;
+    updateLastBubble(true);
+    showToast(e.message || 'Не отправлено', true);
+  }
+}
+
+// ─── Редактирование своего сообщения ───
+async function editMessage(sid){
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
+  if (!m || !m.from_me || m.deleted) return;
+  const newText = await Dialog.prompt('Изменить сообщение:', m.text, { title: 'Редактирование', okText: 'Сохранить' });
+  if (newText == null || newText.trim() === m.text.trim()) return;
+  if (!newText.trim()) { return deleteMessage(sid); }
+  try {
+    const payload = { type: 'edit', target_sid: sid, new_text: newText.trim() };
+    if (activeGroup) {
+      const { ciphertext, envelope_keys, sharedKeyBytes } = await encryptForGroup(activeGroup.members, payload);
+      const r = await chat(`/group/${activeGroup.id}/send`, 'POST', { ciphertext, envelope_keys });
+      _myGroupSharedKeys.set(r.id, sharedKeyBytes);
+      setTimeout(() => _myGroupSharedKeys.delete(r.id), 60000);
+    } else {
+      const ct = await encryptForPeer(activePeer.username, payload);
+      await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: ct });
+    }
+    await idbUpdateMessage(sid, { text: newText.trim(), edited: true });
+    m.text = newText.trim(); m.edited = true;
+    if (activeGroup) renderGroupMessages(); else renderMessages();
+  } catch(e) { showToast(e.message || 'Не удалось отредактировать', true); }
+}
+async function deleteMessage(sid){
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
+  if (!m || !m.from_me || m.deleted) return;
+  if (!await Dialog.confirm('Удалить сообщение у себя и собеседника?', { title: 'Удалить?', danger: true })) return;
+  try {
+    const payload = { type: 'delete', target_sid: sid };
+    if (activeGroup) {
+      const { ciphertext, envelope_keys, sharedKeyBytes } = await encryptForGroup(activeGroup.members, payload);
+      const r = await chat(`/group/${activeGroup.id}/send`, 'POST', { ciphertext, envelope_keys });
+      _myGroupSharedKeys.set(r.id, sharedKeyBytes);
+      setTimeout(() => _myGroupSharedKeys.delete(r.id), 60000);
+    } else {
+      const ct = await encryptForPeer(activePeer.username, payload);
+      await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: ct });
+    }
+    await idbUpdateMessage(sid, { text: '', deleted: true });
+    m.text = ''; m.deleted = true;
+    if (activeGroup) renderGroupMessages(); else renderMessages();
+  } catch(e) { showToast(e.message || 'Не удалось удалить', true); }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// UI — sidebar
+// ════════════════════════════════════════════════════════════════════
+function renderDialogs(filter=''){
+  const list = document.getElementById('sbList');
+  let arr = dialogs;
+  if (filter) {
+    const f = filter.toLowerCase().replace(/^@/, '');
+    arr = arr.filter(d => (d.username && d.username.toLowerCase().includes(f)) || (d.display_name && d.display_name.toLowerCase().includes(f)));
+  }
+  if (!arr.length) {
+    if (filter) {
+      list.innerHTML = `<div class="sb-empty"><i class="fa-regular fa-comments"></i>Ничего не найдено</div>`;
+    } else {
+      list.innerHTML = `<div class="sb-empty">
+        <i class="fa-regular fa-comments"></i>
+        Чатов пока нет.<br>Начните первый или зайдите в ленту.
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:18px;">
+          <button onclick="openNewChat()" style="padding:10px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:13px;">
+            <i class="fa-solid fa-pen-to-square"></i>&nbsp; Новый чат
+          </button>
+          <a href="/social" style="padding:10px;border-radius:10px;background:transparent;border:1px solid var(--border-strong);color:var(--text);font-size:13px;font-weight:600;text-decoration:none;display:block;">
+            <i class="fa-solid fa-hashtag"></i>&nbsp; В GhostSocial
+          </a>
+        </div>
+      </div>`;
+    }
+    return;
+  }
+  list.innerHTML = arr.map(d => `
+    <div class="dialog${activePeer && activePeer.username === d.username ? ' active' : ''}" onclick="openChat(${jsAttr(d.username)},${jsAttr(d.display_name||d.username)})">
+      <div class="d-av">${ini(d.display_name||d.username)}</div>
+      <div class="d-body">
+        <div class="d-row1">
+          <div class="d-name">${esc(d.display_name||d.username)}</div>
+          <div class="d-time">${d.last_at?timeOrDate(d.last_at):''}</div>
+        </div>
+        <div class="d-row2">
+          <div class="d-last ${d.last_from_me?'own':''}">${d.last_from_me?'<i class="fa-solid fa-check" style="opacity:0.6;margin-right:3px;font-size:10px;"></i>':''}${esc(d.last_text || '(нет сообщений)')}</div>
+          ${d.unread > 0 ? `<div class="d-badge">${d.unread > 99 ? '99+' : d.unread}</div>` : ''}
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+document.getElementById('sbSearch').addEventListener('input', e => renderDialogs(e.target.value));
+
+// ?from=URL — внешний переход (с GhostSocial, лендинга и т.п.).
+// Тогда левая кнопка = «← назад» в это место. Иначе кнопка = аватар + меню.
+const _backUrl = (() => {
+  const p = new URLSearchParams(location.search);
+  const f = p.get('from');
+  if (f && /^[/?#]/.test(f) && !f.includes('//') && !f.includes(':')) return f;  // только относительные пути
+  return null;
+})();
+
+function onLeftBtn(e){
+  e.stopPropagation();
+  if (_backUrl) { location.href = _backUrl; return; }
+  // Иначе — меню
+  const p = document.getElementById('sbPopup');
+  p.classList.toggle('open');
+  if (p.classList.contains('open')) setTimeout(() => document.addEventListener('click', closeSbPopupOnce), 0);
+}
+function closeSbPopupOnce(){const p=document.getElementById('sbPopup');if(p)p.classList.remove('open');document.removeEventListener('click', closeSbPopupOnce);}
+
+function applyLeftBtn(){
+  const btn = document.getElementById('sbLeftBtn');
+  if (!btn) return;
+  if (_backUrl) {
+    btn.className = 'sb-back';
+    btn.innerHTML = '<i class="fa-solid fa-arrow-left"></i>';
+    btn.title = 'Назад';
+  } else {
+    btn.className = 'sb-avatar';
+    btn.textContent = ini(me && (me.display_name || me.username));
+    btn.title = 'Меню';
+    const n = document.getElementById('sbMeName');
+    if (n && me) n.textContent = (me.display_name || me.username) + ' · @' + me.username;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// UI — chat
+// ════════════════════════════════════════════════════════════════════
+async function openChat(username, display_name){
+  // Чистим blob-URL'ы и Audio-объекты от ПРЕДЫДУЩЕГО чата — иначе при долгой
+  // сессии открытий 10+ чатов RAM растёт неограниченно. Та же логика как в
+  // backToList() — повторяем здесь чтобы покрыть переход chat→chat без возврата
+  // в список.
+  try {
+    for (const m of activeMessages) {
+      if (m && m._imgUrl) { URL.revokeObjectURL(m._imgUrl); m._imgUrl = null; }
+    }
+    if (typeof _voiceAudios !== 'undefined' && _voiceAudios.forEach) {
+      _voiceAudios.forEach(entry => {
+        try { entry && entry.audio && entry.audio.pause(); } catch(_){}
+        if (entry && entry.url) URL.revokeObjectURL(entry.url);
+      });
+      _voiceAudios.clear();
+    }
+  } catch(_) {}
+  activePeer = { username, display_name: display_name || username };
+  activeGroup = null;
+  _peerTyping = false; _peerOnline = false;
+  clearTimeout(_peerTypingTimer);
+  document.getElementById('appGrid').classList.add('in-chat');
+  activeMessages = await idbGetMessages(username);
+  // ВАЖНО: created_at может быть ISO-строкой (legacy chat_dm) или unix-int
+  // (sealed/новые). localeCompare работает только на строках → роняет openChat
+  // с TypeError, и чат не открывается. Сортируем через .getTime().
+  activeMessages.sort((a,b) => {
+    const av = a.created_at ? new Date(typeof a.created_at === 'number' ? a.created_at * 1000 : a.created_at).getTime() : 0;
+    const bv = b.created_at ? new Date(typeof b.created_at === 'number' ? b.created_at * 1000 : b.created_at).getTime() : 0;
+    return av - bv;
+  });
+  renderChat();
+  updateChatStatusBar();
+  const d = dialogs.find(x => x.username === username);
+  if (d && d.unread > 0) { d.unread = 0; await idbPutDialog(d); }
+  renderDialogs(document.getElementById('sbSearch').value);
+  refreshContactBtn(username);
+  // Спросим у сервера, онлайн ли собеседник
+  askPresence(username);
+  // Отправим read для всех непрочитанных входящих
+  const unread = activeMessages.filter(m => !m.from_me && !m.read);
+  if (unread.length) {
+    // Legacy /read — sealed-read временно отключён (отладка)
+    const unreadIds = unread.map(m => m.sid).filter(x => typeof x === 'number');
+    if (unreadIds.length) {
+      chat('/read', 'POST', { ids: unreadIds, from_username: username }).catch(()=>{});
+    }
+    for (const m of unread) {
+      m.read = true;
+      idbUpdateMessage(m.sid, { read: true }).catch(()=>{});
+    }
+  }
+  // Догон delivered-статуса моих исходящих в этом чате (могли пропустить
+  // WS chat.delivered после refresh / отключения / переключения чатов)
+  try { syncDeliveryStatus(); } catch(_){}
+}
+
+async function refreshContactBtn(username){
+  try {
+    const r = await chat(`/contacts/check/${encodeURIComponent(username)}`);
+    const btn = document.getElementById('chatContactBtn');
+    if (!btn) return;
+    if (r.in_contacts) {
+      btn.innerHTML = '<i class="fa-solid fa-user-check"></i>';
+      btn.title = 'В контактах — нажмите чтобы убрать';
+      btn.style.color = 'var(--green)';
+    } else {
+      btn.innerHTML = '<i class="fa-solid fa-user-plus"></i>';
+      btn.title = 'Добавить в контакты';
+      btn.style.color = '';
+    }
+    btn.dataset.in = r.in_contacts ? '1' : '0';
+  } catch(_) {}
+}
+
+// ─── Меню «...» в шапке чата: очистить историю / удалить чат ───
+function openChatActionsMenu(ev, username){
+  ev.stopPropagation();
+  // Закрываем если уже открыто
+  const existing = document.getElementById('chatActionsPopup');
+  if (existing) { existing.remove(); return; }
+  const pop = document.createElement('div');
+  pop.id = 'chatActionsPopup';
+  pop.className = 'sb-popup';
+  pop.style.cssText = 'display:block;position:fixed;right:14px;top:62px;left:auto;min-width:220px;z-index:200;';
+  pop.innerHTML = `
+    <div class="sb-popup-item danger" onclick="closeChatActionsMenu();deleteChatDialog(${jsAttr(username)})"><i class="fa-solid fa-trash"></i> Удалить чат</div>
+  `;
+  document.body.appendChild(pop);
+  // Закрытие по клику вне
+  setTimeout(() => {
+    document.addEventListener('click', _closeChatActionsOnce, {once: true});
+  }, 50);
+}
+function closeChatActionsMenu(){
+  const p = document.getElementById('chatActionsPopup');
+  if (p) p.remove();
+  document.removeEventListener('click', _closeChatActionsOnce);
+}
+function _closeChatActionsOnce(){ closeChatActionsMenu(); }
+
+// Очистка истории сообщений: удаляет messages + filecache, но оставляет dialog.
+async function clearChatHistory(username){
+  if (!await Dialog.confirm(
+    `Удалить ВСЮ историю переписки с @${username} у себя? Собеседник свои сообщения сохранит.`,
+    { title: 'Очистить историю?', okText: 'Очистить', danger: true }
+  )) return;
+  try {
+    const cnt = await idbDeleteMessagesByPeer(username);
+    // Сбрасываем превью в диалоге
+    const d = dialogs.find(x => x.username === username);
+    if (d) {
+      d.last_text = ''; d.last_at = null; d.last_from_me = false; d.unread = 0;
+      await idbPutDialog(d);
+    }
+    // Чистим активный чат если он был открыт
+    if (activePeer && activePeer.username === username) {
+      // Cleanup blob/audio URL'ов
+      try {
+        for (const m of activeMessages) {
+          if (m && m._imgUrl) { URL.revokeObjectURL(m._imgUrl); m._imgUrl = null; }
+        }
+        if (typeof _voiceAudios !== 'undefined' && _voiceAudios.forEach) {
+          _voiceAudios.forEach(entry => {
+            try { entry && entry.audio && entry.audio.pause(); } catch(_){}
+            if (entry && entry.url) URL.revokeObjectURL(entry.url);
+          });
+          _voiceAudios.clear();
+        }
+      } catch(_) {}
+      activeMessages = [];
+      renderChat();
+    }
+    renderDialogs(document.getElementById('sbSearch').value);
+    showToast(`История очищена (${cnt} сообщ.)`);
+  } catch(e) {
+    showToast('Ошибка: ' + (e.message || e), true);
+  }
+}
+
+// Кастомная модалка удаления чата с чекбоксом «удалить и у собеседника».
+// Возвращает {confirmed: bool, both: bool}.
+function _deleteChatPrompt(username){
+  return new Promise(res => {
+    const ov = document.createElement('div');
+    ov.className = 'ge-dlg-overlay';
+    ov.innerHTML = `
+      <div class="ge-dlg-box">
+        <div class="ge-dlg-title">Удалить чат с @${esc(username)}?</div>
+        <div class="ge-dlg-msg">История и сам диалог будут удалены у вас локально.</div>
+        <label style="display:flex;align-items:flex-start;gap:10px;margin-top:14px;font-size:13px;color:#cbd5e1;line-height:1.45;cursor:pointer;">
+          <input type="checkbox" id="delChatBoth" style="margin-top:2px;width:16px;height:16px;accent-color:#f43f5e;flex-shrink:0;cursor:pointer;">
+          <span>Удалить и у собеседника<br><span style="font-size:11px;color:#94a3b8;">Сработает только если он не успел получить сообщения. Уже прочитанные у него остаются.</span></span>
+        </label>
+        <div class="ge-dlg-actions">
+          <button class="ge-dlg-btn cancel" id="delChatCancel">Отмена</button>
+          <button class="ge-dlg-btn danger" id="delChatOk">Удалить</button>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+    requestAnimationFrame(() => ov.classList.add('show'));
+    const close = (confirmed, both) => {
+      ov.classList.remove('show');
+      setTimeout(() => ov.remove(), 160);
+      res({confirmed, both});
+    };
+    ov.querySelector('#delChatCancel').onclick = () => close(false, false);
+    ov.querySelector('#delChatOk').onclick = () => {
+      const both = ov.querySelector('#delChatBoth').checked;
+      close(true, both);
+    };
+    ov.onclick = e => { if (e.target === ov) close(false, false); };
+  });
+}
+
+// Удалить чат полностью: messages + dialog. Возврат в список.
+// both=true → также серверный буфер + WS-сигнал peer-у удалить у себя.
+async function deleteChatDialog(username){
+  const {confirmed, both} = await _deleteChatPrompt(username);
+  if (!confirmed) return;
+  try {
+    // Серверная часть (зачистка pending + опционально notify peer-а)
+    try {
+      await chat(`/chat/with/${encodeURIComponent(username)}?both=${both ? 'true' : 'false'}`, 'DELETE');
+    } catch(e) {
+      // Не фатально — локальное удаление всё равно сделаем
+      console.warn('[delete chat] server cleanup failed:', e && e.message);
+    }
+    // Локальная часть — всегда
+    await idbDeleteMessagesByPeer(username);
+    await idbDeleteDialog(username);
+    dialogs = dialogs.filter(x => x.username !== username);
+    if (activePeer && activePeer.username === username) {
+      backToList();
+    } else {
+      renderDialogs(document.getElementById('sbSearch').value);
+    }
+    showToast(both ? 'Чат удалён у обоих' : 'Чат удалён у себя');
+  } catch(e) {
+    showToast('Ошибка: ' + (e.message || e), true);
+  }
+}
+
+// Локальная очистка чата без сервера — вызывается из WS-обработчика когда
+// собеседник попросил «удалить у обоих».
+async function _deleteChatLocally(username){
+  try {
+    await idbDeleteMessagesByPeer(username);
+    await idbDeleteDialog(username);
+    dialogs = dialogs.filter(x => x.username !== username);
+    if (activePeer && activePeer.username === username) {
+      backToList();
+    } else {
+      renderDialogs(document.getElementById('sbSearch').value);
+    }
+  } catch(_) {}
+}
+
+async function toggleContact(username){
+  const btn = document.getElementById('chatContactBtn');
+  if (!btn) return;
+  const isIn = btn.dataset.in === '1';
+  try {
+    if (isIn) {
+      await chat(`/contacts/${encodeURIComponent(username)}`, 'DELETE');
+      showToast('Удалён из контактов');
+    } else {
+      await chat(`/contacts/${encodeURIComponent(username)}`, 'POST');
+      showToast('Добавлен в контакты');
+    }
+    refreshContactBtn(username);
+  } catch(e) { showToast('Ошибка', true); }
+}
+
+function backToList(){
+  document.getElementById('appGrid').classList.remove('in-chat');
+  // Освобождаем blob URL-ы (createObjectURL) — иначе плавно тратим RAM на больших файлах
+  try {
+    for (const m of activeMessages) {
+      if (m && m._imgUrl) { URL.revokeObjectURL(m._imgUrl); m._imgUrl = null; }
+    }
+    // Voice URL-ы тоже (lives in _voiceAudios Map)
+    if (typeof _voiceAudios !== 'undefined' && _voiceAudios.forEach) {
+      _voiceAudios.forEach(entry => {
+        try { entry && entry.audio && entry.audio.pause(); } catch(_){}
+        if (entry && entry.url) URL.revokeObjectURL(entry.url);
+      });
+      _voiceAudios.clear();
+    }
+  } catch(_) {}
+  activePeer = null; activeGroup = null; activeMessages = [];
+  // Сбросим chatMain на пустой экран
+  const main = document.getElementById('chatMain');
+  if (main) main.innerHTML = `<div class="chat-empty"><i class="fa-solid fa-ghost"></i><h3>Выберите чат</h3><p>Откройте диалог слева или начните новый.</p></div>`;
+  renderDialogs(document.getElementById('sbSearch').value);
+}
+
+function renderChat(){
+  const p = activePeer;
+  const main = document.getElementById('chatMain');
+  main.innerHTML = `
+    <div class="chat-head">
+      <button class="chat-back" onclick="backToList()"><i class="fa-solid fa-arrow-left"></i></button>
+      <div class="chat-av" onclick="openPeerProfile(${jsAttr(p.username)})">${ini(p.display_name)}</div>
+      <div class="chat-info" onclick="openPeerProfile(${jsAttr(p.username)})">
+        <div class="chat-name">${esc(p.display_name)}</div>
+        <div class="chat-status" id="chatStatus">@${esc(p.username)}</div>
+      </div>
+      <button class="chat-menu" id="chatContactBtn" onclick="toggleContact(${jsAttr(p.username)})" title="Добавить в контакты"><i class="fa-solid fa-user-plus"></i></button>
+      <button class="chat-menu" onclick="openPeerProfile(${jsAttr(p.username)})" title="Профиль"><i class="fa-solid fa-user"></i></button>
+      <button class="chat-menu" onclick="openChatActionsMenu(event,${jsAttr(p.username)})" title="Ещё"><i class="fa-solid fa-ellipsis-vertical"></i></button>
+    </div>
+    <div class="chat-body" id="chatBody"></div>
+    <div id="replyBar"></div>
+    <div class="rec-bar" id="recBar">
+      <div class="rec-dot"></div>
+      <div class="rec-time" id="recTime">0:00</div>
+      <div class="rec-hint">Запись голосового...</div>
+      <button class="rec-btn rec-cancel" onclick="cancelRecord()" title="Отменить"><i class="fa-solid fa-xmark"></i></button>
+      <button class="rec-btn rec-send" onclick="stopAndSendRecord()" title="Отправить"><i class="fa-solid fa-paper-plane"></i></button>
+    </div>
+    <div class="chat-foot">
+      <div class="input-wrap">
+        <button class="foot-btn" title="Прикрепить" onclick="openAttachSheet()"><i class="fa-solid fa-paperclip"></i></button>
+        <input type="file" id="filePicker" multiple style="display:none" onchange="pickAndSendFile(this)">
+        <input type="file" id="filePickerImg" accept="image/*" multiple style="display:none" onchange="pickAndSendFile(this)">
+        <input type="file" id="filePickerVid" accept="video/*" multiple style="display:none" onchange="pickAndSendFile(this)">
+        <textarea class="send-input" id="sendInput" placeholder="Сообщение" rows="1"></textarea>
+        <button class="foot-btn" title="Эмодзи" onclick="openEmojiSheet()"><i class="fa-regular fa-face-smile"></i></button>
+      </div>
+      <button class="foot-btn send" id="sendBtn" onclick="onSendBtn()" title="Отправить"><i class="fa-solid fa-microphone" id="sendIcon"></i></button>
+    </div>`;
+  renderMessages();
+  cancelReply();
+  updateSendIcon();
+  const inp = document.getElementById('sendInput');
+  const btn = document.getElementById('sendBtn');
+  inp.addEventListener('input', () => {
+    btn.disabled = false; // кнопка теперь всегда активна — пустой = mic, текст = send
+    inp.style.height='24px';
+    inp.style.height=Math.min(140,inp.scrollHeight)+'px';
+    if (inp.value.trim()) sendTyping(true);
+    updateSendIcon();
+  });
+  inp.addEventListener('blur', () => sendTyping(false));
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+  inp.focus();
+  scrollChatBottom(false);
+}
+
+function renderMessages(){
+  const body = document.getElementById('chatBody');
+  if (!body) return;
+  let html = '';
+  if (!activeMessages.length) {
+    html += `<div style="margin:auto;color:var(--muted);font-size:13px;text-align:center;padding:40px;">Сообщений пока нет. Напишите первое.</div>`;
+    body.innerHTML = html; return;
+  }
+  let lastDateKey = '';
+  for (let i = 0; i < activeMessages.length; i++) {
+    const m = activeMessages[i];
+    const dk = dateKey(m.created_at);
+    if (dk !== lastDateKey) { html += `<div class="date-sep"><span>${dateLong(m.created_at)}</span></div>`; lastDateKey = dk; }
+    const prev = i > 0 ? activeMessages[i-1] : null;
+    const next = i < activeMessages.length-1 ? activeMessages[i+1] : null;
+    const sP = prev && prev.from_me === m.from_me && dateKey(prev.created_at) === dk;
+    const sN = next && next.from_me === m.from_me && dateKey(next.created_at) === dk;
+    let cls = sP && sN ? 'middle' : sP && !sN ? 'last' : !sP && sN ? 'first' : 'solo';
+    if (m.failed) cls += ' failed';
+    if (m.deleted) cls += ' deleted';
+    const meta = m.pending
+      ? '<i class="fa-regular fa-clock"></i>'
+      : (m.edited ? '<span style="opacity:0.7;font-size:10px;">изм.</span>' : '')
+        + (m.from_me ? ' ' + renderTicks(m) : '');
+    // Цитата (reply)
+    let quoteHtml = '';
+    if (m.reply_to != null && !m.deleted) {
+      const target = activeMessages.find(x => String(x.sid) === String(m.reply_to));
+      const quoteText = target ? (target.text || '[пусто]') : (m.reply_preview || '[оригинал недоступен]');
+      const sid = String(m.reply_to).replace(/[^a-zA-Z0-9_-]/g, '');
+      quoteHtml = `<div class="msg-quote" onclick="scrollToMsg('${sid}')">${esc(quoteText.slice(0, 80))}</div>`;
+    }
+    // Bubble body
+    let bubbleBody;
+    if (m.deleted) {
+      bubbleBody = `<span style="opacity:0.55;font-style:italic;font-size:13px;"><i class="fa-solid fa-ban" style="margin-right:5px;"></i>сообщение удалено</span>`;
+    } else if (m.file_payload || m.file) {
+      const fp = m.file_payload || m.file;
+      const isImg = fp.mime && fp.mime.startsWith('image/');
+      const isVideo = fp.mime && fp.mime.startsWith('video/');
+      // Голосовое = записано через микрофон (помечено voice:true), круглый UI без названия.
+      // Аудио-файл = .mp3/.ogg/.wav прикреплён через attach, TG-style плеер с именем трека.
+      const isVoice = !!fp.voice;
+      const isAudioFile = !fp.voice && fp.mime && fp.mime.startsWith('audio/');
+      const sidArg = JSON.stringify(String(m.sid)).replace(/"/g, '&quot;');
+      // Универсальные атрибуты для медиа: long-press / right-click → меню сообщения.
+      // На мобиле click срабатывает на сам элемент (play/lightbox/download), а
+      // долгое нажатие 500мс открывает меню (Reply/Edit/Delete/Forward/...).
+      const mediaCtx = `oncontextmenu="event.preventDefault();event.stopPropagation();openMsgMenu(event,${sidArg})" ontouchstart="mediaTouchStart(event,${sidArg})" ontouchend="mediaTouchEnd()" ontouchcancel="mediaTouchEnd()" ontouchmove="mediaTouchMove(event)"`;
+      if (isVoice) {
+        const dur = fmtVoiceTime(fp.duration || 0);
+        bubbleBody = `<div class="msg-voice" ${mediaCtx}>
+          <button class="voice-play" onclick="toggleVoicePlay(${sidArg})"><i class="fa-solid fa-play"></i></button>
+          <div class="voice-mid">
+            <div class="voice-bar"><div class="voice-bar-fill"></div></div>
+            <div class="voice-time">${dur}</div>
+          </div>
+        </div>`;
+      } else if (isAudioFile) {
+        // TG-style audio file: play кнопка слева, справа — имя трека, прогресс-бар и размер
+        const name = esc(fp.file_name || fp.name || 'audio');
+        const size = fmtSize(fp.size || 0);
+        bubbleBody = `<div class="msg-audio" ${mediaCtx}>
+          <button class="voice-play" onclick="toggleVoicePlay(${sidArg})"><i class="fa-solid fa-play"></i></button>
+          <div class="audio-mid">
+            <div class="audio-name">${name}</div>
+            <div class="voice-bar"><div class="voice-bar-fill"></div></div>
+            <div class="audio-meta">
+              <span class="voice-time">0:00</span>
+              <span class="audio-size">${size}</span>
+            </div>
+          </div>
+        </div>`;
+      } else if (isImg && m._imgUrl) {
+        bubbleBody = `<img class="msg-img" src="${m._imgUrl}" alt="${esc(fp.file_name||fp.name||'')}" onclick="openMediaViewer(${sidArg})" ${mediaCtx}>`;
+      } else if (isVideo && m._imgUrl) {
+        bubbleBody = `<video class="msg-video" src="${m._imgUrl}" controls preload="metadata" ${mediaCtx}></video>`;
+      } else if ((isImg || isVideo) && m.file_payload) {
+        const lbl = isVideo ? 'распаковываю видео…' : 'загружаю…';
+        const w = isVideo ? 260 : 200, h = isVideo ? 180 : 140;
+        bubbleBody = `<div class="msg-img-placeholder" style="width:${w}px;height:${h}px;background:rgba(0,0,0,0.25);border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--sub);font-size:11px;flex-direction:column;gap:8px;"><i class="fa-solid fa-${isVideo?'film':'image'}" style="font-size:24px;opacity:0.5;"></i>${lbl}</div>`;
+        setTimeout(() => loadImgPreview(m.sid), 50);
+      } else {
+        const name = esc(fp.file_name || fp.name || 'file');
+        const size = fmtSize(fp.size || 0);
+        const icon = fileIcon(fp.file_name || fp.name || '');
+        const sidArg = JSON.stringify(String(m.sid)).replace(/"/g, '&quot;');
+        const mediaCtx = `oncontextmenu="event.preventDefault();event.stopPropagation();openMsgMenu(event,${sidArg})" ontouchstart="mediaTouchStart(event,${sidArg})" ontouchend="mediaTouchEnd()" ontouchcancel="mediaTouchEnd()" ontouchmove="mediaTouchMove(event)"`;
+        bubbleBody = `<div class="msg-file" onclick="downloadFile(${sidArg})" ${mediaCtx}>
+          <div class="msg-file-icon"><i class="fa-solid ${icon}"></i></div>
+          <div class="msg-file-info">
+            <div class="msg-file-name">${name}</div>
+            <div class="msg-file-meta">${size} · нажмите чтобы скачать</div>
+          </div>
+        </div>`;
+      }
+    } else {
+      bubbleBody = linkify(m.text || '');
+    }
+    html += `<div class="msg ${m.from_me?'mine':'theirs'} ${cls}" data-sid="${esc(m.sid)}">
+      <div style="display:flex;flex-direction:column;max-width:100%;">
+        <div class="msg-bubble" onclick="msgBubbleClick(event,${jsAttr(m.sid)})" oncontextmenu="event.preventDefault();openMsgMenu(event,${jsAttr(m.sid)})" ontouchstart="msgTouchStart(event,${jsAttr(m.sid)})" ontouchend="msgTouchEnd()" ontouchcancel="msgTouchEnd()" ontouchmove="msgTouchMove(event)">${m.forwarded_from?`<div style="font-size:11px;color:var(--primary);font-weight:600;margin-bottom:3px;"><i class="fa-solid fa-share" style="margin-right:4px;font-size:10px;"></i>Переслано от @${esc(m.forwarded_from)}</div>`:''}${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
+        ${renderReactions(m)}
+        ${m.deleted ? '' : previewPlaceholder(m)}
+      </div>
+    </div>`;
+  }
+  body.innerHTML = html;
+  loadMsgPreviews();
+}
+
+// Статусы доставки:
+//   pending (POST ещё не дошёл)        → fa-clock (выше в meta)
+//   !pending !delivered                 → дискета (сохранено на серве, ждём receiver)
+//   delivered (receiver сделал /ack)    → ✓ одна галочка
+//   read (receiver открыл чат)          → ✓✓ синие
+function renderTicks(m) {
+  if (m.read) return '<i class="fa-solid fa-check-double" style="color:#22d3ee;"></i>';
+  if (m.delivered) return '<i class="fa-solid fa-check"></i>';
+  return '<i class="fa-solid fa-floppy-disk" style="opacity:0.75;"></i>';
+}
+
+// Чипы реакций под bubble
+function renderReactions(m) {
+  if (!m.reactions || m.deleted) return '';
+  const entries = Object.entries(m.reactions).filter(([_, users]) => users && users.length);
+  if (!entries.length) return '';
+  const sidArg = JSON.stringify(String(m.sid)).replace(/"/g, '&quot;');
+  return '<div class="msg-reactions">' + entries.map(([emo, users]) => {
+    const mine = (users || []).includes(me.username);
+    const cnt = (users || []).length;
+    return `<button class="msg-react-chip${mine?' mine':''}" onclick="toggleReaction(${sidArg}, ${JSON.stringify(emo)})">
+      <span class="emo">${esc(emo)}</span>${cnt > 1 ? `<span class="cnt">${cnt}</span>` : ''}
+    </button>`;
+  }).join('') + '</div>';
+}
+
+function scrollToMsg(sid){
+  const el = document.querySelector(`.msg[data-sid="${sid}"]`);
+  if (!el) return;
+  el.scrollIntoView({behavior:'smooth', block:'center'});
+  const bubble = el.querySelector('.msg-bubble');
+  if (bubble) { bubble.style.transition = 'box-shadow 0.3s'; bubble.style.boxShadow = '0 0 0 2px var(--primary)';
+    setTimeout(() => bubble.style.boxShadow = '', 1200); }
+}
+
+// ─── Тап = меню. Свайп вправо = reply. Скролл = ничего. ───
+// Открытие меню по простому клику/тапу (без 500ms задержки). Чтобы клики
+// внутри bubble на интерактивных элементах (voice/img/file/links/reactions)
+// не открывали меню — фильтр по target.closest. Свайп подавляет click.
+let _swipeState = null;
+let _swipeSuppressClick = false;
+
+function msgBubbleClick(ev, sid){
+  if (_swipeSuppressClick) return;
+  // Не открываем меню если кликнули на интерактивный элемент внутри bubble
+  if (ev.target.closest('button, a, img, video, audio, input, .msg-quote, .msg-react-chip, .voice-play, .voice-bar, .msg-file, .msg-img, .msg-video, .msg-img-placeholder')) return;
+  // Не открываем меню если идёт выделение текста (пользователь копирует)
+  const sel = window.getSelection();
+  if (sel && sel.toString().length > 0) return;
+  openMsgMenu(ev, sid);
+}
+
+function msgTouchStart(ev, sid){
+  const t = (ev.touches && ev.touches[0]) || ev;
+  const msgEl = ev.currentTarget.closest('.msg');
+  const bubbleEl = msgEl && msgEl.querySelector('.msg-bubble');
+  if (msgEl && bubbleEl) {
+    _swipeState = {
+      sid, msgEl, bubbleEl,
+      startX: t.clientX, startY: t.clientY,
+      currentDx: 0, isHoriz: null,
+    };
+  }
+}
+
+function msgTouchMove(ev){
+  if (!_swipeState) return;
+  const t = (ev.touches && ev.touches[0]) || ev;
+  const dx = t.clientX - _swipeState.startX;
+  const dy = t.clientY - _swipeState.startY;
+  if (_swipeState.isHoriz === null) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    _swipeState.isHoriz = Math.abs(dx) > Math.abs(dy);
+    if (!_swipeState.isHoriz) {
+      // Вертикальный — это скролл, выходим
+      _swipeState = null;
+      return;
+    }
+    _swipeState.msgEl.classList.add('swiping');
+    _ensureSwipeIcon(_swipeState.msgEl);
+  }
+  if (!_swipeState.isHoriz) return;
+  // Свайп только вправо для reply
+  const useDx = Math.max(0, dx) * 0.45;
+  const capped = Math.min(useDx, 80);
+  _swipeState.currentDx = capped;
+  _swipeState.bubbleEl.style.transform = `translateX(${capped}px)`;
+  const icon = _swipeState.msgEl.querySelector('.msg-swipe-icon');
+  if (icon) icon.style.opacity = Math.min(1, capped / 50);
+}
+
+// ─── Long-press на медиа (img/video/voice/file) → открыть меню сообщения ───
+// На bubble (текстовом) меню открывается по простому тапу. На медиа click
+// зарезервирован за play/lightbox/download, поэтому для меню используем
+// длинное нажатие 500мс или контекстное меню (правый клик / Apple Pencil).
+let _mediaPressTimer = null;
+let _mediaPressOpened = false;
+let _mediaPressStart = null;
+
+function mediaTouchStart(ev, sid){
+  if (_mediaPressTimer) clearTimeout(_mediaPressTimer);
+  _mediaPressOpened = false;
+  const t = (ev.touches && ev.touches[0]) || ev;
+  _mediaPressStart = { x: t.clientX, y: t.clientY };
+  // Сохраняем clientX/Y потому что ev.touches исчезает в setTimeout
+  const px = t.clientX, py = t.clientY;
+  _mediaPressTimer = setTimeout(() => {
+    _mediaPressTimer = null;
+    _mediaPressOpened = true;
+    // Подавим последующий click чтоб не открылся lightbox после меню
+    _swipeSuppressClick = true;
+    setTimeout(() => { _swipeSuppressClick = false; }, 400);
+    openMsgMenu({clientX: px, clientY: py, preventDefault(){}, stopPropagation(){}}, sid);
+  }, 500);
+}
+function mediaTouchMove(ev){
+  if (!_mediaPressTimer || !_mediaPressStart) return;
+  const t = (ev.touches && ev.touches[0]) || ev;
+  const dx = Math.abs(t.clientX - _mediaPressStart.x);
+  const dy = Math.abs(t.clientY - _mediaPressStart.y);
+  // Если палец двинулся > 8px — это не long-press (свайп или скролл)
+  if (dx > 8 || dy > 8) {
+    clearTimeout(_mediaPressTimer); _mediaPressTimer = null;
+  }
+}
+function mediaTouchEnd(){
+  if (_mediaPressTimer) { clearTimeout(_mediaPressTimer); _mediaPressTimer = null; }
+  _mediaPressStart = null;
+  // Если меню было открыто — подавим click который вот-вот сработает
+  if (_mediaPressOpened) {
+    _mediaPressOpened = false;
+  }
+}
+
+function msgTouchEnd(){
+  if (!_swipeState) return;
+  const state = _swipeState;
+  _swipeState = null;
+  if (!state.isHoriz) return; // Простой тап — меню откроет onclick → msgBubbleClick
+  // Был свайп — обрабатываем и подавляем click
+  const triggered = state.currentDx >= 45;
+  state.msgEl.classList.remove('swiping');
+  state.msgEl.classList.add('swipe-release');
+  state.bubbleEl.style.transform = '';
+  const icon = state.msgEl.querySelector('.msg-swipe-icon');
+  if (icon) icon.style.opacity = '0';
+  setTimeout(() => state.msgEl.classList.remove('swipe-release'), 220);
+  _swipeSuppressClick = true;
+  setTimeout(() => { _swipeSuppressClick = false; }, 350);
+  if (triggered) {
+    const m = activeMessages.find(x => String(x.sid) === String(state.sid));
+    if (m && !m.deleted && typeof startReply === 'function') startReply(m);
+  }
+}
+
+// Bottom sheet forward — выбор куда переслать
+let _fwdSid = null;
+function openForwardSheet(sid){
+  _fwdSid = sid;
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
+  if (!m) return;
+  const list = document.getElementById('fwdList');
+  // DM-диалоги + группы (кроме текущего чата)
+  const dItems = dialogs
+    .filter(d => !(activePeer && activePeer.username === d.username))
+    .map(d => `<div class="dialog" onclick="doForwardTo('dm', ${jsAttr(d.username)})">
+      <div class="d-av">${ini(d.display_name||d.username)}</div>
+      <div class="d-body"><div class="d-row1"><div class="d-name">${esc(d.display_name||d.username)}</div></div></div>
+    </div>`);
+  const gItems = groups
+    .filter(g => !(activeGroup && activeGroup.id === g.id))
+    .map(g => `<div class="dialog" onclick="doForwardTo('group', ${g.id})">
+      <div class="d-av" style="background:linear-gradient(135deg,var(--primary),var(--primary2));">
+        <i class="fa-solid fa-${g.kind==='channel'?'bullhorn':'users'}" style="color:#fff;font-size:14px;"></i>
+      </div>
+      <div class="d-body"><div class="d-row1"><div class="d-name">${esc(g.name)}</div></div></div>
+    </div>`);
+  list.innerHTML = (gItems.join('') + dItems.join('')) ||
+    '<div style="text-align:center;color:var(--sub);padding:24px;">Некуда переслать</div>';
+  document.getElementById('fwdSheet').classList.add('open');
+}
+function closeFwdSheet(){ document.getElementById('fwdSheet').classList.remove('open'); _fwdSid = null; }
+
+async function doForwardTo(kind, target){
+  const sid = _fwdSid;
+  closeFwdSheet();
+  if (sid == null) return;
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
+  if (!m) return;
+  const origAuthor = m.from_me ? me.username : (m.sender_username || (activePeer ? activePeer.username : ''));
+
+  try {
+    const fp = m.file_payload || m.file;
+    const isMedia = !!(fp && fp.file_id && fp.key && fp.iv);
+    let payload;
+
+    if (isMedia) {
+      // ─── Пересылка медиа (картинка/видео/файл/голосовое) ───
+      // Сервер не отдаёт /file/{id} никому кроме (sender, receiver) → C получит
+      // 403 если просто переадресовать file_id. Нужен decrypt+re-encrypt+re-upload
+      // с новым ключом и для нового получателя.
+      if (kind !== 'dm') {
+        showToast('Пересылка файлов в группы пока не поддержана', true);
+        return;
+      }
+      showToast('Пересылаю файл…');
+      const encOriginal = await fetchEncryptedFile(fp.file_id, fp.mime);
+      if (!encOriginal) throw new Error('Файл недоступен (удалён с сервера и нет локального кэша)');
+      // Decrypt оригинала
+      const oldKey = await crypto.subtle.importKey('raw', b64d(fp.key), {name:'AES-GCM'}, false, ['decrypt']);
+      const plain = await crypto.subtle.decrypt({name:'AES-GCM', iv: b64d(fp.iv)}, oldKey, encOriginal);
+      // Re-encrypt свежим ключом + IV для нового получателя
+      const newKey = await crypto.subtle.generateKey({name:'AES-GCM', length:256}, true, ['encrypt','decrypt']);
+      const newIv = crypto.getRandomValues(new Uint8Array(12));
+      const newCt = await crypto.subtle.encrypt({name:'AES-GCM', iv: newIv}, newKey, plain);
+      const newKeyRaw = await crypto.subtle.exportKey('raw', newKey);
+      // Upload re-encrypted blob с привязкой к новому получателю
+      const form = new FormData();
+      form.append('to_username', target);
+      form.append('blob', new Blob([newCt], {type:'application/octet-stream'}), 'enc');
+      const upRes = await fetch(CHAT_API + '/file/upload', {
+        method: 'POST', headers: {'Authorization': 'Bearer ' + token}, body: form,
+      });
+      if (!upRes.ok) {
+        const t = await upRes.text();
+        let msg = t; try { msg = JSON.parse(t).detail || t; } catch(_){}
+        throw new Error(msg || 'upload failed');
+      }
+      const { file_id: newFileId } = await upRes.json();
+      // Кэшируем у себя (как при обычной отправке)
+      await idbCacheFile(newFileId, newCt, fp.mime).catch(()=>{});
+      payload = {
+        type: fp.voice ? 'voice' : 'file',
+        file_id: newFileId,
+        file_name: fp.file_name || fp.name || (fp.voice ? 'voice' : 'file'),
+        mime: fp.mime || 'application/octet-stream',
+        size: fp.size || 0,
+        key: b64e(newKeyRaw),
+        iv: b64e(newIv),
+        ...(fp.voice ? {voice: true, duration: fp.duration || 0} : {}),
+        forwarded_from: origAuthor || null,
+      };
+    } else {
+      // ─── Пересылка текста ───
+      const text = (m.text || '').trim();
+      if (!text) { showToast('Нечего пересылать (пустое сообщение)', true); return; }
+      payload = { type: 'msg', text, forwarded_from: origAuthor || null };
+    }
+
+    // ─── Отправка адресату ───
+    if (kind === 'dm') {
+      const ct = await encryptForPeer(target, payload);
+      await chat('/send', 'POST', { to_username: target, ciphertext: ct });
+    } else {
+      // group: только для текста (см. ранее)
+      const g = groups.find(x => x.id === target);
+      if (!g) return showToast('Группа не найдена', true);
+      const info = await chat(`/group/${target}`);
+      const { ciphertext, envelope_keys, sharedKeyBytes } = await encryptForGroup(info.members, payload);
+      const r = await chat(`/group/${target}/send`, 'POST', { ciphertext, envelope_keys });
+      _myGroupSharedKeys.set(r.id, sharedKeyBytes);
+      setTimeout(() => _myGroupSharedKeys.delete(r.id), 60000);
+    }
+    showToast('Переслано');
+  } catch(e) {
+    console.error('[forward]', e);
+    showToast(e.message || 'Не удалось переслать', true);
+  }
+}
+
+// ── Emoji-палитра ──
+// Используем системный emoji-font: на Apple-устройствах будут реальные iOS emoji,
+// на остальных — системные альтернативы. Никаких 5MB SVG-наборов.
+const EMOJI_DATA = {
+  smiles: { icon: '😀', name: 'Смайлы', items: [
+    {e:'😀',t:'grin happy'},{e:'😃',t:'happy'},{e:'😄',t:'smile happy'},{e:'😁',t:'grin'},{e:'😆',t:'laugh'},
+    {e:'😅',t:'sweat laugh'},{e:'🤣',t:'rofl laugh'},{e:'😂',t:'joy laugh tears'},{e:'🙂',t:'slight smile'},
+    {e:'🙃',t:'upside down'},{e:'😉',t:'wink'},{e:'😊',t:'blush smile'},{e:'😇',t:'angel'},
+    {e:'🥰',t:'love hearts'},{e:'😍',t:'heart eyes love'},{e:'🤩',t:'star eyes wow'},{e:'😘',t:'kiss'},
+    {e:'😗',t:'kiss'},{e:'😚',t:'kiss closed'},{e:'😙',t:'kiss smile'},{e:'🥲',t:'smiling tear'},
+    {e:'😋',t:'yum tasty'},{e:'😛',t:'tongue'},{e:'😜',t:'wink tongue'},{e:'🤪',t:'crazy'},{e:'😝',t:'tongue closed'},
+    {e:'🤑',t:'money'},{e:'🤗',t:'hug'},{e:'🤭',t:'oops'},{e:'🤫',t:'shush'},{e:'🤔',t:'think'},
+    {e:'🤐',t:'zipper mouth'},{e:'🤨',t:'raised brow'},{e:'😐',t:'neutral'},{e:'😑',t:'expressionless'},
+    {e:'😶',t:'no mouth'},{e:'😏',t:'smirk'},{e:'😒',t:'unamused'},{e:'🙄',t:'eye roll'},
+    {e:'😬',t:'grimace'},{e:'🤥',t:'lie'},{e:'😔',t:'pensive sad'},{e:'😪',t:'sleepy'},{e:'🤤',t:'drool'},
+    {e:'😴',t:'sleep'},{e:'😷',t:'mask sick'},{e:'🤒',t:'sick fever'},{e:'🤕',t:'hurt'},{e:'🤢',t:'nausea'},
+    {e:'🤮',t:'vomit'},{e:'🥵',t:'hot'},{e:'🥶',t:'cold'},{e:'😵',t:'dizzy'},{e:'🤯',t:'mind blown'},
+    {e:'🤠',t:'cowboy'},{e:'🥳',t:'party'},{e:'😎',t:'cool sunglasses'},{e:'🤓',t:'nerd'},{e:'🧐',t:'monocle'},
+    {e:'😕',t:'confused'},{e:'😟',t:'worried'},{e:'🙁',t:'frown'},{e:'☹️',t:'frown sad'},
+    {e:'😮',t:'wow open'},{e:'😯',t:'hushed'},{e:'😲',t:'astonished'},{e:'😳',t:'flushed'},
+    {e:'🥺',t:'pleading'},{e:'😦',t:'frown open'},{e:'😧',t:'anguished'},{e:'😨',t:'fearful'},
+    {e:'😰',t:'anxious sweat'},{e:'😥',t:'sad relieved'},{e:'😢',t:'cry tear sad'},{e:'😭',t:'sob cry sad'},
+    {e:'😱',t:'scream'},{e:'😖',t:'confounded'},{e:'😣',t:'persevering'},{e:'😞',t:'disappointed'},
+    {e:'😓',t:'sweat'},{e:'😩',t:'weary'},{e:'😫',t:'tired'},{e:'🥱',t:'yawn'},
+    {e:'😤',t:'huff angry'},{e:'😡',t:'angry red'},{e:'😠',t:'angry'},{e:'🤬',t:'cursing'},
+    {e:'😈',t:'devil purple'},{e:'👿',t:'devil angry'},{e:'💀',t:'skull death'},{e:'☠️',t:'skull'},
+    {e:'💩',t:'poop'},{e:'🤡',t:'clown'},{e:'👹',t:'ogre'},{e:'👺',t:'goblin'},{e:'👻',t:'ghost'},
+    {e:'👽',t:'alien'},{e:'👾',t:'space invader'},{e:'🤖',t:'robot'},
+  ]},
+  gestures: { icon: '👍', name: 'Жесты', items: [
+    {e:'👍',t:'thumbs up like'},{e:'👎',t:'thumbs down dislike'},{e:'👌',t:'ok'},{e:'🤌',t:'pinch'},
+    {e:'🤏',t:'pinch small'},{e:'✌️',t:'victory peace'},{e:'🤞',t:'fingers crossed'},
+    {e:'🤟',t:'love you'},{e:'🤘',t:'rock'},{e:'🤙',t:'call me'},
+    {e:'👈',t:'point left'},{e:'👉',t:'point right'},{e:'👆',t:'point up'},{e:'👇',t:'point down'},
+    {e:'☝️',t:'point up'},{e:'✋',t:'hand'},{e:'🤚',t:'raised back'},{e:'🖐️',t:'hand spread'},
+    {e:'🖖',t:'vulcan'},{e:'👋',t:'wave hi'},{e:'🤝',t:'handshake deal'},{e:'👏',t:'clap applause'},
+    {e:'🙌',t:'raised hands praise'},{e:'👐',t:'open hands'},{e:'🤲',t:'palms up'},{e:'🙏',t:'pray thanks'},
+    {e:'✊',t:'fist'},{e:'👊',t:'punch fist'},{e:'🤛',t:'fist left'},{e:'🤜',t:'fist right'},
+    {e:'💪',t:'muscle strong'},
+  ]},
+  hearts: { icon: '❤️', name: 'Сердца', items: [
+    {e:'❤️',t:'heart red love'},{e:'🧡',t:'heart orange'},{e:'💛',t:'heart yellow'},{e:'💚',t:'heart green'},
+    {e:'💙',t:'heart blue'},{e:'💜',t:'heart purple'},{e:'🖤',t:'heart black'},{e:'🤍',t:'heart white'},
+    {e:'🤎',t:'heart brown'},{e:'❤️‍🔥',t:'heart fire burn'},{e:'❤️‍🩹',t:'heart mend'},
+    {e:'💔',t:'broken heart'},{e:'💕',t:'two hearts'},{e:'💞',t:'revolving hearts'},
+    {e:'💓',t:'beating heart'},{e:'💗',t:'growing heart'},{e:'💖',t:'sparkling heart'},
+    {e:'💘',t:'cupid heart'},{e:'💝',t:'gift heart'},{e:'💟',t:'heart decoration'},
+    {e:'💌',t:'love letter'},{e:'💋',t:'kiss mark'},{e:'💯',t:'hundred'},
+    {e:'💥',t:'boom collision'},{e:'💫',t:'dizzy'},{e:'⭐',t:'star'},{e:'🌟',t:'glowing star'},
+    {e:'✨',t:'sparkles'},{e:'🔥',t:'fire hot'},{e:'💧',t:'drop water'},{e:'💦',t:'sweat drops'},
+  ]},
+  nature: { icon: '🐶', name: 'Природа', items: [
+    {e:'🐶',t:'dog puppy'},{e:'🐱',t:'cat kitten'},{e:'🐭',t:'mouse'},{e:'🐹',t:'hamster'},
+    {e:'🐰',t:'rabbit bunny'},{e:'🦊',t:'fox'},{e:'🐻',t:'bear'},{e:'🐼',t:'panda'},
+    {e:'🐨',t:'koala'},{e:'🐯',t:'tiger'},{e:'🦁',t:'lion'},{e:'🐮',t:'cow'},
+    {e:'🐷',t:'pig'},{e:'🐸',t:'frog'},{e:'🐵',t:'monkey'},{e:'🙈',t:'see no evil'},
+    {e:'🙉',t:'hear no evil'},{e:'🙊',t:'speak no evil'},{e:'🐒',t:'monkey'},{e:'🐔',t:'chicken'},
+    {e:'🐧',t:'penguin'},{e:'🐦',t:'bird'},{e:'🐤',t:'chick'},{e:'🦆',t:'duck'},
+    {e:'🦅',t:'eagle'},{e:'🦉',t:'owl'},{e:'🦇',t:'bat'},{e:'🐺',t:'wolf'},
+    {e:'🐗',t:'boar'},{e:'🐴',t:'horse'},{e:'🦄',t:'unicorn'},{e:'🐝',t:'bee'},
+    {e:'🐛',t:'bug worm'},{e:'🦋',t:'butterfly'},{e:'🐌',t:'snail'},{e:'🐞',t:'lady bug'},
+    {e:'🐢',t:'turtle'},{e:'🐍',t:'snake'},{e:'🦎',t:'lizard'},{e:'🐙',t:'octopus'},
+    {e:'🐠',t:'fish'},{e:'🐳',t:'whale'},{e:'🦈',t:'shark'},{e:'🐊',t:'crocodile'},
+    {e:'🌵',t:'cactus'},{e:'🌲',t:'tree'},{e:'🌴',t:'palm'},{e:'🌱',t:'sprout'},
+    {e:'🌿',t:'herb'},{e:'☘️',t:'clover'},{e:'🍀',t:'four leaf'},{e:'🌾',t:'wheat'},
+    {e:'🌸',t:'cherry blossom'},{e:'🌺',t:'flower'},{e:'🌻',t:'sunflower'},{e:'🌹',t:'rose'},
+    {e:'🌷',t:'tulip'},{e:'🥀',t:'wilted'},{e:'🌼',t:'daisy'},{e:'🍄',t:'mushroom'},
+    {e:'☀️',t:'sun'},{e:'⛅',t:'cloud sun'},{e:'☁️',t:'cloud'},{e:'🌧️',t:'rain'},
+    {e:'⛈️',t:'storm'},{e:'❄️',t:'snowflake'},{e:'☃️',t:'snowman'},{e:'🌈',t:'rainbow'},
+    {e:'🌙',t:'moon'},{e:'🌞',t:'sun face'},{e:'🌍',t:'earth'},{e:'🪐',t:'planet'},
+  ]},
+  food: { icon: '🍕', name: 'Еда', items: [
+    {e:'🍕',t:'pizza'},{e:'🍔',t:'burger'},{e:'🍟',t:'fries'},{e:'🌭',t:'hotdog'},
+    {e:'🌮',t:'taco'},{e:'🌯',t:'burrito'},{e:'🥙',t:'wrap'},{e:'🥗',t:'salad'},
+    {e:'🥘',t:'pan food'},{e:'🍝',t:'pasta'},{e:'🍜',t:'noodle ramen'},{e:'🍲',t:'stew'},
+    {e:'🍛',t:'curry'},{e:'🍣',t:'sushi'},{e:'🍱',t:'bento'},{e:'🍤',t:'shrimp'},
+    {e:'🍙',t:'rice ball'},{e:'🍚',t:'rice'},{e:'🥟',t:'dumpling'},{e:'🥠',t:'fortune cookie'},
+    {e:'🍞',t:'bread'},{e:'🥐',t:'croissant'},{e:'🥨',t:'pretzel'},{e:'🥖',t:'baguette'},
+    {e:'🧀',t:'cheese'},{e:'🥩',t:'steak meat'},{e:'🍗',t:'chicken leg'},{e:'🍖',t:'meat bone'},
+    {e:'🥚',t:'egg'},{e:'🍳',t:'egg fried'},{e:'🥞',t:'pancakes'},{e:'🧇',t:'waffle'},
+    {e:'🥓',t:'bacon'},{e:'🥯',t:'bagel'},{e:'🥪',t:'sandwich'},{e:'🍦',t:'ice cream'},
+    {e:'🍧',t:'shaved ice'},{e:'🍨',t:'sundae'},{e:'🍩',t:'donut'},{e:'🍪',t:'cookie'},
+    {e:'🎂',t:'birthday cake'},{e:'🍰',t:'cake'},{e:'🧁',t:'cupcake'},{e:'🥧',t:'pie'},
+    {e:'🍫',t:'chocolate'},{e:'🍬',t:'candy'},{e:'🍭',t:'lollipop'},{e:'🍿',t:'popcorn'},
+    {e:'🍎',t:'apple red'},{e:'🍐',t:'pear'},{e:'🍊',t:'orange'},{e:'🍋',t:'lemon'},
+    {e:'🍌',t:'banana'},{e:'🍉',t:'watermelon'},{e:'🍇',t:'grape'},{e:'🍓',t:'strawberry'},
+    {e:'🫐',t:'blueberry'},{e:'🍒',t:'cherry'},{e:'🍑',t:'peach'},{e:'🥭',t:'mango'},
+    {e:'🍍',t:'pineapple'},{e:'🥥',t:'coconut'},{e:'🥝',t:'kiwi'},{e:'🍅',t:'tomato'},
+    {e:'🥑',t:'avocado'},{e:'🌶️',t:'pepper hot'},{e:'🥕',t:'carrot'},{e:'🌽',t:'corn'},
+    {e:'☕',t:'coffee'},{e:'🍵',t:'tea'},{e:'🥛',t:'milk'},{e:'🍺',t:'beer'},
+    {e:'🍻',t:'beers'},{e:'🍷',t:'wine'},{e:'🥂',t:'champagne'},{e:'🍸',t:'cocktail'},
+    {e:'🍹',t:'tropical'},{e:'🍾',t:'champagne pop'},{e:'🥃',t:'whiskey'},
+  ]},
+  activity: { icon: '⚽', name: 'Активности', items: [
+    {e:'⚽',t:'soccer ball'},{e:'🏀',t:'basketball'},{e:'🏈',t:'football'},{e:'⚾',t:'baseball'},
+    {e:'🎾',t:'tennis'},{e:'🏐',t:'volleyball'},{e:'🏉',t:'rugby'},{e:'🥏',t:'frisbee'},
+    {e:'🎱',t:'pool 8ball'},{e:'🏓',t:'ping pong'},{e:'🏸',t:'badminton'},{e:'🏒',t:'hockey'},
+    {e:'⛳',t:'golf'},{e:'🏹',t:'archery'},{e:'🎣',t:'fishing'},{e:'🥊',t:'boxing'},
+    {e:'🥋',t:'karate'},{e:'⛸️',t:'skating'},{e:'🎿',t:'ski'},{e:'⛷️',t:'skier'},
+    {e:'🏂',t:'snowboard'},{e:'🏄',t:'surf'},{e:'🚴',t:'cycling'},{e:'🧘',t:'yoga'},
+    {e:'🎮',t:'gamepad gaming'},{e:'🕹️',t:'joystick'},{e:'🎲',t:'dice'},{e:'♟️',t:'chess'},
+    {e:'🎯',t:'target dart'},{e:'🎳',t:'bowling'},{e:'🎤',t:'mic karaoke'},{e:'🎧',t:'headphones'},
+    {e:'🎼',t:'music score'},{e:'🎵',t:'note'},{e:'🎶',t:'notes'},{e:'🎸',t:'guitar'},
+    {e:'🎹',t:'piano'},{e:'🎺',t:'trumpet'},{e:'🥁',t:'drum'},{e:'🎬',t:'clapper film'},
+    {e:'📸',t:'camera photo'},{e:'🎨',t:'art palette'},{e:'🎭',t:'theatre masks'},
+  ]},
+  objects: { icon: '💡', name: 'Объекты', items: [
+    {e:'💡',t:'idea bulb'},{e:'🔦',t:'flashlight'},{e:'🕯️',t:'candle'},{e:'🧯',t:'fire ext'},
+    {e:'💸',t:'money fly'},{e:'💵',t:'dollar'},{e:'💴',t:'yen'},{e:'💶',t:'euro'},
+    {e:'💷',t:'pound'},{e:'💰',t:'money bag'},{e:'💳',t:'card'},{e:'💎',t:'gem diamond'},
+    {e:'⚖️',t:'scales justice'},{e:'🛒',t:'cart'},{e:'🎁',t:'gift'},{e:'🎈',t:'balloon'},
+    {e:'🎉',t:'party tada'},{e:'🎊',t:'confetti'},{e:'🎀',t:'ribbon'},{e:'🪄',t:'magic wand'},
+    {e:'📱',t:'phone mobile'},{e:'💻',t:'laptop'},{e:'⌨️',t:'keyboard'},{e:'🖥️',t:'computer'},
+    {e:'🖨️',t:'printer'},{e:'📷',t:'camera'},{e:'📺',t:'tv'},{e:'📻',t:'radio'},
+    {e:'⏰',t:'alarm clock'},{e:'⏳',t:'hourglass'},{e:'📅',t:'calendar'},{e:'📚',t:'books'},
+    {e:'📖',t:'book open'},{e:'📝',t:'memo writing'},{e:'✏️',t:'pencil'},{e:'🖊️',t:'pen'},
+    {e:'📎',t:'paperclip attach'},{e:'🔒',t:'lock'},{e:'🔓',t:'unlock'},{e:'🔑',t:'key'},
+    {e:'🛡️',t:'shield'},{e:'⚔️',t:'swords'},{e:'🔨',t:'hammer'},{e:'🪛',t:'screwdriver'},
+    {e:'⚙️',t:'gear settings'},{e:'🧰',t:'toolbox'},{e:'🧪',t:'science test'},{e:'💉',t:'syringe'},
+    {e:'💊',t:'pill'},{e:'🩺',t:'stethoscope'},{e:'🚀',t:'rocket'},{e:'🛸',t:'ufo'},
+    {e:'🏆',t:'trophy'},{e:'🥇',t:'gold medal'},{e:'🥈',t:'silver'},{e:'🥉',t:'bronze'},
+    {e:'🏅',t:'medal sport'},{e:'👑',t:'crown'},
+  ]},
+};
+
+let _emojiCurCat = 'smiles';
+let _emojiSearchQuery = '';
+
+function openEmojiSheet() {
+  document.getElementById('emojiSheet').classList.add('open');
+  document.body.classList.add('emoji-open');
+  emojiRenderCats();
+  emojiRenderGrid();
+  setTimeout(() => document.getElementById('emojiSearchInp').focus(), 100);
+}
+
+function closeEmojiSheet() {
+  document.getElementById('emojiSheet').classList.remove('open');
+  document.body.classList.remove('emoji-open');
+}
+
+function emojiRenderCats() {
+  const cats = document.getElementById('emojiCats');
+  cats.innerHTML = Object.keys(EMOJI_DATA).map(key => `
+    <button class="emoji-cat-btn ${_emojiCurCat === key && !_emojiSearchQuery ? 'active' : ''}"
+      onclick="emojiSwitchCat('${key}')" title="${EMOJI_DATA[key].name}">${EMOJI_DATA[key].icon}</button>
+  `).join('');
+}
+
+function emojiSwitchCat(key) {
+  _emojiCurCat = key;
+  _emojiSearchQuery = '';
+  document.getElementById('emojiSearchInp').value = '';
+  emojiRenderCats();
+  emojiRenderGrid();
+}
+
+function emojiFilterBySearch(q) {
+  _emojiSearchQuery = (q || '').trim().toLowerCase();
+  emojiRenderGrid();
+  emojiRenderCats();
+}
+
+function emojiRenderGrid() {
+  const grid = document.getElementById('emojiGrid');
+  let items = [];
+  if (_emojiSearchQuery) {
+    for (const cat of Object.values(EMOJI_DATA)) {
+      for (const item of cat.items) {
+        if (item.t.includes(_emojiSearchQuery)) items.push(item);
+      }
+    }
+  } else {
+    items = EMOJI_DATA[_emojiCurCat].items;
+  }
+  if (!items.length) {
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--sub);padding:24px;font-size:13px;">Не нашёл</div>';
+    return;
+  }
+  grid.innerHTML = items.map(it =>
+    `<button class="emoji-btn" onclick="emojiInsert(${JSON.stringify(it.e).replace(/"/g,'&quot;')})">${it.e}</button>`
+  ).join('');
+}
+
+function emojiInsert(emo) {
+  const inp = document.getElementById('sendInput');
+  if (!inp) { closeEmojiSheet(); return; }
+  const start = inp.selectionStart || inp.value.length;
+  const end = inp.selectionEnd || inp.value.length;
+  inp.value = inp.value.slice(0, start) + emo + inp.value.slice(end);
+  const newPos = start + emo.length;
+  inp.focus();
+  inp.setSelectionRange(newPos, newPos);
+  // Триггерим input для авто-роста textarea
+  inp.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// ── Контекстное меню кнопки "Отправить" (Фаза 3 каналов: + публикация в GS) ──
+let _sendLongPressTimer = null;
+function sendLongPressStart(ev) {
+  if (_sendLongPressTimer) clearTimeout(_sendLongPressTimer);
+  _sendLongPressTimer = setTimeout(() => { openSendOptions(); }, 500);
+}
+function sendLongPressEnd() {
+  if (_sendLongPressTimer) { clearTimeout(_sendLongPressTimer); _sendLongPressTimer = null; }
+}
+
+async function openSendOptions() {
+  // Только в активном канале (kind='channel') и у админа имеет смысл показывать опции
+  const isChannel = activeGroup && activeGroup.kind === 'channel';
+  if (!isChannel) return onSendBtn();
+  const myMember = activeGroup.members && activeGroup.members.find(m => m.id === me.id);
+  const iAmAdmin = myMember && (myMember.is_admin || myMember.is_owner);
+  if (!iAmAdmin) return onSendBtn();
+  const inp = document.getElementById('sendInput');
+  const text = (inp ? inp.value : '').trim();
+  if (!text) { showToast('Напиши сообщение сначала'); return; }
+  const isPublic = !!activeGroup.is_public;
+  const opts = await new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay open';
+    overlay.style.zIndex = '700';
+    overlay.innerHTML = `<div class="modal-sheet" onclick="event.stopPropagation()">
+      <div class="m-handle"></div>
+      <div class="m-head"><div class="m-title">Отправить</div>
+        <button class="m-close" onclick="this.closest('.modal-overlay').remove();window._sendOptResolve&&window._sendOptResolve(null)"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div style="padding:14px 18px;display:flex;flex-direction:column;gap:8px;">
+        <button id="sendOptOnly" style="padding:12px;border-radius:10px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-weight:600;cursor:pointer;font-family:inherit;font-size:13px;text-align:left;">
+          <i class="fa-solid fa-paper-plane" style="margin-right:8px;color:var(--primary);"></i>Только в канал
+        </button>
+        <button id="sendOptBoth" ${isPublic ? '' : 'disabled style="opacity:0.5;cursor:not-allowed;"'} style="padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:13px;text-align:left;">
+          <i class="fa-solid fa-share-nodes" style="margin-right:8px;"></i>В канал + пост в GhostSocial
+        </button>
+        <div style="font-size:11px;color:var(--sub);text-align:center;line-height:1.5;margin-top:4px;">
+          ${isPublic
+            ? 'Пост в GS будет доступен публично с пометкой канала. Комменты и реакции там же.'
+            : 'Публикация в GS доступна только для публичных каналов. Сделай канал публичным в настройках.'}
+        </div>
+      </div>
+    </div>`;
+    document.body.appendChild(overlay);
+    window._sendOptResolve = resolve;
+    overlay.querySelector('#sendOptOnly').onclick = () => { overlay.remove(); resolve('only'); };
+    overlay.querySelector('#sendOptBoth').onclick = () => { overlay.remove(); resolve('both'); };
+    overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); resolve(null); } });
+  });
+  if (!opts) return;
+  // Отправка в канал (как обычное сообщение)
+  await onSendBtn();
+  // И если both — публикуем в GS
+  if (opts === 'both') {
+    try {
+      await chat(`/group/${activeGroup.id}/publish_to_gs`, 'POST', { text });
+      showToast('Опубликовано в GhostSocial');
+    } catch(e) { showToast('Не удалось опубликовать: ' + (e.message || ''), true); }
+  }
+}
+
+// Bottom sheet attach
+function openAttachSheet(){
+  if (activeGroup) {
+    // в группах файлы/голос пока не работают — сразу показываем msg
+    showToast('Файлы и голос в группах — скоро. Пока только текст.', true);
+    return;
+  }
+  if (!activePeer) return;
+  document.getElementById('attachSheet').classList.add('open');
+}
+function closeAttachSheet(){
+  document.getElementById('attachSheet').classList.remove('open');
+}
+
+function _ensureSwipeIcon(msgEl) {
+  if (msgEl.querySelector('.msg-swipe-icon')) return;
+  const icon = document.createElement('div');
+  icon.className = 'msg-swipe-icon';
+  icon.innerHTML = '<i class="fa-solid fa-reply"></i>';
+  msgEl.appendChild(icon);
+}
+
+const REACT_EMOJI = ['❤️','🔥','👍','😂','😮','🙏'];
+
+function openMsgMenu(ev, sid){
+  closeMsgMenu();
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
+  if (!m || m.deleted) return;
+  // Контейнер: emoji bar + menu
+  const wrap = document.createElement('div');
+  wrap.id = 'msgMenu';
+  wrap.style.cssText = 'position:fixed;z-index:500;display:flex;flex-direction:column;gap:6px;align-items:flex-start;';
+
+  // Emoji-bar (реакции)
+  const myReaction = _getMyReaction(m);
+  const bar = document.createElement('div');
+  bar.style.cssText = 'background:rgba(15,23,42,0.96);backdrop-filter:blur(10px);border:1px solid var(--border-strong);border-radius:32px;padding:6px 8px;display:flex;gap:2px;box-shadow:0 12px 32px rgba(0,0,0,0.45);';
+  REACT_EMOJI.forEach(emo => {
+    const btn = document.createElement('button');
+    btn.style.cssText = 'background:none;border:0;font-size:22px;padding:6px 8px;cursor:pointer;border-radius:50%;transition:transform .12s,background .12s;';
+    if (emo === myReaction) btn.style.background = 'rgba(168,85,247,0.25)';
+    btn.textContent = emo;
+    btn.onmouseover = () => btn.style.transform = 'scale(1.25)';
+    btn.onmouseout = () => btn.style.transform = '';
+    btn.onclick = (e) => { e.stopPropagation(); closeMsgMenu(); toggleReaction(sid, emo); };
+    bar.appendChild(btn);
+  });
+  wrap.appendChild(bar);
+
+  // Menu
+  const menu = document.createElement('div');
+  menu.style.cssText = 'background:rgba(15,23,42,0.96);backdrop-filter:blur(10px);border:1px solid var(--border-strong);border-radius:12px;padding:6px;box-shadow:0 12px 32px rgba(0,0,0,0.45);min-width:170px;';
+  const items = [{icon:'fa-reply', label:'Ответить', cb:() => startReply(m)}];
+  // Копировать — только если есть текст
+  if (!m.deleted && (m.text || '').trim()) {
+    items.push({icon:'fa-copy', label:'Копировать', cb:() => copyMsgText(m)});
+  }
+  // Переслать — для любого не-удалённого (текст ИЛИ медиа)
+  if (!m.deleted && ((m.text || '').trim() || m.file_payload || m.file)) {
+    items.push({icon:'fa-share', label:'Переслать', cb:() => openForwardSheet(sid)});
+  }
+  if (m.from_me) {
+    items.push({icon:'fa-pen', label:'Редактировать', cb:() => editMessage(sid)});
+    items.push({icon:'fa-trash-can', label:'Удалить', danger:true, cb:() => deleteMessage(sid)});
+  }
+  menu.innerHTML = items.map((it, i) => `<button data-i="${i}" style="display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;background:none;border:0;color:${it.danger ? 'var(--red)' : 'var(--text)'};font-size:13px;font-family:inherit;cursor:pointer;border-radius:8px;text-align:left;" onmouseover="this.style.background='rgba(255,255,255,0.06)'" onmouseout="this.style.background='none'"><i class="fa-solid ${it.icon}" style="width:14px;"></i>${esc(it.label)}</button>`).join('');
+  wrap.appendChild(menu);
+  document.body.appendChild(wrap);
+  // Позиционирование (wrap)
+  const x = ev.clientX || (ev.touches && ev.touches[0]?.clientX) || 100;
+  const y = ev.clientY || (ev.touches && ev.touches[0]?.clientY) || 100;
+  const rect = wrap.getBoundingClientRect();
+  const left = Math.min(Math.max(8, x), window.innerWidth - rect.width - 10);
+  const top = Math.min(Math.max(8, y), window.innerHeight - rect.height - 10);
+  wrap.style.left = left + 'px';
+  wrap.style.top = top + 'px';
+  menu.querySelectorAll('button').forEach((b, idx) => {
+    b.onclick = () => { closeMsgMenu(); items[idx].cb(); };
+  });
+  setTimeout(() => document.addEventListener('click', closeMsgMenu, {once:true}), 50);
+}
+function closeMsgMenu(){ const m = document.getElementById('msgMenu'); if (m) m.remove(); }
+
+// Копировать текст сообщения в буфер.
+async function copyMsgText(m) {
+  const txt = (m && m.text || '').toString();
+  if (!txt) return;
+  try {
+    await navigator.clipboard.writeText(txt);
+    showToast('Скопировано');
+  } catch(e) {
+    // Fallback для не-https / старых браузеров
+    const ta = document.createElement('textarea');
+    ta.value = txt; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); showToast('Скопировано'); }
+    catch(_) { showToast('Не удалось скопировать', true); }
+    finally { document.body.removeChild(ta); }
+  }
+}
+
+// Закрываем msg-menu при скролле — используем требовательную проверку (не блокируем мобильный скролл)
+(function _wireMenuCloseOnScroll(){
+  if (window._msgMenuScrollWired) return;
+  window._msgMenuScrollWired = true;
+  // Слушаем scroll конкретно на body-чата (через delegation)
+  // Не используем capture:true — это ломает плавный скролл на мобильных
+  document.addEventListener('scroll', (e) => {
+    if (!document.getElementById('msgMenu')) return;
+    // Закрываем только если scroll НЕ внутри самого меню (а это вряд ли)
+    const t = e.target;
+    if (t && t.closest && t.closest('#msgMenu')) return;
+    closeMsgMenu();
+  }, { capture: true, passive: true });
+})();
+
+function _getMyReaction(m) {
+  if (!m || !m.reactions) return null;
+  for (const emo of Object.keys(m.reactions)) {
+    if ((m.reactions[emo] || []).includes(me.username)) return emo;
+  }
+  return null;
+}
+
+async function toggleReaction(sid, emoji) {
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
+  if (!m || m.deleted) return;
+  const current = _getMyReaction(m);
+  const newEmoji = current === emoji ? null : emoji;  // toggle off если та же
+  // Optimistic local update
+  const reactions = m.reactions || {};
+  for (const e of Object.keys(reactions)) {
+    reactions[e] = (reactions[e] || []).filter(u => u !== me.username);
+    if (!reactions[e].length) delete reactions[e];
+  }
+  if (newEmoji) {
+    reactions[newEmoji] = [...(reactions[newEmoji] || []), me.username];
+  }
+  m.reactions = reactions;
+  await idbUpdateMessage(sid, { reactions });
+  if (activeGroup) renderGroupMessages(); else renderMessages();
+  // Отправляем react-payload по тому же пути что edit/delete
+  try {
+    const payload = { type: 'react', target_sid: sid, emoji: newEmoji };
+    if (activeGroup) {
+      const { ciphertext, envelope_keys, sharedKeyBytes } = await encryptForGroup(activeGroup.members, payload);
+      const r = await chat(`/group/${activeGroup.id}/send`, 'POST', { ciphertext, envelope_keys });
+      _myGroupSharedKeys.set(r.id, sharedKeyBytes);
+      setTimeout(() => _myGroupSharedKeys.delete(r.id), 60000);
+    } else if (activePeer) {
+      const ct = await encryptForPeer(activePeer.username, payload);
+      await chat('/send', 'POST', { to_username: activePeer.username, ciphertext: ct });
+    }
+  } catch(e) { showToast(e.message || 'Реакция не отправилась', true); }
+}
+
+function appendMessage(m){
+  const body = document.getElementById('chatBody');
+  if (!body) return;
+  renderMessages();
+  scrollChatBottom(true);
+}
+function updateLastBubble(failed){renderMessages();scrollChatBottom(false);}
+
+function linkify(t){return esc(t).replace(/(https?:\/\/[^\s<>"']+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;opacity:0.85">$1</a>');}
+
+// ── Previews для ссылок в сообщениях ──────────────────────────────────────────
+const _gsPostCache = new Map();   // postId -> {username, display_name, content, ...} | null
+const _linkPrevCache = new Map(); // url -> {title, image, ...} | null
+const URL_RE = /\bhttps?:\/\/[^\s<>"']+/i;
+// /social#p=123 или абсолютная https://...duckdns.org/social#p=123 или /social/#p=123
+const GS_POST_RE = /(?:https?:\/\/[^\s<>"']*?\/social\/?#p=(\d+)|\/social\/?#p=(\d+))/i;
+
+function detectLink(text){
+  if (!text) return null;
+  const gs = text.match(GS_POST_RE);
+  if (gs) return { kind: 'gs_post', id: parseInt(gs[1] || gs[2], 10) };
+  const u = text.match(URL_RE);
+  if (u) return { kind: 'link', url: u[0].replace(/[.,;!?)]+$/, '') };
+  return null;
+}
+
+function previewPlaceholder(msg){
+  const link = detectLink(msg.text);
+  if (!link) return '';
+  if (link.kind === 'gs_post') {
+    return `<a class="msg-preview" data-prev-gs="${link.id}" href="/social#p=${link.id}" target="_blank" rel="noopener">
+      <div class="prev-loading"><div class="spinner-sm"></div>Превью поста…</div>
+    </a>`;
+  }
+  return `<a class="msg-preview" data-prev-url="${esc(link.url)}" href="${esc(link.url)}" target="_blank" rel="noopener">
+    <div class="prev-loading"><div class="spinner-sm"></div>${esc(link.url.slice(0,60))}</div>
+  </a>`;
+}
+
+async function loadMsgPreviews(){
+  // GS post previews
+  document.querySelectorAll('[data-prev-gs]').forEach(async el => {
+    if (el._loading) return;
+    el._loading = true;
+    const id = +el.dataset.prevGs;
+    let post = _gsPostCache.get(id);
+    if (post === undefined) {
+      try { post = await soc(`/post/${id}`); _gsPostCache.set(id, post); }
+      catch(e) { _gsPostCache.set(id, null); post = null; }
+    }
+    if (!post) { el.remove(); return; }
+    const reactsTotal = (post.reactions && post.reactions.total) || 0;
+    const commentsTotal = post.comments_count || 0;
+    el.innerHTML = `
+      <div class="gs-prev">
+        <div class="head">
+          <div class="av">${(post.display_name||'?')[0].toUpperCase()}</div>
+          <b>${esc(post.display_name)}</b>
+          <span>·</span><span>@${esc(post.username)}</span>
+          <span class="badge"><i class="fa-solid fa-hashtag"></i> GhostSocial</span>
+        </div>
+        <div class="txt">${esc((post.content||'').slice(0, 200))}${(post.content||'').length>200?'…':''}</div>
+        <div class="meta">
+          <span><i class="fa-regular fa-heart"></i> ${reactsTotal}</span>
+          <span><i class="fa-regular fa-comment"></i> ${commentsTotal}</span>
+        </div>
+      </div>`;
+  });
+  // External link previews
+  document.querySelectorAll('[data-prev-url]').forEach(async el => {
+    if (el._loading) return;
+    el._loading = true;
+    const url = el.dataset.prevUrl;
+    let data = _linkPrevCache.get(url);
+    if (data === undefined) {
+      try { data = await soc(`/linkpreview?url=${encodeURIComponent(url)}`); _linkPrevCache.set(url, data); }
+      catch(e) { _linkPrevCache.set(url, null); data = null; }
+    }
+    if (!data || !data.title) { el.remove(); return; }
+    el.innerHTML = `
+      <div class="link-prev">
+        ${data.image ? `<div class="img" style="background-image:url('${esc(data.image)}')"></div>` : ''}
+        <div class="body">
+          ${data.site ? `<div class="site">${esc(data.site)}</div>` : ''}
+          <div class="title">${esc(data.title)}</div>
+          ${data.description ? `<div class="desc">${esc(data.description)}</div>` : ''}
+        </div>
+      </div>`;
+  });
+}
+function scrollChatBottom(smooth=true){const b=document.getElementById('chatBody');if(!b)return;b.scrollTo({top:b.scrollHeight, behavior:smooth?'smooth':'auto'});}
+
+// Подсветка скроллбара во время активного скролла (как в TG)
+let _scrollHideTimer = null;
+document.addEventListener('scroll', e => {
+  const t = e.target;
+  if (!t || !t.classList) return;
+  if (!t.classList.contains('chat-body') && !t.classList.contains('sb-list')) return;
+  t.classList.add('scrolling');
+  clearTimeout(_scrollHideTimer);
+  _scrollHideTimer = setTimeout(() => t.classList.remove('scrolling'), 800);
+}, true);
+
+// ════════════════════════════════════════════════════════════════════
+// Профиль чужого юзера (внутренний экран)
+// ════════════════════════════════════════════════════════════════════
+let _profileForUser = null;
+
+async function openPeerProfile(username){
+  _profileForUser = username;
+  const main = document.getElementById('chatMain');
+  const prof = document.getElementById('profileMain');
+  main.style.display = 'none';
+  prof.style.display = 'flex';
+  document.getElementById('appGrid').classList.add('in-chat');
+  prof.innerHTML = `
+    <div class="chat-head">
+      <button class="chat-back" onclick="closePeerProfile()" style="display:flex"><i class="fa-solid fa-arrow-left"></i></button>
+      <div style="flex:1;font-size:15px;font-weight:700;">Профиль</div>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:30px 20px;display:flex;flex-direction:column;align-items:center;text-align:center;">
+      <div class="spinner" style="width:40px;height:40px;border:3px solid rgba(168,85,247,0.2);border-top-color:var(--primary);border-radius:50%;animation:spin 0.9s linear infinite;"></div>
+    </div>`;
+  try {
+    const d = await soc(`/prof/${encodeURIComponent(username)}`);
+    prof.innerHTML = `
+      <div class="chat-head">
+        <button class="chat-back" onclick="closePeerProfile()" style="display:flex"><i class="fa-solid fa-arrow-left"></i></button>
+        <div style="flex:1;font-size:15px;font-weight:700;">Профиль</div>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:30px 20px;">
+        <div style="text-align:center;margin-bottom:24px;">
+          <div style="width:84px;height:84px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));margin:0 auto 14px;display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:700;color:#fff;box-shadow:0 8px 24px rgba(168,85,247,0.4);">${ini(d.display_name)}</div>
+          <div style="font-size:22px;font-weight:800;margin-bottom:4px;">${esc(d.display_name)}</div>
+          <div style="font-size:14px;color:var(--sub);">@${esc(d.username)}</div>
+        </div>
+        <div style="display:flex;gap:10px;max-width:480px;margin:0 auto 22px;">
+          <div style="flex:1;background:rgba(15,23,42,0.6);border:1px solid var(--border);border-radius:14px;padding:14px 8px;text-align:center;"><div style="font-size:20px;font-weight:800;color:var(--primary);">${d.posts_count}</div><div style="font-size:11px;color:var(--sub);">постов</div></div>
+          <div style="flex:1;background:rgba(15,23,42,0.6);border:1px solid var(--border);border-radius:14px;padding:14px 8px;text-align:center;"><div style="font-size:20px;font-weight:800;color:var(--primary);">${d.followers_count}</div><div style="font-size:11px;color:var(--sub);">подписчиков</div></div>
+          <div style="flex:1;background:rgba(15,23,42,0.6);border:1px solid var(--border);border-radius:14px;padding:14px 8px;text-align:center;"><div style="font-size:20px;font-weight:800;color:var(--primary);">${d.following_count}</div><div style="font-size:11px;color:var(--sub);">подписок</div></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px;max-width:480px;margin:0 auto;">
+          <a href="/social#u=${encodeURIComponent(d.username)}" class="auth-btn" style="text-decoration:none;display:flex;align-items:center;justify-content:center;gap:8px;margin:0;"><i class="fa-solid fa-hashtag"></i> Открыть в GhostSocial</a>
+          <button onclick="closePeerProfile()" style="padding:13px;border-radius:12px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;"><i class="fa-solid fa-comment"></i> Вернуться к чату</button>
+        </div>
+      </div>`;
+  } catch(e) {
+    prof.innerHTML = `
+      <div class="chat-head">
+        <button class="chat-back" onclick="closePeerProfile()" style="display:flex"><i class="fa-solid fa-arrow-left"></i></button>
+        <div style="flex:1;font-size:15px;font-weight:700;">Профиль</div>
+      </div>
+      <div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--sub);">Не удалось загрузить</div>`;
+  }
+}
+
+function closePeerProfile(){
+  document.getElementById('profileMain').style.display = 'none';
+  document.getElementById('chatMain').style.display = 'flex';
+  _profileForUser = null;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// NEW CHAT modal
+// ════════════════════════════════════════════════════════════════════
+async function openNewChat(){
+  document.getElementById('newChatModal').classList.add('open');
+  document.getElementById('newChatSearch').value='';
+  // Сначала показываем контакты
+  try {
+    const r = await chat('/contacts');
+    if (r && r.length) {
+      const html = '<div style="font-size:11px;color:var(--sub);font-weight:600;letter-spacing:0.5px;text-transform:uppercase;padding:4px 8px 8px;">Контакты</div>' +
+        r.map(u => `<div class="m-user" onclick="startChat(${jsAttr(u.username)},${jsAttr(u.display_name)})"><div class="av">${ini(u.display_name)}</div><div class="info"><div class="nm">${esc(u.display_name)}</div><div class="un">@${esc(u.username)}</div></div></div>`).join('');
+      document.getElementById('newChatResults').innerHTML = html;
+    } else {
+      document.getElementById('newChatResults').innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px;">Контактов нет.<br>Найдите по @username.</div>';
+    }
+  } catch(_) {
+    document.getElementById('newChatResults').innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px;">Начните вводить имя</div>';
+  }
+  setTimeout(()=>document.getElementById('newChatSearch').focus(),100);
+}
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+// Закрытие модалок по клику на overlay — но НЕ для forceTagModal (его нельзя пропустить)
+document.querySelectorAll('.modal-overlay').forEach(el => {
+  if (el.id === 'forceTagModal') return;
+  el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
+});
+let _t=0;
+// Поиск каналов/групп по @тегу — если ввели @xxx и оно начинается на @, то ищем
+async function tryGroupByTag(tag) {
+  try {
+    const g = await chat(`/group/by_tag/${encodeURIComponent(tag.replace(/^@/,''))}`);
+    return g;
+  } catch(_) { return null; }
+}
+
+async function joinGroupByTag(gid) {
+  try {
+    const r = await chat(`/group/${gid}/join_request`, 'POST');
+    if (r.auto) {
+      showToast('Присоединились! Канал появится в списке.');
+      closeModal('newChatModal');
+      await loadGroups();
+    } else {
+      showToast('Заявка отправлена. Жди ответа администратора.');
+      closeModal('newChatModal');
+    }
+  } catch(e) { showToast(e.message || 'Ошибка', true); }
+}
+
+document.getElementById('newChatSearch').addEventListener('input', e => {
+  const q = e.target.value.trim();
+  clearTimeout(_t);
+  if (!q) { document.getElementById('newChatResults').innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px;">Начните вводить имя</div>'; return; }
+  _t = setTimeout(async () => {
+    try {
+      // Параллельно: 1) юзеры через GS-search, 2) канал/группа по точному тегу
+      const cleanTag = q.replace(/^@/, '').toLowerCase();
+      const [searchD, groupG] = await Promise.all([
+        soc(`/search?q=@${encodeURIComponent(q)}`).catch(()=>({results:[]})),
+        /^[a-z0-9_]{3,20}$/.test(cleanTag) ? tryGroupByTag(cleanTag) : Promise.resolve(null),
+      ]);
+      const res = document.getElementById('newChatResults');
+      const list = (searchD.results || []).filter(u => u.username !== me.username);
+      let html = '';
+      // Группа/канал найдена по точному тегу — показываем первой
+      if (groupG) {
+        const inList = groups.some(x => x.id === groupG.id);
+        html += `<div class="m-user" style="border-left:3px solid var(--primary);">
+          <div class="av" style="background:linear-gradient(135deg,var(--primary),var(--primary2));"><i class="fa-solid fa-${groupG.kind==='channel'?'bullhorn':'users'}" style="color:#fff;font-size:14px;"></i></div>
+          <div class="info" style="flex:1;">
+            <div class="nm">${esc(groupG.name)} <span style="color:var(--sub);font-weight:500;font-size:11px;">@${esc(groupG.username)}</span></div>
+            <div class="un">${groupG.kind==='channel'?(groupG.is_public?'Публичный канал':'Приватный канал'):'Группа'} · ${groupG.members_count} участ.${groupG.bio ? ' · '+esc(groupG.bio.slice(0,40)) : ''}</div>
+          </div>
+          ${inList
+            ? `<button onclick="closeModal('newChatModal');openGroupChat(${groupG.id})" style="padding:6px 12px;border-radius:8px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;">Открыть</button>`
+            : `<button onclick="joinGroupByTag(${groupG.id})" style="padding:6px 12px;border-radius:8px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">${groupG.is_public ? 'Войти' : 'Заявка'}</button>`}
+        </div>`;
+      }
+      // Юзеры
+      html += list.map(u => `<div class="m-user" onclick="startChat(${jsAttr(u.username)},${jsAttr(u.display_name)})"><div class="av">${ini(u.display_name)}</div><div class="info"><div class="nm">${esc(u.display_name)}</div><div class="un">@${esc(u.username)}</div></div></div>`).join('');
+      if (!html) { res.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px;">Никого не найдено</div>'; return; }
+      res.innerHTML = html;
+    } catch(e) { document.getElementById('newChatResults').innerHTML='<div style="padding:30px;text-align:center;color:var(--red);font-size:13px;">Ошибка поиска</div>'; }
+  }, 250);
+});
+function startChat(username, display_name){closeModal('newChatModal');openChat(username, display_name);}
+
+// ════════════════════════════════════════════════════════════════════
+// WebSocket
+// ════════════════════════════════════════════════════════════════════
+// Защита от reconnect-бомбы: если сервер закрыл с policy violation (1008)
+// или auth-fail — НЕ продолжаем стучать.
+let _wsAuthFail = false;
+let _lastWsRecvAt = 0;        // время последнего любого сообщения от сервера
+let _pingSentAt = 0;          // время последнего ping (для timeout pong)
+let _pongTimeoutTimer = null; // таймер ожидания pong
+
+function _killStaleWs(reason) {
+  console.warn('[ws] stale, reconnecting:', reason);
+  clearInterval(pingTimer); clearTimeout(_pongTimeoutTimer);
+  try { ws && ws.close(); } catch(_){}
+  // ws.onclose сам триггернёт reconnect
+}
+
+function connectWS(){
+  if (_wsAuthFail) return;
+  if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+  const base = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/soc/ws';
+  const u = token ? `${base}?token=${encodeURIComponent(token)}` : base;
+  try { ws = new WebSocket(u); } catch(e) { setTimeout(connectWS, wsReconnect); wsReconnect = Math.min(wsReconnect*2, 30000); return; }
+  ws.onopen = () => {
+    wsReconnect = 1000;
+    _lastWsRecvAt = Date.now();
+    clearInterval(pingTimer);
+    pingTimer = setInterval(() => {
+      try{
+        ws.send('ping');
+        _pingSentAt = Date.now();
+        // Ждём pong 10 сек. Если за это время _lastWsRecvAt не обновился позже _pingSentAt — мёртв.
+        clearTimeout(_pongTimeoutTimer);
+        _pongTimeoutTimer = setTimeout(() => {
+          if (_lastWsRecvAt < _pingSentAt) _killStaleWs('pong timeout');
+        }, 10000);
+      }catch(e){ _killStaleWs('send err'); }
+    }, 25000);
+    // После reconnect — подтянем накопленные сообщения с retry на flaky-сети
+    _fetchPendingWithRetry();
+    loadGroups().catch(() => {});
+  };
+  ws.onmessage = async e => {
+    _lastWsRecvAt = Date.now();  // любое сообщение = ws живой
+    if (e.data === 'pong') return;
+    try { const m = JSON.parse(e.data); await handleWs(m); } catch(_){}
+  };
+  ws.onclose = (ev) => {
+    clearInterval(pingTimer); clearTimeout(_pongTimeoutTimer);
+    if (ev && (ev.code === 1008 || ev.code === 4401 || ev.code === 4403)) {
+      _wsAuthFail = true; return;
+    }
+    setTimeout(connectWS, wsReconnect);
+    wsReconnect = Math.min(wsReconnect*2, 30000);
+  };
+  ws.onerror = () => { try{ws.close();}catch(e){} };
+}
+
+// При возврате на вкладку (browser suspended → wake) проверяем WS и догоняем
+// pending. Без этого juзер видел "залипшие" сообщения — пришедшие пока tab
+// был в фоне DM-ы не подтягивались до полного перезаhrузки страницы.
+// Дебаунс: focus + visibilitychange срабатывают вместе → не делаем 2 запроса.
+// Троттлинг: loadGroups/fetchPending не чаще раза в N секунд.
+let _wakeupTimer = null;
+let _lastPendingAt = 0;
+let _lastGroupsAt = 0;
+function _onWakeup(){
+  if (!token || _wsAuthFail) return;
+  if (_wakeupTimer) clearTimeout(_wakeupTimer);
+  _wakeupTimer = setTimeout(_doWakeup, 300);  // дебаунс
+}
+function _doWakeup(){
+  _wakeupTimer = null;
+  if (!token || _wsAuthFail) return;
+  const now = Date.now();
+  // WS — если закрыт ИЛИ давно молчит (>40 сек) — реконнект.
+  // Браузер мог заморозить таймеры в фоне → ping не отправлялся → сервер закрыл,
+  // но onclose мог не сработать. _lastWsRecvAt — самый надёжный признак жизни.
+  const wsAlive = ws && ws.readyState === 1 && (now - _lastWsRecvAt < 40_000);
+  if (!wsAlive) {
+    _killStaleWs('wake check');
+    connectWS();
+    return;
+  }
+  // WS живой — догоним вручную с троттлингом
+  if (now - _lastPendingAt > 10_000) {
+    _lastPendingAt = now;
+    _fetchPendingWithRetry();
+  }
+  if (now - _lastGroupsAt > 60_000) {
+    _lastGroupsAt = now;
+    loadGroups().catch(() => {});
+  }
+}
+
+// fetchPending с одним retry через 5 сек при network glitch. Без этого
+// flaky-соединение проглатывает сообщения молча: catch(() => {}) не имеет
+// retry, юзер их не видит до следующего wake.
+function _fetchPendingWithRetry(){
+  fetchPending().catch(err => {
+    console.warn('[wake] fetchPending failed, retrying in 5s:', err && err.message);
+    setTimeout(() => {
+      fetchPending().catch(err2 => {
+        console.error('[wake] fetchPending retry also failed:', err2 && err2.message);
+      });
+    }, 5000);
+  });
+  // Параллельно догоняем delivery-статус своих сообщений (sender мог пропустить
+  // WS chat.delivered если был offline в момент когда receiver сделал /ack).
+  // Без этого «дискета» висит вечно даже после refresh.
+  try { syncDeliveryStatus(); } catch(_){}
+}
+
+// Спрашивает сервер какие из моих !delivered сообщений уже доставлены.
+// Sender может пропустить WS chat.delivered если был offline в момент receiver/ack.
+async function syncDeliveryStatus(){
+  try {
+    // Берём свои сообщения которые ещё не прочитаны (нужны как delivered, так
+    // и не-delivered — потому что сообщение может стать сразу 'read' пропустив
+    // 'delivered' если receiver открыл чат с уже-загруженным сообщением).
+    const candidates = (activeMessages || []).filter(m => m.from_me && !m.read && m.sid).slice(-200);
+    if (!candidates.length) return;
+    const ids = candidates.map(m => +m.sid).filter(Boolean);
+    if (!ids.length) return;
+    const r = await chat('/delivery_status', 'POST', { ids });
+    let changed = false;
+    for (const m of candidates) {
+      const s = r[String(m.sid)];
+      if (s === 'read' && !m.read) {
+        m.read = true; m.delivered = true;
+        idbUpdateMessage(m.sid, { read: true, delivered: true }).catch(()=>{});
+        changed = true;
+      } else if (s === 'delivered' && !m.delivered) {
+        m.delivered = true;
+        idbUpdateMessage(m.sid, { delivered: true }).catch(()=>{});
+        changed = true;
+      }
+    }
+    if (changed && typeof renderMessages === 'function') renderMessages();
+  } catch(_) {}
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') _onWakeup();
+});
+window.addEventListener('focus', _onWakeup);
+window.addEventListener('online', _onWakeup);  // вернулся интернет
+
+async function handleWs(m){
+  const t = m.type, d = m.data || {};
+  // chat.sealed_new — sealed sender отключён, игнорируем
+  if (t === 'chat.sealed_new') return;
+  if (t === 'chat.new' || t === 'chat.echo') {
+    const ok = await ingestIncoming(d);
+    if (ok && t === 'chat.new') {
+      try { await chat('/ack', 'POST', { ids: [d.id] }); } catch(_) {}
+      // Если чат с этим юзером открыт ПРЯМО СЕЙЧАС → сразу отправим read
+      if (activePeer && activePeer.username === d.from_username) {
+        try { await chat('/read', 'POST', { ids: [d.id], from_username: d.from_username }); } catch(_) {}
+      }
+    }
+  }
+  else if (t === 'chat.delivered') {
+    // Мои сообщения дошли (двойная серая галочка)
+    if (Array.isArray(d.ids)) {
+      for (const id of d.ids) {
+        const m = activeMessages.find(x => String(x.sid) === String(id));
+        if (m) { m.delivered = true; }
+        idbUpdateMessage(id, { delivered: true }).catch(()=>{});
+      }
+      if (activePeer && activePeer.username === d.by_username) renderMessages();
+    }
+  }
+  else if (t === 'chat.read') {
+    // Мои сообщения прочитали (двойная синяя)
+    if (Array.isArray(d.ids)) {
+      for (const id of d.ids) {
+        const m = activeMessages.find(x => String(x.sid) === String(id));
+        if (m) { m.read = true; m.delivered = true; }
+        idbUpdateMessage(id, { read: true, delivered: true }).catch(()=>{});
+      }
+      if (activePeer && activePeer.username === d.by_username) renderMessages();
+    }
+  }
+  else if (t === 'chat.cleared_by_peer') {
+    // Собеседник нажал «удалить чат и у меня» → чистим всё локально.
+    const peer = (d && d.by_username || '').toLowerCase();
+    if (peer) {
+      _deleteChatLocally(peer);
+      showToast(`@${peer} удалил(а) чат у обоих`);
+    }
+  }
+  else if (t === 'chat.typing') {
+    // Кто-то печатает мне
+    if (activePeer && activePeer.username === d.from_username) {
+      setChatTyping(d.is_typing);
+    }
+  }
+  else if (t === 'presence') {
+    // Изменился онлайн-статус юзера
+    if (activePeer && activePeer.username === d.username) {
+      _peerOnline = d.online;
+      // typing имеет приоритет, иначе обновим статус
+      if (!_peerTyping) updateChatStatusBar();
+    }
+  }
+  else if (t === 'group.added' || t === 'group.removed' || t === 'group.members_changed') {
+    // Состав или список групп изменился — перезагрузим
+    try { await loadGroups(); } catch(_) {}
+    // Если открыт чат изменённой группы — обновим список участников
+    if (activeGroup && d.group_id === activeGroup.id && t === 'group.members_changed') {
+      try {
+        const info = await chat(`/group/${activeGroup.id}`);
+        activeGroup.members = info.members;
+        activeGroup.owner_id = info.owner_id;
+        const sub = document.getElementById('grpSub');
+        if (sub) sub.textContent = (activeGroup.kind === 'channel' ? 'Канал' : 'Группа') + ' · ' + info.members.length + ' участ.';
+      } catch(_) {}
+    }
+    if (activeGroup && d.group_id === activeGroup.id && t === 'group.removed') {
+      // Меня кикнули или группа удалена
+      activeGroup = null; activeMessages = [];
+      const main = document.getElementById('chatMain');
+      if (main) main.innerHTML = `<div class="chat-empty"><i class="fa-solid fa-ghost"></i><h3>Группа удалена</h3><p>Или вы были удалены из неё.</p></div>`;
+    }
+  }
+  else if (t === 'group.new' || t === 'group.echo') {
+    await ingestGroupIncoming(d);
+    if (t === 'group.new') {
+      try { await chat(`/group/${d.group_id}/ack`, 'POST', { ids: [d.id] }); } catch(_) {}
+    }
+  }
+}
+
+// ── Typing & Presence state ──
+let _peerTyping = false;
+let _peerTypingTimer = 0;
+let _peerOnline = false;
+let _myTypingLastSent = 0;
+
+function setChatTyping(isTyping){
+  _peerTyping = !!isTyping;
+  updateChatStatusBar();
+  clearTimeout(_peerTypingTimer);
+  if (isTyping) {
+    // Авто-сброс если 4с не пришло обновлений
+    _peerTypingTimer = setTimeout(() => { _peerTyping = false; updateChatStatusBar(); }, 4000);
+  }
+}
+
+function updateChatStatusBar(){
+  const el = document.getElementById('chatStatus');
+  if (!el || !activePeer) return;
+  el.classList.remove('online', 'typing');
+  if (_peerTyping) {
+    el.classList.add('typing');
+    el.innerHTML = `печатает<span class="typing-dots"></span>`;
+  } else if (_peerOnline) {
+    el.classList.add('online');
+    el.innerHTML = `<i class="fa-solid fa-circle"></i> онлайн · @${esc(activePeer.username)}`;
+  } else {
+    el.textContent = `@${activePeer.username}`;
+  }
+}
+
+function sendTyping(isTyping){
+  if (!ws || ws.readyState !== 1 || !activePeer) return;
+  const now = Date.now();
+  // Не чаще раза в 2с
+  if (isTyping && now - _myTypingLastSent < 2000) return;
+  _myTypingLastSent = now;
+  try {
+    ws.send(JSON.stringify({ type: 'chat.typing', data: { to: activePeer.username, is_typing: !!isTyping } }));
+  } catch(_) {}
+}
+
+function askPresence(username){
+  if (!ws || ws.readyState !== 1) return;
+  try { ws.send(JSON.stringify({ type: 'presence.ask', data: { username } })); } catch(_) {}
+}
+
+// ════════════════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════════════════
+async function init(){
+  if (!token) { showAuth(); return; }
+  setSsoCookie(token);
+  try {
+    const d = await soc('/me');
+    me = { ...me, id: d.id || d.user_id, username: d.username, display_name: d.display_name, is_guest: !!d.is_guest };
+    localStorage.setItem('gs_me', JSON.stringify(me));
+    if (me.is_guest) { doLogout(); return; }
+  } catch(e) {
+    token=null; me=null;
+    localStorage.removeItem('gs_token'); localStorage.removeItem('gs_me'); clearSsoCookie();
+    showAuth(); return;
+  }
+  // Пробуем загрузить ключи из IndexedDB (вводили пароль раньше на этом устройстве)
+  let loaded = false;
+  try {
+    await openIDB();
+    loaded = await loadKeysFromIDB();
+  } catch(e) {
+    // openIDB заблокирована другой вкладкой или другая ошибка — покажем юзеру
+    showAuth();
+    document.getElementById('loginError').textContent = e.message || 'Не удалось открыть локальное хранилище';
+    return;
+  }
+  if (loaded) {
+    // SSO + ключи готовы → сразу в чат, без пароля
+    await onReady();
+    return;
+  }
+  // Первый вход на этом устройстве — нужен пароль один раз для расшифровки приватного ключа
+  showAuth();
+  document.getElementById('loginUsername').value = me.username;
+  document.getElementById('loginUsername').disabled = true;
+  document.getElementById('loginError').textContent = 'Подтвердите пароль (один раз на устройство)';
+  document.getElementById('loginPassword').focus();
+}
+init();
+
+// ════════════════════════════════════════════════════════════════════
+// GROUPS — список, создание, отображение в sidebar.
+// Отправка/получение сообщений в группах — часть 2 (sender-key crypto).
+// ════════════════════════════════════════════════════════════════════
+async function loadGroups(){
+  try {
+    const r = await chat('/group/my');
+    groups = Array.isArray(r) ? r : [];
+    renderDialogs(document.getElementById('sbSearch').value);
+    // Подтянем pending для каждой группы параллельно (не блокируем UI)
+    for (const g of groups) {
+      fetchGroupPending(g.id).catch(()=>{});
+    }
+    // Принудительный запрос тега для каналов-без-тега у владельца
+    checkForceTagNeeded();
+  } catch(e) {
+    console.warn('[groups] load failed', e);
+    groups = [];
+  }
+}
+
+// ── Принудительная установка @тега для своих каналов без тега ────────────────
+let _forceTagQueue = [];
+function checkForceTagNeeded(){
+  const needsTag = groups.filter(g => g.is_owner && g.kind === 'channel' && !g.username);
+  if (!needsTag.length) return;
+  _forceTagQueue = needsTag.slice();
+  showNextForceTag();
+}
+
+function showNextForceTag(){
+  if (!_forceTagQueue.length) return;
+  const g = _forceTagQueue[0];
+  document.getElementById('ftName').textContent = g.name;
+  document.getElementById('ftInput').value = '';
+  document.getElementById('ftError').style.display = 'none';
+  document.getElementById('ftSubmit').disabled = false;
+  document.getElementById('ftSubmit').textContent = 'Установить тег';
+  document.getElementById('forceTagModal').classList.add('open');
+  setTimeout(() => document.getElementById('ftInput').focus(), 100);
+}
+
+async function submitForceTag(){
+  const g = _forceTagQueue[0];
+  if (!g) return;
+  const tag = (document.getElementById('ftInput').value || '').trim().replace(/^@/, '').toLowerCase();
+  const err = document.getElementById('ftError');
+  err.style.display = 'none';
+  if (!/^[a-z0-9_]{3,20}$/.test(tag)) {
+    err.textContent = 'Тег: 3-20 символов, только a-z 0-9 _';
+    err.style.display = 'block';
+    return;
+  }
+  const btn = document.getElementById('ftSubmit');
+  btn.disabled = true; btn.textContent = 'Сохранение...';
+  try {
+    await chat(`/group/${g.id}/username`, 'POST', { username: tag });
+    // Обновим в локальном кэше
+    const localG = groups.find(x => x.id === g.id);
+    if (localG) localG.username = tag;
+    // Уберём из очереди и идём дальше
+    _forceTagQueue.shift();
+    document.getElementById('forceTagModal').classList.remove('open');
+    showToast(`Тег @${tag} установлен`);
+    if (_forceTagQueue.length) {
+      setTimeout(showNextForceTag, 300);
+    } else {
+      renderDialogs(document.getElementById('sbSearch').value);
+    }
+  } catch(e) {
+    err.textContent = e.message || 'Ошибка установки тега';
+    err.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Установить тег';
+  }
+}
+
+// Enter в input → submit
+document.addEventListener('DOMContentLoaded', () => {
+  const inp = document.getElementById('ftInput');
+  if (inp) inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitForceTag();
+  });
+});
+
+function openNewMenu(e){
+  e.stopPropagation();
+  const p = document.getElementById('sbNewPopup');
+  p.classList.toggle('open');
+  if (p.classList.contains('open')) setTimeout(() => document.addEventListener('click', closeNewMenuOnce), 0);
+}
+function closeNewMenu(){ document.getElementById('sbNewPopup').classList.remove('open'); }
+function closeNewMenuOnce(){ closeNewMenu(); document.removeEventListener('click', closeNewMenuOnce); }
+
+function openCreateGroup(kind){
+  document.getElementById('cgTitle').textContent = kind === 'channel' ? 'Создать канал' : 'Создать группу';
+  document.getElementById('cgName').value = '';
+  document.getElementById('cgMembers').value = '';
+  document.getElementById('cgError').style.display = 'none';
+  // Чекбокс публичности — только для канала, по умолчанию вкл (public)
+  document.getElementById('cgPublicWrap').style.display = kind === 'channel' ? '' : 'none';
+  document.getElementById('cgPublic').checked = true;
+  document.getElementById('createGroupModal').classList.add('open');
+  document.getElementById('createGroupModal').dataset.kind = kind;
+  setTimeout(() => document.getElementById('cgName').focus(), 100);
+}
+
+async function doCreateGroup(){
+  const kind = document.getElementById('createGroupModal').dataset.kind || 'group';
+  const name = document.getElementById('cgName').value.trim();
+  const errBox = document.getElementById('cgError');
+  errBox.style.display = 'none';
+  if (!name) {
+    errBox.textContent = 'Введите название';
+    errBox.style.display = 'block';
+    return;
+  }
+  const raw = document.getElementById('cgMembers').value.trim();
+  const member_usernames = raw
+    .split(/[,;\s]+/)
+    .map(s => s.replace(/^@/, '').trim().toLowerCase())
+    .filter(s => s && s !== me.username);
+  const btn = document.getElementById('cgSubmit');
+  btn.disabled = true;
+  btn.textContent = 'Создание...';
+  const is_public = kind === 'channel' && document.getElementById('cgPublic').checked;
+  try {
+    const r = await chat('/group/create', 'POST', { name, kind, member_usernames, is_public });
+    closeModal('createGroupModal');
+    showToast(kind === 'channel' ? (is_public ? 'Публичный канал создан' : 'Приватный канал создан') : 'Группа создана');
+    await loadGroups();
+    // Сразу открыть созданную группу
+    if (r && r.id) openGroupChat(r.id, r.name, kind);
+  } catch(e) {
+    errBox.textContent = e.message || 'Ошибка';
+    errBox.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Создать';
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// GROUP CRYPTO — sender-key схема (как в Signal lite)
+//
+// Sender:
+//   1. Генерим случайный AES-256 (32 байта raw)
+//   2. Шифруем payload общим AES → ciphertext
+//   3. Для каждого участника: ECDH(myPriv, peerPub) → derived key →
+//      шифруем 32 байта общего AES → envelope_key для этого юзера
+//   4. POST {ciphertext, envelope_keys: {user_id: enc_key}}
+//
+// Receiver:
+//   1. ECDH(myPriv, senderPub) → derived key
+//   2. Расшифровываем свой envelope_key → 32 байта общего AES
+//   3. Импортируем как AES-GCM → расшифровываем общий ciphertext
+// ════════════════════════════════════════════════════════════════════
+async function encryptForGroup(members, payload){
+  // Генерим общий случайный AES-256 ключ для этого сообщения
+  const sharedKeyBytes = crypto.getRandomValues(new Uint8Array(32));
+  const sharedKey = await crypto.subtle.importKey('raw', sharedKeyBytes,
+    {name:'AES-GCM', length:256}, false, ['encrypt']);
+  const raw = (typeof payload === 'object' && payload !== null) ? JSON.stringify(payload) : String(payload);
+  const ciphertext = await encryptText(sharedKey, raw);
+
+  // Для каждого участника — упакуем sharedKeyBytes через ECDH-derived key
+  const envelope_keys = {};
+  for (const m of members) {
+    if (m.id === me.id) continue;
+    if (!m.x25519_pub) continue;
+    try {
+      const theirPub = await importPub(m.x25519_pub);
+      const wrapKey = await deriveShared(myPriv, theirPub);
+      // Шифруем 32 байта общего ключа этим wrap-ключом
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, wrapKey, sharedKeyBytes);
+      const out = new Uint8Array(12 + ct.byteLength);
+      out.set(iv); out.set(new Uint8Array(ct), 12);
+      envelope_keys[String(m.id)] = b64e(out);
+    } catch(e) {
+      console.warn('[group-encrypt] не удалось упаковать для', m.username, e);
+    }
+  }
+  // Сохраним sharedKeyBytes локально на случай если придёт echo и нужно дешифровать своё
+  return { ciphertext, envelope_keys, sharedKeyBytes };
+}
+
+async function decryptGroupEnvelope(senderUsername, envelopeB64){
+  // Получаем pub отправителя (с кэшем + TOFU как в DM)
+  let pub = pubCache.get(senderUsername);
+  if (!pub) {
+    const r = await chat(`/keys/${encodeURIComponent(senderUsername)}`);
+    if (!r.x25519_pub) throw new Error('Нет ключа отправителя');
+    pub = r.x25519_pub;
+    const existing = await pinnedPubKey(senderUsername);
+    if (existing && existing.pub !== pub) {
+      const trusted = await verifyAndPinPub(senderUsername, pub);
+      if (!trusted) throw new Error(`Ключ @${senderUsername} в группе изменился, доверие не подтверждено`);
+    } else if (!existing) {
+      await pinPubKey(senderUsername, pub, true);
+    }
+    pubCache.set(senderUsername, pub);
+  }
+  const theirPub = await importPub(pub);
+  const wrapKey = await deriveShared(myPriv, theirPub);
+  const raw = b64d(envelopeB64);
+  const iv = raw.slice(0, 12);
+  const ct = raw.slice(12);
+  const keyBytes = await crypto.subtle.decrypt({name:'AES-GCM', iv}, wrapKey, ct);
+  return new Uint8Array(keyBytes);
+}
+
+async function decryptGroupCiphertext(sharedKeyBytes, ciphertextB64){
+  const sharedKey = await crypto.subtle.importKey('raw', sharedKeyBytes,
+    {name:'AES-GCM', length:256}, false, ['decrypt']);
+  return decryptText(sharedKey, ciphertextB64);
+}
+
+// Локальный кэш собственных sharedKey по msg_id — чтобы echo сразу дешифровался
+const _myGroupSharedKeys = new Map();  // msg_id → Uint8Array(32)
+
+// ════════════════════════════════════════════════════════════════════
+// GROUP — open / render / send / recv / IDB
+// ════════════════════════════════════════════════════════════════════
+const _grpKey = gid => 'g:' + gid;
+
+// Цвет для имени отправителя в группе (по hash username — стабильно)
+function userColor(username){
+  const colors = ['#a855f7','#ec4899','#22d3ee','#f59e0b','#10b981','#f43f5e','#6366f1','#84cc16','#0ea5e9','#fb7185'];
+  let h = 0;
+  for (let i = 0; i < username.length; i++) h = (h * 31 + username.charCodeAt(i)) | 0;
+  return colors[Math.abs(h) % colors.length];
+}
+
+async function openGroupChat(gid, name, kind){
+  if (typeof gid === 'string') gid = parseInt(gid, 10);
+  try {
+    const info = await chat(`/group/${gid}`);
+    // Cleanup blob/voice URL'ов от предыдущего чата (см. openChat)
+    try {
+      for (const m of activeMessages) {
+        if (m && m._imgUrl) { URL.revokeObjectURL(m._imgUrl); m._imgUrl = null; }
+      }
+      if (typeof _voiceAudios !== 'undefined' && _voiceAudios.forEach) {
+        _voiceAudios.forEach(entry => {
+          try { entry && entry.audio && entry.audio.pause(); } catch(_){}
+          if (entry && entry.url) URL.revokeObjectURL(entry.url);
+        });
+        _voiceAudios.clear();
+      }
+    } catch(_) {}
+    activePeer = null;
+    activeGroup = info;
+    document.getElementById('appGrid').classList.add('in-chat');
+    // Загрузить историю из IDB
+    activeMessages = (await idbGetMessages(_grpKey(gid))) || [];
+    // created_at может быть ISO-string или unix-int — сортируем через .getTime()
+    activeMessages.sort((a,b) => {
+      const av = a.created_at ? new Date(typeof a.created_at === 'number' ? a.created_at * 1000 : a.created_at).getTime() : 0;
+      const bv = b.created_at ? new Date(typeof b.created_at === 'number' ? b.created_at * 1000 : b.created_at).getTime() : 0;
+      return av - bv;
+    });
+    // Сначала отрисуем шапку + body
+    renderGroupChat();
+    // Сбросим unread для группы (если был)
+    const g = groups.find(x => x.id === gid);
+    if (g) { g.unread = 0; renderDialogs(document.getElementById('sbSearch').value); }
+    // Подтянуть pending с сервера
+    fetchGroupPending(gid).catch(()=>{});
+  } catch(e) {
+    showToast(e.message || 'Не удалось открыть', true);
+  }
+}
+
+function renderGroupChat(){
+  if (!activeGroup) return;
+  const g = activeGroup;
+  const canWrite = g.kind !== 'channel' || g.members.find(m => m.id === me.id && m.is_admin);
+  const main = document.getElementById('chatMain');
+  main.innerHTML = `
+    <div class="chat-head">
+      <button class="chat-back" onclick="backToList()"><i class="fa-solid fa-arrow-left"></i></button>
+      <div class="chat-av" onclick="openGroupMembers()" style="background:linear-gradient(135deg,var(--primary),var(--primary2));cursor:pointer;">
+        <i class="fa-solid fa-${g.kind==='channel'?'bullhorn':'users'}" style="color:#fff;font-size:15px;"></i>
+      </div>
+      <div class="chat-info" onclick="openGroupMembers()" style="cursor:pointer;">
+        <div class="chat-name">${esc(g.name)}${g.username?` <span style="color:var(--sub);font-weight:500;font-size:13px;">@${esc(g.username)}</span>`:''}</div>
+        <div class="chat-status" id="grpSub">${g.kind==='channel'?(g.is_public?'Публичный канал':'Приватный канал'):'Группа'} · ${g.members.length} участ.</div>
+      </div>
+      <button class="chat-menu" onclick="openGroupMembers()" title="Участники"><i class="fa-solid fa-users"></i></button>
+      <button class="chat-menu" onclick="openGroupSettings()" title="Настройки"><i class="fa-solid fa-ellipsis-vertical"></i></button>
+    </div>
+    <div class="chat-body" id="chatBody"></div>
+    <div id="replyBar"></div>
+    ${canWrite ? `
+    <div class="chat-foot">
+      <div class="input-wrap">
+        <textarea class="send-input" id="sendInput" placeholder="${g.kind==='channel'?'Сообщение в канал':'Сообщение в группу'}" rows="1"></textarea>
+        <button class="foot-btn" title="Эмодзи" onclick="openEmojiSheet()"><i class="fa-regular fa-face-smile"></i></button>
+      </div>
+      <button class="foot-btn send" id="sendBtn" onclick="onSendBtn()" oncontextmenu="event.preventDefault();openSendOptions()" ontouchstart="sendLongPressStart(event)" ontouchend="sendLongPressEnd()" ontouchcancel="sendLongPressEnd()" title="Отправить (зажать — опции)"><i class="fa-solid fa-paper-plane" id="sendIcon"></i></button>
+    </div>` : `
+    <div style="padding:14px 18px;background:var(--surface);border-top:1px solid var(--border);text-align:center;color:var(--sub);font-size:13px;">
+      <i class="fa-solid fa-lock" style="margin-right:6px;opacity:0.6;"></i>В канале писать могут только админы
+    </div>
+    `}
+  `;
+  renderGroupMessages();
+  cancelReply();
+  if (canWrite) {
+    const inp = document.getElementById('sendInput');
+    const btn = document.getElementById('sendBtn');
+    inp.addEventListener('input', () => {
+      btn.disabled = false;
+      inp.style.height='24px';
+      inp.style.height=Math.min(140,inp.scrollHeight)+'px';
+    });
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+    inp.focus();
+  }
+  scrollChatBottom(false);
+}
+
+function renderGroupMessages(){
+  const body = document.getElementById('chatBody');
+  if (!body) return;
+  let html = '';
+  if (!activeMessages.length) {
+    html += `<div style="margin:auto;color:var(--muted);font-size:13px;text-align:center;padding:40px;">Сообщений пока нет. Напишите первое.</div>`;
+    body.innerHTML = html; return;
+  }
+  let lastDateKey = '';
+  for (let i = 0; i < activeMessages.length; i++) {
+    const m = activeMessages[i];
+    const dk = dateKey(m.created_at);
+    if (dk !== lastDateKey) { html += `<div class="date-sep"><span>${dateLong(m.created_at)}</span></div>`; lastDateKey = dk; }
+    const prev = i > 0 ? activeMessages[i-1] : null;
+    const next = i < activeMessages.length-1 ? activeMessages[i+1] : null;
+    const sameSenderPrev = prev && prev.from_me === m.from_me && (prev.sender_username || '') === (m.sender_username || '') && dateKey(prev.created_at) === dk;
+    const sameSenderNext = next && next.from_me === m.from_me && (next.sender_username || '') === (m.sender_username || '') && dateKey(next.created_at) === dk;
+    let cls = sameSenderPrev && sameSenderNext ? 'middle' : sameSenderPrev && !sameSenderNext ? 'last' : !sameSenderPrev && sameSenderNext ? 'first' : 'solo';
+    if (m.failed) cls += ' failed';
+    if (m.deleted) cls += ' deleted';
+    const meta = m.pending
+      ? '<i class="fa-regular fa-clock"></i>'
+      : (m.edited ? '<span style="opacity:0.7;font-size:10px;">изм.</span>' : '')
+        + (m.from_me ? ' ' + renderTicks(m) : '');
+    // Имя отправителя — только для ЧУЖИХ сообщений и только если первое в серии
+    let senderName = '';
+    if (!m.from_me && !sameSenderPrev && m.sender_username) {
+      const c = userColor(m.sender_username);
+      const display = esc(m.sender_display_name || m.sender_username);
+      senderName = `<div class="msg-sender" style="color:${c};font-size:11.5px;font-weight:700;padding:0 12px 2px;">${display}</div>`;
+    }
+    let quoteHtml = '';
+    if (m.reply_to != null && !m.deleted) {
+      const target = activeMessages.find(x => String(x.sid) === String(m.reply_to));
+      const quoteText = target ? (target.text || '[пусто]') : (m.reply_preview || '[оригинал недоступен]');
+      const sid = String(m.reply_to).replace(/[^a-zA-Z0-9_-]/g, '');
+      quoteHtml = `<div class="msg-quote" onclick="scrollToMsg('${sid}')">${esc(quoteText.slice(0, 80))}</div>`;
+    }
+    let bubbleBody;
+    if (m.deleted) {
+      bubbleBody = `<span style="opacity:0.55;font-style:italic;font-size:13px;"><i class="fa-solid fa-ban" style="margin-right:5px;"></i>сообщение удалено</span>`;
+    } else {
+      bubbleBody = linkify(m.text || '');
+    }
+    // Аватарка чужого юзера слева от bubble (только last/solo — низ серии)
+    const showAvatar = !m.from_me && (cls.includes('last') || cls.includes('solo')) && m.sender_username;
+    const avatarSlot = !m.from_me ? (showAvatar
+      ? `<div class="grp-av" style="background:linear-gradient(135deg,${userColor(m.sender_username)},${userColor(m.sender_username)}cc);">${ini(m.sender_display_name||m.sender_username)}</div>`
+      : `<div class="grp-av-spacer"></div>`) : '';
+    html += `<div class="msg ${m.from_me?'mine':'theirs'} ${cls}" data-sid="${esc(m.sid)}">
+      ${avatarSlot}
+      <div style="display:flex;flex-direction:column;max-width:100%;">
+        ${senderName}
+        <div class="msg-bubble" onclick="msgBubbleClick(event,${jsAttr(m.sid)})" oncontextmenu="event.preventDefault();openMsgMenu(event,${jsAttr(m.sid)})" ontouchstart="msgTouchStart(event,${jsAttr(m.sid)})" ontouchend="msgTouchEnd()" ontouchcancel="msgTouchEnd()" ontouchmove="msgTouchMove(event)">${m.forwarded_from?`<div style="font-size:11px;color:var(--primary);font-weight:600;margin-bottom:3px;"><i class="fa-solid fa-share" style="margin-right:4px;font-size:10px;"></i>Переслано от @${esc(m.forwarded_from)}</div>`:''}${quoteHtml}${bubbleBody}<span class="msg-meta">${timeShort(m.created_at)} ${meta}</span></div>
+        ${renderReactions(m)}
+      </div>
+    </div>`;
+  }
+  body.innerHTML = html;
+}
+
+// Sender: шифруем + отправляем в группу
+async function sendGroupMessage(){
+  const inp = document.getElementById('sendInput');
+  if (!inp) return;
+  const text = inp.value.trim();
+  if (!text || !activeGroup) return;
+  inp.value = ''; inp.style.height = '42px';
+  const sendBtn = document.getElementById('sendBtn');
+  if (sendBtn) sendBtn.disabled = true;
+  const currentReply = replyingTo;
+  cancelReply();
+  const tempId = 'tmp-' + Date.now();
+  const optimistic = {
+    sid: tempId, peer: _grpKey(activeGroup.id), from_me: true, text,
+    sender_username: me.username, sender_display_name: me.display_name || me.username,
+    created_at: new Date().toISOString(), pending: true,
+  };
+  if (currentReply) {
+    optimistic.reply_to = currentReply.sid;
+    optimistic.reply_preview = makeReplyPreview(currentReply);
+  }
+  activeMessages.push(optimistic);
+  renderGroupMessages();
+  scrollChatBottom(true);
+  try {
+    const payload = { type: 'msg', text };
+    if (currentReply) {
+      payload.reply_to = currentReply.sid;
+      payload.reply_preview = optimistic.reply_preview;
+    }
+    const { ciphertext, envelope_keys, sharedKeyBytes } = await encryptForGroup(activeGroup.members, payload);
+    const r = await chat(`/group/${activeGroup.id}/send`, 'POST', { ciphertext, envelope_keys });
+    optimistic.sid = r.id;
+    optimistic.created_at = r.created_at;
+    optimistic.pending = false;
+    // Запомним shared key чтобы echo не повторно дешифровать (пропустим echo по sid)
+    _myGroupSharedKeys.set(r.id, sharedKeyBytes);
+    setTimeout(() => _myGroupSharedKeys.delete(r.id), 60000);
+    await idbAddMessage(optimistic);
+    // Обновим last_text/at у группы (если она в groups)
+    const g = groups.find(x => x.id === activeGroup.id);
+    if (g) { g.last_text = text; g.last_at = r.created_at; renderDialogs(document.getElementById('sbSearch').value); }
+    renderGroupMessages();
+  } catch(e) {
+    optimistic.failed = true;
+    optimistic.pending = false;
+    renderGroupMessages();
+    showToast(e.message || 'Не отправлено', true);
+  }
+}
+
+// Receiver: WS group.new / group.echo / pending
+async function ingestGroupIncoming(m){
+  // m: {id, group_id, sender_id, from_username, from_display_name, ciphertext, envelope_keys, created_at}
+  const gid = m.group_id;
+  const isMine = m.sender_id === me.id;
+  let text = '';
+  let payload = null;
+  try {
+    if (isMine) {
+      // echo — берём из локального кэша если есть
+      const cached = _myGroupSharedKeys.get(m.id);
+      if (cached) {
+        const raw = await decryptGroupCiphertext(cached, m.ciphertext);
+        payload = parsePayload(raw);
+      } else {
+        // Echo пришёл после рестарта — пропускаем (мы уже сохранили optimistic)
+        return false;
+      }
+    } else {
+      const myEnv = m.envelope_keys && m.envelope_keys[String(me.id)];
+      if (!myEnv) return false;
+      const sharedBytes = await decryptGroupEnvelope(m.from_username, myEnv);
+      const raw = await decryptGroupCiphertext(sharedBytes, m.ciphertext);
+      payload = parsePayload(raw);
+    }
+    text = String(payload.text || '');
+  } catch(e) {
+    console.warn('[group-recv] decrypt failed', e);
+    text = '[не удалось расшифровать]';
+    payload = { type: 'msg', text };
+  }
+
+  // Edit/Delete операции
+  if (payload && payload.type === 'edit' && payload.target_sid != null) {
+    const tsid = payload.target_sid;
+    const target = await idbFindMessageBySid(tsid);
+    if (target && target.peer === _grpKey(gid)) {
+      await idbUpdateMessage(tsid, {text: String(payload.new_text || ''), edited: true});
+      if (activeGroup && activeGroup.id === gid) {
+        const i = activeMessages.findIndex(x => String(x.sid) === String(tsid));
+        if (i >= 0) { activeMessages[i].text = String(payload.new_text || ''); activeMessages[i].edited = true; renderGroupMessages(); }
+      }
+    }
+    return true;
+  }
+  if (payload && payload.type === 'delete' && payload.target_sid != null) {
+    const tsid = payload.target_sid;
+    const target = await idbFindMessageBySid(tsid);
+    if (target && target.peer === _grpKey(gid)) {
+      await idbUpdateMessage(tsid, {text: '', deleted: true});
+      if (activeGroup && activeGroup.id === gid) {
+        const i = activeMessages.findIndex(x => String(x.sid) === String(tsid));
+        if (i >= 0) { activeMessages[i].text = ''; activeMessages[i].deleted = true; renderGroupMessages(); }
+      }
+    }
+    return true;
+  }
+
+  // Реакция в группе
+  if (payload && payload.type === 'react' && payload.target_sid != null) {
+    const tsid = payload.target_sid;
+    const target = await idbFindMessageBySid(tsid);
+    const reactorKey = m.from_username || (isMine ? me.username : null);
+    if (target && target.peer === _grpKey(gid) && reactorKey) {
+      const reactions = target.reactions || {};
+      for (const e of Object.keys(reactions)) {
+        reactions[e] = (reactions[e] || []).filter(u => u !== reactorKey);
+        if (!reactions[e].length) delete reactions[e];
+      }
+      if (payload.emoji) {
+        reactions[payload.emoji] = [...(reactions[payload.emoji] || []), reactorKey];
+      }
+      await idbUpdateMessage(tsid, { reactions });
+      if (activeGroup && activeGroup.id === gid) {
+        const i = activeMessages.findIndex(x => String(x.sid) === String(tsid));
+        if (i >= 0) { activeMessages[i].reactions = reactions; renderGroupMessages(); }
+      }
+    }
+    return true;
+  }
+
+  // Обычное сообщение
+  const stored = {
+    sid: m.id, peer: _grpKey(gid), from_me: isMine, text,
+    sender_username: m.from_username,
+    sender_display_name: m.from_display_name,
+    created_at: m.created_at,
+  };
+  if (payload && payload.reply_to) {
+    stored.reply_to = payload.reply_to;
+    stored.reply_preview = String(payload.reply_preview || '').slice(0, 100);
+  }
+  if (payload && payload.forwarded_from) {
+    stored.forwarded_from = String(payload.forwarded_from).slice(0, 50);
+  }
+  const added = await idbAddMessage(stored);
+  if (!added) return false;
+
+  // Обновим preview группы в sidebar
+  const g = groups.find(x => x.id === gid);
+  if (g) {
+    g.last_text = text;
+    g.last_at = m.created_at;
+    if (!isMine && (!activeGroup || activeGroup.id !== gid)) g.unread = (g.unread || 0) + 1;
+    renderDialogs(document.getElementById('sbSearch').value);
+  }
+
+  if (activeGroup && activeGroup.id === gid) {
+    activeMessages.push(stored);
+    renderGroupMessages();
+    scrollChatBottom(true);
+  }
+  return true;
+}
+
+async function fetchGroupPending(gid){
+  try {
+    const d = await chat(`/group/${gid}/pending`);
+    if (!d.messages || !d.messages.length) return;
+    const ackIds = [];
+    for (const m of d.messages) {
+      const ok = await ingestGroupIncoming(m);
+      if (ok) ackIds.push(m.id);
+    }
+    if (ackIds.length) {
+      try { await chat(`/group/${gid}/ack`, 'POST', { ids: ackIds }); } catch(_) {}
+    }
+  } catch(e) { /* offline */ }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Управление участниками
+// ════════════════════════════════════════════════════════════════════
+function openGroupMembers(){
+  if (!activeGroup) return;
+  const g = activeGroup;
+  const myMember = g.members.find(m => m.id === me.id);
+  const iAmAdmin = myMember && myMember.is_admin;
+  const list = g.members.map(m => `
+    <div style="padding:10px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border);">
+      <div class="d-av" style="width:36px;height:36px;font-size:13px;background:linear-gradient(135deg,${userColor(m.username)},${userColor(m.username)}cc);">${ini(m.display_name||m.username)}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px;">
+          ${esc(m.display_name||m.username)}
+          ${m.is_owner?'<i class="fa-solid fa-crown" style="color:#fbbf24;font-size:10px;"></i>':(m.is_admin?'<i class="fa-solid fa-shield" style="color:var(--primary);font-size:10px;"></i>':'')}
+        </div>
+        <div style="font-size:12px;color:var(--sub);">@${esc(m.username)}</div>
+      </div>
+      ${iAmAdmin && !m.is_owner && m.id !== me.id ? `<button onclick="kickMember(${esc(JSON.stringify(m.username))})" title="Удалить" style="background:transparent;border:none;color:var(--red);cursor:pointer;padding:8px;font-size:13px;"><i class="fa-solid fa-user-xmark"></i></button>` : ''}
+    </div>
+  `).join('');
+  const html = `
+    <div class="modal-overlay open" id="grpMembersModal" onclick="if(event.target===this)closeModal('grpMembersModal')">
+      <div class="modal-sheet" style="max-height:80vh;display:flex;flex-direction:column;">
+        <div class="m-handle"></div>
+        <div class="m-head">
+          <div class="m-title">${esc(g.name)} · ${g.members.length}</div>
+          <button class="m-close" onclick="closeModal('grpMembersModal')"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        ${myMember && myMember.is_owner ? `
+        <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:6px;">
+          <button onclick="openSetGroupTag()" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;text-align:left;">
+            <i class="fa-solid fa-at" style="margin-right:6px;color:var(--primary);"></i>${g.username ? '@' + esc(g.username) : 'Установить @тег'}
+          </button>
+          <button onclick="openSetGroupBio()" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;text-align:left;">
+            <i class="fa-solid fa-pen-to-square" style="margin-right:6px;color:var(--primary);"></i>${g.bio ? 'Изменить био' : 'Добавить био'}
+          </button>
+          ${g.kind === 'channel' ? `
+          <button onclick="toggleGroupVisibility()" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;text-align:left;">
+            <i class="fa-solid fa-${g.is_public ? 'globe' : 'lock'}" style="margin-right:6px;color:${g.is_public ? '#4ade80' : '#fbbf24'};"></i>${g.is_public ? 'Публичный · сделать приватным' : 'Приватный · сделать публичным'}
+          </button>` : ''}
+        </div>` : ''}
+        ${g.bio ? `<div style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;color:var(--sub);font-style:italic;line-height:1.5;">${esc(g.bio)}</div>` : ''}
+        ${iAmAdmin ? `
+        <div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:6px;">
+          <button onclick="openAddMember()" style="width:100%;padding:11px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:13px;">
+            <i class="fa-solid fa-user-plus"></i>&nbsp; Добавить участника
+          </button>
+          <button onclick="openJoinRequests()" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;">
+            <i class="fa-solid fa-user-clock" style="margin-right:6px;color:var(--primary);"></i>Заявки на вступление
+          </button>
+        </div>` : ''}
+        <div style="overflow-y:auto;flex:1;">
+          ${list}
+        </div>
+        ${myMember && !myMember.is_owner ? `
+        <div style="padding:12px 14px;border-top:1px solid var(--border);">
+          <button onclick="leaveGroup()" style="width:100%;padding:11px;border-radius:10px;border:1px solid rgba(244,63,94,0.4);background:transparent;color:var(--red);font-weight:600;cursor:pointer;font-family:inherit;font-size:13px;">
+            <i class="fa-solid fa-right-from-bracket"></i>&nbsp; Покинуть ${g.kind==='channel'?'канал':'группу'}
+          </button>
+        </div>` : ''}
+        ${myMember && myMember.is_owner ? `
+        <div style="padding:12px 14px;border-top:1px solid var(--border);">
+          <button onclick="closeModal('grpMembersModal');confirmDeleteGroup(${g.id}, ${esc(JSON.stringify(g.name))})" style="width:100%;padding:11px;border-radius:10px;border:1px solid rgba(244,63,94,0.4);background:transparent;color:var(--red);font-weight:600;cursor:pointer;font-family:inherit;font-size:13px;">
+            <i class="fa-solid fa-trash"></i>&nbsp; Удалить ${g.kind==='channel'?'канал':'группу'}
+          </button>
+        </div>` : ''}
+      </div>
+    </div>`;
+  // Удалим прошлую модалку если есть
+  const old = document.getElementById('grpMembersModal');
+  if (old) old.remove();
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function openGroupSettings(){
+  openGroupMembers(); // пока settings = members
+}
+
+async function openSetGroupTag(){
+  if (!activeGroup) return;
+  const current = activeGroup.username || '';
+  const raw = await Dialog.prompt(
+    `Глобально уникальный. Текущий: ${current ? '@' + current : '(не задан)'}`,
+    current,
+    {
+      title: '@тег группы/канала',
+      placeholder: '3-20 символов, a-z 0-9 _',
+      maxLength: 20,
+      okText: 'Установить',
+    }
+  );
+  if (raw == null) return;
+  const newTag = raw.trim().replace(/^@/, '').toLowerCase();
+  if (!newTag || newTag === current) return;
+  try {
+    await chat(`/group/${activeGroup.id}/username`, 'POST', { username: newTag });
+    activeGroup.username = newTag;
+    showToast('Тег установлен: @' + newTag);
+    closeModal('grpMembersModal');
+    openGroupMembers();
+    // Обновить шапку
+    renderGroupChat();
+  } catch(e) { showToast(e.message || 'Ошибка', true); }
+}
+
+async function openSetGroupBio(){
+  if (!activeGroup) return;
+  const current = activeGroup.bio || '';
+  const newBio = await Dialog.prompt('Био (до 300 символов):', current,
+    { title: 'Описание канала/группы', maxLength: 300, okText: 'Сохранить' });
+  if (newBio == null) return;
+  try {
+    await chat(`/group/${activeGroup.id}/bio`, 'POST', { bio: newBio });
+    activeGroup.bio = newBio.trim().slice(0, 300) || null;
+    showToast('Био обновлено');
+    closeModal('grpMembersModal');
+    openGroupMembers();
+  } catch(e) { showToast(e.message || 'Ошибка', true); }
+}
+
+async function toggleGroupVisibility(){
+  if (!activeGroup || activeGroup.kind !== 'channel') return;
+  const becoming = activeGroup.is_public ? 'приватным (E2E, по заявкам)' : 'публичным (открытый, без E2E)';
+  const ok = await Dialog.confirm(
+    `Сделать канал ${becoming}?\n\nСтарая история сохранится, но новые юзеры её не увидят (если станет приватным).`,
+    { title: 'Сменить тип канала', okText: 'Сменить' }
+  );
+  if (!ok) return;
+  try {
+    const r = await chat(`/group/${activeGroup.id}/visibility`, 'POST', { is_public: !activeGroup.is_public });
+    activeGroup.is_public = r.is_public;
+    showToast(activeGroup.is_public ? 'Теперь публичный' : 'Теперь приватный');
+    closeModal('grpMembersModal');
+    openGroupMembers();
+    renderGroupChat();
+  } catch(e) { showToast(e.message || 'Ошибка', true); }
+}
+
+async function openJoinRequests() {
+  if (!activeGroup) return;
+  let reqs = [];
+  try { reqs = await chat(`/group/${activeGroup.id}/join_requests`); }
+  catch(e) { return showToast(e.message || 'Ошибка'); }
+  const id = 'jrModal';
+  document.getElementById(id)?.remove();
+  const list = reqs.length ? reqs.map(r => `
+    <div style="padding:10px;background:rgba(0,0,0,0.20);border-radius:8px;margin-bottom:8px;display:flex;align-items:center;gap:8px;">
+      <div class="d-av" style="width:34px;height:34px;font-size:13px;">${ini(r.display_name||r.username)}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;font-size:13px;">${esc(r.display_name||r.username)}</div>
+        <div style="font-size:11px;color:var(--sub);">@${esc(r.username)}</div>
+      </div>
+      <button onclick="decideJoinReq(${r.id}, true)" style="padding:6px 10px;border-radius:8px;border:none;background:#22c55e;color:#fff;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">Принять</button>
+      <button onclick="decideJoinReq(${r.id}, false)" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(244,63,94,0.4);background:transparent;color:var(--red);font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;">Откл</button>
+    </div>`).join('') : '<div style="text-align:center;color:var(--sub);padding:20px;">Заявок нет</div>';
+  const overlay = document.createElement('div');
+  overlay.id = id;
+  overlay.className = 'modal-overlay open';
+  overlay.innerHTML = `<div class="modal-sheet" onclick="event.stopPropagation()">
+    <div class="m-handle"></div>
+    <div class="m-head"><div class="m-title">Заявки на вступление (${reqs.length})</div>
+      <button class="m-close" onclick="document.getElementById('${id}').remove()"><i class="fa-solid fa-xmark"></i></button></div>
+    <div style="padding:14px;max-height:70vh;overflow-y:auto;">${list}</div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
+
+async function decideJoinReq(reqId, accept) {
+  if (!activeGroup) return;
+  try {
+    await chat(`/group/${activeGroup.id}/join_requests/${reqId}/decide`, 'POST', { accept });
+    showToast(accept ? 'Принят' : 'Отклонён');
+    document.getElementById('jrModal')?.remove();
+    setTimeout(() => openJoinRequests(), 200);
+    if (accept) {
+      // обновим список участников
+      const info = await chat(`/group/${activeGroup.id}`);
+      activeGroup.members = info.members;
+    }
+  } catch(e) { showToast(e.message || 'Ошибка'); }
+}
+
+async function openAddMember(){
+  if (!activeGroup) return;
+  const raw = await Dialog.prompt(`Введите @username:`, '',
+    { title: `Добавить в «${activeGroup.name}»`, placeholder: '@alex', okText: 'Добавить' });
+  if (raw == null) return;
+  const username = raw.trim().replace(/^@/, '').toLowerCase();
+  if (!username) return;
+  try {
+    await chat(`/group/${activeGroup.id}/members/${encodeURIComponent(username)}`, 'POST');
+    showToast('Добавлен');
+    const info = await chat(`/group/${activeGroup.id}`);
+    activeGroup.members = info.members;
+    closeModal('grpMembersModal');
+    openGroupMembers();
+    const sub = document.getElementById('grpSub');
+    if (sub) sub.textContent = (activeGroup.kind === 'channel' ? 'Канал' : 'Группа') + ' · ' + info.members.length + ' участ.';
+  } catch(e) {
+    showToast(e.message || 'Ошибка', true);
+  }
+}
+
+async function kickMember(username){
+  if (!activeGroup) return;
+  if (!await Dialog.confirm(`Удалить @${username} из «${activeGroup.name}»?`, { title: 'Удалить участника', danger: true })) return;
+  try {
+    await chat(`/group/${activeGroup.id}/members/${encodeURIComponent(username)}`, 'DELETE');
+    showToast('Удалён');
+    const info = await chat(`/group/${activeGroup.id}`);
+    activeGroup.members = info.members;
+    closeModal('grpMembersModal');
+    openGroupMembers();
+    const sub = document.getElementById('grpSub');
+    if (sub) sub.textContent = (activeGroup.kind === 'channel' ? 'Канал' : 'Группа') + ' · ' + info.members.length + ' участ.';
+  } catch(e) {
+    showToast(e.message || 'Ошибка', true);
+  }
+}
+
+async function leaveGroup(){
+  if (!activeGroup) return;
+  if (!await Dialog.confirm(`Покинуть «${activeGroup.name}»?`, { title: 'Покинуть', okText: 'Покинуть', danger: true })) return;
+  try {
+    await chat(`/group/${activeGroup.id}/members/${encodeURIComponent(me.username)}`, 'DELETE');
+    closeModal('grpMembersModal');
+    showToast('Покинули');
+    activeGroup = null; activeMessages = [];
+    document.getElementById('chatMain').innerHTML = `<div class="chat-empty"><i class="fa-solid fa-ghost"></i><h3>Выберите чат</h3><p>Откройте диалог слева или начните новый.</p></div>`;
+    await loadGroups();
+  } catch(e) {
+    showToast(e.message || 'Ошибка', true);
+  }
+}
+
+async function confirmDeleteGroup(gid, name){
+  if (!await Dialog.confirm(`Удалить «${name}»? Это действие необратимо.`, { title: 'Удалить?', okText: 'Удалить', danger: true })) return;
+  try {
+    await chat(`/group/${gid}`, 'DELETE');
+    showToast('Удалено');
+    activeGroup = null; activeMessages = [];
+    await loadGroups();
+    document.getElementById('chatMain').innerHTML = `
+      <div class="chat-empty">
+        <i class="fa-solid fa-ghost"></i>
+        <h3>Выберите чат</h3>
+        <p>Откройте диалог слева или начните новый.</p>
+      </div>`;
+  } catch(e) {
+    showToast(e.message || 'Ошибка', true);
+  }
+}
+
+// Полный перехват renderDialogs: показываем группы + DM единым списком.
+renderDialogs = function(filter=''){
+  const list = document.getElementById('sbList');
+  const f = (filter || '').toLowerCase().replace(/^@/, '');
+
+  // Фильтры
+  let dArr = dialogs;
+  let gArr = groups.slice();
+  if (f) {
+    dArr = dArr.filter(d =>
+      (d.username && d.username.toLowerCase().includes(f)) ||
+      (d.display_name && d.display_name.toLowerCase().includes(f))
+    );
+    gArr = gArr.filter(g => (g.name || '').toLowerCase().includes(f));
+  }
+
+  // Пустое состояние — только если совсем нет ни диалогов, ни групп
+  if (!dArr.length && !gArr.length) {
+    if (f) {
+      list.innerHTML = `<div class="sb-empty"><i class="fa-regular fa-comments"></i>Ничего не найдено</div>`;
+    } else {
+      list.innerHTML = `<div class="sb-empty">
+        <i class="fa-regular fa-comments"></i>
+        Чатов пока нет.<br>Начните первый или создайте группу.
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:18px;">
+          <button onclick="openNewChat()" style="padding:10px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:13px;">
+            <i class="fa-solid fa-pen-to-square"></i>&nbsp; Новый чат
+          </button>
+          <button onclick="openCreateGroup('group')" style="padding:10px;border-radius:10px;background:transparent;border:1px solid var(--border-strong);color:var(--text);font-weight:600;cursor:pointer;font-family:inherit;font-size:13px;">
+            <i class="fa-solid fa-users"></i>&nbsp; Создать группу
+          </button>
+        </div>
+      </div>`;
+    }
+    return;
+  }
+
+  let html = '';
+
+  // Блок групп/каналов
+  if (gArr.length) {
+    html += `<div style="font-size:10px;color:var(--muted);font-weight:700;letter-spacing:0.08em;padding:14px 14px 6px;text-transform:uppercase;">Группы и каналы</div>`;
+    html += gArr.map(g => `
+      <div class="dialog" onclick="openGroupChat(${g.id}, ${esc(JSON.stringify(g.name))}, ${esc(JSON.stringify(g.kind))})">
+        <div class="d-av" style="background:linear-gradient(135deg,var(--primary),var(--primary2));">
+          <i class="fa-solid fa-${g.kind==='channel'?'bullhorn':'users'}" style="color:#fff;font-size:14px;"></i>
+        </div>
+        <div class="d-body">
+          <div class="d-row1">
+            <div class="d-name">${esc(g.name)}</div>
+            ${g.is_owner ? '<i class="fa-solid fa-crown" style="color:#fbbf24;font-size:10px;"></i>' : ''}
+          </div>
+          <div class="d-row2">
+            <div class="d-last">${g.kind==='channel'?'канал':'группа'} · ${g.members_count} участ.</div>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // Блок личных диалогов
+  if (dArr.length) {
+    if (gArr.length) html += `<div style="font-size:10px;color:var(--muted);font-weight:700;letter-spacing:0.08em;padding:14px 14px 6px;text-transform:uppercase;">Личные</div>`;
+    html += dArr.map(d => `
+      <div class="dialog${activePeer && activePeer.username === d.username ? ' active' : ''}" onclick="openChat(${jsAttr(d.username)},${jsAttr(d.display_name||d.username)})">
+        <div class="d-av">${ini(d.display_name||d.username)}</div>
+        <div class="d-body">
+          <div class="d-row1">
+            <div class="d-name">${esc(d.display_name||d.username)}</div>
+            <div class="d-time">${d.last_at?timeOrDate(d.last_at):''}</div>
+          </div>
+          <div class="d-row2">
+            <div class="d-last ${d.last_from_me?'own':''}">${d.last_from_me?'<i class="fa-solid fa-check" style="opacity:0.6;margin-right:3px;font-size:10px;"></i>':''}${esc(d.last_text || '(нет сообщений)')}</div>
+            ${d.unread > 0 ? `<div class="d-badge">${d.unread > 99 ? '99+' : d.unread}</div>` : ''}
+          </div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  list.innerHTML = html;
+};

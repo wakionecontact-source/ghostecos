@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 60" fill="none">
+  <!-- body -->
+  <path d="M24 3C13.5 3 6 11 6 21 L6 54 L10.5 49.5 L15 54 L19.5 49.5 L24 54 L28.5 49.5 L33 54 L37.5 49.5 L42 54 L42 21 C42 11 34.5 3 24 3 Z" fill="currentColor"/>
+  <!-- left eye -->
+  <ellipse cx="17" cy="22" rx="4" ry="4.5" fill="#000" opacity="0.55"/>
+  <!-- right eye -->
+  <ellipse cx="31" cy="22" rx="4" ry="4.5" fill="#000" opacity="0.55"/>
+  <!-- eye shine left -->
+  <circle cx="18.5" cy="20.5" r="1.4" fill="#fff" opacity="0.7"/>
+  <!-- eye shine right -->
+  <circle cx="32.5" cy="20.5" r="1.4" fill="#fff" opacity="0.7"/>
+</svg>

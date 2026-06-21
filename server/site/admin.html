@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>GhostChat Admin</title>
+<style>
+  :root {
+    --bg: #0d0d0d; --panel: #161616; --border: #2a2a2a;
+    --accent: #7c3aed; --accent2: #5b21b6;
+    --green: #22c55e; --red: #ef4444; --yellow: #eab308; --blue: #3b82f6;
+    --text: #e5e5e5; --muted: #6b7280;
+    --font: 'Courier New', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; height: 100vh; display: flex; flex-direction: column; }
+
+  #header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 10px 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  #header h1 { font-size: 15px; color: var(--accent); letter-spacing: 2px; }
+  #server-url { background: #222; border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 4px; width: 210px; font-family: var(--font); font-size: 12px; }
+  #admin-key  { background: #222; border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 4px; width: 170px; font-family: var(--font); font-size: 12px; }
+  .hbtn { border: none; color: #fff; padding: 4px 14px; border-radius: 4px; cursor: pointer; font-family: var(--font); font-size: 12px; }
+  #connect-btn { background: var(--accent); }
+  #connect-btn:hover { background: var(--accent2); }
+  #back-btn { background: #374151; display: none !important; }
+  #back-btn.visible { display: inline-block !important; }
+  #back-btn:hover { background: #4b5563; }
+  #status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  #status-dot.online { background: var(--green); }
+  #status-dot.offline { background: var(--red); }
+  #status-text { color: var(--muted); font-size: 11px; }
+
+  #main { display: flex; flex: 1; overflow: hidden; }
+
+  #sidebar { width: 230px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+  #sidebar-header { padding: 8px 12px; color: var(--muted); font-size: 11px; letter-spacing: 1px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  #refresh-files { background: none; border: 1px solid var(--border); color: var(--muted); padding: 2px 6px; border-radius: 3px; cursor: pointer; font-size: 11px; }
+  #refresh-files:hover { color: var(--text); }
+  #file-tree { flex: 1; overflow-y: auto; padding: 6px 0; }
+
+  .tree-dir  { padding: 2px 10px; color: #60a5fa; font-size: 12px; cursor: pointer; user-select: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tree-dir:hover { background: #1e1e1e; }
+  .tree-dir.collapsed::before { content: '▶ '; font-size: 9px; }
+  .tree-dir.expanded::before  { content: '▼ '; font-size: 9px; }
+  .tree-file { padding: 2px 10px 2px 22px; color: var(--muted); font-size: 12px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; justify-content: space-between; }
+  .tree-file:hover { background: #1e1e1e; color: var(--text); }
+  .tree-file.active { color: var(--accent); background: #1a1025; }
+  .tree-file .sz { color: #374151; font-size: 10px; flex-shrink: 0; margin-left: 4px; }
+  .tree-children { display: block; }
+  .tree-children.hidden { display: none; }
+
+  #stats-bar { padding: 6px 10px; border-top: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 4px; }
+  .stat-chip { background: #1a1a1a; border: 1px solid var(--border); border-radius: 3px; padding: 2px 7px; font-size: 10px; }
+  .stat-chip span { color: var(--accent); }
+
+  #right { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* Tabs */
+  #tabs { display: flex; background: var(--panel); border-bottom: 1px solid var(--border); }
+  .tab { padding: 6px 16px; cursor: pointer; color: var(--muted); font-size: 12px; border-bottom: 2px solid transparent; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* Console */
+  #console-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  #output { flex: 1; overflow-y: auto; padding: 12px 16px; font-size: 13px; }
+  .log-line { margin: 2px 0; line-height: 1.5; }
+  .log-line.info    { color: var(--text); }
+  .log-line.success { color: var(--green); }
+  .log-line.error   { color: var(--red); }
+  .log-line.warn    { color: var(--yellow); }
+  .log-line.cmd     { color: var(--accent); }
+  .log-line.json    { color: #93c5fd; white-space: pre-wrap; }
+  .log-line.muted   { color: var(--muted); }
+  #hints { font-size: 11px; color: var(--muted); padding: 4px 16px; background: var(--panel); line-height: 1.7; }
+  #console-area { border-top: 1px solid var(--border); background: var(--panel); padding: 10px 16px; display: flex; gap: 8px; align-items: center; }
+  #console-area > span { color: var(--accent); }
+  #cmd-input { flex: 1; background: transparent; border: none; outline: none; color: var(--text); font-family: var(--font); font-size: 13px; }
+  #send-btn { background: var(--accent); border: none; color: #fff; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-family: var(--font); }
+
+  /* Users tab */
+  #users-panel { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+  #users-panel.visible { display: flex; }
+  #users-toolbar { padding: 7px 12px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  #users-search { background: #222; border: 1px solid var(--border); color: var(--text); padding: 3px 8px; border-radius: 3px; font-family: var(--font); font-size: 12px; width: 180px; }
+  #users-search::placeholder { color: var(--muted); }
+  .filter-chip { background: #1a1a1a; border: 1px solid var(--border); border-radius: 3px; padding: 2px 8px; font-size: 11px; cursor: pointer; color: var(--muted); }
+  .filter-chip.active { border-color: var(--accent); color: var(--accent); }
+  #users-list { flex: 1; overflow-y: auto; }
+  .user-row { display: flex; align-items: center; gap: 10px; padding: 7px 14px; border-bottom: 1px solid #1a1a1a; cursor: pointer; }
+  .user-row:hover { background: #1a1a1a; }
+  .user-row.expanded { background: #1a1025; }
+  .u-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); flex-shrink: 0; }
+  .u-dot.online { background: var(--green); }
+  .u-name { flex: 1; font-size: 13px; }
+  .u-badge { font-size: 10px; padding: 1px 6px; border-radius: 10px; }
+  .u-badge.premium { background: #3b1764; color: #c084fc; }
+  .u-badge.blocked { background: #450a0a; color: #fca5a5; }
+  .u-meta { color: var(--muted); font-size: 11px; flex-shrink: 0; }
+  .user-actions { display: none; padding: 8px 14px 10px 31px; background: #111; border-bottom: 1px solid var(--border); gap: 6px; flex-wrap: wrap; }
+  .user-actions.visible { display: flex; }
+  .act-btn { font-size: 11px; padding: 3px 10px; border-radius: 3px; border: 1px solid var(--border); background: #1a1a1a; color: var(--text); cursor: pointer; font-family: var(--font); }
+  .act-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .act-btn.danger { border-color: #450a0a; color: #f87171; }
+  .act-btn.danger:hover { background: #450a0a; }
+  .act-btn.success { border-color: #14532d; color: #4ade80; }
+  .act-btn.success:hover { background: #14532d; }
+  .u-info-box { background: #0f0f1a; border: 1px solid #1e1e3a; border-radius: 4px; padding: 8px 10px; font-size: 11px; color: var(--muted); margin: 0 14px 8px 31px; line-height: 1.8; display: none; }
+  .u-info-box.visible { display: block; }
+  .u-info-box b { color: var(--text); }
+  #users-count { color: var(--muted); font-size: 11px; padding: 4px 12px; background: var(--panel); border-top: 1px solid var(--border); }
+
+  /* Live logs */
+  #logs-panel { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+  #logs-panel.visible { display: flex; }
+  #logs-toolbar { padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  #logs-toolbar select, #logs-toolbar input { background: #222; border: 1px solid var(--border); color: var(--text); padding: 3px 6px; border-radius: 3px; font-family: var(--font); font-size: 11px; }
+  #logs-toolbar label { color: var(--muted); font-size: 11px; }
+  #logs-feed { flex: 1; overflow-y: auto; padding: 8px 12px; font-size: 12px; }
+  .log-entry { padding: 2px 0; border-bottom: 1px solid #1a1a1a; display: flex; gap: 8px; }
+  .log-entry .le-time { color: var(--muted); flex-shrink: 0; width: 70px; }
+  .log-entry .le-cat { border-radius: 3px; padding: 0 5px; font-size: 10px; flex-shrink: 0; min-width: 55px; text-align: center; }
+  .log-entry .le-cat.auth { background: #1e3a5f; color: #60a5fa; }
+  .log-entry .le-cat.ws { background: #1a3320; color: #4ade80; }
+  .log-entry .le-cat.msg { background: #3b1764; color: #c084fc; }
+  .log-entry .le-cat.file { background: #422006; color: #fb923c; }
+  .log-entry .le-cat.contact { background: #1e3a5f; color: #67e8f9; }
+  .log-entry .le-cat.ping { background: #1a1a1a; color: #6b7280; }
+  .log-entry .le-cat.log { background: #1a1a1a; color: var(--muted); }
+  .log-entry .le-cat.device { background: #3b0764; color: #e879f9; }
+  .log-entry .le-cat.channel { background: #14532d; color: #86efac; }
+  .log-entry .le-user { color: #facc15; flex-shrink: 0; min-width: 80px; }
+  .log-entry .le-detail { color: var(--text); }
+  #logs-count { color: var(--muted); font-size: 11px; padding: 4px 12px; background: var(--panel); border-top: 1px solid var(--border); }
+
+  /* File viewer */
+  #file-viewer { flex: 1; overflow: hidden; display: none; flex-direction: column; }
+  #file-viewer-title { padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+  #file-viewer-title strong { color: var(--text); }
+  #file-content { flex: 1; overflow: auto; padding: 14px 18px; white-space: pre-wrap; font-size: 12px; line-height: 1.6; color: #d1d5db; }
+
+  /* SQLite */
+  .db-section { margin-bottom: 28px; }
+  .db-table-name { color: var(--accent); font-size: 13px; margin-bottom: 4px; font-weight: bold; }
+  .db-table-meta { color: var(--muted); font-size: 11px; margin-bottom: 8px; }
+  .db-grid { overflow-x: auto; }
+  table.db-tbl { border-collapse: collapse; font-size: 11px; min-width: 100%; }
+  table.db-tbl th { background: #1e1e2e; color: #93c5fd; padding: 4px 10px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; position: sticky; top: 0; }
+  table.db-tbl td { padding: 3px 10px; border-bottom: 1px solid #1a1a1a; color: #d1d5db; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  table.db-tbl tr:hover td { background: #1a1a2a; }
+  table.db-tbl td.null { color: #374151; font-style: italic; }
+  .db-empty { color: var(--muted); font-size: 11px; padding: 4px 0; }
+
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <h1>👻 GHOSTCHAT ADMIN</h1>
+  <input id="server-url" type="text" value="http://155.212.166.221">
+  <input id="admin-key"  type="password" value="ghostchat_admin_2026">
+  <button class="hbtn" id="connect-btn" onclick="loadAll()">Connect</button>
+  <button class="hbtn" id="back-btn"    onclick="showConsole()">← Console</button>
+  <div id="status-dot"></div>
+  <span id="status-text">disconnected</span>
+</div>
+
+<div id="main">
+  <div id="sidebar">
+    <div id="sidebar-header">
+      FILES
+      <button id="refresh-files" onclick="loadFiles()">↻</button>
+    </div>
+    <div id="file-tree"><div style="padding:8px 12px;color:var(--muted);font-size:12px">— not loaded —</div></div>
+    <div id="stats-bar">
+      <div class="stat-chip">users:<span id="s-users">—</span></div>
+      <div class="stat-chip">msgs:<span id="s-msgs">—</span></div>
+      <div class="stat-chip">ch:<span id="s-ch">—</span></div>
+      <div class="stat-chip">dev:<span id="s-dev">—</span></div>
+      <div class="stat-chip">files:<span id="s-files">—</span></div>
+      <div class="stat-chip">👑:<span id="s-premium">—</span></div>
+      <div class="stat-chip">🟢:<span id="s-online">—</span></div>
+    </div>
+  </div>
+
+  <div id="right">
+    <div id="tabs">
+      <div class="tab active" data-tab="console" onclick="switchTab('console')">Console</div>
+      <div class="tab" data-tab="users"   onclick="switchTab('users')">Users</div>
+      <div class="tab" data-tab="logs"    onclick="switchTab('logs')">Live Logs</div>
+    </div>
+
+    <!-- Console -->
+    <div id="console-panel">
+      <div id="output"></div>
+      <div id="hints">
+        <b>Info:</b> stats · online · list_users · list_devices &lt;u&gt; · user_info &lt;u&gt; · premium_list<br>
+        <b>Actions:</b> kick &lt;u&gt; · block &lt;u&gt; · unblock &lt;u&gt; · send &lt;u&gt; &lt;msg&gt; · broadcast &lt;msg&gt;<br>
+        <b>Premium:</b> grant_premium &lt;u&gt; · revoke_premium &lt;u&gt;<br>
+        <b>Danger:</b> delete_user &lt;u&gt; · wipe_all CONFIRM · cancel_wipe
+      </div>
+      <div id="console-area">
+        <span>ghost&gt;</span>
+        <input id="cmd-input" placeholder="enter command..." autocomplete="off" spellcheck="false">
+        <button id="send-btn" onclick="sendCmd()">RUN</button>
+      </div>
+    </div>
+
+    <!-- Users tab -->
+    <div id="users-panel">
+      <div id="users-toolbar">
+        <input id="users-search" placeholder="🔍 search user..." oninput="filterUsers()">
+        <div class="filter-chip active" id="fc-all"     onclick="setFilter('all')">All</div>
+        <div class="filter-chip"        id="fc-online"  onclick="setFilter('online')">🟢 Online</div>
+        <div class="filter-chip"        id="fc-premium" onclick="setFilter('premium')">👑 Premium</div>
+        <button class="hbtn" style="background:#374151;font-size:11px;padding:3px 10px;margin-left:auto" onclick="loadUsers()">↻ Refresh</button>
+      </div>
+      <div id="users-list"></div>
+      <div id="users-count">— not loaded —</div>
+    </div>
+
+    <!-- Live Logs -->
+    <div id="logs-panel">
+      <div id="logs-toolbar">
+        <label>Category:</label>
+        <select id="log-cat-filter" onchange="applyLogFilter()">
+          <option value="">all</option>
+          <option value="auth">auth</option>
+          <option value="ws">ws</option>
+          <option value="msg">msg</option>
+          <option value="file">file</option>
+          <option value="contact">contact</option>
+          <option value="ping">ping</option>
+          <option value="channel">channel</option>
+          <option value="device">device</option>
+          <option value="log">log</option>
+        </select>
+        <label>User:</label>
+        <input id="log-user-filter" placeholder="username" oninput="applyLogFilter()">
+        <label><input type="checkbox" id="log-autoscroll" checked> Auto-scroll</label>
+        <label><input type="checkbox" id="log-show-ping"> Show ping</label>
+        <button class="hbtn" style="background:var(--accent);font-size:11px;padding:3px 10px" onclick="clearLogs()">Clear</button>
+        <button class="hbtn" style="background:#374151;font-size:11px;padding:3px 10px" onclick="loadHistory()">Load history</button>
+      </div>
+      <div id="logs-feed"></div>
+      <div id="logs-count">Events: 0 | Stream: disconnected</div>
+    </div>
+
+    <!-- File viewer -->
+    <div id="file-viewer">
+      <div id="file-viewer-title">📄 <strong id="fv-name"></strong> <span id="fv-size"></span></div>
+      <div id="file-content"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const COMMANDS = ['stats','list_users','list_devices','kick','online','broadcast',
+  'wipe_all','delete_user','clear','help','grant_premium','revoke_premium',
+  'premium_list','user_info','block','unblock','send','cancel_wipe'];
+const SKIP_DIRS = new Set(['__pycache__','venv','.venv','env','node_modules','.git','uploads']);
+const SKIP_EXTS = new Set(['pyc','pyo']);
+
+let cmdHistory = [], histIdx = -1;
+let consoleMode = true;
+let activeFileEl = null;
+let _allUsers = [];
+let _usersFilter = 'all';
+let _onlineSet  = new Set();
+
+function base()    { return document.getElementById('server-url').value.replace(/\/$/, ''); }
+function akey()    { return document.getElementById('admin-key').value; }
+function headers() { return { 'Content-Type': 'application/json', 'X-Admin-Key': akey() }; }
+
+/* ── Status ── */
+function setStatus(ok) {
+  document.getElementById('status-dot').className = ok ? 'online' : 'offline';
+  document.getElementById('status-text').textContent = ok ? 'connected' : 'error';
+}
+
+/* ── Console log ── */
+function log(text, cls='info') {
+  const out = document.getElementById('output');
+  const d = document.createElement('div');
+  d.className = 'log-line ' + cls;
+  d.textContent = text;
+  out.appendChild(d);
+  out.scrollTop = out.scrollHeight;
+}
+function logJson(obj) {
+  const out = document.getElementById('output');
+  const d = document.createElement('div');
+  d.className = 'log-line json';
+  d.textContent = JSON.stringify(obj, null, 2);
+  out.appendChild(d);
+  out.scrollTop = out.scrollHeight;
+}
+
+/* ── View switch ── */
+function showConsole() {
+  consoleMode = true;
+  document.getElementById('file-viewer').style.display = 'none';
+  document.getElementById('back-btn').classList.remove('visible');
+  if (activeFileEl) { activeFileEl.classList.remove('active'); activeFileEl = null; }
+  switchTab('console');
+}
+
+/* ── Stats ── */
+async function loadStats() {
+  try {
+    const r = await fetch(base() + '/admin/stats', { headers: headers() });
+    if (!r.ok) { setStatus(false); return; }
+    const d = await r.json();
+    setStatus(true);
+    document.getElementById('s-users').textContent   = d.users ?? '—';
+    document.getElementById('s-msgs').textContent    = d.messages ?? '—';
+    document.getElementById('s-ch').textContent      = d.channels ?? '—';
+    document.getElementById('s-dev').textContent     = d.devices ?? '—';
+    document.getElementById('s-files').textContent   = d.pending_files ?? '—';
+  } catch(e) { setStatus(false); }
+
+  // online count + premium from cmd
+  try {
+    const r2 = await fetch(base() + '/admin/cmd', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ cmd: 'online', args: [] })
+    });
+    const d2 = await r2.json();
+    const onlineMap = d2.result || {};
+    _onlineSet = new Set(Object.values(onlineMap));
+    document.getElementById('s-online').textContent = Object.keys(onlineMap).length;
+  } catch(_) {}
+
+  try {
+    const r3 = await fetch(base() + '/admin/cmd', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ cmd: 'premium_list', args: [] })
+    });
+    const d3 = await r3.json();
+    document.getElementById('s-premium').textContent = (d3.result || []).length;
+  } catch(_) {}
+}
+
+/* ── File tree ── */
+async function loadFiles() {
+  try {
+    const r = await fetch(base() + '/admin/files', { headers: headers() });
+    if (!r.ok) return;
+    const d = await r.json();
+    buildTree(d.files);
+  } catch(e) {}
+}
+
+function fmtSize(b) {
+  if (b < 1024) return b + 'B';
+  if (b < 1024*1024) return (b/1024).toFixed(1) + 'K';
+  return (b/1024/1024).toFixed(1) + 'M';
+}
+
+function buildTree(files) {
+  files = files.filter(f => {
+    const parts = f.path.split('/');
+    if (parts.some(p => SKIP_DIRS.has(p))) return false;
+    const ext = f.path.split('.').pop().toLowerCase();
+    return !SKIP_EXTS.has(ext);
+  });
+  const root = {};
+  files.forEach(f => {
+    const parts = f.path.split('/');
+    let node = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      node[parts[i]] = node[parts[i]] || { _files: [] };
+      node = node[parts[i]];
+    }
+    (node._files = node._files || []).push({ name: parts[parts.length-1], path: f.path, size: f.size });
+  });
+  const container = document.getElementById('file-tree');
+  container.innerHTML = '';
+  renderNode(root, container, '');
+}
+
+function renderNode(node, parent, prefix) {
+  (node._files || []).sort((a,b) => a.name.localeCompare(b.name)).forEach(f => {
+    const el = document.createElement('div');
+    el.className = 'tree-file';
+    const icon = f.name.endsWith('.py') ? '🐍' : (f.name.endsWith('.db') || f.name.endsWith('.sqlite')) ? '🗄️' : '📄';
+    el.innerHTML = `<span>${icon} ${f.name}</span><span class="sz">${fmtSize(f.size)}</span>`;
+    el.title = f.path;
+    el.onclick = () => openFile(f.path, f.name, f.size, el);
+    parent.appendChild(el);
+  });
+  Object.keys(node).filter(k => k !== '_files').sort().forEach(dir => {
+    const wrapper = document.createElement('div');
+    const dirEl = document.createElement('div');
+    dirEl.className = 'tree-dir expanded';
+    dirEl.textContent = '📁 ' + dir;
+    const children = document.createElement('div');
+    children.className = 'tree-children';
+    dirEl.onclick = () => {
+      const collapsed = children.classList.toggle('hidden');
+      dirEl.className = 'tree-dir ' + (collapsed ? 'collapsed' : 'expanded');
+    };
+    wrapper.appendChild(dirEl); wrapper.appendChild(children);
+    parent.appendChild(wrapper);
+    renderNode(node[dir], children, prefix + dir + '/');
+  });
+}
+
+/* ── Open file ── */
+async function openFile(path, name, size, el) {
+  if (activeFileEl) activeFileEl.classList.remove('active');
+  activeFileEl = el; el.classList.add('active');
+  document.getElementById('output').style.display = 'none';
+  document.getElementById('hints').style.display = 'none';
+  document.getElementById('console-area').style.display = 'none';
+  const fv = document.getElementById('file-viewer');
+  fv.style.display = 'flex';
+  document.getElementById('back-btn').classList.add('visible');
+  document.getElementById('fv-name').textContent = name;
+  document.getElementById('fv-size').textContent = fmtSize(size);
+  document.getElementById('file-content').textContent = 'Loading...';
+  // Make sure console tab is active
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'console'));
+  document.getElementById('console-panel').style.display = '';
+  document.getElementById('users-panel').className = '';
+  document.getElementById('logs-panel').className = '';
+  try {
+    const r = await fetch(base() + '/admin/file/' + encodeURIComponent(path), { headers: headers() });
+    if (!r.ok) { document.getElementById('file-content').textContent = 'Error: ' + r.status; return; }
+    const d = await r.json();
+    if (d.type === 'sqlite') renderSqlite(d.tables);
+    else if (d.type === 'binary') document.getElementById('file-content').textContent = `[Binary: ${d.ext.toUpperCase()}, ${fmtSize(d.size)}]`;
+    else document.getElementById('file-content').textContent = d.content;
+  } catch(e) {
+    document.getElementById('file-content').textContent = 'Error: ' + e.message;
+  }
+}
+
+function renderSqlite(tables) {
+  const fc = document.getElementById('file-content');
+  fc.innerHTML = ''; fc.style.whiteSpace = 'normal';
+  Object.entries(tables).forEach(([name, info]) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'db-section';
+    let tableHtml = '';
+    if (info.columns.length > 0 && info.data && info.data.length > 0) {
+      const headCells = info.columns.map(c => `<th>${c}</th>`).join('');
+      const bodyRows = info.data.map(row =>
+        '<tr>' + row.map(v => {
+          if (v === null || v === undefined) return '<td class="null">null</td>';
+          const s = String(v), display = s.length > 60 ? s.slice(0,60)+'…' : s;
+          return `<td title="${s.replace(/"/g,'&quot;')}">${display}</td>`;
+        }).join('') + '</tr>'
+      ).join('');
+      tableHtml = `<div class="db-grid"><table class="db-tbl"><thead><tr>${headCells}</tr></thead><tbody>${bodyRows}</tbody></table></div>`;
+    } else if (info.rows === 0) {
+      tableHtml = `<div class="db-empty">— empty —</div>`;
+    } else {
+      tableHtml = `<div class="db-empty">${info.columns.join(', ')}</div>`;
+    }
+    wrap.innerHTML = `<div class="db-table-name">🗄️ ${name}</div><div class="db-table-meta">${info.rows} rows · ${info.columns.length} cols${info.rows > 50 ? ' · last 50' : ''}</div>${tableHtml}`;
+    fc.appendChild(wrap);
+  });
+}
+
+/* ── Users tab ── */
+async function loadUsers() {
+  document.getElementById('users-list').innerHTML = '<div style="padding:16px;color:var(--muted)">Loading...</div>';
+  try {
+    const [r1, r2, r3] = await Promise.all([
+      fetch(base()+'/admin/cmd', { method:'POST', headers:headers(), body: JSON.stringify({cmd:'list_users',args:[]}) }),
+      fetch(base()+'/admin/cmd', { method:'POST', headers:headers(), body: JSON.stringify({cmd:'online',args:[]}) }),
+      fetch(base()+'/admin/cmd', { method:'POST', headers:headers(), body: JSON.stringify({cmd:'premium_list',args:[]}) }),
+    ]);
+    const users   = (await r1.json()).result || [];
+    const onlineM = (await r2.json()).result || {};
+    const premSet = new Set((await r3.json()).result || []);
+    _onlineSet    = new Set(Object.values(onlineM));
+    _allUsers     = users.map(u => ({
+      name: u,
+      online:   _onlineSet.has(u),
+      premium:  premSet.has(u),
+      blocked:  false,
+    }));
+    document.getElementById('s-online').textContent  = _onlineSet.size;
+    document.getElementById('s-premium').textContent = premSet.size;
+    renderUsersList();
+  } catch(e) {
+    document.getElementById('users-list').innerHTML = `<div style="padding:16px;color:var(--red)">Error: ${e.message}</div>`;
+  }
+}
+
+function setFilter(f) {
+  _usersFilter = f;
+  ['all','online','premium'].forEach(k => {
+    document.getElementById('fc-'+k).classList.toggle('active', k === f);
+  });
+  renderUsersList();
+}
+
+function filterUsers() { renderUsersList(); }
+
+function renderUsersList() {
+  const q = document.getElementById('users-search').value.trim().toLowerCase();
+  let list = _allUsers;
+  if (q)                      list = list.filter(u => u.name.toLowerCase().includes(q));
+  if (_usersFilter==='online')  list = list.filter(u => u.online);
+  if (_usersFilter==='premium') list = list.filter(u => u.premium);
+
+  list.sort((a,b) => {
+    if (a.online !== b.online) return a.online ? -1 : 1;
+    if (a.premium !== b.premium) return a.premium ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  const container = document.getElementById('users-list');
+  container.innerHTML = '';
+  list.forEach(u => {
+    const row = document.createElement('div');
+    row.className = 'user-row';
+    row.innerHTML = `
+      <div class="u-dot ${u.online ? 'online' : ''}"></div>
+      <div class="u-name">${u.name}</div>
+      ${u.premium ? '<span class="u-badge premium">👑 Premium</span>' : ''}
+      <div class="u-meta">${u.online ? '🟢 online' : ''}</div>
+    `;
+
+    const actions = document.createElement('div');
+    actions.className = 'user-actions';
+    actions.innerHTML = `
+      <button class="act-btn" onclick="quickCmd('user_info','${u.name}')">ℹ️ Info</button>
+      <button class="act-btn" onclick="quickCmd('kick','${u.name}')">⚡ Kick</button>
+      ${u.premium
+        ? `<button class="act-btn danger" onclick="quickCmdAndReload('revoke_premium','${u.name}')">❌ Revoke Premium</button>`
+        : `<button class="act-btn success" onclick="quickCmdAndReload('grant_premium','${u.name}')">👑 Grant Premium</button>`
+      }
+      ${u.blocked
+        ? `<button class="act-btn success" onclick="quickCmd('unblock','${u.name}')">🔓 Unblock</button>`
+        : `<button class="act-btn danger"  onclick="quickCmd('block','${u.name}')">🔒 Block</button>`
+      }
+      <button class="act-btn" onclick="promptSend('${u.name}')">💬 Send msg</button>
+      <button class="act-btn danger" onclick="confirmDelete('${u.name}')">🗑 Delete</button>
+    `;
+
+    const infoBox = document.createElement('div');
+    infoBox.className = 'u-info-box';
+    infoBox.id = 'info-' + u.name;
+
+    row.onclick = (e) => {
+      if (e.target.tagName === 'BUTTON') return;
+      const open = actions.classList.toggle('visible');
+      row.classList.toggle('expanded', open);
+      if (open && !infoBox.innerHTML) loadUserInfo(u.name, infoBox);
+    };
+
+    container.appendChild(row);
+    container.appendChild(actions);
+    container.appendChild(infoBox);
+  });
+
+  document.getElementById('users-count').textContent = `Showing ${list.length} of ${_allUsers.length} users`;
+}
+
+async function loadUserInfo(uname, box) {
+  box.classList.add('visible');
+  box.innerHTML = 'Loading...';
+  try {
+    const r = await fetch(base()+'/admin/cmd', {
+      method:'POST', headers:headers(),
+      body: JSON.stringify({cmd:'user_info', args:[uname]})
+    });
+    const d = await r.json();
+    if (d.error) { box.innerHTML = '❌ ' + d.error; return; }
+    const i = d.result;
+    box.innerHTML = `
+      <b>display:</b> ${i.display_name || '—'} &nbsp;
+      <b>premium:</b> ${i.has_premium ? '👑 yes' : 'no'} &nbsp;
+      <b>blocked:</b> ${i.screen_block ? '🚫 yes' : 'no'}<br>
+      <b>devices:</b> ${i.devices_total} total, ${i.devices_online} online &nbsp;
+      <b>msgs sent:</b> ${i.messages_sent}<br>
+      <b>app ver:</b> ${i.app_versions && i.app_versions.length ? i.app_versions.join(', ') : '—'} &nbsp;
+      <b>created:</b> ${i.created_at ? new Date(i.created_at*1000).toLocaleDateString() : '—'}
+    `;
+  } catch(e) { box.innerHTML = '❌ ' + e.message; }
+}
+
+async function quickCmd(cmd, uname) {
+  try {
+    const r = await fetch(base()+'/admin/cmd', {
+      method:'POST', headers:headers(),
+      body: JSON.stringify({cmd, args:[uname]})
+    });
+    const d = await r.json();
+    switchTab('console');
+    log('> ' + cmd + ' ' + uname, 'cmd');
+    logJson(d.result ?? d);
+  } catch(e) { log('Error: ' + e.message, 'error'); }
+}
+
+async function quickCmdAndReload(cmd, uname) {
+  await quickCmd(cmd, uname);
+  setTimeout(() => loadUsers(), 500);
+}
+
+function promptSend(uname) {
+  const msg = prompt(`Message to ${uname}:`);
+  if (!msg) return;
+  fetch(base()+'/admin/cmd', {
+    method:'POST', headers:headers(),
+    body: JSON.stringify({cmd:'send', args:[uname, msg]})
+  }).then(r => r.json()).then(d => {
+    switchTab('console');
+    log(`> send ${uname} ${msg}`, 'cmd');
+    logJson(d.result ?? d);
+  });
+}
+
+function confirmDelete(uname) {
+  if (!confirm(`Delete user "${uname}"? This cannot be undone.`)) return;
+  quickCmdAndReload('delete_user', uname);
+}
+
+/* ── Load all ── */
+async function loadAll() {
+  log('Connecting to ' + base() + ' ...', 'muted');
+  await loadStats();
+  await loadFiles();
+  log('Ready.', 'success');
+}
+
+/* ── Send command ── */
+async function sendCmd() {
+  const input = document.getElementById('cmd-input');
+  const raw = input.value.trim();
+  if (!raw) return;
+  cmdHistory.unshift(raw); histIdx = -1;
+  input.value = '';
+  log('> ' + raw, 'cmd');
+  const parts = raw.split(/\s+/);
+  const cmd = parts[0], args = parts.slice(1);
+  if (cmd === 'clear') { document.getElementById('output').innerHTML = ''; return; }
+  if (cmd === 'help')  { log('Commands: ' + COMMANDS.join(', '), 'muted'); return; }
+  try {
+    const r = await fetch(base() + '/admin/cmd', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ cmd, args }),
+    });
+    const d = await r.json();
+    if (d.error) { log('ERROR: ' + d.error, 'error'); if (d.available) log('Available: ' + d.available.join(', '), 'muted'); }
+    else logJson(d.result ?? d);
+    if (['wipe_all','delete_user','kick','grant_premium','revoke_premium'].includes(cmd)) await loadStats();
+  } catch(e) {
+    log('Network error: ' + e.message, 'error');
+    setStatus(false);
+  }
+}
+
+/* ── Keyboard ── */
+document.getElementById('cmd-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { sendCmd(); return; }
+  if (e.key === 'ArrowUp') {
+    if (histIdx < cmdHistory.length - 1) histIdx++;
+    e.target.value = cmdHistory[histIdx] ?? ''; e.preventDefault();
+  }
+  if (e.key === 'ArrowDown') {
+    if (histIdx > 0) histIdx--; else { histIdx = -1; e.target.value = ''; return; }
+    e.target.value = cmdHistory[histIdx] ?? ''; e.preventDefault();
+  }
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const match = COMMANDS.find(c => c.startsWith(e.target.value));
+    if (match) e.target.value = match + ' ';
+  }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !consoleMode) showConsole();
+});
+
+/* ── Tabs ── */
+let currentTab = 'console';
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.getElementById('console-panel').style.display = tab === 'console' ? '' : 'none';
+  document.getElementById('users-panel').className  = tab === 'users'   ? 'visible' : '';
+  document.getElementById('logs-panel').className   = tab === 'logs'    ? 'visible' : '';
+  document.getElementById('file-viewer').style.display = 'none';
+  document.getElementById('back-btn').classList.remove('visible');
+  if (tab === 'logs'  && !sseActive) startSSE();
+  if (tab === 'users' && _allUsers.length === 0) loadUsers();
+  if (tab === 'console') document.getElementById('cmd-input').focus();
+}
+
+/* ── Live Logs ── */
+let logEntries = [], sseSource = null, sseActive = false, logCounter = 0;
+
+function startSSE() {
+  if (sseSource) sseSource.close();
+  sseActive = true; updateLogStatus();
+  fetch(base() + '/admin/logs/stream', { headers: { 'X-Admin-Key': akey() } }).then(response => {
+    if (!response.ok) { sseActive = false; updateLogStatus(); return; }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    function read() {
+      reader.read().then(({ done, value }) => {
+        if (done) { sseActive = false; updateLogStatus(); return; }
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try { addLogEntry(JSON.parse(line.slice(6))); } catch(e) {}
+          }
+        }
+        read();
+      }).catch(() => { sseActive = false; updateLogStatus(); });
+    }
+    read();
+  }).catch(() => { sseActive = false; updateLogStatus(); });
+}
+
+function addLogEntry(entry) {
+  logEntries.push(entry); logCounter++;
+  if (shouldShow(entry)) renderLogEntry(entry);
+  updateLogStatus();
+}
+
+function shouldShow(entry) {
+  const catFilter  = document.getElementById('log-cat-filter').value;
+  const userFilter = document.getElementById('log-user-filter').value.trim().toLowerCase();
+  const showPing   = document.getElementById('log-show-ping').checked;
+  if (entry.cat === 'ping' && !showPing) return false;
+  if (catFilter  && entry.cat !== catFilter) return false;
+  if (userFilter && !entry.user.toLowerCase().includes(userFilter)) return false;
+  return true;
+}
+
+function renderLogEntry(entry) {
+  const feed = document.getElementById('logs-feed');
+  const el = document.createElement('div');
+  el.className = 'log-entry';
+  const time = entry.dt ? entry.dt.split(' ')[1] : new Date(entry.ts * 1000).toLocaleTimeString();
+  el.innerHTML = `<span class="le-time">${time}</span><span class="le-cat ${entry.cat}">${entry.cat}</span><span class="le-user">${entry.user||'—'}</span><span class="le-detail">${entry.act}: ${entry.detail}</span>`;
+  feed.appendChild(el);
+  if (document.getElementById('log-autoscroll').checked) feed.scrollTop = feed.scrollHeight;
+}
+
+function applyLogFilter() {
+  document.getElementById('logs-feed').innerHTML = '';
+  logEntries.filter(shouldShow).forEach(renderLogEntry);
+}
+
+function clearLogs() {
+  logEntries = []; logCounter = 0;
+  document.getElementById('logs-feed').innerHTML = '';
+  updateLogStatus();
+}
+
+async function loadHistory() {
+  try {
+    const cat  = document.getElementById('log-cat-filter').value;
+    const user = document.getElementById('log-user-filter').value.trim();
+    let url = base() + '/admin/logs?limit=500';
+    if (cat)  url += '&cat='  + cat;
+    if (user) url += '&user=' + user;
+    const r = await fetch(url, { headers: headers() });
+    if (!r.ok) return;
+    const d = await r.json();
+    document.getElementById('logs-feed').innerHTML = '';
+    logEntries = d.events || []; logCounter = logEntries.length;
+    logEntries.filter(shouldShow).forEach(renderLogEntry);
+    updateLogStatus();
+  } catch(e) {}
+}
+
+function updateLogStatus() {
+  document.getElementById('logs-count').textContent =
+    `Events: ${logCounter} | Stream: ${sseActive ? 'connected' : 'disconnected'}`;
+}
+
+window.onload = () => { loadAll(); setInterval(loadStats, 15000); };
+</script>
+</body>
+</html>

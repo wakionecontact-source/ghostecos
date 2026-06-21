@@ -1,0 +1,102 @@
+# Build / deps
+__pycache__/
+*.pyc
+*.pyo
+venv/
+node_modules/
+.venv/
+
+# Database & runtime
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.log
+
+# Backups
+*.bak
+*.bak2
+*.bak.*
+*.save
+*.save.*
+*.p
+dev_backups/
+
+# Archives & binaries
+*.zip
+*.apk
+
+# Local media uploads (test data)
+server/social/media/
+server/social/uploads/
+uploads/
+media/
+
+# Secrets / env
+.env
+.env.*
+!.env.example       # шаблон без секретов разрешён
+!*.env.example
+*.pem
+*.key
+*_secret.*
+*credentials*
+
+# Flutter (Ghost native app)
+app/desktop_wrapper/build/
+app/desktop_wrapper/.dart_tool/
+app/desktop_wrapper/.flutter-plugins
+app/desktop_wrapper/.flutter-plugins-dependencies
+app/desktop_wrapper/pubspec.lock
+app/desktop_wrapper/windows/flutter/ephemeral/
+app/desktop_wrapper/linux/flutter/ephemeral/
+app/desktop_wrapper/macos/Flutter/ephemeral/
+app/desktop_wrapper/android/.gradle/
+app/desktop_wrapper/android/app/build/
+app/desktop_wrapper/ios/Pods/
+
+# Claude AI sessions
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Personal binaries at root
+/photo_*.jpg
+/ghostchat_*.apk
+/mine.html
+/ghostcraft.html
+.session_bus.md
+
+# Локальные дизайн-мокапы (не для публики)
+/.phone_*.png
+
+# Локальные заметки и скетчи
+/Python_*.md
+/fix_const.py
+/for claude/
+for\ claude/
+
+# Сгенерированные веб-сплиты (промежуточный build)
+web_split/in/
+web_split/out/
+
+# Flutter wrapper assets (не публикуем — Android иконки/билд-скрипты внутри)
+app/desktop_wrapper/android/app/src/main/res/drawable-*/
+app/desktop_wrapper/android/app/src/main/res/mipmap-anydpi-v26/
+app/desktop_wrapper/android/app/src/main/res/values/colors.xml
+app/desktop_wrapper/build_and_deploy.ps1
+app/desktop_wrapper/tool/
+app/desktop_wrapper/web/
+app/desktop_wrapper/lib/services/
+app/ghostchat/
+
+# Внутренние боты (не для публики)
+bots/
+/bots
+

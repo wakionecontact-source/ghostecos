@@ -1,0 +1,668 @@
+/* ════════════════════════════════════════════════════════════════════
+   liquid.css — общая «жидкое стекло» палитра + анимации для GE-сайтов
+   Подключается через <link rel="stylesheet" href="/liquid.css">
+   Доступно: соц-сеть, чат, банк (nginx alias).
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ─── Жидкое стекло ─── */
+  --glass-bg:        rgba(20, 14, 40, 0.55);
+  --glass-bg-strong: rgba(28, 20, 55, 0.78);
+  --glass-bg-lite:   rgba(255, 255, 255, 0.04);
+  --glass-border:    rgba(255, 255, 255, 0.10);
+  --glass-border-hi: rgba(255, 255, 255, 0.18);
+  --glass-blur:      22px;
+  --glass-blur-lite: 14px;
+  --glass-blur-strong: 32px;
+  --glass-shadow:    0 8px 32px rgba(0, 0, 0, 0.42);
+  --glass-glow:      0 0 24px rgba(124, 58, 237, 0.18);
+
+  /* ─── Пружинные easings ─── */
+  --spring:        cubic-bezier(0.34, 1.56, 0.64, 1);     /* overshoot, упругий */
+  --spring-soft:   cubic-bezier(0.22, 1.30, 0.36, 1);     /* мягкая пружина */
+  --spring-snap:   cubic-bezier(0.16, 1.40, 0.30, 1);     /* короткая пружина */
+  --ease-out-blur: cubic-bezier(0.16, 1.00, 0.30, 1);     /* для blur fade */
+  --ease-glass:    cubic-bezier(0.25, 0.46, 0.45, 0.94);  /* glass appear */
+
+  /* ─── Длительности ─── */
+  --dur-quick:  180ms;
+  --dur-mid:    320ms;
+  --dur-long:   520ms;
+  --dur-rise:   620ms;   /* основная анимация появления */
+}
+
+/* ════════ KEYFRAMES ════════ */
+
+/* Главная анимация: текст/блок «выскакивает снизу вверх», снизу размыт,
+   к концу анимации blur пропадает, поднимается на место. */
+@keyframes riseBlur {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 24px, 0) scale(0.985);
+    filter: blur(10px);
+  }
+  60% {
+    opacity: 1;
+    filter: blur(2px);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    filter: blur(0);
+  }
+}
+
+/* Тот же rise но без скейла (для рядов / inline-элементов) */
+@keyframes riseBlurFlat {
+  0%   { opacity: 0; transform: translate3d(0, 18px, 0); filter: blur(8px); }
+  100% { opacity: 1; transform: translate3d(0, 0, 0);    filter: blur(0); }
+}
+
+/* Появление слева с blur'ом — для боковых панелей */
+@keyframes slideInBlur {
+  0%   { opacity: 0; transform: translate3d(-16px, 0, 0); filter: blur(6px); }
+  100% { opacity: 1; transform: translate3d(0, 0, 0);     filter: blur(0); }
+}
+
+/* Spring scale-in — для модалок/тостов */
+@keyframes springIn {
+  0%   { opacity: 0; transform: scale3d(0.82, 0.82, 1); filter: blur(8px); }
+  60%  { opacity: 1; transform: scale3d(1.04, 1.04, 1); filter: blur(0); }
+  100% { opacity: 1; transform: scale3d(1, 1, 1); }
+}
+
+/* Spring scale-out — для закрытия */
+@keyframes springOut {
+  0%   { opacity: 1; transform: scale3d(1, 1, 1); filter: blur(0); }
+  100% { opacity: 0; transform: scale3d(0.92, 0.92, 1); filter: blur(6px); }
+}
+
+/* Glass float — медленное «дыхание» элемента (для аватаров/иконок hero) */
+@keyframes glassFloat {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50%      { transform: translate3d(0, -4px, 0); }
+}
+
+/* Shimmer — skeleton loading */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* Pulse glow — для активных кнопок / уведомлений */
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(124, 58, 237, 0.45); }
+  50%      { box-shadow: 0 0 0 14px rgba(124, 58, 237, 0); }
+}
+
+/* Tab switch — slide-in для контента таба */
+@keyframes tabSwitch {
+  0%   { opacity: 0; transform: translate3d(8px, 0, 0); filter: blur(4px); }
+  100% { opacity: 1; transform: translate3d(0, 0, 0);   filter: blur(0); }
+}
+
+/* Heart pop — для реакций */
+@keyframes heartPop {
+  0%   { transform: scale(1); }
+  30%  { transform: scale(1.4); }
+  60%  { transform: scale(0.92); }
+  100% { transform: scale(1); }
+}
+
+/* Mesh bg drift — медленный паттерн фона */
+@keyframes meshDrift {
+  0%   { background-position: 0 0, 0 0; }
+  100% { background-position: 60px 60px, 80px 80px; }
+}
+
+/* ════════ UTILITY КЛАССЫ АНИМАЦИЙ ════════
+   Прибавь к элементу класс — он анимируется один раз при появлении.
+   Для последовательной анимации списков — добавляй `.anim-stagger`
+   на родитель, дети получат cascading delay. */
+
+.anim-rise       { animation: riseBlur     var(--dur-rise) var(--spring) both; }
+.anim-rise-flat  { animation: riseBlurFlat var(--dur-mid)  var(--spring-soft) both; }
+.anim-slide-in   { animation: slideInBlur  var(--dur-mid)  var(--spring-soft) both; }
+.anim-spring-in  { animation: springIn     var(--dur-rise) var(--spring) both; }
+.anim-tab        { animation: tabSwitch    var(--dur-mid)  var(--spring-snap) both; }
+.anim-float      { animation: glassFloat   3600ms var(--ease-glass) infinite; }
+.anim-pulse      { animation: pulseGlow    2400ms ease-out infinite; }
+.anim-pop        { animation: heartPop     480ms var(--spring) both; }
+
+/* Stagger — последовательная задержка для детей */
+.anim-stagger > *               { animation: riseBlurFlat var(--dur-rise) var(--spring-soft) both; }
+.anim-stagger > *:nth-child(1)  { animation-delay: 0ms; }
+.anim-stagger > *:nth-child(2)  { animation-delay: 50ms; }
+.anim-stagger > *:nth-child(3)  { animation-delay: 100ms; }
+.anim-stagger > *:nth-child(4)  { animation-delay: 150ms; }
+.anim-stagger > *:nth-child(5)  { animation-delay: 200ms; }
+.anim-stagger > *:nth-child(6)  { animation-delay: 250ms; }
+.anim-stagger > *:nth-child(7)  { animation-delay: 300ms; }
+.anim-stagger > *:nth-child(8)  { animation-delay: 350ms; }
+.anim-stagger > *:nth-child(9)  { animation-delay: 400ms; }
+.anim-stagger > *:nth-child(n+10) { animation-delay: 450ms; }
+
+/* Skeleton-loader */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(255,255,255,0.04) 0%,
+    rgba(255,255,255,0.10) 50%,
+    rgba(255,255,255,0.04) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1500ms linear infinite;
+  border-radius: 8px;
+}
+
+/* ════════ GLASS КОМПОНЕНТЫ ════════ */
+
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  border-radius: 16px;
+}
+.glass-lite {
+  background: var(--glass-bg-lite);
+  backdrop-filter: blur(var(--glass-blur-lite));
+  -webkit-backdrop-filter: blur(var(--glass-blur-lite));
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+}
+.glass-strong {
+  background: var(--glass-bg-strong);
+  backdrop-filter: blur(var(--glass-blur-strong)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--glass-blur-strong)) saturate(160%);
+  border: 1px solid var(--glass-border-hi);
+  box-shadow: var(--glass-shadow), var(--glass-glow);
+  border-radius: 20px;
+}
+
+/* glass bar (sticky шапки/футеры) */
+.glass-bar {
+  background: rgba(15, 10, 28, 0.72);
+  backdrop-filter: blur(18px) saturate(130%);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+  border-bottom: 1px solid var(--glass-border);
+}
+
+/* glass button — упругий нажим + ripple на active */
+.glass-btn {
+  position: relative;
+  overflow: hidden;
+  background: var(--glass-bg-lite);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  padding: 10px 16px;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    transform var(--dur-quick) var(--spring),
+    background var(--dur-quick) ease,
+    border-color var(--dur-quick) ease,
+    box-shadow var(--dur-quick) ease;
+}
+.glass-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--glass-border-hi);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.glass-btn:active {
+  transform: translateY(0) scale(0.97);
+  transition-duration: 80ms;
+}
+
+/* ════════ HOVER TRANSITIONS НА ВСЁМ ════════ */
+
+/* Базовые transition'ы на всё интерактивное — НЕ затрагивает анимации */
+button, a, input, textarea, select,
+[role="button"], .clickable, .card, .post, .msg {
+  transition:
+    transform var(--dur-quick) var(--spring-soft),
+    background var(--dur-quick) ease,
+    border-color var(--dur-quick) ease,
+    color var(--dur-quick) ease,
+    box-shadow var(--dur-quick) ease;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   ADAPT: оверрайды на конкретные селекторы GS / Chat / Bank
+   liquid.css грузится ПОСЛЕ static/style.css — поэтому здесь без !important.
+   Если какое-то приложение не использует эти классы — блок просто не сработает.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ─── Sticky шапки → glass-bar ─── */
+.header-top,
+.app-header,
+.topbar,
+.nav-top {
+  background: rgba(15, 10, 28, 0.55) !important;
+  backdrop-filter: blur(22px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(180%) !important;
+  border-bottom: 1px solid var(--glass-border-hi) !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+}
+
+/* ─── Нижняя навигация → glass с тонким blur ─── */
+.bottom-nav,
+.tabbar,
+.tab-bar,
+.nav-bar,
+.tab-bottom {
+  background: rgba(10, 7, 22, 0.62);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  border-top: 1px solid var(--glass-border);
+}
+
+/* ─── Кнопки нав-бара: плавный spring transition + scale на active ─── */
+.nav-btn,
+.tab-btn,
+.bottom-nav button,
+.tabbar button {
+  transition:
+    color var(--dur-quick) var(--ease-glass),
+    transform var(--dur-quick) var(--spring);
+}
+.nav-btn:active,
+.tab-btn:active,
+.bottom-nav button:active,
+.tabbar button:active {
+  transform: scale(0.92);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   APPLE-LIQUID-GLASS (web-friendly, performant)
+   На вебе настоящий feDisplacementMap-refraction тормозит — выкинут.
+   Что осталось эмулирует iOS Liquid Glass через дешёвые приёмы:
+     1. backdrop-filter: blur + saturate (матовое преломление цвета)
+     2. полупрозрачный белый layer (как поверхность стекла)
+     3. inset box-shadow top-left=ярко, bottom-right=тёмно (specular bevel)
+     4. тонкая полупрозрачная border-image (cristal edge)
+     5. без transition на background/backdrop-filter (от них основные лаги)
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ─── БОЛЬШИЕ КАРТОЧКИ: РАДИАЛЬНЫЙ BLUR (как настоящее iOS Liquid Glass) ───
+   Центр карточки — почти чёткий фон, к краям нарастает blur. Эффект «капли
+   воды»: смотришь в центр — видишь что под ней, смотришь на край — преломление.
+   Реализация: 2 слоя.
+     1. .post-card: лёгкий blur(2px) — общая дымка
+     2. .post-card::before: backdrop-filter blur(40px), показан только по краям
+        через radial-gradient mask (центр прозрачен, края непрозрачны). */
+.post-card,
+.modal-sheet,
+.modal,
+.auth-card,
+.create-card,
+.msk-card,
+.feed-card,
+.nft-card,
+.channel-card {
+  position: relative;
+  background: transparent !important;
+  /* ⚠️ Центр карточки — БЕЗ blur. Совсем. Чистый фон под ним. */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-radius: 20px !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.30),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.08),
+    0 8px 24px rgba(0, 0, 0, 0.38) !important;
+  isolation: isolate;
+}
+
+/* Слой сильного blur, виден ТОЛЬКО на ободке ~30% от края.
+   Mask — линейный градиент 4 углов: чёрный кант → прозрачный центр.
+   Резкий переход (а не плавный 25%→100%): центр 0%, к краям 100%. */
+.post-card::before,
+.modal-sheet::before,
+.modal::before,
+.auth-card::before,
+.create-card::before,
+.msk-card::before,
+.feed-card::before,
+.nft-card::before,
+.channel-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  /* z-index: -1 + isolation:isolate на родителе → blur за всем контентом,
+     при этом не вылезает за пределы карточки. Дети не трогаем (поэтому
+     position:absolute на .post-menu-btn продолжает работать). */
+  z-index: -1;
+  /* ОЧЕНЬ сильный blur */
+  backdrop-filter: blur(50px) saturate(160%) brightness(1.06);
+  -webkit-backdrop-filter: blur(50px) saturate(160%) brightness(1.06);
+  /* Mask: резкий переход прозрачный центр → чёрные края. */
+  -webkit-mask: radial-gradient(
+    ellipse 70% 70% at 50% 50%,
+    transparent 0%,
+    transparent 55%,
+    #000 95%,
+    #000 100%
+  );
+          mask: radial-gradient(
+    ellipse 70% 70% at 50% 50%,
+    transparent 0%,
+    transparent 55%,
+    #000 95%,
+    #000 100%
+  );
+}
+
+/* ❌ Не форсим position:relative на детях — это ломает absolute-кнопки
+   (например .post-menu-btn). z-index:-1 на ::before + isolation:isolate
+   на родителе уже корректно убирают blur за контент без вмешательства. */
+
+/* ─── НАСТОЯЩИЕ APPLE LIQUID GLASS PILLS ─── */
+/* Стекло НЕ ИМЕЕТ собственного цвета — только прозрачный blur поверх
+   фона. Никакой background-заливки. Цвет под стеклом = то что за ним. */
+.lq-pill,
+.algo-chip,
+.filter-btn,
+.tabbar-pill,
+.tab-pill {
+  position: relative;
+  /* ⚠️ background ПОЛНОСТЬЮ ПРОЗРАЧНЫЙ */
+  background: transparent !important;
+  /* Только blur + saturate + refraction. Brightness НЕМНОГО (1.05)
+     чтобы стекло чуть осветляло фон — это естественное свойство стекла. */
+  backdrop-filter: blur(10px) saturate(140%) brightness(1.05) url(#lq-pill-filter);
+  -webkit-backdrop-filter: blur(10px) saturate(140%) brightness(1.05);
+  /* Очень тонкая, чуть видная рамка — «кант стекла» */
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  border-radius: 999px !important;
+  /* Bevel: только highlights/shadows, без заливки */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.50),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.10),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.12),
+    0 3px 12px rgba(0, 0, 0, 0.28) !important;
+  isolation: isolate;
+}
+
+/* Активная вкладка — то же стекло, но с лёгким фиолет-tint'ом ВНУТРИ через
+   backdrop-filter (hue-rotate), не background. Видно по фону + фиолетовая рамка. */
+.algo-chip.active,
+.filter-btn.active,
+.tab-pill.active {
+  background: transparent !important;
+  backdrop-filter: blur(10px) saturate(180%) brightness(1.08) url(#lq-pill-filter);
+  -webkit-backdrop-filter: blur(10px) saturate(180%) brightness(1.08);
+  border: 1.5px solid rgba(168, 85, 247, 0.65) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -1px 0 rgba(168, 85, 247, 0.30),
+    inset 0 0 0 0.5px rgba(168, 85, 247, 0.25),
+    0 3px 12px rgba(0, 0, 0, 0.28),
+    0 0 18px rgba(168, 85, 247, 0.40) !important;
+}
+
+/* Specular highlight — блик «света» сверху капли */
+.lq-pill::after,
+.algo-chip::after,
+.filter-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.40) 0%,
+    rgba(255, 255, 255, 0.08) 30%,
+    transparent 50%,
+    transparent 70%,
+    rgba(255, 255, 255, 0.10) 100%
+  );
+  mix-blend-mode: overlay;
+  z-index: 1;
+}
+.algo-chip > *,
+.filter-btn > * {
+  position: relative;
+  z-index: 2;
+}
+
+/* ─── Posts / Cards: spring hover (только transform, без background/backdrop) ─── */
+.post,
+.post-card,
+.feed-item,
+.feed-card,
+.card,
+.create-card,
+.auth-card,
+.msk-card,
+.nft-card,
+.channel-card,
+.miniska-card {
+  transition: transform var(--dur-mid) var(--spring-soft) !important;
+  will-change: transform;
+}
+.post:hover,
+.post-card:hover,
+.feed-item:hover,
+.feed-card:hover,
+.nft-card:hover,
+.channel-card:hover,
+.miniska-card:hover {
+  transform: translateY(-2px) !important;
+}
+
+/* ─── Кнопки действий поста (лайк/коммент/репост) ─── */
+.act-btn,
+.post-menu-btn,
+.attach-btn,
+.emoji-btn,
+.close-btn,
+.back-btn,
+.load-more-btn,
+.filter-btn,
+.follow-btn,
+.post-follow-btn,
+.confirm-btn,
+.auth-btn {
+  transition:
+    transform var(--dur-quick) var(--spring),
+    background var(--dur-quick) var(--ease-glass),
+    color var(--dur-quick) var(--ease-glass),
+    border-color var(--dur-quick) var(--ease-glass),
+    box-shadow var(--dur-quick) var(--ease-glass) !important;
+}
+.act-btn:hover,
+.post-menu-btn:hover,
+.attach-btn:hover,
+.emoji-btn:hover,
+.close-btn:hover,
+.back-btn:hover,
+.filter-btn:hover,
+.follow-btn:hover,
+.post-follow-btn:hover {
+  transform: translateY(-1px) scale(1.05);
+}
+.act-btn:active,
+.post-menu-btn:active,
+.attach-btn:active,
+.emoji-btn:active,
+.close-btn:active,
+.back-btn:active,
+.filter-btn:active,
+.follow-btn:active,
+.post-follow-btn:active,
+.confirm-btn:active,
+.auth-btn:active,
+.load-more-btn:active {
+  transform: translateY(0) scale(0.92);
+  transition-duration: 80ms;
+}
+
+/* ─── Inputs auth/comment/composer ─── */
+.auth-input,
+.comment-input,
+.msk-tag-input {
+  transition:
+    border-color var(--dur-quick) var(--ease-glass),
+    background var(--dur-quick) var(--ease-glass),
+    box-shadow var(--dur-quick) var(--ease-glass) !important;
+}
+.auth-input:focus,
+.comment-input:focus,
+.msk-tag-input:focus {
+  border-color: rgba(168, 85, 247, 0.55) !important;
+  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.15) !important;
+}
+
+/* ─── Дополнительные overlay (attach-menu, confirm, install, msk, nsfw) ─── */
+.attach-menu-overlay,
+.confirm-overlay,
+.install-overlay,
+.msk-overlay {
+  background: rgba(2, 6, 23, 0.55) !important;
+  backdrop-filter: blur(10px) saturate(120%);
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
+}
+
+/* ─── Чипы / pill'ы (алгоритм-фильтры) ─── */
+.algo-chip,
+.repost-pill {
+  transition:
+    transform var(--dur-quick) var(--spring),
+    background var(--dur-quick) var(--ease-glass),
+    color var(--dur-quick) var(--ease-glass);
+}
+.algo-chip:hover,
+.repost-pill:hover {
+  transform: translateY(-1px);
+}
+.algo-chip:active,
+.repost-pill:active {
+  transform: scale(0.94);
+}
+
+/* ─── Modal overlay + sheet → пружинистая жидкая модалка ─── */
+.modal-overlay,
+.dialog-overlay,
+.sheet-overlay {
+  background: rgba(2, 6, 23, 0.55) !important;
+  backdrop-filter: blur(10px) saturate(120%);
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
+}
+.modal-sheet,
+.modal,
+.dialog,
+.sheet,
+.bottom-sheet {
+  background: rgba(20, 14, 40, 0.72) !important;
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  border: 1px solid var(--glass-border-hi) !important;
+  box-shadow: 0 -12px 48px rgba(0, 0, 0, 0.5),
+              0 0 0 1px rgba(255, 255, 255, 0.04) inset !important;
+}
+/* Анимация открытия — заменяем линейную на пружинистую */
+.modal-overlay.open .modal-sheet,
+.dialog-overlay.open .modal-sheet,
+.modal-overlay.open .modal,
+.dialog-overlay.open .dialog,
+.sheet-overlay.open .sheet {
+  transition: transform var(--dur-long) var(--spring) !important;
+}
+
+/* ─── Кнопки в модалках / save-кнопки ─── */
+.modal-save-btn,
+.dialog-save-btn,
+.btn-primary,
+.btn-save {
+  transition:
+    transform var(--dur-quick) var(--spring),
+    box-shadow var(--dur-quick) var(--ease-glass),
+    opacity var(--dur-quick) ease !important;
+}
+.modal-save-btn:hover:not(:disabled),
+.dialog-save-btn:hover:not(:disabled),
+.btn-primary:hover:not(:disabled),
+.btn-save:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(124, 58, 237, 0.4);
+}
+.modal-save-btn:active:not(:disabled),
+.dialog-save-btn:active:not(:disabled),
+.btn-primary:active:not(:disabled),
+.btn-save:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+}
+
+/* ─── Inputs → glass-стиль ─── */
+.modal-input,
+.dialog-input,
+.input-field,
+.composer-input {
+  transition:
+    border-color var(--dur-quick) var(--ease-glass),
+    background var(--dur-quick) var(--ease-glass),
+    box-shadow var(--dur-quick) var(--ease-glass);
+}
+.modal-input:focus,
+.dialog-input:focus,
+.input-field:focus,
+.composer-input:focus {
+  border-color: rgba(168, 85, 247, 0.55);
+  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.15);
+}
+
+/* ─── Композер (поле создания поста/сообщения) ─── */
+.composer,
+.compose-bar,
+.msg-input-wrap,
+.send-bar {
+  background: rgba(15, 10, 28, 0.62);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border-top: 1px solid var(--glass-border);
+}
+
+/* ─── Реакции на постах: пружинистый pop при клике ─── */
+.msg-react-chip,
+.reaction-chip,
+.post-react-chip {
+  transition: transform var(--dur-quick) var(--spring);
+}
+.msg-react-chip:active,
+.reaction-chip:active,
+.post-react-chip:active {
+  transform: scale(1.18);
+  transition-duration: 80ms;
+}
+.msg-react-chip.mine,
+.reaction-chip.mine,
+.post-react-chip.mine {
+  animation: heartPop 480ms var(--spring) both;
+}
+
+/* ════════ REDUCED-MOTION ════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .anim-rise, .anim-rise-flat, .anim-slide-in, .anim-spring-in, .anim-tab,
+  .anim-stagger > * {
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+  }
+}

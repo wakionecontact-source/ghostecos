@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <!-- lid -->
+  <path d="M4 6.5 L20 6.5 M9 6.5 L9 4.5 L15 4.5 L15 6.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- bin -->
+  <path d="M6 6.5 L7 20 L17 20 L18 6.5" fill="currentColor" fill-opacity="0.15" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+  <!-- ribs -->
+  <path d="M10 10 L10 16 M14 10 L14 16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+</svg>

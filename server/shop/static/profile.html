@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Профиль · GhostChat</title>
+  <link rel="icon" type="image/png" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="{{PREFIX}}/static/common.css">
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="/">GhostChat</a>
+  <div class="nav-links">
+    <a href="{{PREFIX}}/premium">Premium</a>
+  </div>
+  <div class="nav-right"></div>
+</nav>
+
+<div class="page" style="max-width:640px;">
+  <h1>Мой <span class="grad">профиль</span></h1>
+  <p style="margin-bottom:28px;">Данные аккаунта в шопе GhostChat.</p>
+
+  <div class="card" style="margin-bottom:18px;">
+    <div style="display:flex; align-items:center; gap:18px;">
+      <div id="avatar" style="
+        width:64px; height:64px; border-radius:16px;
+        background: linear-gradient(135deg, var(--primary), var(--primary2));
+        display:flex; align-items:center; justify-content:center;
+        font-size:26px; font-weight:800; color:white;
+        box-shadow: 0 10px 30px rgba(168,85,247,0.4);
+      ">?</div>
+      <div style="flex:1; min-width:0;">
+        <h2 id="gcName" style="font-size:22px; margin:0 0 4px; overflow:hidden; text-overflow:ellipsis;">—</h2>
+        <div style="color:var(--sub); font-size:13px;">GhostChat username</div>
+      </div>
+      <span id="premiumBadge"></span>
+    </div>
+
+    <div class="field" style="margin-top:22px; margin-bottom:0;">
+      <label>Регистрация в шопе</label>
+      <div id="regAt" class="info-box">—</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:18px;">
+    <h3 style="margin-bottom:10px;">
+      <i class="fa-solid fa-crown" style="color:var(--primary); margin-right:6px;"></i>
+      Premium
+    </h3>
+    <p id="premiumText" style="margin-bottom:18px;">—</p>
+    <a id="goPremium" href="{{PREFIX}}/premium" class="btn btn-primary">
+      <i class="fa-solid fa-crown"></i> <span id="premiumBtnText">Купить Premium</span>
+    </a>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-bottom:14px;">
+      <i class="fa-solid fa-gear" style="color:var(--primary); margin-right:6px;"></i>
+      Настройки
+    </h3>
+    <div>
+      <button id="btnLogout" class="btn btn-ghost">
+        <i class="fa-solid fa-right-from-bracket"></i> Выйти из аккаунта
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>window.SHOP_PREFIX = "{{PREFIX}}";</script>
+<script src="{{PREFIX}}/static/mesh.js"></script>
+<script src="{{PREFIX}}/static/common.js"></script>
+<script>
+(async function () {
+  const me = await SHOP.requireAuth();
+  if (!me) return;
+  SHOP.renderNav(me);
+
+  document.getElementById("avatar").textContent = (me.gc_username || "?").slice(0,1).toUpperCase();
+  document.getElementById("gcName").textContent = "@" + (me.gc_username || "—");
+  document.getElementById("regAt").textContent = me.registered_at
+    ? new Date(me.registered_at * 1000).toLocaleString("ru-RU")
+    : "—";
+
+  const badge = document.getElementById("premiumBadge");
+  if (me.has_premium) {
+    badge.innerHTML = '<span class="badge badge-green"><i class="fa-solid fa-check"></i> Premium</span>';
+    document.getElementById("premiumText").innerHTML =
+      'У тебя <b>оформлен предзаказ Premium</b>. Доступ активируется после релиза.';
+    document.getElementById("premiumBtnText").textContent = "Открыть мой Premium";
+  } else {
+    badge.innerHTML = '<span class="badge badge-purple">Free</span>';
+    document.getElementById("premiumText").textContent =
+      "Premium ещё не оформлен. Оформи предзаказ пока действует скидка 50%.";
+  }
+
+  document.getElementById("btnLogout").addEventListener("click", async () => {
+    try { await SHOP.api("/api/logout", { method: "POST" }); } catch (_) {}
+    location.href = SHOP.url("/login");
+  });
+})();
+</script>
+</body>
+</html>

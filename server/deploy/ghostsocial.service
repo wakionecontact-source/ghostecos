@@ -1,0 +1,14 @@
+[Unit]
+Description=GhostSocial API
+After=network.target
+
+[Service]
+# Admin токен ставится на сервере через sed (хранится только в systemd unit и memory локально, НЕ в git)
+# Environment="GE_ADMIN_TOKEN=__SET_ON_SERVER_VIA_RANDOM_TOKEN__"
+WorkingDirectory=/opt/ghostchat
+ExecStart=/opt/ghostchat/venv/bin/uvicorn social_app:app --host 0.0.0.0 --port 8005 --no-server-header --proxy-headers
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

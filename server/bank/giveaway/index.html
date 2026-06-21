@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Розыгрыши GhostBank</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/bank/manifest.json">
+<meta name="theme-color" content="#7c3aed">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="GhostBank">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="GhostBank">
+<meta property="og:title" content="Розыгрыши GhostBank">
+<meta property="og:description" content="Бесплатные розыгрыши Gost в экосистеме GhostEcos. Один билет на аккаунт — испытай удачу.">
+<meta property="og:url" content="https://ghostecos.duckdns.org/bank/giveaway/">
+<meta name="twitter:card" content="summary">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+:root{
+  --bg:#020617; --bg-deep:#060a1a; --surface:rgba(15,23,42,0.5);
+  --border:rgba(255,255,255,0.08); --border-strong:rgba(255,255,255,0.14);
+  --primary:#a855f7; --primary2:#7c3aed; --primary3:#ec4899;
+  --text:#f1f5f9; --sub:#94a3b8; --sub2:#64748b;
+  --red:#f43f5e; --green:#22c55e; --yellow:#fbbf24; --gost:#c084fc;
+}
+html{background:var(--bg);scroll-behavior:smooth}
+body{
+  background:transparent;color:var(--text);font-family:'Inter',sans-serif;
+  overflow-x:hidden;
+  padding-top:calc(58px + env(safe-area-inset-top));
+  padding-bottom:calc(40px + env(safe-area-inset-bottom));
+  min-height:100vh;position:relative;
+}
+body::before{
+  content:"";position:fixed;inset:0;z-index:-1;
+  background:
+    radial-gradient(90% 55% at 15% -5%,rgba(124,58,237,0.22),transparent 60%),
+    radial-gradient(80% 55% at 100% 105%,rgba(236,72,153,0.14),transparent 60%),
+    linear-gradient(180deg,var(--bg-deep),var(--bg));
+}
+#mesh-bg{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;}
+header, main, .toast, .modal-overlay{position:relative;z-index:1;}
+button{font-family:inherit;border:0;background:none;color:inherit;cursor:pointer;}
+button:disabled{cursor:not-allowed;}
+a{color:inherit;text-decoration:none;}
+input,textarea{font-family:inherit;}
+
+/* ── Header ── */
+header{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(2,6,23,0.72);backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);border-bottom:1px solid var(--border);}
+.header-top{min-height:58px;display:flex;align-items:center;gap:10px;padding:env(safe-area-inset-top) 14px 0;width:100%;}
+.h-back{width:36px;height:36px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:15px;color:var(--sub);background:var(--surface);border:1px solid var(--border);flex-shrink:0;transition:color .15s,border-color .15s;}
+.h-back:hover{color:var(--text);border-color:var(--border-strong);}
+.header-brand{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:800;user-select:none;}
+.header-brand i{font-size:17px;background:linear-gradient(135deg,var(--primary),var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.header-brand span{background:linear-gradient(90deg,var(--primary),var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:.3px;}
+.h-balance{display:flex;align-items:center;gap:9px;margin-left:auto;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:7px 14px;font-size:13.5px;font-weight:800;font-variant-numeric:tabular-nums;flex-shrink:0;transition:border-color .15s;}
+.h-balance:hover{border-color:var(--border-strong);}
+.h-balance .bi{display:flex;align-items:center;gap:6px;}
+.h-balance .g-ico{color:var(--gost);font-size:13px;}
+.h-balance .s-ico{color:#fb7185;font-size:13px;}
+.h-balance .sep{width:1px;height:15px;background:var(--border-strong);}
+
+/* ── Profile chip ── */
+.h-profile{margin-left:9px;width:36px;height:36px;border-radius:50%;background:var(--surface);border:1px solid var(--border);color:var(--sub);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;cursor:pointer;flex-shrink:0;transition:border-color .15s,transform .12s,background .15s;position:relative;}
+.h-profile:hover{border-color:var(--border-strong);color:var(--text);}
+.h-profile:active{transform:scale(0.95);}
+.h-profile.guest{color:var(--primary);}
+.h-profile.user{background:linear-gradient(135deg,rgba(168,85,247,0.32),rgba(236,72,153,0.24));border-color:rgba(168,85,247,0.45);color:#fff;}
+.h-profile .pdot{position:absolute;right:-2px;bottom:-2px;width:11px;height:11px;border-radius:50%;background:var(--green);border:2px solid #0a0f24;display:none;}
+.h-profile.user .pdot{display:block;}
+
+/* ── Profile dropdown ── */
+.pmenu{position:fixed;top:62px;right:14px;min-width:220px;background:#0b1124;border:1px solid var(--border-strong);border-radius:14px;box-shadow:0 20px 50px rgba(0,0,0,0.5);padding:8px;z-index:300;opacity:0;transform:translateY(-6px) scale(0.97);pointer-events:none;transition:all .18s cubic-bezier(.34,1.4,.64,1);}
+.pmenu.open{opacity:1;transform:translateY(0) scale(1);pointer-events:auto;}
+.pmenu .pm-head{padding:11px 13px 13px;border-bottom:1px solid var(--border);margin-bottom:6px;}
+.pmenu .pm-name{font-size:14px;font-weight:800;color:var(--text);line-height:1.2;}
+.pmenu .pm-handle{font-size:12px;color:var(--sub2);margin-top:3px;}
+.pmenu .pm-item{display:flex;align-items:center;gap:10px;width:100%;padding:10px 13px;font-size:13.5px;font-weight:600;color:var(--text);background:transparent;border:none;border-radius:9px;cursor:pointer;transition:background .12s;text-align:left;}
+.pmenu .pm-item:hover{background:rgba(168,85,247,0.10);}
+.pmenu .pm-item i{width:18px;text-align:center;color:var(--sub2);font-size:13px;}
+.pmenu .pm-item.danger{color:#fda4af;}
+.pmenu .pm-item.danger i{color:#fda4af;}
+
+/* ── SSO modal (login/register) ── */
+#loginOverlay{position:fixed;inset:0;background:rgba(2,6,23,0.72);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);display:none;align-items:flex-end;justify-content:center;z-index:500;}
+#loginOverlay.open{display:flex;animation:fadeIn .2s;}
+@media (min-width:640px){ #loginOverlay{align-items:center;} }
+.lg-sheet{width:100%;max-width:420px;background:#0b1124;border:1px solid var(--border-strong);border-top-left-radius:22px;border-top-right-radius:22px;padding:18px 18px 24px;animation:slideUp .35s cubic-bezier(.34,1.3,.64,1);max-height:88vh;overflow-y:auto;}
+@media (min-width:640px){ .lg-sheet{border-radius:22px;} }
+.lg-grab{width:42px;height:4px;border-radius:99px;background:var(--border-strong);margin:0 auto 14px;}
+.lg-tabs{display:flex;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:4px;margin-bottom:18px;}
+.lg-tab{flex:1;padding:9px;font-size:13px;font-weight:700;color:var(--sub);border:none;background:transparent;border-radius:8px;cursor:pointer;transition:all .15s;}
+.lg-tab.active{background:linear-gradient(95deg,var(--primary),var(--primary2));color:#fff;box-shadow:0 4px 14px rgba(124,58,237,0.4);}
+.lg-title{font-size:18px;font-weight:800;margin-bottom:6px;}
+.lg-sub{font-size:12.5px;color:var(--sub);margin-bottom:18px;line-height:1.5;}
+.lg-field{margin-bottom:12px;}
+.lg-field label{display:block;font-size:11px;font-weight:700;color:var(--sub2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;}
+.lg-field input{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:11px 13px;color:var(--text);font-size:14px;font-family:inherit;transition:border-color .15s;}
+.lg-field input:focus{outline:none;border-color:var(--primary);}
+.lg-check{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--sub);margin:6px 0 14px;line-height:1.4;cursor:pointer;}
+.lg-check input{margin-top:2px;flex-shrink:0;accent-color:var(--primary);}
+.lg-submit{width:100%;background:linear-gradient(95deg,var(--primary),var(--primary2));color:#fff;border:none;border-radius:12px;padding:13px;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 8px 22px rgba(124,58,237,0.45);transition:transform .12s,box-shadow .15s;}
+.lg-submit:hover{box-shadow:0 10px 26px rgba(124,58,237,0.55);}
+.lg-submit:active{transform:scale(0.98);}
+.lg-submit:disabled{opacity:0.55;cursor:wait;}
+.lg-err{font-size:12.5px;color:#fda4af;background:rgba(244,63,94,0.12);border:1px solid rgba(244,63,94,0.32);border-radius:10px;padding:9px 12px;margin-bottom:12px;display:none;}
+.lg-err.show{display:block;}
+.lg-foot{font-size:12px;color:var(--sub2);text-align:center;margin-top:14px;line-height:1.5;}
+.lg-foot a{color:var(--primary3);}
+
+main{max-width:680px;margin:0 auto;padding:22px 16px 36px;}
+
+/* ── Hero ── */
+.hero{text-align:center;margin-bottom:24px;}
+.hero-badge{display:inline-flex;align-items:center;gap:7px;font-size:11px;font-weight:700;color:#d8b4fe;background:rgba(168,85,247,0.14);border:1px solid rgba(168,85,247,0.3);padding:6px 13px;border-radius:999px;text-transform:uppercase;letter-spacing:.6px;margin-bottom:14px;}
+.hero-badge i{font-size:11px;}
+.hero-title{font-size:30px;font-weight:900;letter-spacing:.2px;line-height:1.1;background:linear-gradient(95deg,#f5f3ff,var(--primary) 55%,var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.hero-sub{color:var(--sub);font-size:13.5px;margin-top:10px;line-height:1.55;max-width:440px;margin-left:auto;margin-right:auto;}
+.hero-pills{display:flex;justify-content:center;flex-wrap:wrap;gap:8px;margin-top:16px;}
+.hero-pill{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--sub);background:var(--surface);border:1px solid var(--border);padding:7px 13px;border-radius:999px;}
+.hero-pill i{color:var(--primary);font-size:12px;}
+
+/* ── Guest invite ── */
+.gv-invite{display:none;position:relative;align-items:center;gap:14px;background:linear-gradient(95deg,rgba(168,85,247,0.20),rgba(236,72,153,0.14));border:1px solid rgba(168,85,247,0.40);border-radius:18px;padding:14px 16px;margin-bottom:18px;animation:fadeUp .35s ease-out;}
+.gv-invite.show{display:flex;}
+.gv-invite-ico{width:44px;height:44px;border-radius:13px;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;flex-shrink:0;box-shadow:0 8px 20px rgba(124,58,237,0.4);}
+.gv-invite-text{flex:1;min-width:0;}
+.gv-invite-title{font-size:14.5px;font-weight:800;color:var(--text);line-height:1.2;}
+.gv-invite-sub{font-size:12px;color:var(--sub);margin-top:3px;line-height:1.4;}
+.gv-invite-btn{background:linear-gradient(95deg,var(--primary),var(--primary2));color:#fff;border:none;font-weight:800;font-size:12.5px;padding:9px 15px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;box-shadow:0 6px 16px rgba(124,58,237,0.45);transition:transform .12s;flex-shrink:0;}
+.gv-invite-btn:active{transform:scale(0.96);}
+.gv-invite-close{position:absolute;top:7px;right:8px;width:24px;height:24px;border-radius:50%;background:transparent;border:none;color:var(--sub2);font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:color .15s,background .15s;}
+.gv-invite-close:hover{background:rgba(255,255,255,0.06);color:var(--text);}
+@media (max-width:460px){
+  .gv-invite{flex-wrap:wrap;}
+  .gv-invite-text{flex-basis:calc(100% - 60px);}
+  .gv-invite-btn{flex-basis:100%;justify-content:center;}
+}
+
+/* ── Admin bar ── */
+.admin-bar{display:none;align-items:center;gap:12px;background:linear-gradient(95deg,rgba(168,85,247,0.16),rgba(236,72,153,0.10));border:1px solid rgba(168,85,247,0.34);border-radius:16px;padding:13px 15px;margin-bottom:20px;}
+.admin-bar.show{display:flex;}
+.admin-bar .ab-ico{width:34px;height:34px;border-radius:10px;background:rgba(168,85,247,0.2);display:flex;align-items:center;justify-content:center;color:#d8b4fe;flex-shrink:0;}
+.admin-bar .ab-text{flex:1;font-size:12px;color:var(--sub);line-height:1.4;}
+.admin-bar .ab-text b{color:var(--text);}
+.admin-bar button{font-size:12.5px;font-weight:700;padding:9px 14px;border-radius:10px;display:flex;align-items:center;gap:7px;white-space:nowrap;}
+.ab-create{background:linear-gradient(95deg,var(--primary),var(--primary2));color:#fff;box-shadow:0 6px 16px rgba(124,58,237,0.4);}
+.ab-exit{background:transparent;border:1px solid var(--border)!important;color:var(--sub);}
+.ab-exit:hover{color:var(--text);}
+
+.gv-list{display:flex;flex-direction:column;gap:16px;}
+
+/* ── Card (gradient border via padding) ── */
+.gv-card{position:relative;border-radius:22px;padding:1px;background:linear-gradient(155deg,rgba(168,85,247,0.55),rgba(236,72,153,0.28) 42%,rgba(255,255,255,0.05) 82%);box-shadow:0 22px 48px -16px rgba(124,58,237,0.45);animation:fadeUp .4s ease-out;}
+.gv-card[data-noanim]{animation:none;}
+.gv-card.done{background:linear-gradient(155deg,rgba(34,197,94,0.4),rgba(255,255,255,0.05) 70%);box-shadow:0 18px 40px -18px rgba(34,197,94,0.3);}
+.gv-card.ending{background:linear-gradient(155deg,rgba(244,63,94,0.6),rgba(251,191,36,0.25) 50%,rgba(255,255,255,0.05));}
+.gv-inner{position:relative;overflow:hidden;background:linear-gradient(180deg,rgba(17,24,39,0.94),rgba(8,12,26,0.97));border-radius:21px;padding:18px;}
+.gv-inner::before{content:'';position:absolute;top:-50%;right:-25%;width:150%;height:150%;background:radial-gradient(circle,rgba(168,85,247,0.14),transparent 60%);pointer-events:none;}
+.gv-inner > *{position:relative;}
+
+.gv-row{display:flex;align-items:center;gap:8px;margin-bottom:13px;}
+.gv-badge{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;padding:6px 11px;border-radius:999px;display:inline-flex;align-items:center;gap:7px;}
+.gv-badge.live{background:rgba(168,85,247,0.18);color:#d8b4fe;}
+.gv-badge.live .dot{width:6px;height:6px;border-radius:50%;background:var(--primary);box-shadow:0 0 0 0 rgba(168,85,247,.6);animation:pulse 1.8s infinite;}
+.gv-badge.ending{background:rgba(244,63,94,0.18);color:#fda4af;}
+.gv-badge.done{background:rgba(34,197,94,0.16);color:#86efac;}
+.gv-num{font-size:12px;color:var(--sub2);font-weight:700;font-variant-numeric:tabular-nums;}
+
+.gv-title{font-size:18px;font-weight:800;line-height:1.25;margin-bottom:6px;}
+.gv-desc{font-size:13px;color:var(--sub);line-height:1.55;white-space:pre-wrap;word-break:break-word;}
+
+.gv-prize{display:flex;align-items:center;gap:13px;margin:16px 0;padding:14px;background:rgba(2,6,23,0.45);border:1px solid var(--border);border-radius:15px;}
+.gv-prize-badge{width:50px;height:50px;border-radius:15px;background:linear-gradient(135deg,var(--primary),var(--primary3));display:flex;align-items:center;justify-content:center;font-size:23px;color:#fff;box-shadow:0 10px 22px rgba(168,85,247,0.45);flex-shrink:0;}
+.gv-prize-main{flex:1;min-width:0;}
+.gv-prize-val{font-size:30px;font-weight:900;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.5px;}
+.gv-prize-val small{font-size:14px;font-weight:700;color:var(--gost);margin-left:5px;letter-spacing:0;}
+.gv-prize-cur{font-size:11.5px;color:var(--sub);margin-top:5px;}
+
+.gv-countdown{display:flex;gap:8px;margin:16px 0;}
+.seg{flex:1;background:rgba(2,6,23,0.6);border:1px solid var(--border);border-radius:13px;padding:11px 4px 9px;text-align:center;}
+.seg-num{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1;letter-spacing:.5px;}
+.seg-lbl{font-size:9px;color:var(--sub);text-transform:uppercase;letter-spacing:.6px;margin-top:6px;}
+.gv-card.ending .seg-num{color:#fda4af;}
+.gv-drawing{margin:16px 0;padding:14px;text-align:center;background:rgba(168,85,247,0.1);border:1px solid rgba(168,85,247,0.3);border-radius:13px;font-size:14px;font-weight:700;color:#d8b4fe;display:flex;align-items:center;justify-content:center;gap:9px;}
+.gv-drawing i{animation:spin 1.4s linear infinite;}
+
+.gv-foot{display:flex;align-items:center;gap:12px;margin-top:16px;}
+.gv-part{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--sub);font-weight:600;white-space:nowrap;}
+.gv-part i{color:var(--primary);}
+.gv-part b{color:var(--text);font-variant-numeric:tabular-nums;}
+
+.gv-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:9px;padding:14px;border-radius:13px;font-size:14.5px;font-weight:700;transition:transform .15s,box-shadow .15s;}
+.gv-btn.enter{background:linear-gradient(95deg,var(--primary),var(--primary2));color:#fff;box-shadow:0 10px 26px -6px rgba(124,58,237,0.6);}
+.gv-btn.enter:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 14px 30px -6px rgba(124,58,237,0.7);}
+.gv-btn.entered{background:rgba(34,197,94,0.14);color:#86efac;border:1px solid rgba(34,197,94,0.3);}
+.gv-btn.login{background:rgba(255,255,255,0.05);border:1px solid var(--border-strong);color:var(--text);}
+.gv-btn:disabled{opacity:.8;}
+
+/* winners */
+.gv-winners{margin-top:14px;background:rgba(2,6,23,0.45);border:1px solid var(--border);border-radius:15px;padding:14px;}
+.gv-winners-h{font-size:11px;color:var(--sub);text-transform:uppercase;letter-spacing:.6px;margin-bottom:11px;display:flex;align-items:center;gap:8px;}
+.gv-winners-h i{color:var(--yellow);}
+.gv-winner{display:flex;align-items:center;gap:11px;padding:8px 0;border-top:1px solid var(--border);}
+.gv-winner:first-of-type{border-top:0;}
+.gv-winner .av{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary3));display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;flex-shrink:0;}
+.gv-winner .wn{flex:1;min-width:0;}
+.gv-winner .nm{font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.gv-winner .un{font-size:11.5px;color:var(--sub);}
+.gv-winner .pz{color:var(--green);font-size:13px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap;}
+.gv-noone{font-size:12.5px;color:var(--sub);text-align:center;padding:4px;}
+
+/* admin row on card */
+.gv-admin{display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px dashed var(--border);}
+.gv-admin button{flex:1;font-size:11.5px;font-weight:700;padding:9px;border-radius:10px;background:rgba(255,255,255,0.04);border:1px solid var(--border)!important;color:var(--sub);display:flex;align-items:center;justify-content:center;gap:6px;transition:color .15s;}
+.gv-admin button:hover{color:var(--text);}
+.gv-admin .draw{color:#d8b4fe;}
+.gv-admin .del{flex:0 0 auto;color:#fda4af;}
+
+/* empty / loading */
+.gv-empty,.gv-loading{text-align:center;padding:54px 20px;}
+.gv-empty-ico{width:84px;height:84px;margin:0 auto 18px;border-radius:26px;background:linear-gradient(135deg,rgba(168,85,247,0.25),rgba(236,72,153,0.18));border:1px solid rgba(168,85,247,0.3);display:flex;align-items:center;justify-content:center;font-size:34px;color:#d8b4fe;box-shadow:0 16px 36px -10px rgba(124,58,237,0.5);}
+.gv-empty-title{font-size:18px;font-weight:800;margin-bottom:8px;}
+.gv-empty-sub{font-size:13.5px;color:var(--sub);line-height:1.55;max-width:340px;margin:0 auto 18px;}
+.gv-empty-btn{display:inline-flex;align-items:center;gap:8px;background:linear-gradient(95deg,var(--primary),var(--primary2));color:#fff;font-size:14px;font-weight:700;padding:12px 22px;border-radius:12px;box-shadow:0 10px 24px -6px rgba(124,58,237,0.6);}
+.gv-loading i{font-size:30px;color:var(--primary);opacity:.5;animation:spin 1s linear infinite;}
+.gv-loading p{color:var(--sub);font-size:14px;margin-top:14px;}
+
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(168,85,247,.5);}70%{box-shadow:0 0 0 8px rgba(168,85,247,0);}100%{box-shadow:0 0 0 0 rgba(168,85,247,0);}}
+@keyframes gvHighlight{
+  0%   { box-shadow: 0 22px 48px -16px rgba(124,58,237,0.45), 0 0 0 0   rgba(168,85,247,0.0); transform:scale(1); }
+  12%  { box-shadow: 0 22px 48px -16px rgba(124,58,237,0.65), 0 0 0 6px rgba(168,85,247,0.55); transform:scale(1.012); }
+  28%  { box-shadow: 0 22px 48px -16px rgba(124,58,237,0.65), 0 0 0 14px rgba(168,85,247,0.0);  transform:scale(1.012); }
+  100% { box-shadow: 0 22px 48px -16px rgba(124,58,237,0.45), 0 0 0 0   rgba(168,85,247,0.0); transform:scale(1); }
+}
+.gv-card.gv-focus{animation:gvHighlight 3.4s ease-out 1; will-change: box-shadow, transform;}
+.gv-card.gv-focus.done{animation:gvHighlight 3.4s ease-out 1;}
+.gv-card.gv-focus.done{box-shadow:0 18px 40px -18px rgba(34,197,94,0.3);}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* ── Modals ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(2,6,23,0.72);backdrop-filter:blur(5px);z-index:250;display:none;align-items:flex-end;justify-content:center;padding:0;}
+.modal-overlay.show{display:flex;}
+@media (min-width:560px){.modal-overlay{align-items:center;padding:20px;}}
+.modal{background:#0b1124;border:1px solid var(--border-strong);border-radius:22px 22px 0 0;padding:22px;width:100%;max-width:460px;max-height:92vh;overflow-y:auto;animation:sheetUp .3s cubic-bezier(.2,.8,.2,1);}
+@media (min-width:560px){.modal{border-radius:22px;}}
+@keyframes sheetUp{from{opacity:0;transform:translateY(24px);}to{opacity:1;transform:translateY(0);}}
+.modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;}
+.modal-title{font-size:18px;font-weight:800;}
+.modal-close{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--sub);background:var(--surface);}
+.field{margin-bottom:15px;}
+.field label{display:block;font-size:12px;color:var(--sub);margin-bottom:7px;font-weight:600;}
+.field input,.field textarea{width:100%;background:rgba(2,6,23,0.55);border:1px solid var(--border-strong);border-radius:12px;padding:12px 14px;color:var(--text);font-size:14.5px;transition:border-color .15s;}
+.field input:focus,.field textarea:focus{outline:0;border-color:var(--primary);}
+.field textarea{resize:vertical;min-height:70px;}
+.field .hint{font-size:11.5px;color:var(--sub);margin-top:6px;}
+.row2{display:flex;gap:12px;}
+.row2 .field{flex:1;}
+.presets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:9px;}
+.preset{font-size:12.5px;font-weight:600;padding:8px 13px;border-radius:10px;background:var(--surface);border:1px solid var(--border);color:var(--sub);transition:color .15s,border-color .15s;}
+.preset.on,.preset:hover{color:var(--text);border-color:var(--primary);}
+.modal-actions{display:flex;gap:11px;margin-top:6px;}
+.modal-actions button{flex:1;padding:13px;border-radius:12px;font-size:14.5px;font-weight:700;}
+.btn-primary{background:linear-gradient(95deg,var(--primary),var(--primary2));color:#fff;box-shadow:0 8px 20px -6px rgba(124,58,237,0.6);}
+.btn-ghost{background:transparent;border:1px solid var(--border)!important;color:var(--sub);}
+
+.toast{position:fixed;left:50%;bottom:calc(26px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);background:#0b1124;border:1px solid var(--border-strong);color:var(--text);padding:13px 22px;border-radius:13px;font-size:13.5px;font-weight:600;opacity:0;pointer-events:none;transition:all .3s;z-index:400;max-width:90%;text-align:center;box-shadow:0 12px 34px rgba(0,0,0,0.5);}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+.toast.err{border-color:var(--red);color:#fda4af;}
+.toast.ok{border-color:var(--green);color:#86efac;}
+
+/* ── Share button & bottom-sheet ───────────────────────────────────────── */
+.gv-row{align-items:center;}
+.gv-share{margin-left:auto;width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.06);border:1px solid var(--border);color:var(--sub);display:inline-flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;transition:background .15s,color .15s,transform .12s;}
+.gv-share:hover{background:rgba(168,85,247,0.18);color:var(--primary);}
+.gv-share:active{transform:scale(0.9);}
+
+.share-overlay{position:fixed;inset:0;background:rgba(2,6,23,0.7);backdrop-filter:blur(8px);z-index:500;opacity:0;pointer-events:none;transition:opacity .22s;}
+.share-overlay.open{opacity:1;pointer-events:auto;}
+.share-sheet{position:fixed;left:0;right:0;bottom:0;background:rgba(15,23,42,0.98);backdrop-filter:blur(28px);border-top:1px solid var(--border-strong);border-radius:24px 24px 0 0;padding:14px 18px calc(20px + env(safe-area-inset-bottom));z-index:501;transform:translateY(100%);transition:transform .32s cubic-bezier(0.32,0.72,0,1);box-shadow:0 -12px 40px rgba(0,0,0,0.5);max-height:88vh;overflow-y:auto;}
+.share-overlay.open + .share-sheet{transform:translateY(0);}
+.share-handle{width:38px;height:4px;background:var(--border-strong);border-radius:2px;margin:0 auto 14px;}
+.share-title{font-size:15px;font-weight:800;text-align:center;margin-bottom:14px;color:var(--text);}
+.share-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px 10px;margin-bottom:10px;}
+@media (min-width:560px){.share-grid{grid-template-columns:repeat(5,1fr);}}
+.share-opt{display:flex;flex-direction:column;align-items:center;gap:6px;background:none;border:none;color:var(--text);cursor:pointer;padding:8px 4px;border-radius:12px;transition:background .15s;}
+.share-opt:hover{background:rgba(255,255,255,0.05);}
+.share-opt-ico{width:46px;height:46px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:18px;color:#fff;}
+.share-opt-lbl{font-size:11px;text-align:center;color:var(--sub);line-height:1.2;}
+.share-opt.brand-repost .share-opt-ico{background:linear-gradient(135deg,#a855f7,#7c3aed);}
+.share-opt.brand-photo  .share-opt-ico{background:linear-gradient(135deg,#fb923c,#f97316);}
+.share-opt.brand-link   .share-opt-ico{background:linear-gradient(135deg,#64748b,#475569);}
+.share-opt.brand-chat   .share-opt-ico{background:#0b1124;padding:7px;}
+.share-opt.brand-chat   .share-opt-ico img{width:100%;height:100%;object-fit:contain;display:block;}
+.share-opt.brand-tg     .share-opt-ico{background:#229ED9;}
+.share-opt.brand-discord .share-opt-ico{background:#5865F2;}
+.share-opt.brand-wa     .share-opt-ico{background:#25D366;}
+.share-opt.brand-x      .share-opt-ico{background:#000;}
+.share-opt.brand-vk     .share-opt-ico{background:#0077FF;}
+</style>
+</head>
+<body>
+
+<div id="mesh-bg"></div>
+<script src="/mesh.js"></script>
+
+<header>
+  <div class="header-top">
+    <a href="/bank/" class="h-back" title="В банк"><i class="fa-solid fa-arrow-left"></i></a>
+    <div class="header-brand" id="brand" title="GhostBank"><i class="fa-solid fa-gift"></i><span>Розыгрыши</span></div>
+    <a href="/bank/" class="h-balance" id="hBalance" style="display:none;" title="Ваш баланс — открыть банк">
+      <span class="bi"><i class="fa-solid fa-ghost g-ico"></i><b id="hbGost">0</b></span>
+      <span class="sep"></span>
+      <span class="bi"><i class="fa-solid fa-fire s-ico"></i><b id="hbSoul">0</b></span>
+    </a>
+    <button class="h-profile guest" id="hProfile" title="Войти" onclick="onProfileTap(event)">
+      <i class="fa-solid fa-right-to-bracket" id="hProfileIco"></i>
+      <span class="pdot"></span>
+    </button>
+  </div>
+</header>
+
+<!-- Профильное меню (открывается при тапе на иконку, если залогинен) -->
+<div class="pmenu" id="pMenu">
+  <div class="pm-head">
+    <div class="pm-name" id="pmName">—</div>
+    <div class="pm-handle" id="pmHandle">@—</div>
+  </div>
+  <a class="pm-item" href="/social/" id="pmProfile"><i class="fa-solid fa-user"></i> Мой профиль</a>
+  <a class="pm-item" href="/bank/"><i class="fa-solid fa-wallet"></i> Кошелёк и история</a>
+  <button class="pm-item danger" onclick="doLogout()"><i class="fa-solid fa-right-from-bracket"></i> Выйти</button>
+</div>
+
+<!-- SSO модалка: вход/регистрация в общую учётку GhostEcos -->
+<div id="loginOverlay" onclick="if(event.target===this)closeLogin()">
+  <div class="lg-sheet" role="dialog" aria-modal="true">
+    <div class="lg-grab"></div>
+    <div class="lg-tabs">
+      <button class="lg-tab active" id="lgTabIn"  onclick="lgSwitch('in')">Вход</button>
+      <button class="lg-tab"        id="lgTabUp" onclick="lgSwitch('up')">Регистрация</button>
+    </div>
+    <div id="lgPaneIn">
+      <div class="lg-title">С возвращением</div>
+      <div class="lg-sub">Один аккаунт на GhostChat, GhostSocial и GhostBank.</div>
+      <div class="lg-err" id="lgErrIn"></div>
+      <div class="lg-field"><label>Логин</label><input id="lgInUser" type="text" autocomplete="username" placeholder="username"></div>
+      <div class="lg-field"><label>Пароль</label><input id="lgInPass" type="password" autocomplete="current-password" placeholder="••••••••"></div>
+      <button class="lg-submit" id="lgInBtn" onclick="doLogin()"><i class="fa-solid fa-right-to-bracket"></i> Войти</button>
+      <div class="lg-foot">Нет аккаунта? <a href="javascript:lgSwitch('up')">Создать</a></div>
+    </div>
+    <div id="lgPaneUp" style="display:none;">
+      <div class="lg-title">Создать аккаунт</div>
+      <div class="lg-sub">Логин — латиница и цифры. Пароль — минимум 8 символов.</div>
+      <div class="lg-err" id="lgErrUp"></div>
+      <div class="lg-field"><label>Имя</label><input id="lgUpName" type="text" placeholder="Как тебя называть"></div>
+      <div class="lg-field"><label>Логин</label><input id="lgUpUser" type="text" autocomplete="username" placeholder="username"></div>
+      <div class="lg-field"><label>Пароль</label><input id="lgUpPass" type="password" autocomplete="new-password" placeholder="минимум 8 символов"></div>
+      <label class="lg-check"><input type="checkbox" id="lgUpAge"> Мне 18+, я согласен с правилами экосистемы.</label>
+      <button class="lg-submit" id="lgUpBtn" onclick="doRegister()"><i class="fa-solid fa-user-plus"></i> Создать аккаунт</button>
+      <div class="lg-foot">Уже есть аккаунт? <a href="javascript:lgSwitch('in')">Войти</a></div>
+    </div>
+  </div>
+</div>
+
+<main>
+  <div class="hero">
+    <div class="hero-badge"><i class="fa-solid fa-ghost"></i> GhostBank</div>
+    <div class="hero-title">Розыгрыши Gost</div>
+    <div class="hero-sub">Бесплатно. Один билет на аккаунт. По таймеру случайно выбирается победитель — Gost падает на баланс мгновенно.</div>
+    <div class="hero-pills">
+      <span class="hero-pill"><i class="fa-solid fa-ticket"></i> 1 билет на аккаунт</span>
+      <span class="hero-pill"><i class="fa-solid fa-dice"></i> Честный розыгрыш</span>
+      <span class="hero-pill"><i class="fa-solid fa-bolt"></i> Выплата сразу</span>
+    </div>
+  </div>
+
+  <div class="gv-invite" id="guestInvite">
+    <div class="gv-invite-ico"><i class="fa-solid fa-ghost"></i></div>
+    <div class="gv-invite-text">
+      <div class="gv-invite-title">Создай аккаунт за 10 секунд</div>
+      <div class="gv-invite-sub">Участвуй в розыгрышах, получай Gost на баланс. Один аккаунт на всю экосистему.</div>
+    </div>
+    <button class="gv-invite-btn" onclick="openLogin('up')"><i class="fa-solid fa-user-plus"></i> Создать</button>
+    <button class="gv-invite-close" onclick="dismissInvite()" title="Скрыть"><i class="fa-solid fa-xmark"></i></button>
+  </div>
+
+  <div class="admin-bar" id="adminBar">
+    <div class="ab-ico"><i class="fa-solid fa-shield-halved"></i></div>
+    <div class="ab-text">Режим владельца. <b>Только вы</b> создаёте розыгрыши.</div>
+    <button class="ab-create" onclick="openCreate()"><i class="fa-solid fa-plus"></i> Создать</button>
+    <button class="ab-exit" onclick="exitAdmin()">Выйти</button>
+  </div>
+
+  <div id="list" class="gv-list">
+    <div class="gv-loading"><i class="fa-solid fa-spinner"></i><p>Загрузка розыгрышей...</p></div>
+  </div>
+</main>
+
+<!-- Создать розыгрыш -->
+<div class="modal-overlay" id="createModal" onclick="if(event.target===this)closeCreate()">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">Новый розыгрыш</div>
+      <button class="modal-close" onclick="closeCreate()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="field"><label>Название</label><input id="cTitle" maxlength="120" placeholder="Розыгрыш 5000 Gost"></div>
+    <div class="field"><label>Описание (необязательно)</label><textarea id="cDesc" maxlength="1000" placeholder="Условия, что разыгрываем, для кого..."></textarea></div>
+    <div class="row2">
+      <div class="field"><label>Приз каждому (Gost)</label><input id="cPrize" type="number" min="1" max="1000000" inputmode="numeric" placeholder="1000"></div>
+      <div class="field"><label>Победителей</label><input id="cWinners" type="number" min="1" max="1000" inputmode="numeric" value="1"></div>
+    </div>
+    <div class="field">
+      <label>Дедлайн розыгрыша</label>
+      <div class="presets">
+        <button class="preset" onclick="setPreset(1,this)">1 час</button>
+        <button class="preset" onclick="setPreset(24,this)">Сутки</button>
+        <button class="preset" onclick="setPreset(72,this)">3 дня</button>
+        <button class="preset" onclick="setPreset(168,this)">Неделя</button>
+      </div>
+      <input id="cDeadline" type="datetime-local">
+      <div class="hint">Точная дата или пресет. По дедлайну победитель выберется автоматически.</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-ghost" onclick="closeCreate()">Отмена</button>
+      <button class="btn-primary" id="cSubmit" onclick="submitCreate()">Создать</button>
+    </div>
+  </div>
+</div>
+
+<!-- Вход владельца -->
+<div class="modal-overlay" id="tokenModal" onclick="if(event.target===this)closeToken()">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-head">
+      <div class="modal-title">Вход владельца</div>
+      <button class="modal-close" onclick="closeToken()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="field">
+      <label>Админ-токен</label>
+      <input id="tToken" type="password" placeholder="GE_ADMIN_TOKEN" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div class="hint">Хранится только в этом браузере. Вводится один раз на устройство.</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-ghost" onclick="closeToken()">Отмена</button>
+      <button class="btn-primary" onclick="saveToken()">Войти</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// Розыгрыши GhostBank. Авторизация общая с банком (gs_token).
+// Управление — только владелец (GE_ADMIN_TOKEN, локально). Вход скрытый:
+//   5 быстрых тапов по заголовку «Розыгрыши» ИЛИ Ctrl+Shift+L (десктоп).
+// ═══════════════════════════════════════════════════════════════════════════
+const API = '/api/soc';
+let token = localStorage.getItem('gs_token');
+let adminToken = localStorage.getItem('ge_admin_token') || '';
+let _items = [];
+let _serverOffset = 0;
+// id карточек, которые уже хоть раз рендерились — чтобы при тиковой
+// перерисовке (каждые 25с) не запускать у них fadeUp анимацию заново.
+const _seenIds = new Set();
+
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function fmtNum(n){return (n||0).toLocaleString('ru-RU');}
+function ini(n){return n ? n[0].toUpperCase() : '?';}
+function nowSec(){return Math.floor(Date.now()/1000) + _serverOffset;}
+function pad(x){return String(x).padStart(2,'0');}
+
+function showToast(msg, kind){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (kind ? ' ' + kind : '');
+  setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+async function api(path, method='GET', body=null){
+  const h = { 'Content-Type': 'application/json' };
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 20000);
+  let r;
+  try { r = await fetch(API + path, { method, headers: h, body: body ? JSON.stringify(body) : null, signal: ctrl.signal }); }
+  finally { clearTimeout(tid); }
+  if (!r.ok) {
+    const text = await r.text();
+    let msg = text; try { msg = JSON.parse(text).detail || text; } catch (_) {}
+    const e = new Error(msg); e.status = r.status; throw e;
+  }
+  return r.json();
+}
+
+async function loadWallet(){
+  const el = document.getElementById('hBalance');
+  if (!token || token.startsWith('guest_')){ el.style.display = 'none'; return; }
+  try {
+    const w = await api('/wallet');
+    document.getElementById('hbGost').textContent = fmtNum((w.balance && w.balance.gost) || 0);
+    document.getElementById('hbSoul').textContent = fmtNum((w.balance && w.balance.soul) || 0);
+    el.style.display = 'flex';
+  } catch (_) { /* не залогинен или ошибка — баланс скрыт */ }
+}
+
+// ── Профиль / SSO ────────────────────────────────────────────────────
+let _me = null;
+
+async function loadMe(){
+  if (!token || token.startsWith('guest_')){ _me = null; paintProfile(); return; }
+  try {
+    const m = await api('/me');
+    if (m && !m.is_guest){ _me = m; }
+    else { _me = null; }
+  } catch (e) {
+    // 401 = токен протух — чистим, юзер увидит «Войти»
+    if (e.status === 401){ localStorage.removeItem('gs_token'); token = null; }
+    _me = null;
+  }
+  paintProfile();
+}
+
+function paintProfile(){
+  const btn = document.getElementById('hProfile');
+  const ico = document.getElementById('hProfileIco');
+  if (_me){
+    btn.classList.remove('guest'); btn.classList.add('user');
+    btn.title = '@' + _me.username;
+    ico.outerHTML = '<span id="hProfileIco">' + esc(ini(_me.display_name || _me.username)) + '</span>';
+    document.getElementById('pmName').textContent   = _me.display_name || _me.username;
+    document.getElementById('pmHandle').textContent = '@' + _me.username;
+    const prof = document.getElementById('pmProfile');
+    if (prof) prof.href = '/social/#u/' + _me.username;
+  } else {
+    btn.classList.add('guest'); btn.classList.remove('user');
+    btn.title = 'Войти';
+    ico.outerHTML = '<i class="fa-solid fa-right-to-bracket" id="hProfileIco"></i>';
+  }
+  paintInvite();
+}
+
+// Плашка-приглашение для гостей. Скрывается:
+//  - если юзер залогинен,
+//  - если когда-то нажал «крестик» (gv_invite_dismissed=1).
+function paintInvite(){
+  const el = document.getElementById('guestInvite');
+  if (!el) return;
+  const dismissed = localStorage.getItem('gv_invite_dismissed') === '1';
+  const show = !_me && !dismissed;
+  el.classList.toggle('show', show);
+}
+function dismissInvite(){
+  localStorage.setItem('gv_invite_dismissed', '1');
+  paintInvite();
+}
+
+function onProfileTap(ev){
+  ev.stopPropagation();
+  if (_me) togglePMenu(); else openLogin();
+}
+
+function togglePMenu(){
+  document.getElementById('pMenu').classList.toggle('open');
+}
+function closePMenu(){
+  document.getElementById('pMenu').classList.remove('open');
+}
+document.addEventListener('click', (e) => {
+  const pm = document.getElementById('pMenu');
+  const hp = document.getElementById('hProfile');
+  if (pm && pm.classList.contains('open') && !pm.contains(e.target) && !hp.contains(e.target)) closePMenu();
+});
+
+function openLogin(initialTab){
+  lgSwitch(initialTab === 'up' ? 'up' : 'in');
+  document.getElementById('lgErrIn').classList.remove('show');
+  document.getElementById('lgErrUp').classList.remove('show');
+  document.getElementById('loginOverlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  closePMenu();
+  setTimeout(() => {
+    const f = document.getElementById('lgInUser');
+    if (f && document.getElementById('lgPaneIn').style.display !== 'none') f.focus();
+  }, 80);
+}
+function closeLogin(){
+  document.getElementById('loginOverlay').classList.remove('open');
+  document.body.style.overflow = '';
+}
+function lgSwitch(which){
+  const inOn = which === 'in';
+  document.getElementById('lgTabIn').classList.toggle('active', inOn);
+  document.getElementById('lgTabUp').classList.toggle('active', !inOn);
+  document.getElementById('lgPaneIn').style.display = inOn ? 'block' : 'none';
+  document.getElementById('lgPaneUp').style.display = inOn ? 'none' : 'block';
+}
+function _lgErr(which, msg){
+  const el = document.getElementById(which === 'in' ? 'lgErrIn' : 'lgErrUp');
+  el.textContent = msg;
+  el.classList.add('show');
+}
+async function doLogin(){
+  const btn = document.getElementById('lgInBtn');
+  const u = document.getElementById('lgInUser').value.trim();
+  const p = document.getElementById('lgInPass').value;
+  if (!u || !p){ _lgErr('in', 'Заполните логин и пароль'); return; }
+  btn.disabled = true;
+  try {
+    const r = await fetch(API + '/login', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ username: u, password: p })
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.detail || ('Ошибка ' + r.status));
+    token = data.token;
+    localStorage.setItem('gs_token', token);
+    closeLogin();
+    _notify('Привет, @' + (data.username || u) + '!', 'ok');
+    await loadMe();
+    await loadList();
+  } catch (e) {
+    _lgErr('in', e.message || 'Не удалось войти');
+  } finally { btn.disabled = false; }
+}
+async function doRegister(){
+  const btn  = document.getElementById('lgUpBtn');
+  const name = document.getElementById('lgUpName').value.trim();
+  const u    = document.getElementById('lgUpUser').value.trim();
+  const p    = document.getElementById('lgUpPass').value;
+  const age  = document.getElementById('lgUpAge').checked;
+  if (!name || !u || !p){ _lgErr('up', 'Заполните все поля'); return; }
+  if (p.length < 8){ _lgErr('up', 'Пароль минимум 8 символов'); return; }
+  if (!age){ _lgErr('up', 'Подтвердите возраст 18+'); return; }
+  btn.disabled = true;
+  try {
+    const r = await fetch(API + '/register', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ username: u, display_name: name, password: p, age_18_confirm: true })
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.detail || ('Ошибка ' + r.status));
+    token = data.token;
+    localStorage.setItem('gs_token', token);
+    closeLogin();
+    _notify('Аккаунт создан, добро пожаловать!', 'ok');
+    await loadMe();
+    await loadList();
+  } catch (e) {
+    _lgErr('up', e.message || 'Не удалось создать аккаунт');
+  } finally { btn.disabled = false; }
+}
+function doLogout(){
+  localStorage.removeItem('gs_token');
+  token = null; _me = null;
+  closePMenu();
+  paintProfile();
+  document.getElementById('hBalance').style.display = 'none';
+  _notify('Вы вышли', 'ok');
+  loadList();
+}
+
+async function loadList(){
+  loadWallet();
+  try {
+    const d = await api('/giveaway/list?scope=all');
+    _serverOffset = (d.server_now || 0) - Math.floor(Date.now()/1000);
+    _items = d.giveaways || [];
+    render();
+  } catch (e) {
+    document.getElementById('list').innerHTML =
+      `<div class="gv-empty"><div class="gv-empty-ico"><i class="fa-solid fa-triangle-exclamation"></i></div>`+
+      `<div class="gv-empty-title">Не удалось загрузить</div><div class="gv-empty-sub">${esc(e.message)}</div></div>`;
+  }
+}
+
+function segHTML(secLeft){
+  if (secLeft <= 0) return '<div class="gv-drawing"><i class="fa-solid fa-dice"></i> Идёт розыгрыш...</div>';
+  const d = Math.floor(secLeft/86400), h = Math.floor((secLeft%86400)/3600);
+  const m = Math.floor((secLeft%3600)/60), s = secLeft%60;
+  const seg = (v,l) => `<div class="seg"><div class="seg-num">${pad(v)}</div><div class="seg-lbl">${l}</div></div>`;
+  return `<div class="gv-countdown" data-cd>` + (d>0?seg(d,'дней'):'') + seg(h,'часов') + seg(m,'минут') + seg(s,'секунд') + `</div>`;
+}
+
+function adminButtons(g){
+  if (g.status === 'active'){
+    return `<div class="gv-admin">
+      <button class="draw" onclick="drawNow(${g.id})"><i class="fa-solid fa-dice"></i> Разыграть сейчас</button>
+      <button onclick="cancelGa(${g.id})"><i class="fa-solid fa-ban"></i> Отменить</button>
+      <button class="del" onclick="deleteGa(${g.id})"><i class="fa-solid fa-trash"></i></button>
+    </div>`;
+  }
+  return `<div class="gv-admin"><button class="del" style="flex:1" onclick="deleteGa(${g.id})"><i class="fa-solid fa-trash"></i> Удалить запись</button></div>`;
+}
+
+function cardHTML(g){
+  const isLoggedIn = !!(token && !token.startsWith('guest_'));
+  const noAnim = _seenIds.has(g.id) ? ' data-noanim' : '';
+  _seenIds.add(g.id);
+  const winLabel = g.winners_count > 1 ? `${g.winners_count} победителя` : '1 победитель';
+  const prize = `
+    <div class="gv-prize">
+      <div class="gv-prize-badge"><i class="fa-solid fa-ghost"></i></div>
+      <div class="gv-prize-main">
+        <div class="gv-prize-val">${fmtNum(g.prize_gost)}<small>Gost</small></div>
+        <div class="gv-prize-cur">${winLabel}${g.winners_count>1?' · каждому':''}</div>
+      </div>
+    </div>`;
+
+  if (g.status === 'finished'){
+    let winners;
+    if (g.winners && g.winners.length){
+      winners = g.winners.map(w => `
+        <div class="gv-winner">
+          <span class="av">${esc(ini(w.display_name || w.username))}</span>
+          <div class="wn"><div class="nm">${esc(w.display_name || w.username)}</div><div class="un">@${esc(w.username)}</div></div>
+          <span class="pz">+${fmtNum(w.prize_gost)}</span>
+        </div>`).join('');
+    } else {
+      winners = `<div class="gv-noone">Никто не участвовал — победителей нет.</div>`;
+    }
+    return `<div class="gv-card done" id="g${g.id}" data-gid="${g.id}"${noAnim}><div class="gv-inner">
+      <div class="gv-row"><span class="gv-badge done"><i class="fa-solid fa-check"></i> Завершён</span><span class="gv-num">#${g.id}</span><button class="gv-share" onclick="openShare(${g.id})" title="Поделиться"><i class="fa-solid fa-share-nodes"></i></button></div>
+      <div class="gv-title">${esc(g.title)}</div>
+      ${g.description ? `<div class="gv-desc">${esc(g.description)}</div>` : ''}
+      ${prize}
+      <div class="gv-winners">
+        <div class="gv-winners-h"><i class="fa-solid fa-trophy"></i> ${g.winners.length>1?'Победители':'Победитель'} · ${fmtNum(g.entries_count)} уч.</div>
+        ${winners}
+      </div>
+      ${adminToken ? adminButtons(g) : ''}
+    </div></div>`;
+  }
+
+  // active
+  const secLeft = Math.max(0, g.ends_at - nowSec());
+  const ending = secLeft > 0 && secLeft < 3600;
+  let btn;
+  if (!isLoggedIn) btn = `<button class="gv-btn login" onclick="openLogin()"><i class="fa-solid fa-right-to-bracket"></i> Войти</button>`;
+  else if (g.my_entered) btn = `<button class="gv-btn entered" disabled><i class="fa-solid fa-check"></i> Вы участвуете</button>`;
+  else btn = `<button class="gv-btn enter" onclick="enter(${g.id})"><i class="fa-solid fa-ticket"></i> Участвовать</button>`;
+
+  return `<div class="gv-card ${ending?'ending':''}" id="g${g.id}" data-gid="${g.id}" data-ends="${g.ends_at}"${noAnim}><div class="gv-inner">
+    <div class="gv-row">
+      <span class="gv-badge ${ending?'ending':'live'}">${ending?'<i class="fa-solid fa-hourglass-half"></i> Скоро':'<span class="dot"></span> Идёт'}</span>
+      <span class="gv-num">#${g.id}</span>
+      <button class="gv-share" onclick="openShare(${g.id})" title="Поделиться"><i class="fa-solid fa-share-nodes"></i></button>
+    </div>
+    <div class="gv-title">${esc(g.title)}</div>
+    ${g.description ? `<div class="gv-desc">${esc(g.description)}</div>` : ''}
+    ${prize}
+    ${segHTML(secLeft)}
+    <div class="gv-foot">
+      <span class="gv-part"><i class="fa-solid fa-users"></i> <b>${fmtNum(g.entries_count)}</b>&nbsp;уч.</span>
+      ${btn}
+    </div>
+    ${adminToken ? adminButtons(g) : ''}
+  </div></div>`;
+}
+
+function render(){
+  const el = document.getElementById('list');
+  if (!_items.length){
+    el.innerHTML = `<div class="gv-empty">
+      <div class="gv-empty-ico"><i class="fa-solid fa-gift"></i></div>
+      <div class="gv-empty-title">Пока нет розыгрышей</div>
+      <div class="gv-empty-sub">${adminToken ? 'Создайте первый — он появится здесь и у всех участников.' : 'Загляните позже или следите за анонсами.'}</div>
+      ${adminToken ? '<button class="gv-empty-btn" onclick="openCreate()"><i class="fa-solid fa-plus"></i> Создать первый</button>' : ''}
+    </div>`;
+    return;
+  }
+  el.innerHTML = _items.map(cardHTML).join('');
+  // Deep-link: /bank/giveaway/#g42 → доскролить и подсветить
+  // (один раз на первый рендер с этим hash, чтобы тиковая перерисовка
+  // не «дёргала» страницу повторно)
+  _focusHashCard();
+}
+
+// ── Deep-link к карточке #gID ───────────────────────────────────────
+let _lastFocusedHash = '';
+function _clearHash(){
+  // replaceState не триггерит hashchange — наш слушатель не зацикливается
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (_) {}
+}
+function _focusHashCard(force){
+  const m = (location.hash || '').match(/^#g(\d+)/i);
+  if (!m) return;
+  const id = m[1];
+  const hashKey = '#g' + id;
+  if (!force && _lastFocusedHash === hashKey) return;
+  _lastFocusedHash = hashKey; // помечаем сразу, чтобы тиковый render не зашёл сюда повторно
+  // Карточка может ещё не существовать (приходит на следующем loadList)
+  const card = document.getElementById('g' + id);
+  if (!card){
+    setTimeout(() => {
+      const again = document.getElementById('g' + id);
+      if (again){
+        _scrollAndFlash(again);
+      } else {
+        _notify('Розыгрыш #' + id + ' не найден', 'err');
+        _clearHash(); // несуществующий — тоже чистим, чтобы F5 не дёргал снова
+      }
+    }, 1500);
+    return;
+  }
+  _scrollAndFlash(card);
+}
+function _scrollAndFlash(card){
+  // Учёт фикс-шапки (~58px) + safe-area
+  const top = card.getBoundingClientRect().top + window.scrollY - 78;
+  window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+  // Класс ставим с микро-задержкой, чтобы анимация совпала со скролом
+  setTimeout(() => {
+    card.classList.add('gv-focus');
+    setTimeout(() => card.classList.remove('gv-focus'), 3600);
+  }, 380);
+  _clearHash();
+}
+window.addEventListener('hashchange', () => { _focusHashCard(true); });
+
+// Тик таймеров без перезагрузки всего списка
+function tick(){
+  let reload = false;
+  document.querySelectorAll('.gv-card[data-ends]').forEach(card => {
+    const left = Math.max(0, parseInt(card.dataset.ends, 10) - nowSec());
+    const cd = card.querySelector('[data-cd]');
+    if (left <= 0){ reload = true; return; }
+    if (cd){
+      const d = Math.floor(left/86400), h = Math.floor((left%86400)/3600), m = Math.floor((left%3600)/60), s = left%60;
+      const nums = cd.querySelectorAll('.seg-num');
+      const vals = d>0 ? [d,h,m,s] : [h,m,s];
+      nums.forEach((n,i) => { if (vals[i] !== undefined) n.textContent = pad(vals[i]); });
+    }
+    if (left < 3600 && !card.classList.contains('ending')) card.classList.add('ending');
+  });
+  if (reload) loadList();
+}
+
+async function enter(gid){
+  if (!token || token.startsWith('guest_')){ openLogin(); return; }
+  try {
+    const r = await api(`/giveaway/${gid}/enter`, 'POST');
+    showToast(r.already ? 'Вы уже участвуете' : 'Вы в игре. Удачи!', 'ok');
+    loadList();
+  } catch (e){
+    if (e.status === 403 || e.status === 401){ openLogin(); }
+    else showToast(e.message || 'Не удалось', 'err');
+  }
+}
+
+// ── Скрытый вход владельца ──
+let _tap = 0, _tapT = null;
+function secretTap(){
+  _tap++; clearTimeout(_tapT);
+  _tapT = setTimeout(() => { _tap = 0; }, 1600);
+  if (_tap >= 5){ _tap = 0; openAdminEntry(); }
+}
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.shiftKey && (e.key === 'L' || e.key === 'l')){ e.preventDefault(); openAdminEntry(); }
+});
+function openAdminEntry(){
+  document.getElementById('tokenModal').classList.add('show');
+  setTimeout(() => document.getElementById('tToken').focus(), 50);
+}
+function closeToken(){ document.getElementById('tokenModal').classList.remove('show'); }
+function saveToken(){
+  const v = document.getElementById('tToken').value.trim();
+  if (!v){ showToast('Введите токен', 'err'); return; }
+  adminToken = v; localStorage.setItem('ge_admin_token', v);
+  document.getElementById('tToken').value = '';
+  closeToken(); applyAdminUI(); render();
+  showToast('Режим владельца включён', 'ok');
+}
+function exitAdmin(){
+  adminToken = ''; localStorage.removeItem('ge_admin_token');
+  applyAdminUI(); render(); showToast('Вышли из режима владельца');
+}
+function applyAdminUI(){ document.getElementById('adminBar').classList.toggle('show', !!adminToken); }
+
+// ── Создание ──
+function openCreate(){
+  ['cTitle','cDesc','cPrize','cDeadline'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('cWinners').value = '1';
+  document.querySelectorAll('.preset').forEach(p => p.classList.remove('on'));
+  document.getElementById('createModal').classList.add('show');
+}
+function closeCreate(){ document.getElementById('createModal').classList.remove('show'); }
+function setPreset(hours, btn){
+  const d = new Date(Date.now() + hours*3600*1000);
+  const off = d.getTimezoneOffset()*60000;
+  document.getElementById('cDeadline').value = new Date(d - off).toISOString().slice(0,16);
+  document.querySelectorAll('.preset').forEach(p => p.classList.remove('on'));
+  btn.classList.add('on');
+}
+async function submitCreate(){
+  if (!adminToken){ showToast('Нет токена владельца', 'err'); return; }
+  const title = document.getElementById('cTitle').value.trim();
+  const desc = document.getElementById('cDesc').value.trim();
+  const prize = parseInt(document.getElementById('cPrize').value, 10);
+  const winners = parseInt(document.getElementById('cWinners').value, 10) || 1;
+  const deadline = document.getElementById('cDeadline').value;
+  if (!title){ showToast('Введите название', 'err'); return; }
+  if (!prize || prize < 1){ showToast('Укажите приз в Gost', 'err'); return; }
+  if (!deadline){ showToast('Выберите дедлайн', 'err'); return; }
+  const endsAt = Math.floor(new Date(deadline).getTime()/1000);
+  if (endsAt - Math.floor(Date.now()/1000) < 10){ showToast('Дедлайн должен быть в будущем', 'err'); return; }
+  const btn = document.getElementById('cSubmit');
+  btn.disabled = true; btn.textContent = 'Создаём...';
+  try {
+    await api('/giveaway/create', 'POST', { title, description: desc, prize_gost: prize, winners_count: winners, ends_at: endsAt, token: adminToken });
+    closeCreate(); showToast('Розыгрыш создан', 'ok'); loadList();
+  } catch (e){
+    showToast(e.status === 403 ? 'Неверный токен владельца' : (e.message || 'Ошибка'), 'err');
+  } finally { btn.disabled = false; btn.textContent = 'Создать'; }
+}
+async function drawNow(gid){
+  if (!confirm('Разыграть сейчас, не дожидаясь дедлайна? Победитель выбирается случайно из участников.')) return;
+  try { const r = await api(`/giveaway/${gid}/draw`, 'POST', { token: adminToken }); showToast(`Разыграно. Победителей: ${r.winners_count}`, 'ok'); loadList(); }
+  catch (e){ showToast(e.message || 'Ошибка', 'err'); }
+}
+async function cancelGa(gid){
+  if (!confirm('Отменить розыгрыш? Выплат не будет.')) return;
+  try { await api(`/giveaway/${gid}/cancel`, 'POST', { token: adminToken }); showToast('Отменён'); loadList(); }
+  catch (e){ showToast(e.message || 'Ошибка', 'err'); }
+}
+async function deleteGa(gid){
+  if (!confirm('Удалить розыгрыш полностью? Уже начисленный Gost не отзывается.')) return;
+  try { await api(`/giveaway/${gid}?token=${encodeURIComponent(adminToken)}`, 'DELETE'); showToast('Удалён'); loadList(); }
+  catch (e){ showToast(e.message || 'Ошибка', 'err'); }
+}
+
+// ── Старт ──
+document.getElementById('brand').addEventListener('click', secretTap);
+applyAdminUI();
+loadMe();
+loadList();
+setInterval(tick, 1000);
+setInterval(loadList, 25000);
+setInterval(loadMe, 5 * 60 * 1000);
+
+// ── Share sheet ───────────────────────────────────────────────────────
+let _shareId = null;
+function findGw(id){ return (_items || []).find(g => g.id === id); }
+function _amLoggedIn(){
+  const t = localStorage.getItem('gs_token') || '';
+  return !!(t && !t.startsWith('guest_'));
+}
+
+// Собственный кастомный toast (не browser alert/confirm). Использует CSS .toast.
+let _toastTimer = null;
+function _notify(msg, kind){
+  let el = document.getElementById('_gvToast');
+  if (!el){
+    el = document.createElement('div');
+    el.id = '_gvToast';
+    el.className = 'toast';
+    document.body.appendChild(el);
+  }
+  el.className = 'toast' + (kind === 'err' ? ' err' : (kind === 'ok' ? ' ok' : ''));
+  el.textContent = msg;
+  // force reflow для re-trigger transition
+  void el.offsetWidth;
+  el.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+}
+
+function openShare(id){
+  _shareId = id;
+  const g = findGw(id);
+  if (!g){ _notify('Розыгрыш не загружен — обнови', 'err'); return; }
+  const url = location.origin + '/bank/giveaway/#g' + id;
+  document.getElementById('shareTitle').textContent = g.title || 'Розыгрыш';
+  document.getElementById('shareUrl').textContent = url;
+  document.getElementById('shareOverlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeShare(){
+  document.getElementById('shareOverlay').classList.remove('open');
+  document.body.style.overflow = '';
+  _shareId = null;
+}
+function _shareUrl(id){ return location.origin + '/bank/giveaway/#g' + id; }
+function _shareText(g){
+  const lines = ['🎁 ' + (g.title || 'Розыгрыш Gost')];
+  if (g.description) lines.push(g.description);
+  lines.push('Приз: ' + fmtNum(g.prize_gost) + ' Gost · ' +
+             (g.winners_count > 1 ? g.winners_count + ' победителя' : '1 победитель'));
+  lines.push(g.status === 'finished' ? 'Уже завершён, посмотри победителей' : 'Участвуй пока идёт!');
+  return lines.join('\n');
+}
+
+async function shareCopy(){
+  const g = findGw(_shareId); if (!g) { _notify('Карточка не найдена', 'err'); return; }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(_shareUrl(g.id));
+    } else {
+      // fallback для старых браузеров
+      const ta = document.createElement('textarea');
+      ta.value = _shareUrl(g.id);
+      ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    _notify('Ссылка скопирована', 'ok');
+  } catch (e) {
+    _notify('Не удалось скопировать', 'err');
+  }
+  closeShare();
+}
+
+async function shareRepost(){
+  const g = findGw(_shareId); if (!g) { _notify('Карточка не найдена', 'err'); return; }
+  if (!_amLoggedIn()) { _notify('Войди чтобы постить', 'err'); closeShare(); return; }
+  const text = _shareText(g) + '\n\n' + _shareUrl(g.id);
+  try {
+    const r = await fetch('/api/soc/post/new', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + (localStorage.getItem('gs_token') || ''),
+      },
+      body: JSON.stringify({ text: text })
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      throw new Error(r.status + ' ' + txt.slice(0, 80));
+    }
+    _notify('Опубликовано в твоём профиле', 'ok');
+  } catch (e) {
+    _notify('Не вышло: ' + e.message, 'err');
+  }
+  closeShare();
+}
+
+function sharePhoto(){
+  const g = findGw(_shareId); if (!g) { _notify('Карточка не найдена', 'err'); return; }
+  const a = document.createElement('a');
+  a.href = '/api/soc/og/giveaway/' + g.id + '.png';
+  a.download = 'giveaway_' + g.id + '.png';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  _notify('Скачивание начато', 'ok');
+  closeShare();
+}
+
+function shareChat(){
+  const g = findGw(_shareId); if (!g) { _notify('Карточка не найдена', 'err'); return; }
+  if (!_amLoggedIn()) { _notify('Войди в GhostChat', 'err'); closeShare(); return; }
+  // Пытаемся передать текст через query — если /chat/ это поддержит.
+  // Параллельно копируем в clipboard как страховку.
+  const text = _shareText(g) + '\n' + _shareUrl(g.id);
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text);
+    }
+  } catch (_) {}
+  _notify('Открываю чат, текст в буфере', 'ok');
+  setTimeout(() => {
+    location.href = '/chat/?compose=' + encodeURIComponent(text);
+  }, 600);
+}
+
+function shareExternal(network){
+  const g = findGw(_shareId); if (!g) { _notify('Карточка не найдена', 'err'); return; }
+  const url = _shareUrl(g.id);
+  const text = _shareText(g);
+  let href = '';
+  if (network === 'tg')      href = 'https://t.me/share/url?url=' + encodeURIComponent(url) + '&text=' + encodeURIComponent(text);
+  else if (network === 'wa') href = 'https://wa.me/?text=' + encodeURIComponent(text + '\n' + url);
+  else if (network === 'discord') {
+    try { navigator.clipboard.writeText(text + '\n' + url); _notify('Скопировано — вставь в Discord', 'ok'); }
+    catch (_) { _notify('Не удалось скопировать', 'err'); }
+    closeShare(); return;
+  }
+  else if (network === 'x')  href = 'https://twitter.com/intent/tweet?text=' + encodeURIComponent(text) + '&url=' + encodeURIComponent(url);
+  else if (network === 'vk') href = 'https://vk.com/share.php?url=' + encodeURIComponent(url) + '&title=' + encodeURIComponent(g.title || 'Розыгрыш');
+  if (href) window.open(href, '_blank', 'noopener,noreferrer');
+  closeShare();
+}
+</script>
+
+<!-- Share bottom-sheet -->
+<div class="share-overlay" id="shareOverlay" onclick="if(event.target===this)closeShare()"></div>
+<div class="share-sheet">
+  <div class="share-handle"></div>
+  <div class="share-title" id="shareTitle">Поделиться</div>
+  <div class="share-grid">
+    <button class="share-opt brand-repost" onclick="shareRepost()">
+      <div class="share-opt-ico"><i class="fa-solid fa-retweet"></i></div>
+      <div class="share-opt-lbl">Репост в профиль</div>
+    </button>
+    <button class="share-opt brand-photo" onclick="sharePhoto()">
+      <div class="share-opt-ico"><i class="fa-solid fa-image"></i></div>
+      <div class="share-opt-lbl">Как фото</div>
+    </button>
+    <button class="share-opt brand-link" onclick="shareCopy()">
+      <div class="share-opt-ico"><i class="fa-solid fa-link"></i></div>
+      <div class="share-opt-lbl">Скопировать</div>
+    </button>
+    <button class="share-opt brand-chat" onclick="shareChat()">
+      <div class="share-opt-ico"><img src="/favicon.png" alt="GhostChat"></div>
+      <div class="share-opt-lbl">В GhostChat</div>
+    </button>
+    <button class="share-opt brand-tg" onclick="shareExternal('tg')">
+      <div class="share-opt-ico"><i class="fa-brands fa-telegram"></i></div>
+      <div class="share-opt-lbl">Telegram</div>
+    </button>
+    <button class="share-opt brand-wa" onclick="shareExternal('wa')">
+      <div class="share-opt-ico"><i class="fa-brands fa-whatsapp"></i></div>
+      <div class="share-opt-lbl">WhatsApp</div>
+    </button>
+    <button class="share-opt brand-discord" onclick="shareExternal('discord')">
+      <div class="share-opt-ico"><i class="fa-brands fa-discord"></i></div>
+      <div class="share-opt-lbl">Discord</div>
+    </button>
+    <button class="share-opt brand-x" onclick="shareExternal('x')">
+      <div class="share-opt-ico"><i class="fa-brands fa-x-twitter"></i></div>
+      <div class="share-opt-lbl">X (Twitter)</div>
+    </button>
+    <button class="share-opt brand-vk" onclick="shareExternal('vk')">
+      <div class="share-opt-ico"><i class="fa-brands fa-vk"></i></div>
+      <div class="share-opt-lbl">VK</div>
+    </button>
+  </div>
+  <div style="text-align:center;font-size:11px;color:var(--sub2);word-break:break-all;padding:6px 4px 0" id="shareUrl"></div>
+</div>
+</body>
+</html>

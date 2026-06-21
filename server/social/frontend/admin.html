@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GhostEcos — Admin</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+*,*::before,*::after { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --bg:#020617; --surface:rgba(15,23,42,0.55); --border:rgba(255,255,255,0.10);
+  --border-strong:rgba(255,255,255,0.16); --text:#f1f5f9; --sub:#94a3b8;
+  --muted:#64748b; --primary:#a855f7; --primary2:#ec4899;
+  --green:#22c55e; --red:#f43f5e; --yellow:#fbbf24;
+}
+html,body { min-height:100vh; background:var(--bg); color:var(--text);
+  font-family:'Inter',system-ui,sans-serif; font-size:14px; }
+body::before {
+  content:''; position:fixed; inset:0; z-index:-1;
+  background:
+    radial-gradient(80% 60% at 0% 0%, rgba(124,58,237,0.15), transparent 60%),
+    radial-gradient(70% 60% at 100% 100%, rgba(236,72,153,0.10), transparent 60%);
+}
+#mesh-bg { position:fixed; inset:0; width:100%; height:100%; z-index:0; pointer-events:none; }
+.shell { max-width:1200px; margin:0 auto; padding:14px; position:relative; z-index:1; }
+
+header {
+  display:flex; align-items:center; gap:12px; padding:12px 16px;
+  background:var(--surface); backdrop-filter:blur(14px);
+  border:1px solid var(--border); border-radius:14px; margin-bottom:16px;
+}
+.logo {
+  width:36px; height:36px; border-radius:10px;
+  background:linear-gradient(135deg,var(--primary),var(--primary2));
+  display:flex; align-items:center; justify-content:center;
+  color:#fff; font-weight:800; font-size:14px;
+}
+header .title { font-weight:700; font-size:16px; }
+header .sub { font-size:11px; color:var(--sub); }
+header .right { margin-left:auto; display:flex; gap:10px; align-items:center; }
+header .right a {
+  color:var(--sub); font-size:13px; text-decoration:none; padding:6px 10px;
+  border-radius:8px; transition:background .15s;
+}
+header .right a:hover { background:rgba(255,255,255,0.05); color:var(--text); }
+.role-badge {
+  padding:4px 10px; border-radius:6px; font-size:11px; font-weight:700;
+  letter-spacing:0.05em; text-transform:uppercase;
+}
+.role-badge.admin { background:rgba(168,85,247,0.20); color:var(--primary); }
+.role-badge.mod   { background:rgba(34,197,94,0.20); color:var(--green); }
+.role-badge.user  { background:rgba(148,163,184,0.15); color:var(--sub); }
+
+.tabs { display:flex; gap:4px; margin-bottom:16px; background:var(--surface);
+  backdrop-filter:blur(10px); border:1px solid var(--border); border-radius:12px; padding:4px; }
+.tab { flex:1; padding:10px; background:transparent; border:0; color:var(--sub);
+  font-family:inherit; font-size:13px; font-weight:600; cursor:pointer;
+  border-radius:8px; transition:background .15s, color .15s; }
+.tab:hover { color:var(--text); }
+.tab.active { background:rgba(168,85,247,0.18); color:var(--text); }
+
+.panel { display:none; }
+.panel.active { display:block; }
+
+.card {
+  background:var(--surface); border:1px solid var(--border); border-radius:14px;
+  padding:16px; margin-bottom:16px; backdrop-filter:blur(10px);
+}
+.card-title { font-weight:700; font-size:14px; margin-bottom:12px;
+  display:flex; align-items:center; gap:10px; }
+.card-title .cnt {
+  background:rgba(255,255,255,0.06); color:var(--sub);
+  padding:2px 8px; border-radius:6px; font-size:11px; font-weight:600;
+}
+
+input, textarea {
+  background:rgba(0,0,0,0.30); border:1px solid var(--border-strong);
+  color:var(--text); padding:10px 12px; border-radius:10px;
+  font-family:inherit; font-size:13px; outline:none; width:100%;
+}
+input:focus, textarea:focus { border-color:var(--primary); }
+
+.btn { padding:10px 14px; border-radius:10px; border:none;
+  font-family:inherit; font-size:13px; font-weight:700; cursor:pointer;
+  transition:filter .12s, transform .05s; }
+.btn:hover:not(:disabled) { filter:brightness(1.1); }
+.btn:active { transform:scale(0.97); }
+.btn:disabled { opacity:0.5; cursor:default; }
+.btn.primary { background:linear-gradient(135deg,var(--primary),var(--primary2)); color:#fff; }
+.btn.green { background:var(--green); color:#fff; }
+.btn.ghost { background:transparent; color:var(--text); border:1px solid var(--border-strong); }
+.btn.danger { background:transparent; color:var(--red); border:1px solid rgba(244,63,94,0.4); }
+.btn.small { padding:6px 10px; font-size:11px; font-weight:600; }
+
+.row {
+  display:flex; align-items:center; gap:10px;
+  padding:10px; background:rgba(0,0,0,0.20); border-radius:10px; margin-bottom:8px;
+}
+.row .av {
+  width:32px; height:32px; border-radius:50%;
+  background:linear-gradient(135deg,var(--primary),var(--primary2));
+  display:flex; align-items:center; justify-content:center;
+  color:#fff; font-size:12px; font-weight:700; flex-shrink:0;
+}
+.row .info { flex:1; min-width:0; }
+.row .info .nm { font-weight:600; font-size:13px; }
+.row .info .un { font-size:11px; color:var(--sub); }
+.row .info .meta { font-size:11px; color:var(--muted); margin-top:2px; }
+
+.stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+.stat { padding:14px; background:rgba(0,0,0,0.25); border-radius:10px; }
+.stat .l { font-size:11px; color:var(--muted); text-transform:uppercase;
+  letter-spacing:0.05em; font-weight:700; margin-bottom:6px; }
+.stat .v { font-size:22px; font-weight:700; color:var(--text); }
+
+.empty {
+  text-align:center; color:var(--sub); padding:30px; font-size:13px;
+}
+.search-row { display:flex; gap:6px; margin-bottom:10px; }
+
+#authMsg {
+  text-align:center; padding:40px 20px; max-width:480px; margin:80px auto;
+}
+#authMsg h2 { font-size:22px; font-weight:800; margin-bottom:12px; }
+#authMsg p { color:var(--sub); line-height:1.6; margin-bottom:20px; }
+</style>
+</head>
+<body>
+
+<canvas id="mesh-bg"></canvas>
+
+<div id="authMsg" style="display:none;">
+  <h2>Admin-панель GhostEcos</h2>
+  <p>Доступ только для администраторов экосистемы. Авторизуйся в GhostSocial и зайди под admin-аккаунтом.</p>
+  <a href="/social/?return=/admin/" class="btn primary" style="text-decoration:none;display:inline-block;">Войти через GhostSocial</a>
+</div>
+
+<div class="shell" id="shell" style="display:none;">
+  <header>
+    <div class="logo">A</div>
+    <div>
+      <div class="title">GhostEcos Admin</div>
+      <div class="sub" id="meSub">—</div>
+    </div>
+    <div class="right">
+      <span class="role-badge" id="roleBadge">—</span>
+      <a href="/social/">Social</a>
+      <a href="/chat/">Chat</a>
+      <a href="/bank/">Bank</a>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" data-panel="overview">Обзор</button>
+    <button class="tab" data-panel="mods">Модераторы</button>
+    <button class="tab" data-panel="apps">Заявки</button>
+    <button class="tab" data-panel="overwatch">Overwatch</button>
+  </div>
+
+  <div class="panel active" id="panelOverview">
+    <div class="card">
+      <div class="card-title">Статистика</div>
+      <div class="stats-grid" id="statsGrid">
+        <div class="empty">Загрузка…</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" id="panelMods">
+    <div class="card">
+      <div class="card-title">Назначить модератором</div>
+      <div class="search-row">
+        <input id="searchInp" placeholder="@username или имя" oninput="searchUsers(this.value)">
+      </div>
+      <div id="searchResults"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Текущие модераторы <span class="cnt" id="modsCnt">0</span></div>
+      <div id="modsList"><div class="empty">Загрузка…</div></div>
+    </div>
+  </div>
+
+  <div class="panel" id="panelApps">
+    <div class="card">
+      <div class="card-title">Заявки в модераторы <span class="cnt" id="appsCnt">0 pending</span></div>
+      <div id="appsList"><div class="empty">Загрузка…</div></div>
+    </div>
+  </div>
+
+  <div class="panel" id="panelOverwatch">
+    <div class="card">
+      <div class="card-title">Очередь overwatch <span class="cnt" id="owCnt">0</span></div>
+      <div id="owList"><div class="empty">Загрузка…</div></div>
+    </div>
+  </div>
+</div>
+
+<script src="/mesh.js"></script>
+<script src="/dialog.js"></script>
+<script>
+const API = '/api/soc';
+let token = localStorage.getItem('gs_token');
+let me = null;
+
+async function api(path, method='GET', body=null) {
+  const h = { 'Content-Type': 'application/json' };
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  const opts = { method, headers: h };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(API + path, opts);
+  if (!r.ok) {
+    const t = await r.text();
+    let m = t; try { m = JSON.parse(t).detail || t; } catch(_){}
+    const e = new Error(m); e.status = r.status; throw e;
+  }
+  return r.json();
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function jsAttr(v) { return esc(JSON.stringify(v)); }
+
+async function boot() {
+  if (!token) { document.getElementById('authMsg').style.display = 'block'; return; }
+  try {
+    me = await api('/me');
+    if (!me.is_admin) {
+      document.getElementById('authMsg').innerHTML =
+        '<h2>Нет доступа</h2><p>Этот аккаунт не является администратором экосистемы.</p>' +
+        '<a href="/social/" class="btn ghost" style="text-decoration:none;display:inline-block;">К GhostSocial</a>';
+      document.getElementById('authMsg').style.display = 'block';
+      return;
+    }
+  } catch(e) {
+    if (e.status === 401) {
+      localStorage.removeItem('gs_token');
+      document.getElementById('authMsg').style.display = 'block';
+      return;
+    }
+    document.getElementById('authMsg').innerHTML = `<h2>Ошибка</h2><p>${esc(e.message||'')}</p>`;
+    document.getElementById('authMsg').style.display = 'block';
+    return;
+  }
+  document.getElementById('shell').style.display = 'block';
+  document.getElementById('meSub').textContent = '@' + me.username + ' · ' + (me.display_name || '');
+  document.getElementById('roleBadge').textContent = 'Owner';
+  document.getElementById('roleBadge').className = 'role-badge admin';
+  loadOverview(); loadMods(); loadApps(); loadOverwatch();
+}
+
+// Tabs
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel' + t.dataset.panel[0].toUpperCase() + t.dataset.panel.slice(1)));
+});
+
+function _stat(l, v, sub) {
+  return `<div class="stat"><div class="l">${l}</div><div class="v">${v}</div>${sub ? `<div class="l" style="margin-top:4px;font-size:10px;">${sub}</div>` : ''}</div>`;
+}
+
+async function loadOverview() {
+  try {
+    const s = await api('/admin/stats');
+    const u = s.users || {}, a = s.activity || {}, ct = s.content || {}, ch = s.chat || {},
+          ec = s.economy || {}, mo = s.moderation || {}, sg = s.social_graph || {};
+    const fmt = n => (n || 0).toLocaleString('ru-RU');
+    document.getElementById('statsGrid').innerHTML = `
+      <div class="stat" style="grid-column:span 2;background:rgba(168,85,247,0.08);"><div class="l">DAU / WAU / MAU</div><div class="v">${fmt(a.dau)} <span style="font-size:14px;color:var(--sub)">/ ${fmt(a.wau)} / ${fmt(a.mau)}</span></div></div>
+      ${_stat('Всего юзеров', fmt(u.total), `+${u.new_24h} за 24ч · +${u.new_7d} за 7д`)}
+      ${_stat('Регистрации за 30д', fmt(u.new_30d), `всего ${u.referred} по рефералке`)}
+      ${_stat('Подтвердили 18+', fmt(u.age_confirmed_18plus))}
+      ${_stat('Модераторов', fmt(u.moderators))}
+
+      ${_stat('Постов всего', fmt(ct.posts_total), `+${ct.posts_24h} за 24ч · +${ct.posts_7d} за 7д`)}
+      ${_stat('Миниски', fmt(ct.miniska_total), `+${ct.miniska_24h} за 24ч`)}
+      ${_stat('NSFW-постов', fmt(ct.nsfw_total), `${ct.nsfw_set_by_admin} от модерации`)}
+      ${_stat('Комментариев', fmt(ct.comments_total), `+${ct.comments_24h} за 24ч`)}
+      ${_stat('Реакций', fmt(ct.reactions_total))}
+
+      ${_stat('DM-сообщений за 24ч', fmt(ch.dm_24h))}
+      ${_stat('Групп / каналов', fmt(ch.groups_total), `${ch.groups_public} публичных`)}
+      ${_stat('Сообщений в группах 24ч', fmt(ch.group_messages_24h))}
+
+      ${_stat('Кошельков с балансом', fmt(ec.wallet_users_non_zero))}
+      ${_stat('Gost в обороте', fmt(ec.gost_in_circulation))}
+      ${_stat('Soul в обороте', fmt(ec.soul_in_circulation))}
+      ${_stat('NFT отчеканено', fmt(ec.nft_minted), `${ec.nft_listed} в продаже`)}
+
+      ${_stat('Заявки в модераторы', fmt(mo.applications_pending), 'pending')}
+      ${_stat('Overwatch в работе', fmt(mo.overwatch_open))}
+      ${_stat('Репутация ≥70 (хорошая)', fmt(mo.reputation_good_70_plus))}
+      ${_stat('Репутация 30-70', fmt(mo.reputation_mid_30_70))}
+      ${_stat('Репутация <30 (низкая)', fmt(mo.reputation_low_under_30))}
+
+      ${_stat('Подписок всего', fmt(sg.follows_total))}
+    `;
+  } catch(e) { document.getElementById('statsGrid').innerHTML = '<div class="empty">Ошибка: ' + esc(e.message||'') + '</div>'; }
+}
+
+let _searchTimer = 0;
+function searchUsers(q) {
+  clearTimeout(_searchTimer);
+  const box = document.getElementById('searchResults');
+  q = (q||'').trim();
+  if (!q) { box.innerHTML = ''; return; }
+  _searchTimer = setTimeout(async () => {
+    try {
+      const path = q.startsWith('@') ? `/search?q=${encodeURIComponent(q)}` : `/search?q=@${encodeURIComponent(q)}`;
+      const d = await api(path);
+      const users = (d.results || d.users || []).slice(0, 10);
+      if (!users.length) { box.innerHTML = '<div class="empty">Никого не найдено</div>'; return; }
+      box.innerHTML = users.map(u => `
+        <div class="row">
+          <div class="av">${(u.display_name||u.username||'?')[0].toUpperCase()}</div>
+          <div class="info">
+            <div class="nm">${esc(u.display_name||u.username)}</div>
+            <div class="un">@${esc(u.username)}</div>
+          </div>
+          <button class="btn primary small" onclick="promote(${jsAttr(u.username)})">Сделать мод</button>
+        </div>`).join('');
+    } catch(e) { box.innerHTML = '<div class="empty">Ошибка: ' + esc(e.message||'') + '</div>'; }
+  }, 250);
+}
+
+async function promote(username) {
+  if (!await Dialog.confirm(`Сделать @${username} модератором?`, { title:'Назначить', okText:'Назначить' })) return;
+  try { await api('/mod/promote/' + encodeURIComponent(username), 'POST'); loadMods(); loadOverview(); searchUsers(document.getElementById('searchInp').value); }
+  catch(e) { Dialog.alert(e.message||'Ошибка'); }
+}
+
+async function demote(username) {
+  if (!await Dialog.confirm(`Снять @${username} с роли модератора?`, { title:'Снять', okText:'Снять', danger:true })) return;
+  try { await api('/mod/demote/' + encodeURIComponent(username), 'POST'); loadMods(); loadOverview(); }
+  catch(e) { Dialog.alert(e.message||'Ошибка'); }
+}
+
+async function loadMods() {
+  try {
+    const mods = await api('/mod/list');
+    document.getElementById('modsCnt').textContent = mods.length;
+    document.getElementById('modsList').innerHTML = mods.length ? mods.map(m => {
+      const since = m.moderator_since ? new Date(m.moderator_since*1000).toLocaleDateString('ru') : '—';
+      return `<div class="row">
+        <div class="av">${(m.display_name||m.username||'?')[0].toUpperCase()}</div>
+        <div class="info">
+          <div class="nm">${esc(m.display_name||m.username)}</div>
+          <div class="un">@${esc(m.username)}</div>
+          <div class="meta">с ${since} · рейтинг ${m.moderator_rating}/100${m.moderator_reprimands ? ' · выговоры '+m.moderator_reprimands+'/3' : ''}</div>
+        </div>
+        <button class="btn danger small" onclick="demote(${jsAttr(m.username)})">Снять</button>
+      </div>`;
+    }).join('') : '<div class="empty">Модераторов нет</div>';
+  } catch(e) { document.getElementById('modsList').innerHTML = '<div class="empty">Ошибка</div>'; }
+}
+
+async function loadApps() {
+  try {
+    const apps = await api('/mod/applications');
+    const pending = apps.filter(a => a.status === 'pending');
+    document.getElementById('appsCnt').textContent = pending.length + ' pending';
+    document.getElementById('appsList').innerHTML = apps.length ? apps.map(a => appCard(a)).join('') : '<div class="empty">Заявок нет</div>';
+  } catch(e) { document.getElementById('appsList').innerHTML = '<div class="empty">Ошибка</div>'; }
+}
+
+function appCard(a) {
+  const isPending = a.status === 'pending';
+  const ago = Math.round((Date.now()/1000 - a.created_at) / 3600);
+  return `<div class="row" style="border-left:3px solid ${isPending ? 'var(--primary)' : a.status==='accepted' ? 'var(--green)' : 'var(--red)'};">
+    <div class="av">${(a.display_name||a.username||'?')[0].toUpperCase()}</div>
+    <div class="info">
+      <div class="nm">${esc(a.display_name||a.username)}
+        <span style="margin-left:8px;color:var(--sub);font-size:11px;font-weight:500;">${ago}ч назад · ${a.quality_score}/100</span>
+      </div>
+      <div class="un">@${esc(a.username)}</div>
+      <div class="meta">Постов: ${a.posts_count} · Комм: ${a.comments_count} · Gost: ${a.gost_balance ?? 0}</div>
+    </div>
+    ${isPending
+      ? `<button class="btn green small" onclick="appDecide(${a.id}, true)">Принять</button>
+         <button class="btn danger small" onclick="appDecide(${a.id}, false)">Откл</button>`
+      : `<span style="font-size:11px;color:var(--sub);">${a.status === 'accepted' ? 'Принят' : 'Отклонён'}</span>`}
+  </div>`;
+}
+
+async function appDecide(id, accept) {
+  if (!await Dialog.confirm(accept ? 'Принять заявку?' : 'Отклонить заявку?')) return;
+  try { await api(`/mod/applications/${id}/decide`, 'POST', { accept }); loadApps(); loadMods(); loadOverview(); }
+  catch(e) { Dialog.alert(e.message||'Ошибка'); }
+}
+
+async function loadOverwatch() {
+  try {
+    const ow = await api('/mod/overwatch_queue');
+    document.getElementById('owCnt').textContent = ow.length;
+    document.getElementById('owList').innerHTML = ow.length ? ow.map(o => owCard(o)).join('') : '<div class="empty">Open overwatch нет</div>';
+  } catch(e) { document.getElementById('owList').innerHTML = '<div class="empty">Ошибка: ' + esc(e.message||'') + '</div>'; }
+}
+
+function owCard(o) {
+  return `<div class="row" style="border-left:3px solid var(--primary);">
+    <div class="info">
+      <div style="font-size:11px;color:var(--sub);margin-bottom:4px;">
+        activity ${o.current_activity}/1000 · ${o.kind === 'manual' ? 'Платный' : 'Системный'}
+      </div>
+      <div style="background:rgba(0,0,0,0.30);padding:10px;border-radius:8px;font-size:13px;line-height:1.5;">
+        ${esc((o.content||'').slice(0, 300))}${(o.content||'').length > 300 ? '…' : ''}
+      </div>
+      ${o.my_vote != null ? `<div style="margin-top:6px;font-size:11px;color:var(--sub);">Ты голосовал: ${o.my_vote > 0 ? '+' : ''}${o.my_vote}</div>` : `
+      <div style="display:flex;gap:4px;margin-top:8px;flex-wrap:wrap;">
+        ${[-150,-50,0,50,150].map(d =>
+          `<button class="btn ${d<0?'danger':d>0?'green':'ghost'} small" onclick="owVote(${o.request_id}, ${d})">${d>0?'+':''}${d}</button>`
+        ).join('')}
+      </div>`}
+    </div>
+  </div>`;
+}
+
+async function owVote(reqId, delta) {
+  if (!await Dialog.confirm(`Голос: ${delta>0?'+':''}${delta}?`)) return;
+  try {
+    const r = await api(`/mod/overwatch/${reqId}/vote`, 'POST', { delta });
+    if (r.closed) Dialog.alert(`Overwatch закрыт. Итог: ${r.delta_so_far>0?'+':''}${r.delta_so_far} activity.`);
+    loadOverwatch(); loadOverview();
+  } catch(e) { Dialog.alert(e.message||'Ошибка'); }
+}
+
+boot();
+</script>
+</body>
+</html>

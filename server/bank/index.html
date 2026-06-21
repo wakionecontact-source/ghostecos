@@ -1,0 +1,1459 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>GhostBank</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/bank/manifest.json">
+<meta name="theme-color" content="#7c3aed">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="GhostBank">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+:root{
+  --bg:#020617; --bg-deep:#060a1a; --surface:rgba(15,23,42,0.5);
+  --border:rgba(255,255,255,0.08); --border-strong:rgba(255,255,255,0.13);
+  --primary:#a855f7; --primary2:#7c3aed; --primary3:#ec4899;
+  --text:#f1f5f9; --sub:#94a3b8;
+  --red:#f43f5e; --green:#22c55e; --yellow:#fbbf24; --pink:#ec4899; --blue:#3b82f6;
+  --soul:#ec4899; --prem:#fbbf24; --gost:#a855f7;
+}
+html{background:var(--bg);scroll-behavior:smooth}
+body{
+  background:transparent;color:var(--text);font-family:'Inter',sans-serif;
+  overflow-x:hidden;
+  padding-top:calc(56px + env(safe-area-inset-top));
+  padding-bottom:calc(70px + env(safe-area-inset-bottom));
+  min-height:100vh;position:relative;
+}
+body::before{
+  content:"";position:fixed;inset:0;z-index:-1;
+  background:
+    radial-gradient(80% 60% at 20% 0%,rgba(124,58,237,0.15),transparent 60%),
+    radial-gradient(70% 60% at 100% 100%,rgba(236,72,153,0.10),transparent 60%),
+    linear-gradient(180deg,var(--bg-deep),var(--bg));
+}
+#mesh-bg{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;}
+header, main, nav#appNav, .toast, .modal-overlay{position:relative;z-index:1;}
+header{z-index:100;} nav#appNav{z-index:100;} .toast{z-index:300;} .modal-overlay{z-index:250;}
+button{font-family:inherit;border:0;background:none;color:inherit;cursor:pointer;}
+button:disabled{cursor:not-allowed;}
+a{color:inherit;text-decoration:none;}
+input,select,textarea{font-family:inherit;}
+
+header{position:fixed;top:0;left:0;right:0;background:rgba(2,6,23,0.78);backdrop-filter:blur(22px) saturate(140%);-webkit-backdrop-filter:blur(22px) saturate(140%);border-bottom:1px solid var(--border);display:flex;flex-direction:column;}
+.header-top{min-height:56px;display:flex;align-items:center;justify-content:space-between;padding:env(safe-area-inset-top) 16px 0;max-width:720px;margin:0 auto;width:100%;}
+.header-brand{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:800;padding:6px 10px;}
+.header-brand i{font-size:16px;background:linear-gradient(135deg,var(--primary),var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.header-brand span{background:linear-gradient(90deg,var(--primary),var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:0.3px;}
+.h-avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary3));display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;cursor:pointer;box-shadow:0 4px 12px rgba(168,85,247,0.3);flex-shrink:0;}
+
+main{max-width:720px;margin:0 auto;padding:18px 16px 30px;}
+
+#authScreen{display:none;flex-direction:column;align-items:center;justify-content:center;min-height:70vh;padding:30px 20px;text-align:center;}
+.auth-logo{font-size:30px;font-weight:800;background:linear-gradient(90deg,var(--primary),var(--primary3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px;}
+.auth-sub{color:var(--sub);margin-bottom:24px;max-width:380px;line-height:1.5;}
+.auth-btn{display:inline-flex;align-items:center;gap:8px;background:linear-gradient(90deg,var(--primary),var(--primary2));color:#fff;padding:13px 26px;border-radius:12px;font-weight:700;font-size:14px;box-shadow:0 6px 20px rgba(168,85,247,0.35);transition:transform 0.15s;}
+.auth-btn:hover{transform:translateY(-1px);}
+
+/* ── СВИТЧЕР ВАЛЮТ ── */
+.cur-switcher{display:grid;grid-template-columns:1fr 1.6fr 1fr;gap:10px;margin-bottom:22px;}
+.cur-card{position:relative;overflow:hidden;background:var(--surface);border:1px solid var(--border-strong);border-radius:18px;padding:14px;backdrop-filter:blur(8px);cursor:pointer;transition:opacity 0.2s ease-out,border-color 0.2s ease-out,box-shadow 0.2s ease-out;display:flex;flex-direction:column;justify-content:space-between;min-height:110px;pointer-events:auto;}
+.cur-card *{pointer-events:none;}
+.cur-card::before{content:'';position:absolute;top:-50%;right:-30%;width:200%;height:200%;background:radial-gradient(circle,var(--accent-color,transparent) 0%,transparent 60%);opacity:0.25;pointer-events:none;transition:opacity 0.2s ease-out;}
+.cur-card.active{border-color:var(--accent-color);box-shadow:0 12px 32px rgba(0,0,0,0.35),0 0 0 1px var(--accent-color);}
+.cur-card.active::before{opacity:0.45;}
+.cur-card:not(.active){opacity:0.7;}
+.cur-card:not(.active):hover{opacity:1;border-color:var(--accent-color);}
+.cur-card[data-currency="gost"]{--accent-color:rgba(168,85,247,0.5);}
+.cur-card[data-currency="soul"]{--accent-color:rgba(236,72,153,0.5);}
+.cur-card[data-currency="prem"]{--accent-color:rgba(251,191,36,0.5);}
+.cc-head{display:flex;align-items:center;gap:7px;margin-bottom:8px;}
+.cc-icon{width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:14px;}
+.cur-card[data-currency="gost"] .cc-icon{color:var(--gost);}
+.cur-card[data-currency="soul"] .cc-icon{color:var(--soul);}
+.cur-card[data-currency="prem"] .cc-icon{color:var(--prem);}
+.cc-name{font-size:13px;font-weight:700;color:var(--text);}
+.cur-card.active .cc-name{font-size:14px;}
+.cc-soon{font-size:8px;font-weight:800;background:rgba(100,116,139,0.3);color:#94a3b8;padding:2px 6px;border-radius:999px;text-transform:uppercase;letter-spacing:0.4px;margin-left:auto;}
+.cc-balance{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1;transition:font-size 0.4s;}
+.cur-card.active .cc-balance{font-size:30px;}
+.cc-sub{font-size:10px;color:var(--sub);margin-top:6px;line-height:1.3;opacity:0.85;}
+.cur-card.active .cc-sub{font-size:11px;}
+
+.panel{display:none;animation:fadeUp 0.4s ease-out;}
+.panel.active{display:block;}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+
+.section{margin-bottom:24px;}
+.section-title{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;padding:0 2px;}
+.section-title i{color:var(--primary);font-size:12px;}
+.section-title .right{margin-left:auto;display:flex;gap:6px;}
+
+.claim-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;background:linear-gradient(90deg,var(--primary),var(--primary2));color:#fff;padding:15px;border-radius:14px;font-size:15px;font-weight:700;box-shadow:0 8px 24px rgba(168,85,247,0.35);transition:transform 0.15s;}
+.claim-btn:hover:not(:disabled){transform:translateY(-2px);}
+.claim-btn:disabled{opacity:0.55;background:rgba(100,116,139,0.25);box-shadow:none;color:#94a3b8;}
+.claim-btn i{font-size:16px;}
+.claim-hint{text-align:center;color:var(--sub);font-size:12px;margin-top:10px;}
+.claim-hint b{color:var(--primary);font-variant-numeric:tabular-nums;font-weight:700;}
+
+.sources{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+@media (max-width:480px){.sources{grid-template-columns:1fr;}}
+.src{display:flex;align-items:center;gap:11px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:11px 13px;font-size:13px;backdrop-filter:blur(8px);}
+.src i{width:24px;text-align:center;color:var(--primary);font-size:14px;}
+.src .label{flex:1;color:var(--text);}
+.src b{color:var(--green);font-weight:800;font-size:13px;font-variant-numeric:tabular-nums;}
+
+.tx-list{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;backdrop-filter:blur(8px);}
+.tx-item{display:flex;align-items:center;gap:12px;padding:13px 14px;border-bottom:1px solid var(--border);}
+.tx-item:last-child{border-bottom:0;}
+.tx-icon{width:36px;height:36px;border-radius:11px;background:rgba(168,85,247,0.12);display:flex;align-items:center;justify-content:center;color:var(--primary);font-size:14px;flex-shrink:0;}
+.tx-body{flex:1;min-width:0;}
+.tx-title{font-size:13px;font-weight:600;margin-bottom:2px;}
+.tx-meta{font-size:11px;color:var(--sub);}
+.tx-amount{font-weight:800;font-size:14px;font-variant-numeric:tabular-nums;}
+.tx-amount.pos{color:var(--green);}
+.tx-amount.neg{color:var(--red);}
+.tx-empty{padding:30px;text-align:center;color:var(--sub);font-size:13px;}
+.tx-empty i{font-size:32px;color:#475569;display:block;margin-bottom:10px;}
+
+/* ── Soul rate hero ── */
+.soul-rate{background:linear-gradient(135deg,rgba(236,72,153,0.15),rgba(168,85,247,0.08));border:1px solid rgba(236,72,153,0.3);border-radius:16px;padding:14px 16px;margin-bottom:14px;backdrop-filter:blur(8px);display:flex;justify-content:space-between;align-items:center;gap:12px;}
+.soul-rate .l{font-size:11px;color:var(--sub);text-transform:uppercase;letter-spacing:0.5px;font-weight:700;}
+.soul-rate .v{font-size:18px;font-weight:800;color:var(--soul);font-variant-numeric:tabular-nums;}
+.soul-rate .small{font-size:10px;color:var(--sub);margin-top:2px;}
+
+/* ── Big actions buttons row (на soul-панели) ── */
+.actions-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px;}
+.act-btn{display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 12px;background:var(--surface);border:1px solid var(--border-strong);border-radius:14px;color:var(--text);font-size:12px;font-weight:700;transition:all 0.18s;backdrop-filter:blur(8px);}
+.act-btn i{font-size:18px;color:var(--soul);}
+.act-btn:hover{border-color:var(--soul);background:rgba(236,72,153,0.08);transform:translateY(-1px);}
+
+/* ── SOON-BANNER ── */
+.soon-card{background:var(--surface);border:1px solid var(--border-strong);border-radius:16px;padding:20px;text-align:center;backdrop-filter:blur(8px);}
+.soon-card .badge{display:inline-block;background:rgba(100,116,139,0.3);color:#94a3b8;padding:3px 10px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:10px;}
+.soon-card h3{font-size:16px;font-weight:700;margin-bottom:8px;}
+.soon-card p{color:var(--sub);font-size:13px;line-height:1.55;margin-bottom:10px;}
+.soon-card .feats{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:14px;text-align:left;}
+@media (max-width:480px){.soon-card .feats{grid-template-columns:1fr;}}
+.soon-card .feat{display:flex;align-items:center;gap:9px;background:rgba(2,6,23,0.4);border:1px solid var(--border);border-radius:10px;padding:9px 11px;font-size:12px;}
+.soon-card .feat i{color:var(--primary);width:18px;text-align:center;}
+
+/* ── NFT cards (каталог) ── */
+.cat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;}
+@media (min-width:480px){.cat-grid{grid-template-columns:repeat(3,1fr);}}
+@media (min-width:640px){.cat-grid{grid-template-columns:repeat(5,1fr);}}
+.cat-card{position:relative;background:var(--surface);border:1px solid var(--border-strong);border-radius:14px;padding:14px 10px 12px;display:flex;flex-direction:column;align-items:center;gap:6px;backdrop-filter:blur(8px);cursor:pointer;transition:transform 0.25s,border-color 0.25s,box-shadow 0.25s;overflow:hidden;}
+.cat-card::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 50% 30%,var(--glow,rgba(168,85,247,0.18)),transparent 60%);opacity:0.55;pointer-events:none;transition:opacity 0.3s;}
+.cat-card:hover{transform:translateY(-3px);border-color:var(--glow-strong,rgba(168,85,247,0.5));box-shadow:0 10px 25px rgba(0,0,0,0.3);}
+.cat-card:hover::before{opacity:1;}
+.cat-art{width:64px;height:64px;display:flex;align-items:center;justify-content:center;position:relative;z-index:1;}
+.cat-art svg{width:100%;height:100%;display:block;overflow:visible;}
+.cat-name{font-size:12px;font-weight:700;text-align:center;position:relative;z-index:1;}
+.cat-meta{font-size:10px;color:var(--sub);position:relative;z-index:1;display:flex;align-items:center;gap:4px;}
+.cat-meta i{font-size:9px;color:var(--prem);}
+.cat-floor{font-size:11px;font-weight:800;color:var(--soul);position:relative;z-index:1;display:flex;align-items:center;gap:3px;}
+.cat-floor i{font-size:9px;color:var(--soul);}
+.cat-card[data-rarity="common"]{--glow:rgba(168,85,247,0.18);--glow-strong:rgba(168,85,247,0.5);}
+.cat-card[data-rarity="rare"]{--glow:rgba(244,114,182,0.20);--glow-strong:rgba(244,114,182,0.6);}
+.cat-card[data-rarity="legend"]{--glow:rgba(251,191,36,0.25);--glow-strong:rgba(251,191,36,0.7);}
+
+/* ── NFT keyframes (анимации) ── */
+@keyframes ghostFloat{0%,100%{transform:translateY(0);}50%{transform:translateY(-4px);}}
+@keyframes pulseGlow{0%,100%{filter:drop-shadow(0 0 2px currentColor);}50%{filter:drop-shadow(0 0 10px currentColor);}}
+@keyframes spinSlow{from{transform:rotate(0);}to{transform:rotate(360deg);}}
+@keyframes flameWave{0%,100%{transform:scaleY(1) translateY(0);}33%{transform:scaleY(1.08) translateY(-1px);}66%{transform:scaleY(0.95) translateY(1px);}}
+@keyframes heartBeat{0%,100%{transform:scale(1);}15%{transform:scale(1.15);}30%{transform:scale(1);}45%{transform:scale(1.12);}}
+@keyframes flash{0%,80%,100%{opacity:1;filter:drop-shadow(0 0 0 currentColor);}90%{opacity:0.6;filter:drop-shadow(0 0 16px currentColor);}}
+@keyframes shimmer{0%,100%{filter:hue-rotate(0deg) brightness(1);}50%{filter:hue-rotate(40deg) brightness(1.25);}}
+@keyframes blinkEye{0%,90%,100%{transform:scaleY(1);}93%{transform:scaleY(0.05);}96%{transform:scaleY(1);}}
+@keyframes pupilLook{0%,100%{transform:translate(0,0);}25%{transform:translate(3px,1px);}50%{transform:translate(0,2px);}75%{transform:translate(-3px,0);}}
+@keyframes glint{0%{transform:translateX(-60%);opacity:0;}50%{opacity:1;}100%{transform:translateX(60%);opacity:0;}}
+@keyframes gemSparkle{0%,100%{opacity:0.4;}50%{opacity:1;}}
+.nft-ghost{animation:ghostFloat 2.5s ease-in-out infinite;color:#e0e7ff;}
+.nft-moon{animation:pulseGlow 3s ease-in-out infinite;color:#fef3c7;}
+.nft-star{animation:spinSlow 12s linear infinite;color:var(--yellow);}
+.nft-flame{transform-origin:50% 90%;animation:flameWave 1s ease-in-out infinite;color:#fb923c;}
+.nft-heart{animation:heartBeat 1.4s ease-in-out infinite;transform-origin:50% 50%;color:var(--red);}
+.nft-bolt{animation:flash 2.2s ease-in-out infinite;color:#facc15;}
+.nft-crystal{animation:shimmer 3s ease-in-out infinite;color:#67e8f9;}
+.nft-eye .eye-lid{transform-origin:50% 50%;animation:blinkEye 4s ease-in-out infinite;}
+.nft-eye .pupil{animation:pupilLook 4s ease-in-out infinite;}
+.nft-key{position:relative;color:#fcd34d;}
+.nft-key .glint{animation:glint 2.5s ease-in-out infinite;}
+.nft-crown .gem{animation:gemSparkle 1.6s ease-in-out infinite;}
+.nft-crown .gem.g2{animation-delay:0.3s;}
+.nft-crown .gem.g3{animation-delay:0.6s;}
+
+/* ── Маркет: фильтры + грид листингов ── */
+.market-filters{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:12px;scrollbar-width:none;}
+.market-filters::-webkit-scrollbar{display:none;}
+.mf-chip{flex-shrink:0;padding:7px 13px;background:var(--surface);border:1px solid var(--border-strong);border-radius:999px;font-size:12px;font-weight:600;color:var(--sub);cursor:pointer;transition:all 0.15s;backdrop-filter:blur(8px);}
+.mf-chip:hover{color:var(--text);}
+.mf-chip.active{background:linear-gradient(90deg,var(--primary),var(--primary2));color:#fff;border-color:transparent;}
+
+.list-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;}
+@media (min-width:480px){.list-grid{grid-template-columns:repeat(3,1fr);}}
+.lst-card{background:var(--surface);border:1px solid var(--border-strong);border-radius:14px;padding:12px;backdrop-filter:blur(8px);display:flex;flex-direction:column;gap:8px;position:relative;overflow:hidden;}
+.lst-card::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 50% 30%,var(--glow,rgba(168,85,247,0.18)),transparent 60%);opacity:0.4;pointer-events:none;}
+.lst-card[data-rarity="common"]{--glow:rgba(168,85,247,0.18);}
+.lst-card[data-rarity="rare"]{--glow:rgba(244,114,182,0.20);}
+.lst-card[data-rarity="legend"]{--glow:rgba(251,191,36,0.25);}
+.lst-art{width:56px;height:56px;margin:0 auto;display:flex;align-items:center;justify-content:center;position:relative;z-index:1;}
+.lst-art svg{width:100%;height:100%;overflow:visible;}
+.lst-name{font-size:12px;font-weight:700;text-align:center;position:relative;z-index:1;}
+.lst-serial{font-size:10px;color:var(--sub);text-align:center;position:relative;z-index:1;font-variant-numeric:tabular-nums;}
+.lst-owner{font-size:10px;text-align:center;color:var(--sub);position:relative;z-index:1;display:flex;align-items:center;justify-content:center;gap:3px;}
+.lst-owner .verified{color:var(--soul);font-size:9px;}
+.verified{color:var(--soul);font-size:10px;}
+.load-more{width:100%;margin-top:14px;padding:11px;background:var(--surface);border:1px solid var(--border-strong);border-radius:12px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer;transition:all 0.15s;backdrop-filter:blur(8px);}
+.load-more:hover:not(:disabled){border-color:var(--primary);background:rgba(168,85,247,0.08);}
+.load-more:disabled{opacity:0.4;}
+.cur-pill{display:inline-flex;align-items:center;gap:3px;font-variant-numeric:tabular-nums;}
+.cur-pill i{font-size:10px;}
+.cur-pill.gost{color:var(--gost);} .cur-pill.gost i{color:var(--gost);}
+.cur-pill.soul{color:var(--soul);} .cur-pill.soul i{color:var(--soul);}
+.lst-price{font-weight:800;font-size:14px;color:var(--soul);text-align:center;position:relative;z-index:1;display:flex;justify-content:center;align-items:center;gap:4px;}
+.lst-price i{font-size:11px;}
+.lst-btn{width:100%;padding:8px;border-radius:10px;background:linear-gradient(90deg,var(--primary),var(--primary2));color:#fff;font-size:12px;font-weight:700;position:relative;z-index:1;cursor:pointer;transition:transform 0.15s;}
+.lst-btn:hover:not(:disabled){transform:translateY(-1px);}
+.lst-btn:disabled{opacity:0.5;background:rgba(100,116,139,0.3);}
+.lst-btn.own{background:transparent;border:1px solid var(--border-strong);color:var(--sub);}
+
+/* ── Моя коллекция (мои NFT) ── */
+.my-empty{padding:24px;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:14px;color:var(--sub);font-size:13px;backdrop-filter:blur(8px);}
+.my-empty i{font-size:32px;color:#475569;display:block;margin-bottom:10px;}
+
+/* ── BOTTOM NAV ── */
+nav#appNav{position:fixed;left:0;right:0;bottom:0;background:rgba(2,6,23,0.85);backdrop-filter:blur(22px) saturate(140%);-webkit-backdrop-filter:blur(22px) saturate(140%);border-top:1px solid var(--border);padding:8px 8px calc(8px + env(safe-area-inset-bottom));display:flex;justify-content:space-around;align-items:center;}
+nav#appNav a{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 4px;border-radius:10px;color:var(--sub);font-size:10px;font-weight:600;transition:color 0.15s,background 0.15s;max-width:100px;}
+nav#appNav a i{font-size:18px;}
+nav#appNav a.active{color:var(--primary);background:rgba(168,85,247,0.12);}
+nav#appNav a:not(.active):hover{color:var(--text);}
+
+/* ── TOAST ── */
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(80px + env(safe-area-inset-bottom));background:rgba(15,23,42,0.95);backdrop-filter:blur(10px);border:1px solid var(--border-strong);color:var(--text);padding:11px 18px;border-radius:14px;font-size:13px;font-weight:600;box-shadow:0 14px 40px rgba(0,0,0,0.4);opacity:0;pointer-events:none;transition:opacity 0.25s,transform 0.25s;max-width:90%;}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(-4px);}
+.toast.err{border-color:var(--red);color:#fecaca;}
+
+/* ── LOADER ── */
+.loader{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:36px;color:var(--sub);font-size:13px;}
+.spinner{width:32px;height:32px;border:3px solid rgba(168,85,247,0.2);border-top-color:var(--primary);border-radius:50%;animation:spin 0.9s linear infinite;margin-bottom:12px;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.spinner-sm{width:18px;height:18px;border-width:2px;margin:0;}
+
+.bump{animation:bumpAnim 0.5s ease-out;}
+@keyframes bumpAnim{0%{transform:scale(1);}30%{transform:scale(1.15);}100%{transform:scale(1);}}
+
+/* ── MODAL ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(2,6,23,0.78);backdrop-filter:blur(8px);display:none;align-items:flex-end;justify-content:center;padding:0;}
+.modal-overlay.open{display:flex;}
+@media (min-width:520px){.modal-overlay{align-items:center;padding:20px;}}
+.modal{width:100%;max-width:440px;background:rgba(15,23,42,0.95);border:1px solid var(--border-strong);border-radius:20px 20px 0 0;padding:22px 22px calc(22px + env(safe-area-inset-bottom));animation:modalUp 0.3s cubic-bezier(0.34,1.56,0.64,1);}
+@media (min-width:520px){.modal{border-radius:20px;}}
+@keyframes modalUp{from{transform:translateY(40px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+.modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;}
+.modal-title{font-size:16px;font-weight:800;}
+.modal-close{width:30px;height:30px;border-radius:8px;background:rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:center;color:var(--sub);cursor:pointer;font-size:13px;}
+.modal-close:hover{background:rgba(255,255,255,0.1);color:var(--text);}
+.modal-art{width:90px;height:90px;margin:0 auto 14px;display:flex;align-items:center;justify-content:center;}
+.modal-art svg{width:100%;height:100%;overflow:visible;}
+.modal-info{text-align:center;margin-bottom:18px;}
+.modal-info h3{font-size:18px;font-weight:800;margin-bottom:4px;}
+.modal-info .sub{font-size:12px;color:var(--sub);}
+.modal-row{display:flex;justify-content:space-between;font-size:13px;padding:9px 0;border-bottom:1px solid var(--border);}
+.modal-row:last-of-type{border-bottom:0;}
+.modal-row b{color:var(--text);font-weight:700;}
+.modal-row .v{color:var(--soul);font-weight:800;font-variant-numeric:tabular-nums;}
+.modal-actions{display:flex;gap:10px;margin-top:16px;}
+.btn{flex:1;padding:13px;border-radius:12px;font-size:14px;font-weight:700;cursor:pointer;transition:all 0.15s;font-family:inherit;}
+.btn.primary{background:linear-gradient(90deg,var(--primary),var(--primary2));color:#fff;border:0;}
+.btn.primary:hover:not(:disabled){transform:translateY(-1px);}
+.btn.primary:disabled{opacity:0.5;}
+.btn.danger{background:rgba(244,63,94,0.15);border:1px solid rgba(244,63,94,0.4);color:var(--red);}
+.btn.ghost{background:transparent;border:1px solid var(--border-strong);color:var(--text);}
+.field{margin-bottom:12px;}
+.field label{display:block;font-size:11px;color:var(--sub);font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;}
+.field input,.field textarea{width:100%;background:rgba(2,6,23,0.7);border:1px solid var(--border-strong);border-radius:11px;padding:11px 14px;color:var(--text);font-size:14px;outline:none;transition:border-color 0.15s;font-family:inherit;}
+.field input:focus,.field textarea:focus{border-color:rgba(168,85,247,0.5);}
+.field .hint{font-size:11px;color:var(--sub);margin-top:4px;}
+</style>
+</head>
+<body>
+
+<div id="mesh-bg"></div>
+<script src="/mesh.js"></script>
+<script src="/dialog.js"></script>
+
+<header>
+  <div class="header-top">
+    <div class="header-brand"><i class="fa-solid fa-wallet"></i><span>GhostBank</span></div>
+    <div class="h-avatar" id="hAvatar">?</div>
+  </div>
+</header>
+
+<main>
+  <div id="authScreen">
+    <div class="auth-logo">GhostBank</div>
+    <p class="auth-sub">Аккаунт общий с GhostSocial и GhostChat. Войдите там — баланс появится сразу.</p>
+    <a href="/social/" class="auth-btn"><i class="fa-solid fa-arrow-right"></i> Открыть GhostSocial</a>
+  </div>
+
+  <div id="app" style="display:none">
+
+    <!-- CURRENCY SWITCHER -->
+    <div class="cur-switcher">
+      <div class="cur-card" data-currency="gost" onclick="selectCurrency('gost')">
+        <div class="cc-head"><div class="cc-icon"><i class="fa-solid fa-ghost"></i></div><div class="cc-name">Gost</div></div>
+        <div class="cc-balance" id="bGost">0</div>
+        <div class="cc-sub">За активность</div>
+      </div>
+      <div class="cur-card active" data-currency="soul" onclick="selectCurrency('soul')">
+        <div class="cc-head"><div class="cc-icon"><i class="fa-solid fa-fire"></i></div><div class="cc-name">Soul</div></div>
+        <div class="cc-balance" id="bSoul">0</div>
+        <div class="cc-sub">Основная · переводы · NFT</div>
+      </div>
+      <div class="cur-card" data-currency="prem" onclick="selectCurrency('prem')">
+        <div class="cc-head"><div class="cc-icon"><i class="fa-solid fa-crown"></i></div><div class="cc-name">Prem</div><span class="cc-soon">скоро</span></div>
+        <div class="cc-balance" id="bPrem">0</div>
+        <div class="cc-sub">Премиум-украшения</div>
+      </div>
+    </div>
+
+    <!-- PANEL GOST -->
+    <div class="panel" data-panel="gost">
+      <a href="/bank/giveaway/" style="display:flex;align-items:center;gap:13px;background:linear-gradient(90deg,rgba(168,85,247,0.16),rgba(236,72,153,0.12));border:1px solid rgba(168,85,247,0.35);border-radius:16px;padding:14px 16px;margin-bottom:22px;text-decoration:none;">
+        <div style="width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,var(--primary),var(--primary3));display:flex;align-items:center;justify-content:center;font-size:18px;color:#fff;flex-shrink:0;"><i class="fa-solid fa-gift"></i></div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:700;color:var(--text);">Розыгрыши Gost</div>
+          <div style="font-size:12px;color:var(--sub);">Бесплатно, 1 билет на аккаунт — испытай удачу</div>
+        </div>
+        <i class="fa-solid fa-chevron-right" style="color:var(--sub);font-size:13px;"></i>
+      </a>
+      <div class="section">
+        <div class="section-title"><i class="fa-solid fa-gift"></i>Ежедневный бонус</div>
+        <button class="claim-btn" id="claimBtn" onclick="claimDaily()">
+          <i class="fa-solid fa-gift"></i><span>Получить <b id="claimAmt">10</b> Gost</span>
+        </button>
+        <div class="claim-hint" id="claimHint" style="display:none;">Следующий бонус через <b id="claimCd">--:--:--</b></div>
+      </div>
+      <div class="section">
+        <div class="section-title"><i class="fa-solid fa-bolt"></i>Как заработать</div>
+        <div class="sources">
+          <div class="src"><i class="fa-solid fa-gift"></i><span class="label">Ежедневный бонус</span><b>+10</b></div>
+          <div class="src"><i class="fa-solid fa-pen"></i><span class="label">Свой пост</span><b>+5</b></div>
+          <div class="src"><i class="fa-solid fa-heart"></i><span class="label">Лайк на твой пост</span><b>+1</b></div>
+          <div class="src"><i class="fa-solid fa-comment"></i><span class="label">Коммент</span><b>+2</b></div>
+          <div class="src"><i class="fa-solid fa-user-plus"></i><span class="label">Подписчик</span><b>+5</b></div>
+          <div class="src"><i class="fa-solid fa-user-group"></i><span class="label">Приведённый друг</span><b>+10</b></div>
+          <div class="src"><i class="fa-solid fa-trophy"></i><span class="label">Welcome</span><b>+100</b></div>
+        </div>
+      </div>
+      <!-- Реферальная программа -->
+      <div class="section" id="refSection" style="display:none;">
+        <div class="section-title"><i class="fa-solid fa-share-nodes"></i>Пригласи друзей<span class="right" id="refStats" style="font-size:10px;color:var(--sub);font-weight:600;"></span></div>
+        <div style="background:linear-gradient(135deg,rgba(168,85,247,0.10),rgba(236,72,153,0.10));border:1px solid rgba(168,85,247,0.30);border-radius:14px;padding:14px;">
+          <div style="font-size:12px;color:var(--sub);margin-bottom:8px;line-height:1.5;">
+            Делись ссылкой — друг получит <b style="color:var(--primary);">+30 Gost</b> при регистрации, ты — <b style="color:var(--primary);">+10 Gost</b> за каждого.
+          </div>
+          <div style="display:flex;gap:6px;margin-bottom:10px;">
+            <input id="refLinkInp" readonly style="flex:1;padding:9px 11px;border-radius:8px;border:1px solid var(--border-strong);background:rgba(0,0,0,0.25);color:var(--text);font-family:'SF Mono',Menlo,monospace;font-size:12px;">
+            <button onclick="copyRefLink()" id="refCopyBtn" style="padding:9px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;"><i class="fa-solid fa-copy"></i></button>
+          </div>
+          <button onclick="shareRefLink()" style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;">
+            <i class="fa-solid fa-share"></i>&nbsp; Поделиться
+          </button>
+          <div id="refInvitedList" style="margin-top:12px;"></div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title"><i class="fa-solid fa-clock-rotate-left"></i>История Gost</div>
+        <div class="tx-list" id="txList"><div class="loader"><div class="spinner"></div>Загрузка...</div></div>
+      </div>
+    </div>
+
+    <!-- PANEL SOUL -->
+    <div class="panel active" data-panel="soul">
+      <!-- Курс + system_balance -->
+      <div class="soul-rate">
+        <div>
+          <div class="l">Курс Soul</div>
+          <div class="v"><span id="soulRate">—</span> <span style="font-size:11px;color:var(--sub);font-weight:600;">Gost / 1 Soul</span></div>
+        </div>
+        <div style="text-align:right;">
+          <div class="l">В системе</div>
+          <div class="v" style="font-size:14px;"><span id="sysBal">—</span> <span style="font-size:10px;color:var(--sub);">/ <span id="sysCap">—</span></span></div>
+          <div class="small">Сожжено: <span id="burnedTotal">0</span></div>
+        </div>
+      </div>
+      <!-- Action buttons -->
+      <div class="actions-row" style="grid-template-columns:1fr 1fr;">
+        <button class="act-btn" onclick="openTransferSoul()"><i class="fa-solid fa-paper-plane"></i>Перевести</button>
+        <button class="act-btn" onclick="openInvoiceCreate()"><i class="fa-solid fa-receipt"></i>Счёт</button>
+        <button class="act-btn" onclick="openMintNft()"><i class="fa-solid fa-plus"></i>Создать NFT</button>
+        <button class="act-btn" onclick="openUsername()"><i class="fa-solid fa-at"></i>Username</button>
+      </div>
+      <!-- Мои инвойсы -->
+      <div class="section">
+        <div class="section-title"><i class="fa-solid fa-receipt"></i>Мои счета<span class="right" id="myInvCount" style="font-size:10px;color:var(--sub);font-weight:600;"></span></div>
+        <div id="myInvList"></div>
+      </div>
+      <!-- История Soul -->
+      <div class="section">
+        <div class="section-title"><i class="fa-solid fa-clock-rotate-left"></i>История Soul</div>
+        <div class="tx-list" id="soulTxList"><div class="loader"><div class="spinner"></div>Загрузка...</div></div>
+      </div>
+    </div>
+
+    <!-- PANEL PREM -->
+    <div class="panel" data-panel="prem">
+      <div class="section">
+        <div class="section-title"><i class="fa-solid fa-crown"></i>Премиум-валюта</div>
+        <div class="soon-card">
+          <div class="badge" style="background:rgba(251,191,36,0.2);color:var(--prem);">скоро</div>
+          <h3>Для тех, кто всё успел</h3>
+          <p>Prem — украшения профиля, Premium-подписка, эксклюзивные рамки и эффекты. Получают через конвертацию Soul при смене сезона: <code>(soul^1.1) × 0.9</code></p>
+          <div class="feats">
+            <div class="feat"><i class="fa-solid fa-medal"></i>Premium-подписка GhostChat</div>
+            <div class="feat"><i class="fa-solid fa-palette"></i>Цветные ники, рамки, фоны</div>
+            <div class="feat"><i class="fa-solid fa-gift"></i>Эксклюзивные NFT-подарки</div>
+            <div class="feat"><i class="fa-solid fa-arrow-trend-up"></i>Награды за HODL Soul</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ───────── МОЯ КОЛЛЕКЦИЯ NFT ───────── -->
+    <div class="section">
+      <div class="section-title">
+        <i class="fa-solid fa-images"></i>Моя коллекция
+        <span class="right"><span id="myNftCount" style="font-size:10px;color:var(--sub);font-weight:600;">0</span></span>
+      </div>
+      <div id="myNftList"><div class="loader"><div class="spinner"></div>Загрузка...</div></div>
+    </div>
+
+    <!-- ───────── КАТАЛОГ ───────── -->
+    <div class="section">
+      <div class="section-title"><i class="fa-solid fa-th-large"></i>Каталог GhostEcos · стартовая коллекция</div>
+      <div class="cat-grid" id="catGrid"><div class="loader" style="grid-column:1/-1;"><div class="spinner"></div></div></div>
+      <p style="margin-top:14px;font-size:11px;color:var(--sub);text-align:center;line-height:1.5;">
+        10 типов NFT от <b style="color:var(--text);">@ghostecos</b> <i class="fa-solid fa-circle-check" style="color:var(--soul);font-size:10px;"></i> · по 100 экз каждого
+      </p>
+    </div>
+
+    <!-- ───────── МАРКЕТ ───────── -->
+    <div class="section" id="marketSection">
+      <div class="section-title"><i class="fa-solid fa-store"></i>NFT-маркет</div>
+      <div class="market-filters" id="marketFilters">
+        <button class="mf-chip active" data-slug="">Все</button>
+      </div>
+      <div class="list-grid" id="marketGrid"><div class="loader" style="grid-column:1/-1;"><div class="spinner"></div></div></div>
+    </div>
+
+  </div>
+</main>
+
+<nav id="appNav">
+  <a href="/social/"><i class="fa-solid fa-house"></i>Лента</a>
+  <a href="/social/#screenMinisky"><i class="fa-solid fa-video"></i>Миниски</a>
+  <a href="#" class="active"><i class="fa-solid fa-wallet"></i>Банк</a>
+  <a href="/bank/giveaway/"><i class="fa-solid fa-gift"></i>Розыгрыши</a>
+  <a href="/chat/"><i class="fa-solid fa-comments"></i>Чаты</a>
+  <a href="/"><i class="fa-solid fa-ghost"></i>Главная</a>
+</nav>
+
+<div class="toast" id="toast"></div>
+
+<!-- ─── Modal: NFT details / buy / list / transfer ─── -->
+<div class="modal-overlay" id="nftModal" onclick="if(event.target===this)closeModal('nftModal')">
+  <div class="modal" id="nftModalContent"></div>
+</div>
+
+<!-- ─── Modal: Transfer Soul ─── -->
+<div class="modal-overlay" id="transferModal" onclick="if(event.target===this)closeModal('transferModal')">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">Перевод Soul</div>
+      <button class="modal-close" onclick="closeModal('transferModal')"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="field"><label>Получатель (username)</label><input id="trUser" placeholder="username" autocomplete="off"></div>
+    <div class="field"><label>Сумма (Soul)</label><input id="trAmount" type="number" min="1" placeholder="1"><div class="hint">Комиссия 3% сверху</div></div>
+    <div class="field"><label>Заметка (опц.)</label><input id="trNote" placeholder="за что..." maxlength="200"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal('transferModal')">Отмена</button>
+      <button class="btn primary" id="trSubmit" onclick="doTransferSoul()">Отправить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Modal: Create invoice ─── -->
+<div class="modal-overlay" id="invCreateModal" onclick="if(event.target===this)closeModal('invCreateModal')">
+  <div class="modal">
+    <div class="modal-head"><div class="modal-title">Новый счёт</div><button class="modal-close" onclick="closeModal('invCreateModal')"><i class="fa-solid fa-xmark"></i></button></div>
+    <p style="color:var(--sub);font-size:12px;margin-bottom:14px;">Получите ссылку — другие смогут платить по ней Soul. Действует 7 дней.</p>
+    <div class="field"><label>Сумма (Soul)</label><input id="invcAmount" type="number" min="1" placeholder="10"></div>
+    <div class="field"><label>За что (опц.)</label><input id="invcNote" placeholder="например: за чай" maxlength="200"></div>
+    <div class="modal-row"><span>Создание счёта</span><b>100 Gost</b></div>
+    <div class="modal-row"><span>Комиссия при оплате</span><b>5%</b></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal('invCreateModal')">Отмена</button>
+      <button class="btn primary" onclick="doCreateInvoice()">Создать (100 Gost)</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Modal: Pay invoice ─── -->
+<div class="modal-overlay" id="invPayModal" onclick="if(event.target===this)closeModal('invPayModal')">
+  <div class="modal" id="invPayContent"></div>
+</div>
+
+<!-- ─── Modal: Username управление ─── -->
+<div class="modal-overlay" id="usernameModal" onclick="if(event.target===this)closeModal('usernameModal')">
+  <div class="modal" id="usernameContent"></div>
+</div>
+
+<!-- ─── Modal: Mint NFT ─── -->
+<div class="modal-overlay" id="mintModal" onclick="if(event.target===this)closeModal('mintModal')">
+  <div class="modal">
+    <div class="modal-head"><div class="modal-title">Создать свой NFT</div><button class="modal-close" onclick="closeModal('mintModal')"><i class="fa-solid fa-xmark"></i></button></div>
+    <div class="modal-art" id="mintPreview" style="background:#a855f7;border-radius:18px;color:#fff;font-size:36px;font-weight:800;">?</div>
+    <div class="field"><label>Эмодзи (1-6 символов)</label><input id="mintEmoji" placeholder="🐱 или GS" maxlength="6" oninput="updateMintPreview()"></div>
+    <div class="field"><label>Цвет фона</label><input id="mintBg" type="color" value="#a855f7" oninput="updateMintPreview()" style="height:42px;padding:4px;cursor:pointer;"></div>
+    <div class="field"><label>Slug (a-z, цифры)</label><input id="mintSlug" placeholder="my-cat" maxlength="32"></div>
+    <div class="field"><label>Название</label><input id="mintName" placeholder="Мой кот" maxlength="60"></div>
+    <div class="field"><label>Тираж (100-10000)</label><input id="mintSupply" type="number" min="100" max="10000" value="100" oninput="updateMintCost()"></div>
+    <div class="field"><label>Сколько штук выкупить себе (опц.)</label><input id="mintAutoBuy" type="number" min="0" value="0" oninput="updateMintCost()"><div class="hint">Система выкупит у тебя M штук за Soul. Цена = поле ниже.</div></div>
+    <div class="field"><label>Цена на маркете (Soul за штуку)</label><input id="mintSellPrice" type="number" min="1" value="1" oninput="updateMintCost()"></div>
+    <div class="modal-row"><span>Стоимость создания</span><b id="mintCostG">— Gost</b></div>
+    <div class="modal-row"><span>Получите за автовыкуп</span><b id="mintPayout">0 Soul</b></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal('mintModal')">Отмена</button>
+      <button class="btn primary" onclick="doMintNft()">Создать NFT</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Modal: Seed phrase show (после регистрации/regen) ─── -->
+<div class="modal-overlay" id="seedModal" onclick="if(event.target===this)closeModal('seedModal')">
+  <div class="modal">
+    <div class="modal-head"><div class="modal-title" style="color:var(--yellow);"><i class="fa-solid fa-key"></i> Recovery seed</div></div>
+    <p style="color:var(--sub);font-size:12px;margin-bottom:14px;">Сохраните эту фразу. С ней можно восстановить доступ, если забудете пароль.<br><b style="color:var(--red);">НЕ показывайте её никому.</b></p>
+    <div id="seedDisplay" style="background:rgba(2,6,23,0.8);border:2px dashed var(--yellow);border-radius:12px;padding:18px;text-align:center;font-family:'Courier New',monospace;font-size:22px;font-weight:800;letter-spacing:3px;color:var(--yellow);margin-bottom:14px;word-break:break-all;"></div>
+    <div class="modal-actions">
+      <button class="btn primary" onclick="copySeed()"><i class="fa-solid fa-copy"></i> Скопировать</button>
+      <button class="btn ghost" onclick="closeModal('seedModal')">Я сохранил</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// Bank: Gost + Soul + NFT-market
+// ═══════════════════════════════════════════════════════════════════════════
+const API = '/api/soc';
+let token = localStorage.getItem('gs_token');
+let me = null;
+try { me = JSON.parse(localStorage.getItem('gs_me') || 'null'); } catch(_) {}
+let _walDailyTimer = null;
+let _ws = null, _wsReconnectDelay = 1000, _wsAuthFail = false;
+let _activeCurrency = localStorage.getItem('bank_active_cur') || 'soul';
+let _activeMarketSlug = ''; // фильтр маркета (пусто = все)
+
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+// JS-context escape для inline onclick — esc() ловит только HTML-context.
+// JSON.stringify даёт правильно квотированную JS-строку, потом обрамляем в HTML-context через esc.
+function jsArg(s){return esc(JSON.stringify(String(s == null ? '' : s)));}
+// Whitelist для CSS-цвета чтобы исключить injection в style=""
+function safeColor(c){return /^#[0-9a-fA-F]{6}$/.test(c) ? c : '#a855f7';}
+// Whitelist для currency
+function safeCur(c){return c === 'gost' || c === 'soul' || c === 'prem' ? c : 'gost';}
+function ini(n){return n ? n[0].toUpperCase() : '?';}
+function fmtNum(n){return (n||0).toLocaleString('ru-RU');}
+function showToast(msg, err=false){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'toast' + (err ? ' err' : '');
+  t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2600);
+}
+function ago(ts){
+  const d = new Date(ts.includes('Z') || ts.includes('+') ? ts : ts + 'Z');
+  const s = Math.floor((Date.now() - d) / 1000);
+  if (s < 60) return 'только что';
+  if (s < 3600) return Math.floor(s / 60) + ' мин назад';
+  if (s < 86400) return Math.floor(s / 3600) + ' ч назад';
+  return Math.floor(s / 86400) + ' д назад';
+}
+
+async function api(path, method='GET', body=null){
+  const h = { 'Content-Type': 'application/json' };
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 20000);
+  const opts = { method, headers: h, signal: ctrl.signal };
+  if (body) opts.body = JSON.stringify(body);
+  let r;
+  try { r = await fetch(API + path, opts); }
+  finally { clearTimeout(tid); }
+  if (!r.ok) {
+    const text = await r.text();
+    let msg = text; try { msg = JSON.parse(text).detail || text; } catch(_) {}
+    const e = new Error(msg); e.status = r.status; throw e;
+  }
+  return r.json();
+}
+
+function setBalance(elId, val){
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const prev = +(el.textContent.replace(/\s/g, '')) || 0;
+  el.textContent = fmtNum(val);
+  if (val > prev) {
+    el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
+  }
+}
+
+// ── Currency switcher ──
+function selectCurrency(cur){
+  if (cur === _activeCurrency) return;
+  _activeCurrency = cur;
+  localStorage.setItem('bank_active_cur', cur);
+  document.querySelectorAll('.cur-card').forEach(c => c.classList.toggle('active', c.dataset.currency === cur));
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.dataset.panel === cur));
+}
+
+// ── SVG NFT icons (генерируем динамически по slug) ──
+const NFT_SVG = {
+  ghost: `<svg viewBox="0 0 80 80" class="nft-ghost"><ellipse cx="40" cy="35" rx="22" ry="26" fill="currentColor"/><path d="M18 55 L25 65 L32 55 L40 65 L48 55 L55 65 L62 55 L62 35 L18 35 Z" fill="currentColor"/><circle cx="32" cy="32" r="3.5" fill="#1e293b"/><circle cx="48" cy="32" r="3.5" fill="#1e293b"/><ellipse cx="40" cy="44" rx="3" ry="2" fill="#1e293b" opacity="0.6"/></svg>`,
+  moon: `<svg viewBox="0 0 80 80" class="nft-moon"><circle cx="40" cy="40" r="26" fill="currentColor"/><circle cx="32" cy="32" r="3.5" fill="#94a3b8" opacity="0.5"/><circle cx="50" cy="44" r="2.5" fill="#94a3b8" opacity="0.5"/><circle cx="44" cy="52" r="3" fill="#94a3b8" opacity="0.5"/><circle cx="28" cy="46" r="2" fill="#94a3b8" opacity="0.5"/></svg>`,
+  star: `<svg viewBox="0 0 80 80" class="nft-star"><path d="M40 10 L48 32 L72 32 L52 46 L60 70 L40 56 L20 70 L28 46 L8 32 L32 32 Z" fill="currentColor" stroke="#fff" stroke-width="0.5"/></svg>`,
+  flame: `<svg viewBox="0 0 80 80" class="nft-flame"><path d="M40 12 C 28 28, 22 42, 28 56 C 30 64, 36 70, 40 70 C 44 70, 50 64, 52 56 C 58 42, 52 28, 40 12 Z" fill="currentColor"/><path d="M40 28 C 34 38, 32 48, 36 56 C 38 62, 42 64, 44 60 C 48 52, 46 40, 40 28 Z" fill="#fcd34d"/><ellipse cx="40" cy="56" rx="3" ry="6" fill="#fff"/></svg>`,
+  heart: `<svg viewBox="0 0 80 80" class="nft-heart"><path d="M40 64 C 24 50, 8 38, 14 22 C 18 12, 32 12, 40 26 C 48 12, 62 12, 66 22 C 72 38, 56 50, 40 64 Z" fill="currentColor"/><path d="M28 22 C 24 26, 24 32, 28 36" stroke="#fff" stroke-width="2" fill="none" opacity="0.5"/></svg>`,
+  bolt: `<svg viewBox="0 0 80 80" class="nft-bolt"><path d="M44 8 L20 44 L36 44 L28 72 L60 32 L42 32 L52 8 Z" fill="currentColor" stroke="#fff" stroke-width="0.5"/></svg>`,
+  crystal: `<svg viewBox="0 0 80 80" class="nft-crystal"><path d="M40 8 L60 28 L40 72 L20 28 Z" fill="currentColor" stroke="#fff" stroke-width="0.8"/><path d="M40 8 L60 28 L40 28 Z" fill="rgba(255,255,255,0.4)"/><path d="M40 28 L60 28 L40 72 Z" fill="rgba(0,0,0,0.15)"/><line x1="40" y1="8" x2="40" y2="72" stroke="#fff" stroke-width="0.8"/></svg>`,
+  eye: `<svg viewBox="0 0 80 80" class="nft-eye"><ellipse cx="40" cy="40" rx="32" ry="20" fill="#fff"/><ellipse cx="40" cy="40" rx="32" ry="20" fill="none" stroke="#1e293b" stroke-width="1.5"/><g class="pupil"><circle cx="40" cy="40" r="11" fill="#0891b2"/><circle cx="40" cy="40" r="6" fill="#1e293b"/><circle cx="37" cy="37" r="2" fill="#fff"/></g><ellipse cx="40" cy="40" rx="32" ry="20" fill="#1e293b" class="eye-lid"/></svg>`,
+  key: `<svg viewBox="0 0 80 80" class="nft-key"><circle cx="25" cy="25" r="14" fill="none" stroke="currentColor" stroke-width="4"/><circle cx="25" cy="25" r="5" fill="currentColor"/><rect x="36" y="22" width="36" height="6" rx="2" fill="currentColor"/><rect x="56" y="28" width="4" height="8" fill="currentColor"/><rect x="64" y="28" width="4" height="6" fill="currentColor"/><rect class="glint" x="14" y="36" width="3" height="40" fill="rgba(255,255,255,0.6)" transform="rotate(-45 40 40)"/></svg>`,
+  crown: `<svg viewBox="0 0 80 80" class="nft-crown"><path d="M14 56 L18 30 L30 44 L40 22 L50 44 L62 30 L66 56 Z" fill="#fcd34d" stroke="#fbbf24" stroke-width="1.5"/><rect x="14" y="56" width="52" height="10" rx="2" fill="#fbbf24"/><circle class="gem" cx="40" cy="34" r="3.5" fill="#f43f5e"/><circle class="gem g2" cx="24" cy="50" r="2.5" fill="#3b82f6"/><circle class="gem g3" cx="56" cy="50" r="2.5" fill="#22c55e"/><rect x="14" y="62" width="52" height="2" fill="rgba(255,255,255,0.4)"/></svg>`,
+};
+function nftSvg(slug){return NFT_SVG[slug] || NFT_SVG.ghost;}
+function rarityIcon(r){return r === 'legend' ? '<i class="fa-solid fa-crown"></i>' : r === 'rare' ? '<i class="fa-solid fa-star"></i>' : '';}
+function verifiedBadge(){return '<i class="fa-solid fa-circle-check verified" title="Официальный аккаунт"></i>';}
+function curIcon(cur){return cur === 'gost' ? 'fa-ghost' : 'fa-fire';}
+function curName(cur){return cur === 'gost' ? 'Gost' : 'Soul';}
+function pricePill(amount, currency){const c = safeCur(currency); return `<span class="cur-pill ${c}"><i class="fa-solid ${curIcon(c)}"></i>${fmtNum(amount)}</span>`;}
+
+// ═══════════════ Wallet (Gost + Soul) ═══════════════
+async function loadWallet(){
+  try {
+    const [w, txGost, state, txSoul] = await Promise.all([
+      api('/wallet'), api('/wallet/tx'), api('/economy/state'), api('/soul/tx')
+    ]);
+    setBalance('bGost', w.balance.gost || 0);
+    setBalance('bSoul', w.balance.soul || 0);
+    setBalance('bPrem', w.balance.prem || 0);
+    document.getElementById('claimAmt').textContent = w.daily_reward;
+    setupDailyClaim(w.next_daily_in || 0);
+    renderGostTx(txGost.transactions || []);
+    // Реф-блок — параллельно, не блокируем кошелёк если упадёт
+    loadRefBlock().catch(() => {});
+    // Soul state
+    document.getElementById('soulRate').textContent = state.rate_paused ? '⏸ паузa' : fmtNum(state.soul_rate_gost);
+    document.getElementById('sysBal').textContent = fmtNum(state.system_balance);
+    document.getElementById('sysCap').textContent = fmtNum(state.cap);
+    document.getElementById('burnedTotal').textContent = fmtNum(state.burned_total);
+    renderSoulTx(txSoul.transactions || []);
+  } catch(e) {
+    console.error('[wallet]', e);
+    if (e.status === 401) { showAuth(); return; }
+    showToast('Не удалось загрузить кошелёк', true);
+  }
+}
+
+function setupDailyClaim(secondsLeft){
+  const btn = document.getElementById('claimBtn');
+  const hint = document.getElementById('claimHint');
+  const cd = document.getElementById('claimCd');
+  clearInterval(_walDailyTimer);
+  if (secondsLeft <= 0) {
+    btn.disabled = false; btn.style.display = ''; hint.style.display = 'none';
+    return;
+  }
+  btn.disabled = true; hint.style.display = '';
+  const tick = () => {
+    if (secondsLeft <= 0) { clearInterval(_walDailyTimer); setupDailyClaim(0); return; }
+    const h = Math.floor(secondsLeft / 3600);
+    const m = Math.floor((secondsLeft % 3600) / 60);
+    const s = secondsLeft % 60;
+    cd.textContent = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    secondsLeft--;
+  };
+  tick(); _walDailyTimer = setInterval(tick, 1000);
+}
+
+async function claimDaily(){
+  const btn = document.getElementById('claimBtn');
+  btn.disabled = true;
+  try {
+    const r = await api('/wallet/claim_daily', 'POST');
+    if (r.credited > 0) showToast(`+${r.credited} Gost получено!`);
+    await loadWallet();
+  } catch(e) {
+    showToast(e.message || 'Не удалось получить бонус', true);
+    btn.disabled = false;
+  }
+}
+
+const TX_GOST = {
+  register:{icon:'fa-trophy',label:'Welcome бонус'},
+  daily:{icon:'fa-gift',label:'Ежедневный бонус'},
+  post:{icon:'fa-pen',label:'За пост'},
+  react:{icon:'fa-heart',label:'Лайк на твой пост'},
+  comment:{icon:'fa-comment',label:'Коммент на твой пост'},
+  follow:{icon:'fa-user-plus',label:'Новый подписчик'},
+  spend:{icon:'fa-cart-shopping',label:'Покупка'},
+  admin:{icon:'fa-shield',label:'От администрации'},
+};
+function renderGostTx(list){
+  const root = document.getElementById('txList');
+  if (!list.length) { root.innerHTML = '<div class="tx-empty"><i class="fa-solid fa-coins"></i>Пока пусто. Активничай в GhostSocial — Gost начнут капать.</div>'; return; }
+  root.innerHTML = list.map(t => {
+    const meta = TX_GOST[t.source] || {icon:'fa-coins', label:t.source};
+    const sign = t.delta > 0 ? '+' : '';
+    const cls = 'tx-amount ' + (t.delta < 0 ? 'neg' : 'pos');
+    const actor = t.actor ? ` · @${esc(t.actor.username)}` : '';
+    return `<div class="tx-item"><div class="tx-icon"><i class="fa-solid ${meta.icon}"></i></div><div class="tx-body"><div class="tx-title">${esc(meta.label)}</div><div class="tx-meta">${ago(t.created_at)}${actor}</div></div><div class="${cls}">${sign}${t.delta} ${t.currency}</div></div>`;
+  }).join('');
+}
+
+const TX_SOUL = {
+  admin_emit:{icon:'fa-shield',label:'Эмиссия'},
+  transfer_in:{icon:'fa-arrow-down',label:'Перевод от'},
+  transfer_out:{icon:'fa-arrow-up',label:'Перевод'},
+  nft_buy:{icon:'fa-cart-shopping',label:'Покупка NFT'},
+  nft_sell:{icon:'fa-tag',label:'Продажа NFT'},
+  nft_fee:{icon:'fa-paper-plane',label:'Передача NFT'},
+  fee:{icon:'fa-receipt',label:'Комиссия'},
+  burn:{icon:'fa-fire',label:'Сожжено'},
+};
+function renderSoulTx(list){
+  const root = document.getElementById('soulTxList');
+  if (!list.length) { root.innerHTML = '<div class="tx-empty"><i class="fa-solid fa-fire"></i>История Soul-транзакций пуста. Начните с покупки NFT на маркете.</div>'; return; }
+  root.innerHTML = list.map(t => {
+    const meta = TX_SOUL[t.source] || {icon:'fa-fire', label:t.source};
+    const sign = t.delta > 0 ? '+' : '';
+    const cls = 'tx-amount ' + (t.delta < 0 ? 'neg' : (t.delta > 0 ? 'pos' : ''));
+    const counter = t.counter ? ` · @${esc(t.counter.username)}${t.counter.is_official ? ' ✓' : ''}` : '';
+    const note = t.note ? ` · ${esc(t.note)}` : '';
+    return `<div class="tx-item"><div class="tx-icon" style="color:var(--soul);background:rgba(236,72,153,0.12);"><i class="fa-solid ${meta.icon}"></i></div><div class="tx-body"><div class="tx-title">${esc(meta.label)}</div><div class="tx-meta">${ago(t.created_at)}${counter}${note}</div></div><div class="${cls}">${t.delta === 0 ? '—' : sign + fmtNum(t.delta) + ' Soul'}</div></div>`;
+  }).join('');
+}
+
+// ═══════════════ NFT: каталог, мой, маркет ═══════════════
+async function loadCatalog(){
+  try {
+    const r = await api('/nft/catalog');
+    renderCatalog(r.catalog || []);
+    renderMarketFilters(r.catalog || []);
+  } catch(e) { console.error('[catalog]', e); }
+}
+function renderCatalog(items){
+  const root = document.getElementById('catGrid');
+  root.innerHTML = items.map(it => {
+    // Floor: показываем Gost-цену если есть (первичные продажи), иначе Soul
+    let floorHTML;
+    if (it.floor_gost != null) floorHTML = `от ${pricePill(it.floor_gost, 'gost')}`;
+    else if (it.floor_soul != null) floorHTML = `от ${pricePill(it.floor_soul, 'soul')}`;
+    else floorHTML = `от ${pricePill(it.start_price_gost, 'gost')}`;
+    return `
+    <div class="cat-card" data-rarity="${it.rarity}" onclick="openCatalogModal(${jsArg(it.slug)})" title="${esc(it.description)}">
+      <div class="cat-art">${nftArt(it)}</div>
+      <div class="cat-name">${esc(it.name)}</div>
+      <div class="cat-meta">${rarityIcon(it.rarity)} ${it.listed}/${it.max_supply}</div>
+      <div class="cat-floor">${floorHTML}</div>
+    </div>`;
+  }).join('');
+}
+function renderMarketFilters(items){
+  const wrap = document.getElementById('marketFilters');
+  wrap.innerHTML = '<button class="mf-chip ' + (_activeMarketSlug === '' ? 'active' : '') + '" data-slug="" onclick="setMarketFilter(\'\')">Все</button>' +
+    items.map(it => `<button class="mf-chip ${_activeMarketSlug === it.slug ? 'active' : ''}" data-slug="${esc(it.slug)}" onclick="setMarketFilter(${jsArg(it.slug)})">${esc(it.name)}</button>`).join('');
+}
+function setMarketFilter(slug){
+  _activeMarketSlug = slug;
+  document.querySelectorAll('.mf-chip').forEach(c => c.classList.toggle('active', c.dataset.slug === slug));
+  loadMarket();
+}
+
+async function loadMyNfts(){
+  try {
+    const r = await api('/nft/my');
+    const nfts = r.nfts || [];
+    document.getElementById('myNftCount').textContent = nfts.length;
+    const root = document.getElementById('myNftList');
+    if (!nfts.length) { root.innerHTML = '<div class="my-empty"><i class="fa-solid fa-image"></i>Пока нет NFT. Купите первый на маркете или дождитесь подарка.</div>'; return; }
+    root.innerHTML = '<div class="list-grid">' + nfts.map(n => `
+      <div class="lst-card" data-rarity="${n.catalog.rarity}" onclick="openMyNftModal(${n.id})">
+        <div class="lst-art">${nftArt(n.catalog)}</div>
+        <div class="lst-name">${esc(n.catalog.name)}</div>
+        <div class="lst-serial">#${n.serial}/${n.catalog.max_supply}</div>
+        ${n.listing ? `<div class="lst-price">${pricePill(n.listing.price, n.listing.currency)}</div>` : `<button class="lst-btn">Управлять</button>`}
+      </div>`).join('') + '</div>';
+  } catch(e) { console.error('[my nfts]', e); }
+}
+
+let _marketOffset = 0;
+let _marketHasMore = false;
+async function loadMarket(append=false){
+  const root = document.getElementById('marketGrid');
+  if (!append) {
+    root.innerHTML = '<div class="loader" style="grid-column:1/-1;"><div class="spinner"></div></div>';
+    _marketOffset = 0;
+  }
+  // Убрать старую кнопку «Показать ещё» если есть
+  const oldBtn = document.getElementById('marketMoreBtn');
+  if (oldBtn) oldBtn.remove();
+  try {
+    const params = new URLSearchParams();
+    if (_activeMarketSlug) params.set('slug', _activeMarketSlug);
+    params.set('offset', _marketOffset);
+    const r = await api('/nft/listings?' + params.toString());
+    if (!r.listings.length && !append) {
+      root.innerHTML = '<div class="my-empty" style="grid-column:1/-1;"><i class="fa-solid fa-store-slash"></i>Здесь пусто</div>';
+      _marketHasMore = false;
+      return;
+    }
+    const html = r.listings.map(n => {
+      const isMine = me && n.owner.id === me.id;
+      const ownerBadge = n.owner.is_official ? verifiedBadge() : '';
+      const cur = n.listing.currency;
+      return `<div class="lst-card" data-rarity="${n.catalog.rarity}" onclick="openListingModal(${n.id})">
+        <div class="lst-art">${nftArt(n.catalog)}</div>
+        <div class="lst-name">${esc(n.catalog.name)}</div>
+        <div class="lst-serial">#${n.serial}/${n.catalog.max_supply}</div>
+        <div class="lst-owner">${ownerBadge}@${esc(n.owner.username)}</div>
+        <div class="lst-price">${pricePill(n.listing.price, cur)}</div>
+        ${isMine ? '<button class="lst-btn own" onclick="event.stopPropagation();unlistNft(' + n.id + ')">Снять</button>' : '<button class="lst-btn" onclick="event.stopPropagation();buyListing(' + n.id + ')">Купить</button>'}
+      </div>`;
+    }).join('');
+    if (append) root.insertAdjacentHTML('beforeend', html);
+    else root.innerHTML = html;
+    _marketOffset += r.listings.length;
+    _marketHasMore = !!r.has_more;
+    // Кнопка «Показать ещё» — после грида
+    if (_marketHasMore) {
+      const section = document.getElementById('marketSection');
+      const btn = document.createElement('button');
+      btn.id = 'marketMoreBtn';
+      btn.className = 'load-more';
+      btn.textContent = 'Показать ещё';
+      btn.onclick = () => { btn.disabled = true; btn.textContent = 'Загрузка...'; loadMarket(true); };
+      section.appendChild(btn);
+    }
+  } catch(e) { console.error('[market]', e); if (!append) root.innerHTML = '<div class="my-empty" style="grid-column:1/-1;">Ошибка загрузки</div>'; }
+}
+
+// ═══════════════ Модалки ═══════════════
+function openModal(id){document.getElementById(id).classList.add('open');}
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+
+async function openCatalogModal(slug){
+  try {
+    const r = await api('/nft/catalog');
+    const it = r.catalog.find(x => x.slug === slug);
+    if (!it) return;
+    const floorRows = [];
+    if (it.floor_gost != null) floorRows.push(`<div class="modal-row"><span>Первичная цена (от GhostEcos)</span><span class="v">${pricePill(it.floor_gost, 'gost')}</span></div>`);
+    if (it.floor_soul != null) floorRows.push(`<div class="modal-row"><span>Минимальная P2P</span><span class="v">${pricePill(it.floor_soul, 'soul')}</span></div>`);
+    if (!floorRows.length) floorRows.push(`<div class="modal-row"><span>Стартовая цена</span><span class="v">${pricePill(it.start_price_gost, 'gost')}</span></div>`);
+    const cont = document.getElementById('nftModalContent');
+    cont.innerHTML = `
+      <div class="modal-head">
+        <div class="modal-title">${esc(it.name)}</div>
+        <button class="modal-close" onclick="closeModal('nftModal')"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-art">${nftSvg(it.slug)}</div>
+      <div class="modal-info">
+        <h3>${esc(it.name)} ${rarityIcon(it.rarity)}</h3>
+        <div class="sub">${esc(it.description)}</div>
+      </div>
+      <div>
+        <div class="modal-row"><span>Создатель</span><b>@${esc(it.creator.username)} ${it.creator.is_official ? verifiedBadge() : ''}</b></div>
+        <div class="modal-row"><span>Тираж</span><b>${it.minted}/${it.max_supply}</b></div>
+        <div class="modal-row"><span>На рынке</span><b>${it.listed}</b></div>
+        ${floorRows.join('')}
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="closeModal('nftModal')">Закрыть</button>
+        <button class="btn primary" onclick="closeModal('nftModal');setMarketFilter(${jsArg(slug)});scrollToSection('marketSection');">Купить на маркете</button>
+      </div>`;
+    openModal('nftModal');
+  } catch(e) { console.error(e); }
+}
+
+async function openListingModal(nftId){
+  try {
+    // Берём один листинг точечно через /nft/my (если мой) или через /listings (по offset)
+    // Здесь — упрощённо: достаём из последнего загруженного списка
+    const r = await api(`/nft/listings?offset=0`);
+    // Если не нашли в первой странице — попробуем все валюты через slug-pass: ищем по nftId перебором
+    let n = r.listings.find(x => x.id === nftId);
+    if (!n) {
+      // ещё пара попыток с большими offset (если очень глубоко)
+      for (let off = 30; off < 300 && !n; off += 30) {
+        const r2 = await api(`/nft/listings?offset=${off}`);
+        n = r2.listings.find(x => x.id === nftId);
+        if (!r2.has_more) break;
+      }
+    }
+    if (!n) { showToast('Уже продан', true); loadMarket(); return; }
+    const isMine = me && n.owner.id === me.id;
+    const ownerBadge = n.owner.is_official ? verifiedBadge() : '';
+    const cur = n.listing.currency;
+    const cont = document.getElementById('nftModalContent');
+    const rows = [`<div class="modal-row"><span>Продавец</span><b>${ownerBadge}@${esc(n.owner.username)}</b></div>`];
+    rows.push(`<div class="modal-row"><span>Цена</span><span class="v">${pricePill(n.listing.price, cur)}</span></div>`);
+    let total = n.listing.price;
+    if (cur === 'soul') {
+      const fee = Math.max(1, Math.ceil(n.listing.price * 0.10));
+      total = n.listing.price + fee;
+      rows.push(`<div class="modal-row"><span>Комиссия маркета (10%)</span><span class="v">${pricePill(fee, 'soul')}</span></div>`);
+      rows.push(`<div class="modal-row"><span><b>Итого</b></span><span class="v"><b>${pricePill(total, 'soul')}</b></span></div>`);
+    } else {
+      rows.push(`<div class="modal-row" style="color:var(--sub);font-size:11px;"><span>Первичная продажа</span><span>без комиссии</span></div>`);
+    }
+    cont.innerHTML = `
+      <div class="modal-head">
+        <div class="modal-title">${cur === 'gost' ? 'Первичная продажа' : 'NFT в продаже'}</div>
+        <button class="modal-close" onclick="closeModal('nftModal')"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-art">${nftSvg(n.catalog.slug)}</div>
+      <div class="modal-info">
+        <h3>${esc(n.catalog.name)} ${rarityIcon(n.catalog.rarity)}</h3>
+        <div class="sub">#${n.serial} из ${n.catalog.max_supply}</div>
+      </div>
+      <div>${rows.join('')}</div>
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="closeModal('nftModal')">Отмена</button>
+        ${isMine ? `<button class="btn danger" onclick="unlistNft(${n.id})">Снять с продажи</button>` : `<button class="btn primary" onclick="buyListing(${n.id})">Купить за ${pricePill(total, cur)}</button>`}
+      </div>`;
+    openModal('nftModal');
+  } catch(e) { console.error(e); }
+}
+
+async function openMyNftModal(nftId){
+  try {
+    const r = await api('/nft/my');
+    const n = r.nfts.find(x => x.id === nftId);
+    if (!n) return;
+    const cont = document.getElementById('nftModalContent');
+    const listed = !!n.listing;
+    const listedHere = listed ? `<div class="modal-row"><span>Сейчас на маркете</span><span class="v">${pricePill(n.listing.price, n.listing.currency)}</span></div>` : '';
+    cont.innerHTML = `
+      <div class="modal-head">
+        <div class="modal-title">Мой NFT</div>
+        <button class="modal-close" onclick="closeModal('nftModal')"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-art">${nftSvg(n.catalog.slug)}</div>
+      <div class="modal-info">
+        <h3>${esc(n.catalog.name)} ${rarityIcon(n.catalog.rarity)}</h3>
+        <div class="sub">#${n.serial} из ${n.catalog.max_supply}</div>
+      </div>
+      ${listedHere}
+      <div class="field" style="margin-top:14px;">
+        <label>${listed ? 'Изменить цену (Soul)' : 'Цена на маркете (Soul)'}</label>
+        <input id="listPrice" type="number" min="1" value="${listed ? n.listing.price : ''}" placeholder="например 10">
+        <div class="hint">Юзеры выставляют только за Soul. С продажи 10% комиссия системе.</div>
+      </div>
+      <div class="modal-actions">
+        ${listed ? `<button class="btn danger" onclick="unlistNft(${n.id})">Снять</button>` : '<button class="btn ghost" onclick="closeModal(\'nftModal\')">Отмена</button>'}
+        <button class="btn primary" onclick="listMyNft(${n.id})">${listed ? 'Обновить' : 'Выставить'}</button>
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="openTransferNft(${n.id})"><i class="fa-solid fa-paper-plane"></i> Передать (−1 Soul)</button>
+      </div>`;
+    openModal('nftModal');
+  } catch(e) { console.error(e); }
+}
+
+// Глобальный in-flight guard для финансовых операций — защита от двойных кликов
+const _inFlight = new Set();
+async function withLock(key, fn) {
+  if (_inFlight.has(key)) { showToast('Уже выполняется...', true); return; }
+  _inFlight.add(key);
+  try { return await fn(); } finally { _inFlight.delete(key); }
+}
+
+async function buyListing(nftId){
+  return withLock('buy:'+nftId, async () => {
+  try {
+    const r = await api(`/nft/buy/${nftId}`, 'POST');
+    const cur = r.currency || 'soul';
+    const total = (r.price || 0) + (r.fee || 0);
+    showToast(`Куплено! −${fmtNum(total)} ${curName(cur)}`);
+    closeModal('nftModal');
+    await Promise.all([loadWallet(), loadMyNfts(), loadMarket(), loadCatalog()]);
+  } catch(e) { showToast(e.message || 'Ошибка покупки', true); }
+  });
+}
+
+async function listMyNft(nftId){
+  const price = +document.getElementById('listPrice').value;
+  if (!price || price < 1) { showToast('Введите цену', true); return; }
+  try {
+    await api('/nft/list', 'POST', { nft_id: nftId, price_soul: price });
+    showToast(`Выставлено за ${price} Soul`);
+    closeModal('nftModal');
+    await Promise.all([loadMyNfts(), loadMarket(), loadCatalog()]);
+  } catch(e) { showToast(e.message || 'Ошибка', true); }
+}
+
+async function unlistNft(nftId){
+  try {
+    await api(`/nft/list/${nftId}`, 'DELETE');
+    showToast('Снято с маркета');
+    closeModal('nftModal');
+    await Promise.all([loadMyNfts(), loadMarket(), loadCatalog()]);
+  } catch(e) { showToast(e.message || 'Ошибка', true); }
+}
+
+async function openTransferNft(nftId){
+  const raw = await Dialog.prompt('Username получателя:', '',
+    { title: 'Передать NFT', placeholder: '@user', okText: 'Далее' });
+  if (raw == null) return;
+  const username = raw.trim().replace(/^@/, '').toLowerCase();
+  if (!username) return;
+  const ok = await Dialog.confirm(`Передать NFT юзеру @${username}?\n\nКомиссия: 1 Soul.`,
+    { title: 'Подтвердить передачу', okText: 'Передать' });
+  if (!ok) return;
+  try {
+    const r = await api('/nft/transfer', 'POST', { nft_id: nftId, to_username: username });
+    showToast(`NFT передан @${r.recipient.username}`);
+    closeModal('nftModal');
+    loadWallet(); loadMyNfts();
+  } catch(e) { showToast(e.message || 'Ошибка', true); }
+}
+
+// ── Soul transfer ──
+function openTransferSoul(){
+  document.getElementById('trUser').value = '';
+  document.getElementById('trAmount').value = '';
+  document.getElementById('trNote').value = '';
+  openModal('transferModal');
+}
+async function doTransferSoul(){
+  const u = document.getElementById('trUser').value.trim().toLowerCase();
+  const a = +document.getElementById('trAmount').value;
+  const n = document.getElementById('trNote').value.trim();
+  if (!u || !a || a < 1) { showToast('Заполните username и сумму', true); return; }
+  const btn = document.getElementById('trSubmit');
+  btn.disabled = true;
+  try {
+    const r = await api('/soul/transfer', 'POST', { to_username: u, amount: a, note: n || null });
+    showToast(`Отправлено @${r.recipient.username} · комиссия ${r.fee}`);
+    closeModal('transferModal');
+    await loadWallet();
+  } catch(e) { showToast(e.message || 'Ошибка перевода', true); }
+  btn.disabled = false;
+}
+
+function scrollToSection(id){
+  const el = document.getElementById(id);
+  if (el) el.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+// ── Рендер NFT-арта универсально (preset SVG или emoji) ──
+function nftArt(catalog){
+  if (catalog.image_kind === 'emoji') {
+    const c = safeColor(catalog.bg_color || '#a855f7');  // whitelist hex
+    const t = catalog.image_data || '?';
+    return `<div style="width:100%;height:100%;border-radius:14px;background:${c};display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:800;color:#fff;text-shadow:0 2px 8px rgba(0,0,0,0.4);">${esc(t)}</div>`;
+  }
+  return nftSvg(catalog.slug);
+}
+
+// ══════════════ INVOICES ══════════════
+async function loadInvoices(){
+  try {
+    const r = await api('/invoice/my');
+    const items = r.invoices || [];
+    document.getElementById('myInvCount').textContent = items.length ? items.length : '';
+    const root = document.getElementById('myInvList');
+    if (!items.length) { root.innerHTML = '<div class="my-empty"><i class="fa-solid fa-receipt"></i>Счетов пока нет.<br>Создайте — получите ссылку для оплаты.</div>'; return; }
+    root.innerHTML = '<div class="tx-list">' + items.map(i => {
+      const url = `${location.origin}/bank/?pay=${i.code}`;
+      const status = i.cancelled ? '<span style="color:var(--red);">отменён</span>' : (i.seconds_left <= 0 ? '<span style="color:var(--sub);">истёк</span>' : `<span style="color:var(--green);">активен · ${Math.floor(i.seconds_left/86400)}д ${Math.floor(i.seconds_left%86400/3600)}ч</span>`);
+      const codeArg = jsArg(i.code);
+      return `<div class="tx-item">
+        <div class="tx-icon" style="color:var(--soul);background:rgba(236,72,153,0.12);"><i class="fa-solid fa-receipt"></i></div>
+        <div class="tx-body">
+          <div class="tx-title">${pricePill(i.amount_soul, 'soul')} ${i.note ? '· ' + esc(i.note) : ''}</div>
+          <div class="tx-meta">оплачен ${i.paid_count}× · ${status} · <a href="${esc(url)}" onclick="copyInvLink(event, ${codeArg})" style="color:var(--primary);text-decoration:underline;">копировать ссылку</a></div>
+        </div>
+        ${!i.cancelled && i.seconds_left > 0 ? `<button class="btn ghost" style="padding:6px 10px;font-size:11px;" onclick="cancelInvoice(${codeArg})">×</button>` : ''}
+      </div>`;
+    }).join('') + '</div>';
+  } catch(e) { console.error('[invoices]', e); }
+}
+function copyInvLink(ev, code){
+  ev.preventDefault();
+  const url = `${location.origin}/bank/?pay=${encodeURIComponent(code)}`;
+  navigator.clipboard.writeText(url).then(() => showToast('Ссылка скопирована'));
+}
+async function cancelInvoice(code){
+  if (!await Dialog.confirm('Отменить счёт?', { title: 'Отменить счёт', danger: true })) return;
+  return withLock('inv-cancel:'+code, async () => {
+    try { await api(`/invoice/${code}`, 'DELETE'); showToast('Отменён'); loadInvoices(); }
+    catch(e) { showToast(e.message, true); }
+  });
+}
+function openInvoiceCreate(){
+  document.getElementById('invcAmount').value = '';
+  document.getElementById('invcNote').value = '';
+  openModal('invCreateModal');
+}
+async function doCreateInvoice(){
+  const amount = +document.getElementById('invcAmount').value;
+  const note = document.getElementById('invcNote').value.trim();
+  if (!amount || !Number.isFinite(amount) || amount < 1) { showToast('Введите сумму', true); return; }
+  return withLock('inv-create', async () => {
+    try {
+      const r = await api('/invoice/create', 'POST', { amount_soul: amount, note: note || null });
+      showToast(`Счёт создан · ${r.code}`);
+      closeModal('invCreateModal');
+      await Promise.all([loadInvoices(), loadWallet()]);
+      const url = `${location.origin}/bank/?pay=${encodeURIComponent(r.code)}`;
+      navigator.clipboard.writeText(url).then(() => showToast('Ссылка скопирована'));
+    } catch(e) { showToast(e.message, true); }
+  });
+}
+
+// Открыть страницу оплаты при ?pay=CODE
+async function checkInvoicePayParam(){
+  const p = new URLSearchParams(location.search);
+  const code = p.get('pay');
+  if (!code) return;
+  try {
+    if (!/^[a-z0-9-]{1,20}$/i.test(code)) { showToast('Невалидный код счёта', true); return; }
+    const inv = await api(`/invoice/${encodeURIComponent(code)}`);
+    const fee = Math.max(1, Math.ceil(inv.amount_soul * (inv.fee_bps / 10000)));
+    const isMine = me && inv.owner.username === me.username;
+    const expired = inv.expired || inv.cancelled;
+    const cont = document.getElementById('invPayContent');
+    cont.innerHTML = `
+      <div class="modal-head"><div class="modal-title">Оплата счёта</div><button class="modal-close" onclick="closeModal('invPayModal');history.replaceState(null,'',location.pathname);"><i class="fa-solid fa-xmark"></i></button></div>
+      <div class="modal-info">
+        <h3>${pricePill(inv.amount_soul, 'soul')}</h3>
+        ${inv.note ? `<div class="sub">${esc(inv.note)}</div>` : ''}
+      </div>
+      <div>
+        <div class="modal-row"><span>Получатель</span><b>${inv.owner.is_official ? verifiedBadge() : ''}@${esc(inv.owner.username)}</b></div>
+        <div class="modal-row"><span>Сумма счёта</span><span class="v">${pricePill(inv.amount_soul, 'soul')}</span></div>
+        <div class="modal-row"><span>Комиссия (5%)</span><span class="v">${pricePill(fee, 'soul')}</span></div>
+        <div class="modal-row"><span><b>Итого с вашего баланса</b></span><span class="v"><b>${pricePill(inv.amount_soul + fee, 'soul')}</b></span></div>
+        <div class="modal-row"><span>Уже оплачен раз</span><b>${inv.paid_count}</b></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="closeModal('invPayModal');history.replaceState(null,'',location.pathname);">Отмена</button>
+        ${expired ? '<button class="btn ghost" disabled>Счёт неактивен</button>' : isMine ? '<button class="btn ghost" disabled>Это ваш счёт</button>' : `<button class="btn primary" onclick="payInvoice(${jsArg(code)})">Оплатить</button>`}
+      </div>`;
+    openModal('invPayModal');
+  } catch(e) { showToast(e.message || 'Счёт не найден', true); }
+}
+async function payInvoice(code){
+  return withLock('pay:'+code, async () => {
+    try {
+      const r = await api(`/invoice/${encodeURIComponent(code)}/pay`, 'POST');
+      showToast(`Оплачено! −${fmtNum(r.amount + r.fee)} Soul`);
+      closeModal('invPayModal');
+      history.replaceState(null, '', location.pathname);
+      loadWallet();
+    } catch(e) { showToast(e.message, true); }
+  });
+}
+
+// ══════════════ USERNAMES ══════════════
+async function openUsername(){
+  try {
+    const r = await api('/username/my');
+    const cont = document.getElementById('usernameContent');
+    const additional = r.additional || [];
+    cont.innerHTML = `
+      <div class="modal-head"><div class="modal-title">Мои username</div><button class="modal-close" onclick="closeModal('usernameModal')"><i class="fa-solid fa-xmark"></i></button></div>
+      <div class="modal-row"><span>Создано всего (lifetime)</span><b>${r.lifetime_created} / ${r.lifetime_cap}</b></div>
+      <div class="modal-row"><span>Сейчас primary</span><b>@${esc(r.primary)}</b></div>
+      ${additional.length ? '<div style="margin-top:12px;font-size:11px;color:var(--sub);text-transform:uppercase;font-weight:700;letter-spacing:0.5px;">Дополнительные:</div>' : ''}
+      ${additional.map(a => {
+        const uArg = jsArg(a.username);
+        const priceArg = a.for_sale_price == null ? 'null' : Number(a.for_sale_price);
+        return `
+        <div class="modal-row">
+          <span>@${esc(a.username)}${a.for_sale_price ? ` <span style="color:var(--soul);font-size:11px;">· продаётся за ${Number(a.for_sale_price)}</span>` : ''}</span>
+          <span style="display:flex;gap:6px;">
+            <button class="btn ghost" style="padding:5px 10px;font-size:11px;" onclick="setUsernamePrimary(${uArg})">Сделать primary</button>
+            <button class="btn ghost" style="padding:5px 10px;font-size:11px;" onclick="listUsernameForSale(${uArg}, ${priceArg})">${a.for_sale_price ? 'Снять' : 'Продать'}</button>
+          </span>
+        </div>`;
+      }).join('')}
+      ${r.lifetime_created < r.lifetime_cap ? `
+        <div class="field" style="margin-top:14px;">
+          <label>Создать новый username (100 Soul, осталось ${r.lifetime_cap - r.lifetime_created} раз)</label>
+          <input id="unNew" placeholder="например cool-name" autocomplete="off">
+        </div>
+        <div class="modal-actions">
+          <button class="btn ghost" onclick="closeModal('usernameModal')">Закрыть</button>
+          <button class="btn primary" onclick="doCreateUsername()">Создать за 100 Soul</button>
+        </div>` : '<div style="text-align:center;color:var(--sub);font-size:12px;margin-top:14px;">Лимит создания исчерпан. Дополнительные можно только купить у других.</div><div class="modal-actions"><button class="btn ghost" onclick="closeModal(\'usernameModal\')">Закрыть</button></div>'}
+    `;
+    openModal('usernameModal');
+  } catch(e) { showToast(e.message, true); }
+}
+async function doCreateUsername(){
+  const u = document.getElementById('unNew').value.trim().toLowerCase();
+  if (!u) { showToast('Введите username', true); return; }
+  try {
+    await api('/username/create', 'POST', { username: u });
+    showToast(`Создан @${u}`);
+    closeModal('usernameModal');
+    loadWallet();
+  } catch(e) { showToast(e.message, true); }
+}
+async function setUsernamePrimary(u){
+  if (!await Dialog.confirm(`Сделать @${u} основным username?`, { title: 'Сменить основной', okText: 'Сделать основным' })) return;
+  try {
+    const r = await api('/username/set_primary', 'POST', { username: u });
+    showToast(`Теперь @${r.primary}`);
+    me.username = r.primary;
+    localStorage.setItem('gs_me', JSON.stringify(me));
+    closeModal('usernameModal');
+  } catch(e) { showToast(e.message, true); }
+}
+async function listUsernameForSale(u, currentPrice){
+  if (currentPrice !== null) {
+    if (!await Dialog.confirm(`Снять @${u} с продажи?`, { title: 'Снять', okText: 'Снять' })) return;
+    try { await api('/username/list', 'POST', { username: u, price_soul: null }); showToast('Снят'); openUsername(); }
+    catch(e) { showToast(e.message, true); }
+    return;
+  }
+  const raw = await Dialog.prompt(`Цена в Soul за @${u}:`, '50',
+    { title: 'Выставить на продажу', placeholder: 'число', okText: 'Выставить' });
+  if (raw == null) return;
+  const price = +raw;
+  if (!price || price < 1) return;
+  try { await api('/username/list', 'POST', { username: u, price_soul: price }); showToast(`Выставлен за ${price} Soul`); openUsername(); }
+  catch(e) { showToast(e.message, true); }
+}
+
+// ══════════════ MINT NFT ══════════════
+function openMintNft(){
+  document.getElementById('mintEmoji').value = '';
+  document.getElementById('mintSlug').value = '';
+  document.getElementById('mintName').value = '';
+  document.getElementById('mintSupply').value = 100;
+  document.getElementById('mintAutoBuy').value = 0;
+  document.getElementById('mintSellPrice').value = 1;
+  document.getElementById('mintBg').value = '#a855f7';
+  updateMintPreview();
+  updateMintCost();
+  openModal('mintModal');
+}
+function updateMintPreview(){
+  const emoji = document.getElementById('mintEmoji').value || '?';
+  const bg = document.getElementById('mintBg').value;
+  const p = document.getElementById('mintPreview');
+  p.textContent = emoji;
+  p.style.background = bg;
+}
+function updateMintCost(){
+  const supply = +document.getElementById('mintSupply').value || 100;
+  const autoBuy = +document.getElementById('mintAutoBuy').value || 0;
+  const price = +document.getElementById('mintSellPrice').value || 1;
+  const supplyFee = Math.max(1, Math.round((10000 / supply) ** 1.1));
+  const gostCost = 50 + supplyFee;
+  const soulPayout = autoBuy * price;
+  document.getElementById('mintCostG').innerHTML = `${pricePill(gostCost, 'gost')} <span style="color:var(--sub);font-size:11px;">(50 + ${supplyFee})</span>`;
+  document.getElementById('mintPayout').innerHTML = soulPayout > 0 ? pricePill(soulPayout, 'soul') + ' от системы' : '0';
+}
+async function doMintNft(){
+  const body = {
+    slug: document.getElementById('mintSlug').value.trim().toLowerCase(),
+    name: document.getElementById('mintName').value.trim(),
+    description: '',
+    supply: +document.getElementById('mintSupply').value,
+    image_emoji: document.getElementById('mintEmoji').value.trim(),
+    bg_color: document.getElementById('mintBg').value,
+    rarity: 'common',
+    auto_buy: +document.getElementById('mintAutoBuy').value,
+    sell_price_soul: +document.getElementById('mintSellPrice').value,
+  };
+  if (!body.slug || !body.name || !body.image_emoji) { showToast('Заполните slug, имя и эмодзи', true); return; }
+  if (!Number.isInteger(body.supply) || body.supply < 1) { showToast('Тираж: целое число > 0', true); return; }
+  if (!Number.isFinite(body.sell_price_soul) || body.sell_price_soul < 0) { showToast('Цена: число ≥ 0', true); return; }
+  return withLock('mint:'+body.slug, async () => {
+    try {
+      const r = await api('/nft/mint', 'POST', body);
+      showToast(`NFT создан! −${r.gost_paid} Gost, +${r.soul_received} Soul`);
+      closeModal('mintModal');
+      await Promise.all([loadWallet(), loadCatalog(), loadMyNfts(), loadMarket()]);
+    } catch(e) { showToast(e.message, true); }
+  });
+}
+
+// ══════════════ SEED PHRASE ══════════════
+function showSeedModal(seed){
+  document.getElementById('seedDisplay').textContent = seed;
+  document.getElementById('seedDisplay').dataset.seed = seed;
+  openModal('seedModal');
+}
+function copySeed(){
+  const s = document.getElementById('seedDisplay').dataset.seed;
+  navigator.clipboard.writeText(s).then(() => showToast('Скопировано'));
+}
+
+// ── WebSocket ──
+function connectWS(){
+  if (_wsAuthFail) return;
+  if (_ws && (_ws.readyState === 0 || _ws.readyState === 1)) return;
+  const base = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/soc/ws';
+  const u = token ? `${base}?token=${encodeURIComponent(token)}` : base;
+  try { _ws = new WebSocket(u); } catch(_) { setTimeout(connectWS, _wsReconnectDelay); return; }
+  let pingTimer = null;
+  _ws.onopen = () => {
+    _wsReconnectDelay = 1000;
+    clearInterval(pingTimer);
+    pingTimer = setInterval(() => { try { _ws.send('ping'); } catch(_) {} }, 25000);
+    loadWallet();
+  };
+  _ws.onmessage = (e) => {
+    if (e.data === 'pong') return;
+    let m; try { m = JSON.parse(e.data); } catch(_) { return; }
+    handleWS(m);
+  };
+  _ws.onclose = (ev) => {
+    clearInterval(pingTimer);
+    if (ev && (ev.code === 1008 || ev.code === 4401 || ev.code === 4403)) { _wsAuthFail = true; return; }
+    setTimeout(connectWS, _wsReconnectDelay);
+    _wsReconnectDelay = Math.min(_wsReconnectDelay * 2, 30000);
+  };
+  _ws.onerror = () => { try { _ws.close(); } catch(_) {} };
+}
+function handleWS(m){
+  const t = m.type, d = m.data || {};
+  if (t === 'wallet.credit') {
+    if (d.currency === 'gost' && typeof d.balance === 'number') setBalance('bGost', d.balance);
+    if (d.currency === 'soul' && typeof d.balance === 'number') setBalance('bSoul', d.balance);
+    const lbl = {register:'welcome', daily:'дейли', post:'за пост', react:'за лайк', comment:'за коммент', follow:'за подписчика', transfer_in:'перевод', nft_sell:'продажа NFT'}[d.source] || d.source;
+    const sign = d.delta > 0 ? '+' : '';
+    showToast(`${sign}${d.delta} ${d.currency === 'soul' ? 'Soul' : 'Gost'} · ${lbl}`);
+    loadWallet();
+  } else if (t === 'nft.sold' || t === 'nft.received') {
+    loadMarket(); loadMyNfts(); loadCatalog();
+    if (t === 'nft.received') showToast(`Вам передан NFT от @${d.from}!`);
+  }
+}
+
+function showAuth(){
+  document.getElementById('authScreen').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+}
+function showApp(){
+  document.getElementById('authScreen').style.display = 'none';
+  document.getElementById('app').style.display = '';
+  if (me) document.getElementById('hAvatar').textContent = ini(me.display_name || me.username);
+  selectCurrency(_activeCurrency);
+}
+
+async function init(){
+  if (!token) { showAuth(); return; }
+  try {
+    const d = await api('/me');
+    me = { id: d.id || d.user_id, username: d.username, display_name: d.display_name, is_guest: !!d.is_guest };
+    localStorage.setItem('gs_me', JSON.stringify(me));
+    if (me.is_guest) { showAuth(); return; }
+    showApp();
+    await Promise.all([loadWallet(), loadCatalog(), loadMyNfts(), loadMarket(), loadInvoices()]);
+    connectWS();
+    checkInvoicePayParam();
+  } catch(e) {
+    console.error('[init]', e);
+    if (e.status === 401) { localStorage.removeItem('gs_token'); localStorage.removeItem('gs_me'); }
+    showAuth();
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && token) { loadWallet(); loadMarket(); loadMyNfts(); }
+});
+window.addEventListener('focus', () => { if (token) loadWallet(); });
+
+init();
+
+// ── Реферальная программа ──
+async function loadRefBlock(){
+  let data;
+  try { data = await api('/ref/me'); }
+  catch(e) { return; }
+  const sec = document.getElementById('refSection');
+  if (!sec) return;
+  sec.style.display = '';
+  const origin = location.origin || 'https://ghostecos.duckdns.org';
+  const fullLink = origin + '/?ref=' + encodeURIComponent(data.username);
+  document.getElementById('refLinkInp').value = fullLink;
+  const stats = document.getElementById('refStats');
+  if (stats) stats.textContent = `${data.total_invited} · +${data.total_earned_gost} Gost`;
+  // Список приглашённых
+  const list = document.getElementById('refInvitedList');
+  if (data.invited && data.invited.length) {
+    list.innerHTML = `<div style="font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Кого ты привёл (${data.total_invited})</div>` +
+      data.invited.slice(0, 5).map(u =>
+        `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+           <div style="width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700;">${(u.display_name||u.username||'?')[0].toUpperCase()}</div>
+           <div style="flex:1;font-size:12px;">${escape_(u.display_name || u.username)}</div>
+           <div style="font-size:10px;color:var(--muted);">@${escape_(u.username)}</div>
+         </div>`
+      ).join('') +
+      (data.total_invited > 5 ? `<div style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px;">+ ещё ${data.total_invited - 5}</div>` : '');
+  } else {
+    list.innerHTML = '';
+  }
+}
+
+function escape_(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function copyRefLink(){
+  const inp = document.getElementById('refLinkInp');
+  if (!inp || !inp.value) return;
+  try {
+    await navigator.clipboard.writeText(inp.value);
+    const btn = document.getElementById('refCopyBtn');
+    const old = btn.innerHTML;
+    btn.innerHTML = '<i class="fa-solid fa-check"></i>';
+    setTimeout(() => { btn.innerHTML = old; }, 1500);
+    showToast('Ссылка скопирована');
+  } catch(_) {
+    inp.select(); document.execCommand('copy');
+    showToast('Ссылка скопирована');
+  }
+}
+
+async function shareRefLink(){
+  const link = document.getElementById('refLinkInp').value;
+  if (!link) return;
+  const text = 'Заходи в GhostChat — мессенджер где сервер не видит твои сообщения. Получишь +30 Gost: ' + link;
+  if (navigator.share) {
+    try { await navigator.share({title:'GhostChat', text, url: link}); return; } catch(_) {}
+  }
+  // Fallback: копируем
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('Текст скопирован');
+  } catch(_) { showToast('Скопируйте ссылку вручную', true); }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin · GhostChat Shop</title>
+  <link rel="icon" type="image/png" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="{{PREFIX}}/static/common.css">
+  <style>
+    #pwGate {
+      position: fixed; inset: 0; z-index: 200;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(2, 6, 23, 0.85); backdrop-filter: blur(16px);
+    }
+    #pwGate .card { text-align: center; max-width: 360px; width: 100%; }
+    .admin-layout {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 16px;
+      align-items: start;
+      min-height: calc(100vh - 160px);
+    }
+    @media (max-width: 720px) {
+      .admin-layout { grid-template-columns: 1fr; }
+    }
+
+    /* Список тикетов */
+    .ticket-list { display: flex; flex-direction: column; gap: 6px; }
+    .ticket-item {
+      padding: 14px 16px; border-radius: 12px;
+      border: 1px solid var(--border-strong);
+      background: rgba(15, 23, 42, 0.3);
+      backdrop-filter: blur(10px);
+      cursor: pointer; transition: all 0.15s;
+    }
+    .ticket-item:hover { border-color: rgba(168,85,247,0.5); background: rgba(15,23,42,0.55); }
+    .ticket-item.active { border-color: rgba(168,85,247,0.7); background: rgba(168,85,247,0.1); }
+    .ticket-item .t-id { font-family: 'Courier New', monospace; font-weight: 700; font-size: 14px; }
+    .ticket-item .t-user { font-size: 13px; color: var(--sub); margin-top: 3px; }
+    .ticket-item .t-meta { display: flex; gap: 8px; align-items: center; margin-top: 6px; flex-wrap:wrap; }
+
+    /* Детали тикета */
+    .chat {
+      background: rgba(2, 6, 23, 0.4);
+      border: 1px solid var(--border-strong);
+      border-radius: 14px; padding: 14px; height: 380px; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word; }
+    .msg-user   { align-self: flex-end; background: rgba(30, 41, 59, 0.8); }
+    .msg-admin  { align-self: flex-start;
+      background: linear-gradient(135deg, var(--primary), var(--primary2));
+      color: white; box-shadow: 0 4px 14px rgba(168,85,247,0.3);
+    }
+    .msg-system { align-self: center; background: transparent; color: var(--muted); font-size: 12px; font-style: italic; max-width: 100%; text-align:center; }
+    .msg-time { font-size: 10px; opacity: 0.6; margin-top: 4px; display: block; }
+
+    .action-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+    .stat-row { display: flex; gap: 20px; flex-wrap: wrap; }
+    .stat-box {
+      flex: 1; min-width: 100px; text-align: center;
+      padding: 16px 12px; border-radius: 14px;
+      background: rgba(15,23,42,0.3); border: 1px solid var(--border-strong);
+    }
+    .stat-box .n { font-size: 28px; font-weight: 800; background: linear-gradient(90deg, var(--primary), var(--primary2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .stat-box .l { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+    .no-ticket {
+      display: flex; align-items: center; justify-content: center;
+      height: 100%; min-height: 300px; color: var(--muted); font-size: 15px;
+      flex-direction: column; gap: 12px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Экран-замок с паролем -->
+<div id="pwGate" style="display:none;">
+  <div class="card">
+    <div style="width:52px;height:52px;border-radius:14px;margin:0 auto 18px;
+      background:rgba(168,85,247,0.15);border:1px solid rgba(168,85,247,0.3);
+      display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--primary);">
+      <i class="fa-solid fa-lock"></i>
+    </div>
+    <h2 style="font-size:22px;margin-bottom:6px;">Admin</h2>
+    <p style="margin-bottom:20px;font-size:14px;">Введи пароль владельца</p>
+    <input id="pwInput" class="input" type="password" placeholder="пароль"
+           autofocus enterkeyhint="go"
+           style="margin-bottom:10px;text-align:center;letter-spacing:2px;"/>
+    <button id="pwBtn" class="btn btn-primary" style="width:100%;justify-content:center;margin-top:2px;">
+      <i class="fa-solid fa-unlock"></i> Войти
+    </button>
+    <p id="pwErr" style="color:var(--red);font-size:13px;min-height:18px;margin-top:10px;"></p>
+  </div>
+</div>
+
+<nav>
+  <a class="nav-logo" href="/">GhostChat</a>
+  <div class="nav-links">
+    <a href="{{PREFIX}}/admin" class="active">Admin</a>
+    <a href="{{PREFIX}}/premium">Shop</a>
+  </div>
+  <div class="nav-right"></div>
+</nav>
+
+<div class="page" style="max-width:1100px;">
+  <h1><span class="grad">Admin</span> панель</h1>
+
+  <!-- Статистика -->
+  <div class="stat-row" style="margin-bottom:20px;" id="statsRow">
+    <div class="stat-box"><div class="n" id="sTotal">—</div><div class="l">всего тикетов</div></div>
+    <div class="stat-box"><div class="n" id="sPending" style="-webkit-text-fill-color:var(--yellow);">—</div><div class="l">ждут проверки</div></div>
+    <div class="stat-box"><div class="n" id="sConfirmed" style="-webkit-text-fill-color:var(--green);">—</div><div class="l">подтверждено</div></div>
+    <div class="stat-box"><div class="n" id="sOpen">—</div><div class="l">открыты</div></div>
+  </div>
+
+  <div class="admin-layout">
+    <!-- Список тикетов -->
+    <div class="card" style="padding:16px;">
+      <h3 style="margin-bottom:12px;"><i class="fa-solid fa-ticket" style="color:var(--primary); margin-right:6px;"></i> Тикеты</h3>
+      <div id="ticketList" class="ticket-list">
+        <div style="color:var(--muted); font-size:13px; text-align:center; padding:20px;">Загрузка…</div>
+      </div>
+      <div id="pagination" style="display:flex; gap:8px; margin-top:12px; justify-content:center;"></div>
+    </div>
+
+    <!-- Правая колонка — детали -->
+    <div class="card" id="detailCard">
+      <div class="no-ticket" id="noTicket">
+        <i class="fa-solid fa-ticket" style="font-size:32px; opacity:0.3;"></i>
+        <span>Выбери тикет слева</span>
+      </div>
+      <div id="ticketDetail" style="display:none;">
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap;">
+          <span id="dTicketId" style="font-family:'Courier New',monospace; font-weight:700; font-size:16px;"></span>
+          <span id="dStatus" class="badge badge-purple"></span>
+          <span id="dMethod" class="badge badge-blue" style="display:none;"></span>
+          <span style="color:var(--muted); font-size:13px; margin-left:auto;" id="dDate"></span>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; padding:12px; border-radius:12px; background:rgba(2,6,23,0.4); border:1px solid var(--border);">
+          <div style="flex:1;">
+            <div style="font-size:12px; color:var(--muted);">GhostChat</div>
+            <div id="dGc" style="font-weight:600; margin-top:2px;"></div>
+          </div>
+          <div>
+            <div style="font-size:12px; color:var(--muted);">Сумма</div>
+            <div id="dAmt" style="font-weight:600; margin-top:2px;"></div>
+          </div>
+        </div>
+
+        <h3 style="margin-bottom:8px;">Чат</h3>
+        <div class="chat" id="dChat"></div>
+
+        <div style="display:flex; gap:8px; margin-top:10px;">
+          <input id="adminInput" class="input" placeholder="Ответить…" maxlength="2000" style="flex:1;" enterkeyhint="send"/>
+          <button id="btnAdminSend" class="btn btn-primary" style="padding:12px 16px;">
+            <i class="fa-solid fa-paper-plane"></i>
+          </button>
+        </div>
+
+        <div class="action-row" id="actionRow"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>window.SHOP_PREFIX = "{{PREFIX}}";</script>
+<script src="{{PREFIX}}/static/mesh.js"></script>
+<script src="{{PREFIX}}/static/common.js"></script>
+<script>
+(async function () {
+  const me = await SHOP.requireAuth();
+  if (!me) return;
+  if (!me.is_owner) {
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-size:20px;color:var(--red);">Доступ запрещён</div>';
+    return;
+  }
+  SHOP.renderNav(me);
+
+  // --- Пароль-замок ---
+  const SESSION_KEY = '__admin_ok';
+  const alreadyVerified = sessionStorage.getItem(SESSION_KEY) === '1';
+
+  if (!alreadyVerified) {
+    const gate = document.getElementById('pwGate');
+    gate.style.display = 'flex';
+    const inp = document.getElementById('pwInput');
+    const err = document.getElementById('pwErr');
+
+    await new Promise(resolve => {
+      async function tryVerify() {
+        const pw = inp.value;
+        if (!pw) { err.textContent = 'Введи пароль'; return; }
+        err.textContent = '';
+        inp.disabled = true;
+        try {
+          await SHOP.api('/api/admin/verify', { method: 'POST', body: { password: pw } });
+          sessionStorage.setItem(SESSION_KEY, '1');
+          gate.style.display = 'none';
+          resolve();
+        } catch (e) {
+          err.textContent = e.status === 403 ? 'Неверный пароль' : 'Ошибка';
+          inp.disabled = false;
+          inp.select();
+        }
+      }
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') tryVerify(); });
+      document.getElementById('pwBtn').addEventListener('click', tryVerify);
+      setTimeout(() => inp.focus(), 50);
+    });
+  }
+
+  let tickets = [];
+  let currentId = null;
+  let pollTimer = null;
+  let lastMsgId = 0;
+  let page = 0;
+  const PAGE = 50;
+
+  const STATUS_MAP = {
+    open:         ['badge-purple', 'ожидает оплаты'],
+    payment_sent: ['badge-yellow', 'ждёт проверки'],
+    confirmed:    ['badge-green',  'оплачено ✓'],
+    cancelled:    ['badge-red',    'отменён'],
+    rejected:     ['badge-red',    'отклонён'],
+  };
+
+  async function loadTickets() {
+    try {
+      const r = await SHOP.api('/api/admin/tickets?limit=' + PAGE + '&offset=' + (page * PAGE));
+      tickets = r.tickets;
+
+      // stats
+      document.getElementById('sTotal').textContent = r.total;
+      document.getElementById('sPending').textContent = tickets.filter(t => t.status === 'payment_sent').length;
+      document.getElementById('sConfirmed').textContent = tickets.filter(t => t.status === 'confirmed').length;
+      document.getElementById('sOpen').textContent = tickets.filter(t => t.status === 'open').length;
+
+      renderList();
+      renderPagination(r.total);
+    } catch (e) { SHOP.toast('Ошибка загрузки', 'error'); }
+  }
+
+  function renderList() {
+    const el = document.getElementById('ticketList');
+    if (!tickets.length) { el.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:20px;">Пусто</div>'; return; }
+    el.innerHTML = tickets.map(t => {
+      const [cls, label] = STATUS_MAP[t.status] || ['badge-purple', t.status];
+      const date = new Date(t.created_at * 1000).toLocaleDateString('ru-RU');
+      const method = t.payment_method ? t.payment_method : '';
+      const methodIcon = method === 'send' ? '💎' : method === 'donate' ? '🧡' : '';
+      return `<div class="ticket-item${t.ticket_id === currentId ? ' active' : ''}" onclick="openTicket('${t.ticket_id}')">
+        <div class="t-id">${t.ticket_id}</div>
+        <div class="t-user">@${SHOP.escape(t.gc_username)}</div>
+        <div class="t-meta">
+          <span class="badge ${cls}" style="font-size:11px;">${label}</span>
+          ${methodIcon ? '<span style="font-size:12px;">'+methodIcon+'</span>' : ''}
+          <span style="font-size:11px;color:var(--muted);margin-left:auto;">${date} · ${t.amount_rub}₽</span>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function renderPagination(total) {
+    const pages = Math.ceil(total / PAGE);
+    const el = document.getElementById('pagination');
+    if (pages <= 1) { el.innerHTML = ''; return; }
+    let h = '';
+    for (let i = 0; i < pages; i++) {
+      h += `<button onclick="goPage(${i})" class="btn btn-${i === page ? 'primary' : 'ghost'}" style="padding:6px 12px;font-size:13px;">${i+1}</button>`;
+    }
+    el.innerHTML = h;
+  }
+
+  window.goPage = function(p) { page = p; loadTickets(); };
+
+  window.openTicket = async function(id) {
+    currentId = id;
+    if (pollTimer) clearInterval(pollTimer);
+    renderList(); // подсветить активный
+    document.getElementById('noTicket').style.display = 'none';
+    document.getElementById('ticketDetail').style.display = '';
+
+    let t;
+    try { t = await SHOP.api('/api/tickets/' + encodeURIComponent(id)); }
+    catch (e) { SHOP.toast('Ошибка', 'error'); return; }
+
+    renderDetail(t);
+    lastMsgId = t.messages.length ? t.messages[t.messages.length-1].id : 0;
+    pollTimer = setInterval(pollDetail, 4000);
+  };
+
+  function renderDetail(t) {
+    document.getElementById('dTicketId').textContent = t.ticket_id;
+    const [cls, label] = STATUS_MAP[t.status] || ['badge-purple', t.status];
+    const sEl = document.getElementById('dStatus');
+    sEl.className = 'badge ' + cls;
+    sEl.textContent = label;
+
+    const mEl = document.getElementById('dMethod');
+    if (t.payment_method) {
+      mEl.style.display = '';
+      const icons = { send: '💎 @send', donate: '🧡 DonationAlerts' };
+      mEl.textContent = icons[t.payment_method] || t.payment_method;
+    }
+
+    document.getElementById('dDate').textContent =
+      new Date(t.created_at * 1000).toLocaleString('ru-RU');
+    document.getElementById('dGc').textContent = '@' + (t.user?.gc_username || '—');
+    document.getElementById('dAmt').textContent = t.amount_rub + ' ₽';
+
+    const chat = document.getElementById('dChat');
+    chat.innerHTML = '';
+    for (const m of t.messages) appendMsg(m);
+    chat.scrollTop = chat.scrollHeight;
+
+    // Кнопки действий
+    const row = document.getElementById('actionRow');
+    row.innerHTML = '';
+    if (t.status === 'payment_sent') {
+      row.innerHTML = `
+        <button onclick="confirmTicket('${t.ticket_id}')" class="btn btn-primary">
+          <i class="fa-solid fa-check"></i> Подтвердить оплату
+        </button>
+        <button onclick="rejectTicket('${t.ticket_id}')" class="btn btn-danger">
+          <i class="fa-solid fa-xmark"></i> Отклонить
+        </button>
+      `;
+    } else if (t.status === 'open') {
+      row.innerHTML = `<span style="font-size:13px;color:var(--muted);">Ждём оплаты от пользователя…</span>`;
+    } else if (t.status === 'confirmed') {
+      row.innerHTML = `<span style="font-size:13px;color:var(--green);"><i class="fa-solid fa-check"></i> Premium выдан</span>`;
+    }
+  }
+
+  function appendMsg(m) {
+    const el = document.createElement('div');
+    el.className = 'msg msg-' + m.sender;
+    const time = new Date(m.sent_at * 1000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    const who = m.sender === 'user' ? '👤 ' : m.sender === 'admin' ? '🔑 ' : '';
+    el.innerHTML = who + SHOP.escape(m.body) + '<span class="msg-time">' + time + '</span>';
+    document.getElementById('dChat').appendChild(el);
+  }
+
+  async function pollDetail() {
+    if (!currentId) return;
+    try {
+      const r = await SHOP.api('/api/tickets/' + encodeURIComponent(currentId) + '/messages?after=' + lastMsgId);
+      if (r.messages.length) {
+        const chat = document.getElementById('dChat');
+        const atBottom = chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 20;
+        for (const m of r.messages) { appendMsg(m); lastMsgId = m.id; }
+        if (atBottom) chat.scrollTop = chat.scrollHeight;
+      }
+      // Если статус изменился — перезагрузить тикет целиком
+      const cur = document.getElementById('dStatus').textContent;
+      const map = { open: 'ожидает оплаты', payment_sent: 'ждёт проверки', confirmed: 'оплачено ✓', cancelled: 'отменён', rejected: 'отклонён' };
+      if (r.status && cur !== map[r.status]) {
+        const t = await SHOP.api('/api/tickets/' + encodeURIComponent(currentId));
+        renderDetail(t);
+        lastMsgId = t.messages.length ? t.messages[t.messages.length-1].id : 0;
+        loadTickets(); // обновить счётчики
+      }
+    } catch (_) {}
+  }
+
+  // Отправить сообщение как admin
+  async function sendAdminMsg() {
+    const inp = document.getElementById('adminInput');
+    const body = inp.value.trim();
+    if (!body || !currentId) return;
+    inp.value = '';
+    try {
+      await SHOP.api('/api/tickets/' + encodeURIComponent(currentId) + '/messages', { method: 'POST', body: { body } });
+      await pollDetail();
+    } catch (e) { SHOP.toast(e.message || 'Ошибка', 'error'); inp.value = body; }
+  }
+  document.getElementById('btnAdminSend').addEventListener('click', sendAdminMsg);
+  document.getElementById('adminInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAdminMsg(); }
+  });
+
+  window.confirmTicket = async function(id) {
+    if (!confirm('Подтвердить оплату по тикету ' + id + '?')) return;
+    try {
+      await SHOP.api('/api/tickets/' + encodeURIComponent(id) + '/confirm', { method: 'POST' });
+      SHOP.toast('Premium выдан ✓', 'success');
+      const t = await SHOP.api('/api/tickets/' + encodeURIComponent(id));
+      renderDetail(t);
+      loadTickets();
+    } catch (e) { SHOP.toast(e.message || 'Ошибка', 'error'); }
+  };
+
+  window.rejectTicket = async function(id) {
+    if (!confirm('Отклонить оплату по тикету ' + id + '?')) return;
+    try {
+      await SHOP.api('/api/tickets/' + encodeURIComponent(id) + '/reject', { method: 'POST' });
+      SHOP.toast('Отклонён', 'success');
+      const t = await SHOP.api('/api/tickets/' + encodeURIComponent(id));
+      renderDetail(t);
+      loadTickets();
+    } catch (e) { SHOP.toast(e.message || 'Ошибка', 'error'); }
+  };
+
+  // Первая загрузка
+  await loadTickets();
+  // Автообновление списка каждые 15 сек
+  setInterval(loadTickets, 15000);
+})();
+</script>
+</body>
+</html>

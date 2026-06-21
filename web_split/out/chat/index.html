@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>GhostChat</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<!-- PWA -->
+<link rel="manifest" href="/chat/manifest.json">
+<meta name="theme-color" content="#7c3aed">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="GhostChat">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+  <link rel="stylesheet" href="/liquid.css">
+  <link rel="stylesheet" href="/chat/static/style.css">
+</head>
+<body>
+<canvas id="mesh-bg"></canvas>
+
+<div id="authScreen">
+  <div class="auth-card">
+    <div class="auth-logo">GhostChat</div>
+    <div class="auth-tagline">Приватный мессенджер</div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tabLogin" onclick="switchTab('login')">Войти</button>
+      <button class="auth-tab" id="tabReg" onclick="switchTab('reg')">Регистрация</button>
+    </div>
+    <div id="loginForm">
+      <input class="auth-input" id="loginUsername" placeholder="Имя пользователя" autocomplete="username" autocapitalize="none">
+      <input class="auth-input" id="loginPassword" type="password" placeholder="Пароль" autocomplete="current-password">
+      <button class="auth-btn" id="loginBtn" onclick="doLogin()">Войти</button>
+      <div class="auth-error" id="loginError"></div>
+      <div class="auth-foot">Аккаунт общий с <a href="/social" target="_blank" rel="noopener">GhostSocial</a></div>
+      <p style="font-size:11px;color:var(--sub);text-align:center;margin-top:14px;line-height:1.55;">
+        Входя или регистрируя аккаунт вы соглашаетесь с
+        <a href="/terms" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;">Условиями пользования</a>
+        и
+        <a href="/privacy" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;">Политикой приватности</a>
+      </p>
+    </div>
+    <div id="regForm" style="display:none">
+      <p class="auth-hint">Латиница, цифры, _ и точка</p>
+      <input class="auth-input" id="regUsername" placeholder="username" autocomplete="username" autocapitalize="none">
+      <input class="auth-input" id="regName" placeholder="Отображаемое имя" autocomplete="name">
+      <input class="auth-input" id="regPassword" type="password" placeholder="Пароль (мин 8)" autocomplete="new-password">
+      <input class="auth-input" id="regPasswordConfirm" type="password" placeholder="Повторите пароль" autocomplete="new-password">
+      <label style="display:flex;align-items:flex-start;gap:8px;margin:12px 2px 4px;font-size:13px;color:var(--sub);cursor:pointer;line-height:1.5;">
+        <input type="checkbox" id="regAge18" style="margin-top:3px;width:16px;height:16px;accent-color:var(--primary);cursor:pointer;flex-shrink:0;">
+        <span>Подтверждаю, что мне исполнилось <b>18 лет</b>, и согласен с <a href="/terms" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;">условиями пользования</a> и <a href="/privacy" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;">политикой приватности</a></span>
+      </label>
+      <button class="auth-btn" id="regBtn" onclick="doRegister()">Зарегистрироваться</button>
+      <div class="auth-error" id="regError"></div>
+      <p style="font-size:11px;color:var(--sub);text-align:center;margin-top:14px;line-height:1.55;">
+        Входя или регистрируя аккаунт вы соглашаетесь с
+        <a href="/terms" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;">Условиями пользования</a>
+        и
+        <a href="/privacy" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;">Политикой приватности</a>
+      </p>
+    </div>
+  </div>
+</div>
+
+<div class="boot" id="boot">
+  <div class="spinner"></div>
+  <h3 id="bootTitle">Подготовка чата</h3>
+  <p id="bootMsg">Минуточку…</p>
+</div>
+
+<div id="app">
+  <div class="app-grid" id="appGrid">
+    <aside class="sb">
+      <div class="sb-head">
+        <button id="sbLeftBtn" class="sb-avatar" onclick="onLeftBtn(event)" title="Меню">?</button>
+        <div class="sb-title">GhostChat</div>
+        <button class="sb-new" onclick="openNewMenu(event)" title="Новый чат / группа"><i class="fa-solid fa-pen-to-square"></i></button>
+        <div class="sb-popup" id="sbNewPopup" style="right:14px;left:auto;top:54px;min-width:200px;">
+          <div class="sb-popup-item" onclick="closeNewMenu();openNewChat()"><i class="fa-solid fa-user"></i> Новый чат</div>
+          <div class="sb-popup-item" onclick="closeNewMenu();openCreateGroup('group')"><i class="fa-solid fa-users"></i> Создать группу</div>
+          <div class="sb-popup-item" onclick="closeNewMenu();openCreateGroup('channel')"><i class="fa-solid fa-bullhorn"></i> Создать канал</div>
+        </div>
+        <div class="sb-popup" id="sbPopup">
+          <div class="sb-popup-item" id="sbMeName" style="cursor:default;color:var(--sub);font-weight:600;padding:8px 12px;border-bottom:1px solid var(--border);margin-bottom:4px;"></div>
+          <div class="sb-popup-item" onclick="window.location.href='/'"><i class="fa-solid fa-house"></i> На главную</div>
+          <div class="sb-popup-item" onclick="window.location.href='/social'"><i class="fa-solid fa-hashtag"></i> GhostSocial</div>
+          <div class="sb-popup-item" onclick="window.location.href='/bank/?from=/chat/'"><i class="fa-solid fa-wallet"></i> GhostBank</div>
+          <div class="sb-popup-item" id="sbInstallItem" onclick="openInstall()" style="display:none;"><i class="fa-solid fa-mobile-screen"></i> Установить как приложение</div>
+          <div class="sb-popup-item danger" onclick="doLogout()"><i class="fa-solid fa-right-from-bracket"></i> Выйти</div>
+        </div>
+      </div>
+      <div class="sb-search">
+        <i class="fa-solid fa-magnifying-glass"></i>
+        <input id="sbSearch" placeholder="Поиск по чатам">
+      </div>
+      <div class="sb-list" id="sbList"></div>
+      <a href="/social" class="sb-foot-link" id="sbFootSocial">
+        <span style="display:flex;align-items:center;gap:9px;">
+          <i class="fa-solid fa-hashtag"></i>
+          <span>Перейти в GhostSocial</span>
+        </span>
+        <span class="sb-foot-badge" id="sbFootBadge"></span>
+      </a>
+    </aside>
+    <main class="chat" id="chatMain">
+      <div class="chat-empty">
+        <i class="fa-solid fa-ghost"></i>
+        <h3>Выберите чат</h3>
+        <p>Откройте диалог слева или начните новый — нажмите кнопку с ручкой вверху.</p>
+        <div style="display:flex;gap:10px;margin-top:24px;flex-wrap:wrap;justify-content:center;">
+          <button onclick="openNewChat()" style="padding:12px 22px;border-radius:12px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:8px;box-shadow:0 6px 18px rgba(168,85,247,0.3);">
+            <i class="fa-solid fa-pen-to-square"></i> Новый чат
+          </button>
+          <a href="/social" style="padding:12px 22px;border-radius:12px;background:transparent;border:1px solid var(--border-strong);color:var(--text);font-size:14px;font-weight:600;text-decoration:none;display:inline-flex;align-items:center;gap:8px;">
+            <i class="fa-solid fa-hashtag"></i> GhostSocial
+          </a>
+        </div>
+      </div>
+    </main>
+    <!-- Профиль чужого юзера — отдельный экран -->
+    <main class="chat" id="profileMain" style="display:none"></main>
+  </div>
+</div>
+
+<div class="modal-overlay" id="newChatModal">
+  <div class="modal-sheet">
+    <div class="m-handle"></div>
+    <div class="m-head">
+      <div class="m-title">Новый чат</div>
+      <button class="m-close" onclick="closeModal('newChatModal')"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="m-search">
+      <i class="fa-solid fa-magnifying-glass"></i>
+      <input id="newChatSearch" placeholder="Поиск по @username или имени">
+    </div>
+    <div class="m-results" id="newChatResults">
+      <div style="padding:30px;text-align:center;color:var(--muted);font-size:13px;">Начните вводить имя</div>
+    </div>
+  </div>
+</div>
+
+<!-- Bottom sheet: emoji-палитра -->
+<div class="emoji-sheet-overlay" id="emojiSheet" onclick="if(event.target===this)closeEmojiSheet()">
+  <div class="emoji-sheet" onclick="event.stopPropagation()">
+    <div class="grab"></div>
+    <div class="emoji-search">
+      <input id="emojiSearchInp" placeholder="Поиск (по тегам: heart, fire, smile...)" oninput="emojiFilterBySearch(this.value)">
+      <button class="foot-btn" onclick="closeEmojiSheet()" title="Закрыть" style="background:transparent;border:0;color:var(--sub);font-size:16px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="emoji-cats" id="emojiCats"></div>
+    <div class="emoji-grid" id="emojiGrid"></div>
+  </div>
+</div>
+
+<!-- Bottom sheet: переслать в чат -->
+<div class="attach-sheet-overlay" id="fwdSheet" onclick="if(event.target===this)closeFwdSheet()">
+  <div class="attach-sheet" onclick="event.stopPropagation()" style="max-height:70vh;display:flex;flex-direction:column;">
+    <div class="grab"></div>
+    <div style="font-weight:700;font-size:15px;margin:0 4px 12px;">Переслать в…</div>
+    <div id="fwdList" style="overflow-y:auto;max-height:55vh;display:flex;flex-direction:column;gap:4px;"></div>
+  </div>
+</div>
+
+<!-- Bottom sheet: выбор типа вложения -->
+<div class="attach-sheet-overlay" id="attachSheet" onclick="if(event.target===this)closeAttachSheet()">
+  <div class="attach-sheet" onclick="event.stopPropagation()">
+    <div class="grab"></div>
+    <div class="attach-grid">
+      <div class="attach-item" onclick="closeAttachSheet();document.getElementById('filePickerImg').click()">
+        <i class="fa-solid fa-image"></i><span>Фото</span>
+      </div>
+      <div class="attach-item" onclick="closeAttachSheet();document.getElementById('filePickerVid').click()">
+        <i class="fa-solid fa-video"></i><span>Видео</span>
+      </div>
+      <div class="attach-item" onclick="closeAttachSheet();document.getElementById('filePicker').click()">
+        <i class="fa-solid fa-file"></i><span>Файл</span>
+      </div>
+      <div class="attach-item" onclick="closeAttachSheet();onSendBtn()">
+        <i class="fa-solid fa-microphone"></i><span>Голосовое</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Принудительный запрос @тега для канала-без-тега (нельзя закрыть) -->
+<div class="modal-overlay" id="forceTagModal" style="z-index:600;">
+  <div class="modal-sheet" style="max-width:420px;">
+    <div class="m-head">
+      <div class="m-title">Нужен @тег для канала</div>
+    </div>
+    <div style="padding:16px 18px;display:flex;flex-direction:column;gap:14px;">
+      <div style="font-size:13px;line-height:1.55;color:var(--sub);">
+        У канала <b id="ftName" style="color:var(--text);"></b> нет публичного @тега. Без него канал нельзя найти и присоединиться.
+        Создай тег чтобы продолжить — это обязательно.
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">@тег (3-20, латиница/цифры/_)</div>
+        <input id="ftInput" maxlength="20" placeholder="my_channel" style="width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);font-family:'SF Mono',Menlo,monospace;font-size:14px;box-sizing:border-box;">
+      </div>
+      <div id="ftError" style="display:none;color:var(--red);font-size:12px;padding:8px 11px;background:rgba(244,63,94,0.08);border-radius:8px;"></div>
+      <button id="ftSubmit" onclick="submitForceTag()" style="padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:14px;">
+        Установить тег
+      </button>
+      <div style="font-size:11px;color:var(--muted);text-align:center;line-height:1.5;">
+        Закрыть это окно нельзя. Канал не виден другим пока без тега.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Создание группы / канала -->
+<div class="modal-overlay" id="createGroupModal">
+  <div class="modal-sheet">
+    <div class="m-handle"></div>
+    <div class="m-head">
+      <div class="m-title" id="cgTitle">Создать группу</div>
+      <button class="m-close" onclick="closeModal('createGroupModal')"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px;">
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Название</div>
+        <input id="cgName" maxlength="80" placeholder="Моя группа" style="width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);font-family:inherit;font-size:14px;box-sizing:border-box;">
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Участники (по @username, через запятую)</div>
+        <input id="cgMembers" placeholder="@alex, @maria, @ghost" style="width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);font-family:inherit;font-size:14px;box-sizing:border-box;">
+        <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5;">Можно добавить позже. Участники должны иметь E2E-ключи (зайти в /chat хотя бы раз).</div>
+      </div>
+      <div id="cgPublicWrap" style="display:none;background:rgba(168,85,247,0.06);border:1px solid rgba(168,85,247,0.20);border-radius:10px;padding:11px 13px;">
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+          <input type="checkbox" id="cgPublic" checked style="width:18px;height:18px;cursor:pointer;accent-color:var(--primary);">
+          <div>
+            <div style="font-size:13px;font-weight:600;">Публичный канал</div>
+            <div style="font-size:11px;color:var(--sub);line-height:1.5;">Виден в поиске, без E2E. Снимешь галку — приватный, по заявкам, с E2E.</div>
+          </div>
+        </label>
+      </div>
+      <div id="cgError" style="display:none;color:var(--red);font-size:12px;padding:8px 11px;background:rgba(244,63,94,0.08);border-radius:8px;"></div>
+      <button id="cgSubmit" onclick="doCreateGroup()" style="padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:14px;">
+        Создать
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="confirm-overlay" id="confirmModal">
+  <div class="confirm-box">
+    <div class="confirm-icon"><i class="fa-solid fa-right-from-bracket"></i></div>
+    <div class="confirm-title" id="confirmTitle"></div>
+    <div class="confirm-msg" id="confirmMsg"></div>
+    <div class="confirm-actions">
+      <button class="confirm-btn cancel" id="confirmCancel">Отмена</button>
+      <button class="confirm-btn ok" id="confirmOk">Ок</button>
+    </div>
+  </div>
+</div>
+
+<!-- iOS install instructions -->
+<div class="install-overlay" id="installModal">
+  <div class="install-box">
+    <button class="install-close" onclick="closeInstall(false)"><i class="fa-solid fa-xmark"></i></button>
+    <div class="install-icon"><img src="/apple-touch-icon.png" alt="" style="width:62px;height:62px;border-radius:14px;"></div>
+    <h2 class="install-title">Установите GhostChat</h2>
+    <p class="install-sub">Откроется как приложение — без браузерной строки, с иконкой на экране Домой.</p>
+    <div class="install-steps">
+      <div class="install-step"><span class="install-num">1</span><div>Тапните <b><i class="fa-solid fa-arrow-up-from-bracket" style="color:#3b82f6"></i> Поделиться</b> внизу Safari</div></div>
+      <div class="install-step"><span class="install-num">2</span><div>Прокрутите и выберите <b>«На экран Домой»</b></div></div>
+      <div class="install-step"><span class="install-num">3</span><div>Нажмите <b>«Добавить»</b> справа сверху</div></div>
+    </div>
+    <button class="install-got" onclick="closeInstall(true)">Понятно</button>
+  </div>
+  <div class="install-arrow"><i class="fa-solid fa-arrow-down"></i></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/mesh.js"></script>
+<script src="/dialog.js"></script>
+
+  <script src="/liquid.js" defer></script>
+  <script src="/chat/static/app.js" defer></script>
+</body>
+</html>

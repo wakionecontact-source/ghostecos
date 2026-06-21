@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Условия пользования — GhostEcos</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #020617; --bg-deep: #060a1a;
+      --surface: rgba(15, 23, 42, 0.45); --surface2: rgba(30, 41, 59, 0.6);
+      --border: rgba(255,255,255,0.08); --border-strong: rgba(255,255,255,0.13);
+      --primary: #a855f7; --primary2: #7c3aed;
+      --text: #f1f5f9; --sub: #94a3b8;
+      --green: #4ade80; --yellow: #fbbf24; --red: #f87171;
+    }
+    html { scroll-behavior: smooth; background: var(--bg); }
+    body { background: transparent; color: var(--text);
+      font-family: 'Inter', sans-serif; overflow-x: hidden; position: relative; }
+    #mesh-bg { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+    body::before {
+      content: ""; position: fixed; inset: 0; z-index: -1;
+      background:
+        radial-gradient(80% 60% at 20% 0%,  rgba(124,58,237,0.18), transparent 60%),
+        radial-gradient(70% 60% at 100% 100%, rgba(168,85,247,0.12), transparent 60%),
+        linear-gradient(180deg, var(--bg-deep), var(--bg));
+    }
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 40px; background: rgba(2,6,23,0.6);
+      backdrop-filter: blur(22px); border-bottom: 1px solid var(--border);
+    }
+    .nav-logo { font-size: 20px; font-weight: 800; letter-spacing: 1px;
+      background: linear-gradient(90deg, var(--primary), var(--primary2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      text-decoration: none; }
+    .nav-right { display: flex; gap: 16px; align-items: center; }
+    .nav-right a { color: var(--sub); text-decoration: none; font-size: 14px;
+      font-weight: 500; transition: color 0.2s; }
+    .nav-right a:hover { color: var(--text); }
+    .nav-right a.active { color: var(--text); }
+    .hero { padding: 130px 40px 50px; text-align: center; position: relative; z-index: 1; }
+    .hero-badge {
+      display: inline-block; background: rgba(168,85,247,0.12);
+      border: 1px solid rgba(168,85,247,0.25); color: var(--primary);
+      padding: 4px 16px; border-radius: 99px; font-size: 11px;
+      letter-spacing: 2px; text-transform: uppercase; font-weight: 600;
+      margin-bottom: 20px;
+    }
+    .hero h1 {
+      font-size: clamp(2rem, 5vw, 3.4rem); font-weight: 800;
+      letter-spacing: -1.5px; margin-bottom: 14px;
+      background: linear-gradient(135deg, #fff 0%, var(--primary) 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .hero-sub { color: var(--sub); font-size: 15px; max-width: 580px;
+      margin: 0 auto; line-height: 1.7; }
+    .container { max-width: 800px; margin: 0 auto;
+      padding: 0 24px 80px; position: relative; z-index: 1; }
+    .card {
+      background: rgba(15, 23, 42, 0.5); backdrop-filter: blur(18px);
+      border: 1px solid var(--border); border-radius: 18px;
+      padding: 24px 28px; margin-bottom: 14px;
+      transition: border-color 0.25s;
+    }
+    .card:hover { border-color: rgba(168,85,247,0.3); }
+    .card-header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+    .card-icon {
+      width: 38px; height: 38px; border-radius: 10px;
+      background: rgba(168,85,247,0.12); border: 1px solid rgba(168,85,247,0.2);
+      display: flex; align-items: center; justify-content: center;
+      color: var(--primary); font-size: 16px; flex-shrink: 0;
+    }
+    .card-icon.danger { background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.25); color: var(--red); }
+    .card-icon.warn { background: rgba(251,191,36,0.1); border-color: rgba(251,191,36,0.25); color: var(--yellow); }
+    .card-icon.ok { background: rgba(74,222,128,0.1); border-color: rgba(74,222,128,0.25); color: var(--green); }
+    .card h2 { font-size: 16px; font-weight: 700; color: var(--text); }
+    .card p { color: var(--sub); font-size: 14px; line-height: 1.75; margin-bottom: 8px; }
+    .card p:last-child { margin-bottom: 0; }
+    .card ul { list-style: none; padding: 0;
+      display: flex; flex-direction: column; gap: 6px; }
+    .card ul li { color: var(--sub); font-size: 14px;
+      line-height: 1.6; padding-left: 16px; position: relative; }
+    .card ul li::before {
+      content: ''; position: absolute; left: 0; top: 9px;
+      width: 5px; height: 5px; border-radius: 50%;
+      background: var(--primary); opacity: 0.6;
+    }
+    .card ul li b { color: var(--text); font-weight: 600; }
+    .card ul.bad li::before { background: var(--red); opacity: 0.7; }
+    .card ul.good li::before { background: var(--green); opacity: 0.8; }
+    .highlight-box {
+      background: rgba(168,85,247,0.08); border: 1px solid rgba(168,85,247,0.2);
+      border-radius: 12px; padding: 12px 16px; margin-top: 12px;
+      color: var(--text); font-size: 13px; font-weight: 500; line-height: 1.6;
+    }
+    .warning-box {
+      background: rgba(251,191,36,0.06); border: 1px solid rgba(251,191,36,0.25);
+      border-radius: 12px; padding: 12px 16px; margin-top: 12px;
+      color: var(--yellow); font-size: 13px; font-weight: 500; line-height: 1.6;
+    }
+    .danger-box {
+      background: rgba(248,113,113,0.06); border: 1px solid rgba(248,113,113,0.25);
+      border-radius: 12px; padding: 12px 16px; margin-top: 12px;
+      color: var(--red); font-size: 13px; font-weight: 500; line-height: 1.6;
+    }
+    .contact-link {
+      display: inline-flex; align-items: center; gap: 8px;
+      margin-top: 10px; padding: 10px 18px;
+      background: rgba(168,85,247,0.1); border: 1px solid rgba(168,85,247,0.25);
+      border-radius: 12px; color: var(--primary); text-decoration: none;
+      font-size: 14px; font-weight: 600; transition: background 0.2s, transform 0.15s;
+    }
+    .contact-link:hover { background: rgba(168,85,247,0.18); transform: translateY(-1px); }
+    .updated { text-align: center; color: var(--sub); font-size: 13px;
+      margin-top: 36px; padding-top: 22px;
+      border-top: 1px solid var(--border); opacity: 0.7; }
+    footer { position: relative; z-index: 1; text-align: center; padding: 24px;
+      color: var(--sub); font-size: 13px; border-top: 1px solid var(--border); }
+    footer a { color: var(--primary); text-decoration: none; }
+    footer a:hover { opacity: 0.8; }
+    @media (max-width: 600px) {
+      nav { padding: 14px 20px; }
+      .hero { padding: 110px 20px 40px; }
+      .container { padding: 0 16px 60px; }
+      .card { padding: 20px; }
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="mesh-bg"></canvas>
+
+<nav>
+  <a class="nav-logo" href="/">GhostEcos</a>
+  <div class="nav-right">
+    <a href="/privacy">Privacy</a>
+    <a href="/terms" class="active">Terms</a>
+    <a href="/">На главную</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <div class="hero-badge">Документ</div>
+  <h1>Условия пользования</h1>
+  <p class="hero-sub">Что можно, что нельзя, и за что забанят. Коротко и без юридических заклинаний.</p>
+</div>
+
+<div class="container">
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon"><i class="fa-solid fa-handshake"></i></div>
+      <h2>Соглашение</h2>
+    </div>
+    <p>Регистрируясь в любом сервисе <b>GhostEcos</b> (GhostChat, GhostSocial, GhostBank, GhostNation, OKey), ты подтверждаешь, что прочитал и принимаешь эти условия и <a href="/privacy" style="color:var(--primary)">политику приватности</a>.</p>
+    <p>Сервис распространяется по принципу <b>AS IS</b> — как есть. Это любительский проект одного разработчика, без SLA, без юридического лица, без гарантий аптайма и сохранности данных.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon"><i class="fa-solid fa-id-card"></i></div>
+      <h2>Возраст и доступ</h2>
+    </div>
+    <ul>
+      <li>Минимальный возраст — <b>18 лет</b> во всех сервисах экосистемы</li>
+      <li>Регистрируясь, ты подтверждаешь, что тебе исполнилось 18 лет</li>
+      <li>Передавать аккаунт третьим лицам можно, но риски (взлом, потеря данных) — на тебе</li>
+      <li>Можно иметь несколько аккаунтов</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon ok"><i class="fa-solid fa-check"></i></div>
+      <h2>Что можно</h2>
+    </div>
+    <ul class="good">
+      <li>Использовать все сервисы бесплатно</li>
+      <li>Создавать публичные и приватные группы, каналы, посты</li>
+      <li>Размещать собственный контент (тексты, фото, видео, голосовые)</li>
+      <li>Зарабатывать игровую валюту Gost за активность</li>
+      <li>Покупать и продавать NFT и кастомные usernames внутри GhostBank</li>
+      <li>Создавать ботов и интеграции на публичных API</li>
+      <li>Форкать код (AGPL-3.0) и поднимать свою копию экосистемы</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon danger"><i class="fa-solid fa-xmark"></i></div>
+      <h2>Что запрещено</h2>
+    </div>
+    <ul class="bad">
+      <li><b>CSAM</b> [си-эс-эй-эм] (Child Sexual Abuse Material — материалы сексуального насилия над детьми) — любые сексуальные материалы с участием несовершеннолетних, включая рисованные (loli/shota) и AI-сгенерированные</li>
+      <li><b>Реальные призывы к терактам и подготовка терактов</b></li>
+      <li><b>Торговля оружием, наркотиками, людьми</b></li>
+      <li><b>Доксинг</b> — публикация чужих персональных данных без согласия</li>
+      <li><b>Атаки на инфраструктуру</b> — DDoS, эксплойты, перебор паролей</li>
+      <li><b>Эксплуатация багов</b> для получения преимуществ. О багах сообщать админу — есть bug-bounty в Gost</li>
+    </ul>
+    <div class="highlight-box">
+      <b>Что РАЗРЕШЕНО</b> (то, за что обычно банят в других соцсетях): жёсткий контент, мемы про насилие, спорные мнения, мат, чёрный юмор, спам, флуд, массовые рассылки, реклама, имперсонация, накрутка активности и балансов, любые дискуссии. Сервис не модерирует за «оскорбление чувств», «токсичность» и тому подобное.
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon warn"><i class="fa-solid fa-eye-slash"></i></div>
+      <h2>18+ контент</h2>
+    </div>
+    <p>Платформа взрослая (18+), <b>контент 18+ между взрослыми разрешён</b> — порно, гуро, шок-контент, любая эротика.</p>
+    <div class="warning-box">
+      <b>Обязательное правило:</b> весь 18+ контент должен публиковаться <b>с включённым блюром</b> (NSFW-тег при загрузке). Это не цензура — просто чтобы случайно не вылетало в общую ленту тем, кто не подписан.
+    </div>
+    <ul>
+      <li>Не поставил блюр сам — администрация поставит вручную</li>
+      <li>За каждый такой случай — снижение репутации аккаунта в GhostEcos</li>
+      <li>Регулярные нарушения = постоянное снижение видимости постов в общей ленте</li>
+      <li>Сам контент не удаляется, только скрывается за блюром</li>
+    </ul>
+    <div class="danger-box">
+      <b>Любые 18+ материалы с несовершеннолетними (CSAM) запрещены полностью</b> и передаются в правоохранительные органы. Это не «контент с блюром», это уголовка.
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon"><i class="fa-solid fa-lock"></i></div>
+      <h2>E2E-шифрование и закон</h2>
+    </div>
+    <p>В GhostChat личные сообщения и приватные группы зашифрованы <b>end-to-end</b>. Администрация физически не может их прочитать или передать кому-либо.</p>
+    <p>Это не значит, что шифрование разрешает совершать преступления. Если ты используешь E2E для координации запрещённых действий — ответственность несёшь ты, а не разработчик.</p>
+    <p>Публичные каналы и посты в GhostSocial <b>не зашифрованы</b> и могут быть снижены в активности/удалены администрацией без предупреждения, если нарушают правила.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon warn"><i class="fa-solid fa-coins"></i></div>
+      <h2>Игровая экономика</h2>
+    </div>
+    <p>Валюты <b>Gost</b>, <b>Soul</b>, <b>Prem</b> и игровые <b>NFT</b> — это внутриигровые объекты для развлечения.</p>
+    <ul>
+      <li>Они <b>не являются криптовалютой</b>, ценными бумагами или иным финансовым инструментом</li>
+      <li>Сервис <b>не выводит</b> валюту в реальные деньги и не предоставляет официального обменника на фиат</li>
+      <li>Не подлежат возврату (refund) за исключением случаев технического сбоя на стороне сервиса</li>
+      <li>При удалении аккаунта или бане — все балансы и NFT передаются системе</li>
+      <li>Администрация оставляет за собой право корректировать балансы при обнаружении эксплойтов</li>
+      <li>Курсы между валютами и эмиссия могут меняться</li>
+    </ul>
+    <div class="highlight-box">
+      <b>P2P-обмен разрешён.</b> Пользователи могут самостоятельно покупать и продавать Gost / Soul / Prem / NFT друг у друга за реальные деньги (вне сервиса) или за любые другие активы. Сервис <b>не участвует</b> в таких сделках, <b>не гарантирует</b> их безопасность и <b>не возмещает</b> убытки при обмане. Все P2P-сделки — на собственный риск.
+    </div>
+    <div class="warning-box">
+      Скам в P2P-сделках — повод заблокировать мошенника, но не повод возвращать пострадавшему его валюту. Используйте гарантов и проверяйте репутацию контрагента.
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon"><i class="fa-solid fa-gavel"></i></div>
+      <h2>Модерация</h2>
+    </div>
+    <p><b>Сервис не удаляет аккаунты и не банит пользователей.</b></p>
+    <p>Единственное что может произойти за неудачный контент:</p>
+    <ul>
+      <li><b>Снижение activity-score поста в GhostSocial</b> — пост реже показывается в ленте «Для вас» при большом числе жалоб или низком engagement. Сам пост не удаляется.</li>
+      <li><b>Снижение репутации в GhostEcos</b> — внутренний счётчик. Влияет на доверие в P2P-сделках, видимость профиля и доступ к некоторым функциям.</li>
+      <li><b>Право на жалобу</b> — любой может пожаловаться. Жалобы влияют только на activity/репутацию, не на бан.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon"><i class="fa-solid fa-copyright"></i></div>
+      <h2>Контент и авторские права</h2>
+    </div>
+    <ul>
+      <li>Опубликованный контент остаётся <b>твоей собственностью</b></li>
+      <li>Размещая контент, ты даёшь сервису неисключительное право его хранить, отображать и кэшировать (необходимо для работы)</li>
+      <li>Серверный и веб-код экосистемы — <b>AGPL-3.0</b>. Можешь форкать и использовать с соблюдением лицензии</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon"><i class="fa-solid fa-trash"></i></div>
+      <h2>Удаление аккаунта</h2>
+    </div>
+    <ul>
+      <li>Удалить аккаунт можно в любой момент через настройки</li>
+      <li>Удаление необратимо — восстановление невозможно</li>
+      <li>При удалении стираются: профиль, посты, комментарии, миниски, балансы Gost/Soul/Prem, NFT, страна в GhostNation (постройки остаются до удаления за неактивность)</li>
+      <li>Сообщения в чатах у собеседников могут остаться (они хранятся у них локально)</li>
+      <li>Username (включая купленные) освобождается через 30 дней и снова доступен для регистрации</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+      <h2>Отказ от ответственности</h2>
+    </div>
+    <ul>
+      <li>Сервис предоставляется без каких-либо гарантий</li>
+      <li>Нет гарантии беспрерывной работы, доступности или сохранности данных</li>
+      <li>Разработчик не несёт ответственности за упущенную выгоду, моральный вред или иные косвенные убытки</li>
+      <li>Делайте резервные копии важной информации самостоятельно</li>
+      <li>Сервис может быть закрыт в любой момент с предварительным уведомлением через @ghostchatof в Telegram</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon"><i class="fa-solid fa-rotate"></i></div>
+      <h2>Изменения условий</h2>
+    </div>
+    <p>Эти условия могут обновляться. Существенные изменения анонсируются в Telegram-канале <b>@ghostchatof</b>. Продолжая пользоваться сервисом после изменений, ты соглашаешься с новой редакцией.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon"><i class="fa-solid fa-envelope"></i></div>
+      <h2>Контакт</h2>
+    </div>
+    <p>По всем вопросам, жалобам, апелляциям бана, bug-bounty и сотрудничеству:</p>
+    <a class="contact-link" href="https://t.me/waki_one" target="_blank" rel="noopener">
+      <i class="fa-brands fa-telegram"></i>
+      @waki_one
+    </a>
+  </div>
+
+  <div class="updated">
+    Последнее обновление: июнь 2026 · GhostEcos v0.2
+  </div>
+
+</div>
+
+<footer>
+  <p>© 2026 GhostEcos · <a href="/">На главную</a> · <a href="/privacy">Privacy</a></p>
+</footer>
+
+<script src="/mesh.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Статистика · GhostChat</title>
+  <link rel="icon" type="image/png" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="{{PREFIX}}/static/common.css">
+  <style>
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 14px;
+      margin-bottom: 12px;
+    }
+    .stat-card {
+      background: var(--surface);
+      backdrop-filter: blur(22px);
+      -webkit-backdrop-filter: blur(22px);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius);
+      padding: 20px 16px;
+      text-align: center;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+    .stat-card:hover { border-color: rgba(168,85,247,0.35); transform: translateY(-2px); }
+    .stat-num {
+      font-size: 34px;
+      font-weight: 800;
+      background: linear-gradient(90deg, var(--primary), var(--primary2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      display: block;
+      line-height: 1.1;
+    }
+    .stat-label { font-size: 12px; color: var(--sub); margin-top: 5px; line-height: 1.4; }
+    .stat-sub { font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.3; min-height: 14px; }
+    .stat-icon { font-size: 16px; color: var(--primary); margin-bottom: 8px; opacity: 0.65; }
+    .section-title {
+      font-size: 11px; font-weight: 600; letter-spacing: 1.5px;
+      color: var(--muted); text-transform: uppercase; margin-bottom: 12px; margin-top: 28px;
+    }
+    .ver-row { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+    .ver-row:last-child { border-bottom: none; }
+    .ver-name { min-width: 90px; font-size: 14px; font-weight: 600; }
+    .ver-bar { flex: 1; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.06); overflow: hidden; }
+    .ver-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--primary), var(--primary2)); transition: width 0.6s ease; }
+    .ver-count { min-width: 36px; text-align: right; font-size: 13px; color: var(--sub); }
+    .spin {
+      display: inline-block; width: 22px; height: 22px;
+      border: 2px solid rgba(168,85,247,0.25); border-top-color: var(--primary);
+      border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .refresh-btn {
+      cursor: pointer; background: none; border: 1px solid var(--border-strong);
+      border-radius: 8px; color: var(--sub); padding: 6px 12px; font-size: 13px;
+      font-family: inherit; transition: color 0.2s, border-color 0.2s;
+    }
+    .refresh-btn:hover { color: var(--text); border-color: rgba(168,85,247,0.4); }
+    .updated-at { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="/">GhostChat</a>
+  <div class="nav-links">
+    <a href="{{PREFIX}}/premium">Premium</a>
+  </div>
+  <div class="nav-right"></div>
+</nav>
+
+<div class="page" style="max-width:920px;">
+  <div style="display:flex; align-items:flex-end; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:8px;">
+    <div>
+      <h1>Статистика <span class="grad">GhostChat</span></h1>
+      <p>Публичные данные о визитах, загрузках, аккаунтах и Premium.</p>
+      <div class="updated-at" id="updatedAt"></div>
+    </div>
+    <button class="refresh-btn" id="btnRefresh">
+      <i class="fa-solid fa-rotate-right"></i> Обновить
+    </button>
+  </div>
+
+  <div id="loadingState" style="text-align:center; padding:60px 0;">
+    <span class="spin"></span>
+    <p style="margin-top:14px; color:var(--sub);">Загружаем статистику…</p>
+  </div>
+
+  <div id="statsContent" style="display:none;">
+
+    <div class="section-title">Обзор</div>
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-calendar-day"></i></div>
+        <span class="stat-num" id="sDaysRunning">—</span>
+        <div class="stat-label">Дней в работе</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-eye"></i></div>
+        <span class="stat-num" id="sOvVisitors">—</span>
+        <div class="stat-label">Уникальных визитов</div>
+        <div class="stat-sub" id="sOvVisitorsSub"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-download"></i></div>
+        <span class="stat-num" id="sOvDownloads">—</span>
+        <div class="stat-label">Всего скачиваний</div>
+        <div class="stat-sub" id="sOvDownloadsSub"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-arrow-trend-up"></i></div>
+        <span class="stat-num" id="sConversion">—</span>
+        <div class="stat-label">Конверсия в скачивание</div>
+      </div>
+    </div>
+
+    <div class="section-title">Скачивания</div>
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-code-branch"></i></div>
+        <span class="stat-num" id="sLatestVersion" style="font-size:24px;">—</span>
+        <div class="stat-label">Текущая версия</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-download"></i></div>
+        <span class="stat-num" id="sNewDownloads">—</span>
+        <div class="stat-label">Новых установок</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-arrows-rotate"></i></div>
+        <span class="stat-num" id="sUpdates">—</span>
+        <div class="stat-label">Обновлений</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-calendar-week"></i></div>
+        <span class="stat-num" id="sDownloads7d">—</span>
+        <div class="stat-label">За 7 дней</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-circle-xmark"></i></div>
+        <span class="stat-num" id="sNoDownload">—</span>
+        <div class="stat-label">Не стали скачивать</div>
+        <div class="stat-sub" id="sNoDownloadSub"></div>
+      </div>
+    </div>
+
+    <div class="section-title">Визиты</div>
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-users-viewfinder"></i></div>
+        <span class="stat-num" id="sTotalVisitors">—</span>
+        <div class="stat-label">Всего визитов</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-clock"></i></div>
+        <span class="stat-num" id="sVisitors24h">—</span>
+        <div class="stat-label">За 24 часа</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-calendar-week"></i></div>
+        <span class="stat-num" id="sVisitors7d">—</span>
+        <div class="stat-label">За 7 дней</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-person-walking-arrow-right"></i></div>
+        <span class="stat-num" id="sSkipPct">—</span>
+        <div class="stat-label">Ушли без скачивания</div>
+      </div>
+    </div>
+
+    <div class="section-title">Аккаунты</div>
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-users"></i></div>
+        <span class="stat-num" id="sTotalUsers">—</span>
+        <div class="stat-label">Всего аккаунтов</div>
+        <div class="stat-sub" id="sTotalUsersSub"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-crown"></i></div>
+        <span class="stat-num" id="sPremiumUsers">—</span>
+        <div class="stat-label">Premium</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-percent"></i></div>
+        <span class="stat-num" id="sPremiumPct">—</span>
+        <div class="stat-label">Доля Premium</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-bolt"></i></div>
+        <span class="stat-num" id="sActive7d">—</span>
+        <div class="stat-label">Активны за 7 дней</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-user-plus"></i></div>
+        <span class="stat-num" id="sNewUsers7d">—</span>
+        <div class="stat-label">Новых за 7 дней</div>
+      </div>
+    </div>
+
+    <div class="section-title">Входы</div>
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-right-to-bracket"></i></div>
+        <span class="stat-num" id="sTotalLogins">—</span>
+        <div class="stat-label">Всего входов</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-person"></i></div>
+        <span class="stat-num" id="sUniqueLogins">—</span>
+        <div class="stat-label">Уникальных входов</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-repeat"></i></div>
+        <span class="stat-num" id="sAvgLogins">—</span>
+        <div class="stat-label">Входов на юзера</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-calendar-week"></i></div>
+        <span class="stat-num" id="sLogins7d">—</span>
+        <div class="stat-label">За 7 дней</div>
+      </div>
+    </div>
+
+    <div class="section-title">Покупки и доход</div>
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-ruble-sign"></i></div>
+        <span class="stat-num" id="sRevenue" style="font-size:28px;">—</span>
+        <div class="stat-label">Подтверждённый доход</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-circle-check"></i></div>
+        <span class="stat-num" id="sConfirmedTickets">—</span>
+        <div class="stat-label">Подтверждено</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-hourglass-half"></i></div>
+        <span class="stat-num" id="sPaidTickets">—</span>
+        <div class="stat-label">Ожидают проверки</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-ticket"></i></div>
+        <span class="stat-num" id="sOpenTickets">—</span>
+        <div class="stat-label">Открытых тикетов</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="fa-solid fa-receipt"></i></div>
+        <span class="stat-num" id="sTotalTickets">—</span>
+        <div class="stat-label">Всего тикетов</div>
+      </div>
+    </div>
+
+    <div class="section-title">Версии приложения</div>
+    <div class="card">
+      <div id="versionsContainer">
+        <p style="color:var(--muted);">Нет данных</p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>window.SHOP_PREFIX = "{{PREFIX}}";</script>
+<script src="{{PREFIX}}/static/mesh.js"></script>
+<script src="{{PREFIX}}/static/common.js"></script>
+<script>
+(async function () {
+  SHOP.renderNav(await SHOP.loadMe());
+
+  const fmt  = n => (n === null || n === undefined) ? "—" : String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  const set  = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  const sub  = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+
+  async function loadStats() {
+    document.getElementById("loadingState").style.display = "";
+    document.getElementById("statsContent").style.display = "none";
+    try {
+      const d = await SHOP.api("/api/stats/data");
+
+      // Обзор
+      set("sDaysRunning", fmt(d.days_running));
+      set("sOvVisitors",  fmt(d.total_visitors));
+      sub("sOvVisitorsSub", "+" + fmt(d.visitors_7d) + " за неделю");
+      set("sOvDownloads", fmt(d.total_downloads));
+      sub("sOvDownloadsSub", d.conversion_pct + "% конверсия");
+      set("sConversion",  d.conversion_pct + "%");
+
+      // Скачивания
+      set("sLatestVersion", d.latest_version ? "v" + d.latest_version : "—");
+      set("sNewDownloads",  fmt(d.new_downloads));
+      set("sUpdates",       fmt(d.updates));
+      set("sDownloads7d",   fmt(d.downloads_7d));
+      set("sNoDownload",    fmt(d.no_download));
+      sub("sNoDownloadSub", d.skip_pct + "% визитов");
+
+      // Визиты
+      set("sTotalVisitors", fmt(d.total_visitors));
+      set("sVisitors24h",   fmt(d.visitors_24h));
+      set("sVisitors7d",    fmt(d.visitors_7d));
+      set("sSkipPct",       d.skip_pct + "%");
+
+      // Аккаунты
+      set("sTotalUsers",   fmt(d.total_users));
+      sub("sTotalUsersSub", "+" + fmt(d.new_users_7d) + " за неделю");
+      set("sPremiumUsers", fmt(d.premium_users));
+      set("sPremiumPct",   d.premium_pct + "%");
+      set("sActive7d",     fmt(d.active_7d));
+      set("sNewUsers7d",   fmt(d.new_users_7d));
+
+      // Входы
+      set("sTotalLogins",  fmt(d.total_logins));
+      set("sUniqueLogins", fmt(d.unique_logins));
+      set("sAvgLogins",    d.avg_logins_per_user);
+      set("sLogins7d",     fmt(d.logins_7d));
+
+      // Покупки
+      set("sRevenue",          fmt(d.revenue_confirmed) + " ₽");
+      set("sConfirmedTickets", fmt(d.confirmed_tickets));
+      set("sPaidTickets",      fmt(d.paid_tickets));
+      set("sOpenTickets",      fmt(d.open_tickets));
+      set("sTotalTickets",     fmt(d.total_tickets));
+
+      // Версии
+      const vc = document.getElementById("versionsContainer");
+      if (!d.versions || d.versions.length === 0) {
+        vc.innerHTML = '<p style="color:var(--muted);">Нет данных</p>';
+      } else {
+        const maxCnt = Math.max(...d.versions.map(v => v.count), 1);
+        vc.innerHTML = d.versions.map(v => `
+          <div class="ver-row">
+            <div class="ver-name">v${SHOP.escape(String(v.version))}</div>
+            <div class="ver-bar"><div class="ver-fill" style="width:${Math.round(v.count / maxCnt * 100)}%"></div></div>
+            <div class="ver-count">${v.count}</div>
+          </div>`).join("");
+      }
+
+      const t = new Date();
+      set("updatedAt", "Обновлено в " + t.toLocaleTimeString("ru-RU"));
+      document.getElementById("loadingState").style.display = "none";
+      document.getElementById("statsContent").style.display = "";
+    } catch (e) {
+      document.getElementById("loadingState").innerHTML =
+        '<p style="color:var(--red);"><i class="fa-solid fa-triangle-exclamation"></i> Не удалось загрузить статистику</p>';
+    }
+  }
+
+  document.getElementById("btnRefresh").addEventListener("click", loadStats);
+  loadStats();
+  setInterval(loadStats, 30000);
+})();
+</script>
+</body>
+</html>
