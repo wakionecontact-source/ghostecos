@@ -201,10 +201,10 @@ const angLerp=(a,b,t)=>{let d=((b-a+Math.PI)%(2*Math.PI))-Math.PI;return a+d*t;}
 const TILE=3, HEIGHT=3.4, EYE=1.62;
 const WALK=3.2, RUN=5.0;
 const HOUR=40000;                 // длина игрового часа (мс). Ночь ≈ 4 мин
-const BATT_DRAIN=0.6, STAM_DRAIN=26, STAM_REGEN=14;
+const BATT_DRAIN=0.6, STAM_DRAIN=18, STAM_REGEN=15;   // бег длится дольше — есть шанс оторваться
 const CONE=0.46, RANGE=18, CATCH=1.4;
 const SENSE_QUIET=10, SENSE_LOUD=30;   // дальность обнаружения: крадёшься / шумишь
-const LOCKER_DIST=3.8, LOCKER_FIND=2.6, CAMP_LIMIT=7;  // шкаф: радиус проверки / время найти / лимит отсидки
+const LOCKER_DIST=3.8, LOCKER_FIND=2.6, CAMP_LIMIT=10;  // шкаф: радиус проверки / время найти / лимит отсидки
 
 const NIGHTS={
  1:[{n:'bonnie',start:2,spd:3.4}],
@@ -216,7 +216,7 @@ const NIGHTS={
 const NAMES={bonnie:'Бонни',chica:'Чика',foxy:'Фокси',freddy:'Фредди'};
 const EYECOL={bonnie:0xff3b3b,chica:0xff5ce0,foxy:0xffd24a,freddy:0x9fd0ff};
 const TIPS={
- 1:"Первая смена. Аниматроник видит только то, что ПЕРЕД ним — держись вне взгляда, заходи со спины. Фонарь нужен в темноте, но он ПРИВЛЕКАЕТ: посветил на него — заметит и пойдёт на свет. Дотяни до 6 утра.",
+ 1:"Первая смена. По умолчанию ТЕМНО. Свет в лицо — аниматроник ЗАМИРАЕТ (твоя защита), но пока фонарь горит, тебя видно издалека и тянет остальных — свети точечно. В темноте замечают только вблизи: крадись, заходи со спины, прячься в шкаф (E). Дотяни до 6 утра.",
  2:"Их двое. Сорвал им взгляд (за угол) — идут к месту, где видели тебя, потом гадают, куда ты свернул, и ищут там. Этим и отрывайся; ныряй в шкаф (E).",
  3:"Фокси охотится рывком: увидел или поймал лучом фонаря — спринтует прямо на тебя. Не свети на него и рви линию взгляда.",
  4:"Фредди замирает, только пока ты на него СМОТРИШЬ. Не отворачивайся от него.",
@@ -266,8 +266,8 @@ renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(innerWidt
 const scene=new THREE.Scene(); scene.background=new THREE.Color(0x04050a);
 scene.fog=new THREE.FogExp2(0x04050a,0.05);
 const camera=new THREE.PerspectiveCamera(76,innerWidth/innerHeight,0.05,80); camera.rotation.order='YXZ';
-const amb=new THREE.AmbientLight(0x2a3a55,0.04); scene.add(amb);   // максимально темно, но стены/шкафы ещё угадываются
-const hemi=new THREE.HemisphereLight(0x1a2740,0x04060a,0.045); scene.add(hemi);
+const amb=new THREE.AmbientLight(0x2a3a55,0.10); scene.add(amb);   // темно, но видно БЕЗ фонаря — можно красться с выключенным
+const hemi=new THREE.HemisphereLight(0x1a2740,0x04060a,0.06); scene.add(hemi);
 const flash=new THREE.SpotLight(0xfff2cc,0,60,CONE+0.05,0.5,0.9);  // луч добивает далеко
 const flashTarget=new THREE.Object3D(); scene.add(flashTarget); flash.target=flashTarget;
 camera.add(flash); scene.add(camera);
@@ -381,7 +381,7 @@ function startNight(night){
      anims:[],pathTimer:0,footT:0,hidden:false,hideLocker:null,hideTime:0,nearLocker:null,moveDir:{x:0,z:1},blackoutT:rnd(18,38),hbT:0,breathT:0,danger:0};
   NIGHTS[night].forEach(cfg=>{const s=startCell(cfg.n);const w=cellWorld(s[0],s[1]);
     const a={cfg,name:cfg.n,x:w.x,z:w.z,heading:0,active:false,frozen:false,state:'idle',lastSeen:null,wanderTo:null,
-             speed:cfg.spd,look:cfg.n==='freddy',foxy:cfg.n==='foxy',chargeT:0,recoverT:0,checkT:0,sawEnter:false,
+             speed:cfg.spd,look:cfg.n==='freddy',foxy:cfg.n==='foxy',chargeT:0,recoverT:0,checkT:0,sawEnter:false,stunT:0,
              searchPhase:0,searchT:0,seenDir:null,predict:null,heading:0,path:null,pathAge:9};
     chars[cfg.n].group.position.set(a.x,0,a.z);chars[cfg.n].group.visible=true;G.anims.push(a);});
   ['bonnie','chica','foxy','freddy'].forEach(n=>{if(!G.anims.find(a=>a.name===n))chars[n].group.visible=false;});
@@ -417,11 +417,18 @@ $('clickcap').onclick=()=>requestLock();
 renderer.domElement.addEventListener('click',()=>{if(G&&!G.over&&!G.won&&!locked)requestLock();});
 function toggleFlash(){if(G.batt<=0)G.flashOn=false;else G.flashOn=!G.flashOn;setFlash(G.flashOn);sfxClick();}
 function setFlash(on){flash.intensity=on?150:0;$('flag').textContent=on?'фонарь вкл':'фонарь выкл';$('flag').className=on?'flagOn':'flagOff';}
-function tryHide(){ if(G.hidden){G.hidden=false;G.hideLocker=null;$('hideov').classList.remove('on');sfxClick();return;}
-  if(G.nearLocker){G.hidden=true;G.hideLocker=G.nearLocker;G.hideTime=0;$('hideov').classList.add('on');G.flashOn=false;setFlash(false);sfxBreath();
-    // засекли, как ты залезал? тогда придёт проверять
-    G.anims.forEach(a=>{a.checkT=0;a.sawEnter=a.active&&Math.hypot(a.x-camera.position.x,a.z-camera.position.z)<SENSE_LOUD&&los(a.x,a.z,camera.position.x,camera.position.z);
-      if(a.sawEnter)a.lastSeen={x:G.hideLocker.x,z:G.hideLocker.z};}); } }
+function tryHide(){
+  if(G.hidden){   // ВЫЛЕЗАЕМ — ближние ошалевают и стопорятся на 5с (окно на побег)
+    if(G.hideTime>1.2){ let any=false; G.anims.forEach(a=>{if(a.active&&Math.hypot(a.x-camera.position.x,a.z-camera.position.z)<12){a.stunT=5;a.chargeT=0;any=true;}}); any?sfxStun():sfxClick(); }
+    else sfxClick();
+    G.hidden=false;G.hideLocker=null;$('hideov').classList.remove('on');return;
+  }
+  if(G.nearLocker){   // ПРЯЧЕМСЯ
+    const seen=G.anims.map(a=>a.active&&(a.stunT||0)<=0&&animSees(a));   // кто реально видел, как лезешь (до укрытия)
+    G.hidden=true;G.hideLocker=G.nearLocker;G.hideTime=0;$('hideov').classList.add('on');G.flashOn=false;setFlash(false);sfxBreath();
+    G.anims.forEach((a,i)=>{a.checkT=0;a.sawEnter=seen[i]; if(a.sawEnter)a.lastSeen={x:G.hideLocker.x,z:G.hideLocker.z};});
+  }
+}
 
 /* ---------------- линия видимости / путь ---------------- */
 function los(ax,az,bx,bz){const dx=bx-ax,dz=bz-az,d=Math.hypot(dx,dz),steps=Math.ceil(d/0.4);
@@ -444,15 +451,21 @@ const fwd=new THREE.Vector3(),tmp=new THREE.Vector3();
 function lookInfo(a){camera.getWorldDirection(fwd);tmp.set(a.x-camera.position.x,0,a.z-camera.position.z);
   const dist=tmp.length();tmp.normalize();const f=fwd.clone();f.y=0;f.normalize();
   return{dist,ang:Math.acos(clamp(f.dot(tmp),-1,1))};}
-// ЛУЧЕВОЙ ВЗГЛЯД: видит только то, что в конусе ПЕРЕД ним и без стены на пути
-function animSees(a,d){ if(G.hidden)return false;        // дальность взгляда БЕЗГРАНИЧНА — ограничивают только стены
-  const toP=Math.atan2(camera.position.x-a.x,camera.position.z-a.z);
-  const da=Math.abs(((toP-a.heading+Math.PI)%(2*Math.PI))-Math.PI);
+// игрок «освещён» = САМ включил фонарь (лампы НЕ выдают — иначе без фонаря всё равно палят)
+function playerLit(){ return G.flashOn; }
+// ЛУЧЕВОЙ ВЗГЛЯД: при свете видят на любой дистанции, в ТЕМНОТЕ — только вблизи (≤7)
+function animSees(a){ if(G.hidden)return false;
+  const dx=camera.position.x-a.x,dz=camera.position.z-a.z,d=Math.hypot(dx,dz);
+  if(d>(playerLit()?40:7))return false;          // при свете видят далеко (40), в темноте — только вблизи (7)
+  const da=Math.abs(((Math.atan2(dx,dz)-a.heading+Math.PI)%(2*Math.PI))-Math.PI);
   if(da>1.35)return false;                               // широкий конус ~155°
   return los(a.x,a.z,camera.position.x,camera.position.z); }
-// ФОНАРЬ НА НЁМ: заметит и пойдёт на свет с любой дистанции, даже стоя спиной
+// ФОНАРЬ В ЛИЦО: пока светишь на него — он ЗАМИРАЕТ (защита)
 function animLit(a){ if(!G.flashOn||G.hidden)return false; const{ang}=lookInfo(a);
-  return ang<CONE&&los(a.x,a.z,camera.position.x,camera.position.z); }   // дальность луча безграничная
+  return ang<CONE&&los(a.x,a.z,camera.position.x,camera.position.z); }
+// СВЕТ ПРИТЯГИВАЕТ: пока фонарь горит — всех с прямой видимостью тянет к тебе
+function animAttracted(a){ if(!G.flashOn||G.hidden)return false;
+  return Math.hypot(a.x-camera.position.x,a.z-camera.position.z)<16&&los(a.x,a.z,camera.position.x,camera.position.z); }
 // услышал бег
 function animHears(a,d){ if(G.hidden)return false; if(!(keys['ShiftLeft']||keys['ShiftRight']))return false;
   return d<9&&los(a.x,a.z,camera.position.x,camera.position.z); }
@@ -479,28 +492,34 @@ function updateAnim(a,dt){
   const px=camera.position.x,pz=camera.position.z;
   const dToP=Math.hypot(a.x-px,a.z-pz);
 
-  // Фредди: замирает, пока на него смотришь
-  if(a.look){ a.frozen=isWatchedFreddy(a); chars.freddy.eyeMat.color.setHex(a.frozen?0xffffff:0x9fd0ff);
-    if(a.frozen){grp.position.set(a.x,0,a.z);return;} }
+  // ОШАРАШЕН (ты выскочил из шкафа рядом) — стоит столбом и теряет тебя
+  if(a.stunT>0){ a.stunT-=dt; a.lastSeen=null; a.state='wander';
+    chars[a.name].eyeMat.color.setHex(0x66ffff); grp.position.set(a.x,0,a.z); return; }
 
-  // обнаружение: конус зрения / свет фонаря / слышит бег
-  const sees=animSees(a,dToP), lit=animLit(a), hears=animHears(a,dToP);
-  const onYou = sees||lit||hears||(a.look&&!G.hidden);
+  // ЗАМОРОЗКА: Фредди — взглядом, остальные — фонарём в лицо (защита)
+  a.frozen = a.look ? isWatchedFreddy(a) : animLit(a);
+  if(a.frozen){ a.lastSeen={x:px,z:pz}; a.state='chase';      // знает, где ты — рванёт, как отпустишь свет
+    chars[a.name].eyeMat.color.setHex(0xffffff); grp.position.set(a.x,0,a.z); return; }
+  if(a.look) chars.freddy.eyeMat.color.setHex(0x9fd0ff);      // не заморожен — обычные глаза
+
+  // обнаружение: только зрение (без фонаря — вблизи) + слух + свет притягивает. НИКТО не всезнающий
+  const sees=animSees(a), hears=animHears(a,dToP), pull=animAttracted(a);
+  const onYou = sees||hears||pull;
   if(onYou){ a.lastSeen={x:px,z:pz}; a.seenDir={x:G.moveDir.x,z:G.moveDir.z}; a.state='chase'; a.searchPhase=0; a.searchT=0; }
   if(!a.look) chars[a.name].eyeMat.color.setHex(a.state==='chase'?0xff2a2a:(a.state==='search'?0xffae33:EYECOL[a.name]));
 
-  // Фокси: рывок когда видит или освещён
+  // Фокси: рывок когда видит/учуял (свет в лицо его тоже морозит — обработано выше)
   if(a.foxy){
     if(a.recoverT>0){a.recoverT-=dt;faceMove(a,grp,0,0,dt);grp.position.set(a.x,0,a.z);return;}
-    if((sees||lit)&&dToP<18&&dToP>CATCH&&a.chargeT<=0){a.chargeT=2.2;sfxFoxy(a);}
+    if((sees||pull)&&dToP<18&&dToP>CATCH&&a.chargeT<=0){a.chargeT=2.2;sfxFoxy(a);}
     if(a.chargeT>0){a.chargeT-=dt;const dx=(px-a.x)/(dToP||1),dz=(pz-a.z)/(dToP||1);
       moveEnt(a,dx,dz,(a.speed+4.5)*dt);faceMove(a,grp,dx,dz,dt);grp.position.set(a.x,0,a.z);
-      if(!(sees||lit)&&a.chargeT<1.6){a.chargeT=0;a.recoverT=1.0;} return;}
+      if(!(sees||pull)&&a.chargeT<1.6){a.chargeT=0;a.recoverT=1.0;} return;}
   }
 
   // выбор цели
   let tx,tz, direct=false;
-  if(onYou){ tx=px; tz=pz; direct=(sees||lit||a.look); }   // видит/освещён/смотрит — прямо на тебя
+  if(onYou){ tx=px; tz=pz; direct=(sees||a.look); }   // видит в упор — в лоб; притянутый светом — обходит по маршруту
   else if(a.lastSeen){                                      // потерял -> к месту, потом по направлению ухода
     a.state='search';
     if(a.searchPhase!==1){ a.searchPhase=0; tx=a.lastSeen.x; tz=a.lastSeen.z;
@@ -584,13 +603,14 @@ function update(dt){
   G.anims.forEach(a=>{
     if(!a.active&&hour>=a.cfg.start)a.active=true;
     if(!a.active){chars[a.name].group.position.set(a.x,0,a.z);return;}
-    if(G.hidden&&G.hideLocker){                 // в укрытии: подошедший ПРОВЕРЯЕТ шкаф
+    if(G.hidden&&G.hideLocker){                 // в укрытии: проверяет ТОЛЬКО тот, кто реально шёл за тобой к шкафу
       const dL=Math.hypot(a.x-G.hideLocker.x,a.z-G.hideLocker.z);
-      if(dL<LOCKER_DIST){ a.lastSeen={x:G.hideLocker.x,z:G.hideLocker.z};
+      const tracking=a.sawEnter||(a.lastSeen&&Math.hypot(a.lastSeen.x-G.hideLocker.x,a.lastSeen.z-G.hideLocker.z)<3.5);
+      if(dL<LOCKER_DIST&&tracking){
         if(a.checkT===0)sfxKnock(a);
         a.checkT+=dt*(a.sawEnter?1.6:1);
         if(a.checkT>=LOCKER_FIND){jumpscare(a.name);return;}
-      } else a.checkT=Math.max(0,a.checkT-dt*0.6);
+      } else a.checkT=Math.max(0,a.checkT-dt*0.8);
       checkMax=Math.max(checkMax,a.checkT/LOCKER_FIND);
     } else a.checkT=0;
     updateAnim(a,dt);
@@ -627,6 +647,10 @@ const mctx=$('mini').getContext('2d');
 function updateMini(){const w=364,h=300,cw=w/W,ch=h/Hh;mctx.clearRect(0,0,w,h);
   for(let r=0;r<Hh;r++)for(let c=0;c<W;c++){mctx.fillStyle=grid[r][c]?'#252b36':'#0c0e14';mctx.fillRect(c*cw,r*ch,cw-0.5,ch-0.5);}
   lockers.forEach(L=>{mctx.fillStyle='#4aa3c8';mctx.fillRect((L.c+0.2)*cw,(L.r+0.2)*ch,cw*0.6,ch*0.6);});
+  // метка сцены (зона аниматроников) — красный ромб + подпись
+  (function(){const sc=3,sr=3;mctx.fillStyle='#c0392b';mctx.beginPath();
+    mctx.moveTo((sc+0.5)*cw,(sr+0.05)*ch);mctx.lineTo((sc+0.95)*cw,(sr+0.5)*ch);mctx.lineTo((sc+0.5)*cw,(sr+0.95)*ch);mctx.lineTo((sc+0.05)*cw,(sr+0.5)*ch);mctx.closePath();mctx.fill();
+    mctx.fillStyle='#ff9a8a';mctx.font='bold 9px sans-serif';mctx.textAlign='center';mctx.fillText('СЦЕНА',(sc+0.5)*cw,(sr-0.55)*ch);})();
   const pc=worldCell(camera.position.x,camera.position.z);
   mctx.fillStyle=G.hidden?'#4aa3c8':'#7fb069';mctx.beginPath();mctx.arc((pc.c+0.5)*cw,(pc.r+0.5)*ch,5,0,7);mctx.fill();
   const dir=camera.getWorldDirection(new THREE.Vector3());mctx.strokeStyle='#7fb069';mctx.lineWidth=2;mctx.beginPath();
@@ -673,6 +697,7 @@ const sfxBreath=()=>{noise(.6,.08,420,'lowpass');setTimeout(()=>noise(.5,.05,360
 const sfxFoxy=(a)=>{const pan=panOf(a);noise(.5,.3,900,'bandpass',pan);for(let i=0;i<6;i++)setTimeout(()=>tone(300+i*40,.5,'sawtooth',.12,140,pan),i*40);};
 const sfxBoom=()=>{noise(.5,.3,120,'lowpass');tone(50,.5,'sine',.2,30);};
 const sfxKnock=(a)=>{const pan=panOf(a);noise(.12,.28,170,'lowpass',pan);setTimeout(()=>noise(.1,.2,150,'lowpass',pan),140);};
+const sfxStun=()=>{noise(.35,.18,700,'bandpass');for(let i=0;i<4;i++)setTimeout(()=>tone(420-i*70,.16,'square',.11),i*70);};
 function playScream(){if(!AC)return;noise(1,.5,1400);for(let i=0;i<5;i++){const f=600+i*60;tone(f,.9,'sawtooth',.12,f*.35);}tone(220,.9,'square',.12,90);}
 function playChime(){if(!AC)return;[523,659,784,1046].forEach((f,i)=>setTimeout(()=>tone(f,.6,'sine',.18),i*140));}
 function startAmbient(){ensureAudio();if(!AC||ambient)return;const s=AC.createBufferSource();s.buffer=nbuf(2);s.loop=true;
@@ -697,7 +722,7 @@ function buildTitle(){const box=$('nightSelect');box.innerHTML='';
   $('btnNew').textContent = unlocked>1 ? ('Играть — ночь '+unlocked) : 'Новая игра';
   $('ctrlHint').innerHTML="Ходи по пиццерии и доживи до 6 утра. Аниматроники видят только ПЕРЕД собой — обходи со спины, держись вне взгляда.<br>"+
     "<b style='color:#8b97a6'>WASD</b> ходьба · <b style='color:#8b97a6'>Shift</b> бег (слышно) · <b style='color:#8b97a6'>мышь/стрелки</b> обзор · <b style='color:#8b97a6'>F/ПКМ</b> фонарь · <b style='color:#8b97a6'>E</b> спрятаться<br>"+
-    "<span style='color:#5b6675'>Фонарь ПРИВЛЕКАЕТ: посветишь на них — заметят и пойдут на свет. Сорвал взгляд — идут к последнему месту и ищут, куда ты свернул. Esc — пауза.</span>"+
+    "<span style='color:#5b6675'>Без фонаря тебя замечают только вблизи — крадись в темноте. Свет в лицо морозит, но палит тебя и тянет остальных. Выскочил из шкафа — ближние на 5с офигевают. Esc — пауза.</span>"+
     "<br><span style='color:#3a424d;font-size:11px'>Кнопка — последняя открытая ночь · кликни цифру — любая ночь · U — открыть все</span>";}
 let toastT=null;
 function flashMsg(t){const el=$('toast');el.textContent=t;el.classList.remove('hidden');el.classList.add('show');
@@ -717,7 +742,7 @@ window.__game={get G(){return G;},camera,scene,renderer,chars,startNight,
   pauseRender(){renderer.setAnimationLoop(null);renderer.render(scene,camera);},
   step(n){renderer.setAnimationLoop(null);for(let i=0;i<(n||1);i++){if(G)update(0.016);}renderer.render(scene,camera);},
   resumeRender(){renderer.setAnimationLoop(()=>{const dt=Math.min(clock.getDelta(),0.05);if(G)update(dt);renderer.render(scene,camera);});},
-  los,bfsPath,animSees,animLit};
+  los,bfsPath,animSees,animLit,animAttracted,playerLit};
 </script>
 </body>
 </html>
