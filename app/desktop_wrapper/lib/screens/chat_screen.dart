@@ -6,6 +6,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -560,81 +561,135 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             isGroup: isGroup,
           ),
         ),
-        body: SafeArea(
-          top: false,
-          child: Column(
-            children: [
-              Expanded(
-                // Матовая подложка над mesh: mesh просвечивает, но сообщения читаемы.
-                // Без BackdropFilter на большом скролле — оптимизация (фрост даёт
-                // композер ниже + бабблы-стекло поверх).
-                child: ColoredBox(
-                  color: GE.bg.withValues(alpha: 0.0),
-                  child: ValueListenableBuilder<List<StoredMessage>>(
-                    valueListenable: notif,
-                    builder: (_, msgs, __) {
-                      if (msgs.isEmpty) return _empty();
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (mounted && _scrollCtrl.hasClients) {
-                          final at = _scrollCtrl.position.pixels;
-                          final max = _scrollCtrl.position.maxScrollExtent;
-                          if (max - at < 200) _scrollToBottom(true);
-                        }
-                      });
-                      return ListView.builder(
-                        controller: _scrollCtrl,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 12,
-                        ),
-                        itemCount: msgs.length,
-                        itemBuilder: (_, i) {
-                          final m = msgs[i];
-                          return Dismissible(
-                            key: ValueKey('msg_${m.sid}_${m.tempSid ?? ""}'),
-                            direction: DismissDirection.startToEnd,
-                            confirmDismiss: (_) async {
-                              // Не «исчезаем», а только триггерим reply.
-                              setState(() => _replyTo = m);
-                              HapticFeedback.selectionClick();
-                              return false;
+        body: Stack(
+          children: [
+            SafeArea(
+              top: false,
+              child: Column(
+                children: [
+                  Expanded(
+                    // Матовая подложка над mesh: mesh просвечивает, но сообщения читаемы.
+                    // Без BackdropFilter на большом скролле — оптимизация (фрост даёт
+                    // композер ниже + бабблы-стекло поверх).
+                    child: ColoredBox(
+                      color: GE.bg.withValues(alpha: 0.0),
+                      child: ValueListenableBuilder<List<StoredMessage>>(
+                        valueListenable: notif,
+                        builder: (_, msgs, __) {
+                          if (msgs.isEmpty) return _empty();
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (mounted && _scrollCtrl.hasClients) {
+                              final at = _scrollCtrl.position.pixels;
+                              final max = _scrollCtrl.position.maxScrollExtent;
+                              if (max - at < 200) _scrollToBottom(true);
+                            }
+                          });
+                          return ListView.builder(
+                            controller: _scrollCtrl,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 12,
+                            ),
+                            itemCount: msgs.length,
+                            itemBuilder: (_, i) {
+                              final m = msgs[i];
+                              // Тонкая линия-разделитель при смене автора (свой↔чужой).
+                              final newSender =
+                                  i > 0 && msgs[i - 1].fromMe != m.fromMe;
+                              final bubble = Dismissible(
+                                key: ValueKey(
+                                  'msg_${m.sid}_${m.tempSid ?? ""}',
+                                ),
+                                direction: DismissDirection.startToEnd,
+                                confirmDismiss: (_) async {
+                                  // Не «исчезаем», а только триггерим reply.
+                                  setState(() => _replyTo = m);
+                                  HapticFeedback.selectionClick();
+                                  return false;
+                                },
+                                background: Container(
+                                  alignment: Alignment.centerLeft,
+                                  padding: const EdgeInsets.only(left: 24),
+                                  child: Icon(
+                                    Icons.reply,
+                                    color: GE.primary,
+                                    size: 22,
+                                  ),
+                                ),
+                                child: GestureDetector(
+                                  onLongPress: () => _openBubbleMenu(m),
+                                  onDoubleTap: () async {
+                                    try {
+                                      await ChatRepo.instance.reactDmMessage(
+                                        toUsername: widget.peer,
+                                        sid: m.sid,
+                                        emoji: '❤',
+                                      );
+                                    } catch (_) {}
+                                  },
+                                  child: _Bubble(
+                                    m,
+                                    myUsername: _myUsername,
+                                    highlighted: m.sid == _highlightSid,
+                                  ),
+                                ),
+                              );
+                              if (!newSender) return bubble;
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Center(
+                                    child: Container(
+                                      width: 44,
+                                      height: 1,
+                                      margin: const EdgeInsets.symmetric(
+                                        vertical: 7,
+                                      ),
+                                      color: GE.borderStrong,
+                                    ),
+                                  ),
+                                  bubble,
+                                ],
+                              );
                             },
-                            background: Container(
-                              alignment: Alignment.centerLeft,
-                              padding: const EdgeInsets.only(left: 24),
-                              child: Icon(
-                                Icons.reply,
-                                color: GE.primary,
-                                size: 22,
-                              ),
-                            ),
-                            child: GestureDetector(
-                              onLongPress: () => _openBubbleMenu(m),
-                              onDoubleTap: () async {
-                                try {
-                                  await ChatRepo.instance.reactDmMessage(
-                                    toUsername: widget.peer,
-                                    sid: m.sid,
-                                    emoji: '❤',
-                                  );
-                                } catch (_) {}
-                              },
-                              child: _Bubble(
-                                m,
-                                myUsername: _myUsername,
-                                highlighted: m.sid == _highlightSid,
-                              ),
-                            ),
                           );
                         },
-                      );
-                    },
+                      ),
+                    ),
                   ),
-                ),
+                  if (_replyTo != null || _editing != null) _replyEditBar(),
+                  _composer(),
+                ],
               ),
-              if (_replyTo != null || _editing != null) _replyEditBar(),
-              _composer(),
-            ],
+            ),
+            _topBlurFade(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Блюр-фейд под шапкой: контент уезжает под неё размытым, нижний край мягко
+  // гаснет вниз (не резкая прямая линия). Positioned — живёт в Stack тела.
+  Widget _topBlurFade() {
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      height: 30,
+      child: IgnorePointer(
+        child: ShaderMask(
+          shaderCallback: (r) => const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Colors.white, Colors.transparent],
+          ).createShader(r),
+          blendMode: BlendMode.dstIn,
+          child: ClipRect(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 11, sigmaY: 11),
+              child: const SizedBox.expand(),
+            ),
           ),
         ),
       ),
@@ -973,7 +1028,9 @@ class _Bubble extends StatelessWidget {
                 spreadRadius: 1,
               ),
               BoxShadow(
-                color: (mine ? GE.primary : GE.primary2).withValues(alpha: 0.22),
+                color: (mine ? GE.primary : GE.primary2).withValues(
+                  alpha: 0.22,
+                ),
                 blurRadius: 22,
                 spreadRadius: -3,
               ),
