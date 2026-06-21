@@ -2225,6 +2225,9 @@ def init():
     try: c.execute("CREATE INDEX IF NOT EXISTS idx_dm_sealed_recv ON chat_dm_sealed(receiver_id, id DESC)")
     except sqlite3.OperationalError: pass
 
+    try: c.execute("ALTER TABLE users ADD COLUMN avatar_url TEXT NULL")
+    except sqlite3.OperationalError: pass
+
     # Multi-device delivery: сообщения живут 24ч после первой доставки.
     # delivered_to — JSON-массив device_id'ов которые уже подтвердили получение.
     # last_delivery_at — для TTL-cleanup'a фоновой задачей.
@@ -3800,6 +3803,77 @@ def unfollow(username: str, authorization: Optional[str] = Header(None)):
     c.close()
     return {"status": "ok", "following": False}
 
+@router.post("/me/avatar")
+async def upload_avatar(authorization: Optional[str] = Header(None), file: UploadFile = File(...)):
+    """Загрузить свою аватарку. Image jpeg/png/webp, max 5MB. Ресайз до 512×512."""
+    user = auth_member(authorization)
+    _rate_limit(f"avaup:{user['id']}", limit=10, window=3600)
+    ALLOWED = {"image/jpeg", "image/png", "image/webp"}
+    if file.content_type not in ALLOWED:
+        raise HTTPException(400, "Только JPEG / PNG / WebP")
+    raw = await file.read()
+    if len(raw) > 5 * 1024 * 1024:
+        raise HTTPException(413, "Файл больше 5 МБ")
+    if len(raw) < 100:
+        raise HTTPException(400, "Файл слишком маленький")
+    try:
+        from PIL import Image
+        import io as _io
+        img = Image.open(_io.BytesIO(raw))
+        img.load()
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGB")
+        elif img.mode == "RGBA":
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[3])
+            img = bg
+        w, h = img.size
+        s = min(w, h)
+        img = img.crop(((w - s) // 2, (h - s) // 2, (w - s) // 2 + s, (h - s) // 2 + s))
+        img = img.resize((512, 512), Image.LANCZOS)
+        out = _io.BytesIO()
+        img.save(out, format="JPEG", quality=85, optimize=True)
+        out_bytes = out.getvalue()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"Не удалось обработать изображение: {e}")
+    import os as _os
+    avatars_dir = "/opt/ghostchat/media/avatars"
+    _os.makedirs(avatars_dir, exist_ok=True)
+    # Версия в имени → cache busting у пиров без force-reload.
+    ver = int(time.time())
+    fname = f"{user['id']}_{ver}.jpg"
+    fpath = _os.path.join(avatars_dir, fname)
+    with open(fpath, "wb") as f:
+        f.write(out_bytes)
+    url = f"/media/avatars/{fname}"
+    c = db()
+    old = c.execute("SELECT avatar_url FROM users WHERE id=?", (user["id"],)).fetchone()
+    c.execute("UPDATE users SET avatar_url=? WHERE id=?", (url, user["id"]))
+    c.commit(); c.close()
+    if old and old["avatar_url"] and old["avatar_url"].startswith("/media/avatars/"):
+        try: _os.remove("/opt/ghostchat/media/avatars/" + old["avatar_url"].rsplit("/", 1)[1])
+        except Exception: pass
+    return {"avatar_url": url}
+
+
+@router.delete("/me/avatar")
+def delete_avatar(authorization: Optional[str] = Header(None)):
+    """Снять свою аватарку."""
+    user = auth_member(authorization)
+    _rate_limit(f"avadel:{user['id']}", limit=10, window=3600)
+    c = db()
+    old = c.execute("SELECT avatar_url FROM users WHERE id=?", (user["id"],)).fetchone()
+    c.execute("UPDATE users SET avatar_url=NULL WHERE id=?", (user["id"],))
+    c.commit(); c.close()
+    if old and old["avatar_url"] and old["avatar_url"].startswith("/media/avatars/"):
+        import os as _os
+        try: _os.remove("/opt/ghostchat/media/avatars/" + old["avatar_url"].rsplit("/", 1)[1])
+        except Exception: pass
+    return {"ok": True}
+
+
 @router.get("/me")
 def get_me(authorization: Optional[str] = Header(None)):
     user = auth(authorization)
@@ -3815,7 +3889,7 @@ def get_me(authorization: Optional[str] = Header(None)):
     c = db()
     stats = get_user_stats(c, user["id"])
     flags_row = c.execute(
-        "SELECT is_admin, is_moderator FROM users WHERE id=?", (user["id"],)
+        "SELECT is_admin, is_moderator, avatar_url FROM users WHERE id=?", (user["id"],)
     ).fetchone()
     c.close()
     return {
@@ -3826,6 +3900,7 @@ def get_me(authorization: Optional[str] = Header(None)):
         "is_guest": False,
         "is_admin": _is_admin_user({**user, "is_admin": (flags_row["is_admin"] if flags_row else 0)}),
         "is_moderator": bool(flags_row and flags_row["is_moderator"]),
+        "avatar_url": (flags_row["avatar_url"] if flags_row else None),
         **stats,
     }
 

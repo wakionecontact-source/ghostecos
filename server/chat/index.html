@@ -1159,7 +1159,9 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
   <aside class="pd-drawer" id="pdDrawer" role="dialog" aria-label="Профиль">
     <div class="pd-head">
       <button class="pd-close" onclick="closeProfileDrawer()" title="Закрыть"><i class="fa-solid fa-xmark"></i></button>
-      <div class="pd-ava" id="pdAva">?</div>
+      <div class="pd-ava" id="pdAva" onclick="document.getElementById('avaUpInput').click()" title="Загрузить аватарку" style="cursor:pointer;">?</div>
+      <input type="file" id="avaUpInput" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="onAvatarFileChosen(this)">
+      <a id="pdAvaRemove" href="#" style="display:none;font-size:11px;color:var(--sub);margin-top:4px;" onclick="onAvatarRemove(event)">убрать</a>
       <div class="pd-name" id="pdName">—</div>
       <div class="pd-handle" id="pdHandle">@—</div>
       <!-- Переключатель аккаунтов — в правом нижнем углу карточки профиля. -->
@@ -5393,6 +5395,52 @@ function onLeftBtn(e){
   openProfileDrawer();
 }
 
+async function onAvatarFileChosen(input){
+  const f = input.files && input.files[0];
+  if (!f) return;
+  if (f.size > 5 * 1024 * 1024) { appAlert('Размер', 'Файл больше 5 МБ'); input.value=''; return; }
+  const ava = document.getElementById('pdAva');
+  if (ava) ava.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+  try {
+    const fd = new FormData();
+    fd.append('file', f);
+    const r = await fetch(API + '/me/avatar', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token },
+      body: fd,
+    });
+    if (!r.ok) {
+      const t = await r.text(); let m = t; try { m = JSON.parse(t).detail || t; } catch(_){}
+      throw new Error(m);
+    }
+    const d = await r.json();
+    me.avatar_url = d.avatar_url;
+    localStorage.setItem('gs_me', JSON.stringify(me));
+    openProfileDrawer();
+  } catch(e) {
+    appAlert('Не удалось загрузить', e.message || String(e));
+    openProfileDrawer();
+  } finally {
+    input.value = '';
+  }
+}
+
+async function onAvatarRemove(ev){
+  ev && ev.preventDefault && ev.preventDefault();
+  try {
+    const r = await fetch(API + '/me/avatar', {
+      method: 'DELETE',
+      headers: { 'Authorization': 'Bearer ' + token },
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    me.avatar_url = null;
+    localStorage.setItem('gs_me', JSON.stringify(me));
+    openProfileDrawer();
+  } catch(e) {
+    appAlert('Не удалось убрать', e.message || String(e));
+  }
+}
+
 function openProfileDrawer(){
   const d = document.getElementById('pdDrawer');
   const b = document.getElementById('pdBackdrop');
@@ -5404,10 +5452,12 @@ function openProfileDrawer(){
     nm.textContent = me.display_name || me.username || '—';
     hd.textContent = '@' + (me.username || '');
     if (me.avatar_url){
-      ava.innerHTML = '<img src="' + esc(me.avatar_url) + '" alt="">';
+      ava.innerHTML = '<img src="' + esc(me.avatar_url) + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">';
     } else {
       ava.textContent = ini(me.display_name || me.username || '?');
     }
+    const rm = document.getElementById('pdAvaRemove');
+    if (rm) rm.style.display = me.avatar_url ? '' : 'none';
   }
   const ii = document.getElementById('pdInstallItem');
   if (ii) ii.style.display = (window._deferredInstallPrompt || window._pwaCanInstall) ? '' : 'none';
