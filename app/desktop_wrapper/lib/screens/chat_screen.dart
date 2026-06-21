@@ -549,17 +549,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final notif = ChatRepo.instance.messagesNotifier(widget.peer);
     final isGroup = widget.peer.startsWith('g:');
-    // Верхний отступ ленты = статус-бар + высота шапки (64) + зазор: первое
-    // сообщение не прячется под шапкой-стеклом, но скроллит под неё.
-    final headerPad = MediaQuery.of(context).padding.top + 64 + 8;
     return MeshBackground(
       particleCount: 16,
       child: Scaffold(
         backgroundColor: Colors.transparent,
         resizeToAvoidBottomInset: true,
-        // Контент уезжает ПОД шапку (за неё) — шапка-стекло размывает сообщения
-        // под собой и выровнена сама по себе (стекло = шапка), а не band-полоса.
-        extendBodyBehindAppBar: true,
         appBar: PreferredSize(
           preferredSize: const Size.fromHeight(64),
           child: _ChatHeader(
@@ -593,7 +587,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           });
                           return ListView.builder(
                             controller: _scrollCtrl,
-                            padding: EdgeInsets.fromLTRB(12, headerPad, 12, 12),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 12,
+                            ),
                             itemCount: msgs.length,
                             itemBuilder: (_, i) {
                               final m = msgs[i];
@@ -673,38 +670,29 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
-  // Шапка-стекло: BackdropFilter размывает сообщения, уезжающие под шапку.
-  // ShaderMask гасит САМ блюр к низу (мягкий размытый край, не резкая линия).
-  // Высота = статус-бар + шапка (64) + зона затухания → стекло выровнено по шапке.
+  // «Мыло» под шапкой: BackdropFilter размывает сообщения, уезжающие вверх под
+  // шапку, + градиент-тинт для мягкого края (не резкая прямая линия). Раньше
+  // дико лагало НЕ из-за этого блюра (он мелкий), а из-за расшифровки фото на
+  // главном потоке — её вынесли в изолят, так что блюр теперь по карману.
   Widget _topBlurFade() {
-    final h = MediaQuery.of(context).padding.top + 64 + 18;
     return Positioned(
       top: 0,
       left: 0,
       right: 0,
-      height: h,
+      height: 52,
       child: IgnorePointer(
-        child: ShaderMask(
-          shaderCallback: (r) => const LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.white, Colors.white, Colors.transparent],
-            stops: [0.0, 0.74, 1.0],
-          ).createShader(r),
-          blendMode: BlendMode.dstIn,
-          child: ClipRect(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      GE.bgDeep.withValues(alpha: 0.5),
-                      GE.bg.withValues(alpha: 0.0),
-                    ],
-                  ),
+        child: ClipRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    GE.bgDeep.withValues(alpha: 0.55),
+                    GE.bg.withValues(alpha: 0.0),
+                  ],
                 ),
               ),
             ),
