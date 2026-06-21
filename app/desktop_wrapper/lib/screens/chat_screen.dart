@@ -549,6 +549,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final notif = ChatRepo.instance.messagesNotifier(widget.peer);
     final isGroup = widget.peer.startsWith('g:');
+    // Тинт стекла шапки: светлее тёмного фона, чтобы стекло читалось.
+    final glassTint = Color.alphaBlend(
+      Colors.white.withValues(alpha: 0.10),
+      GE.bgDeep,
+    );
     return MeshBackground(
       particleCount: 16,
       child: Scaffold(
@@ -556,10 +561,31 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         resizeToAvoidBottomInset: true,
         appBar: PreferredSize(
           preferredSize: const Size.fromHeight(64),
-          child: _ChatHeader(
-            peer: widget.peer,
-            displayName: widget.displayName,
-            isGroup: isGroup,
+          // Стекло-фон САМОЙ шапки (frosted-бар): тинт читается на тёмном +
+          // BackdropFilter; нижний край мягко гаснет в контент (градиент → 0).
+          child: ClipRect(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      glassTint.withValues(alpha: 0.92),
+                      glassTint.withValues(alpha: 0.86),
+                      glassTint.withValues(alpha: 0.0),
+                    ],
+                    stops: const [0.0, 0.72, 1.0],
+                  ),
+                ),
+                child: _ChatHeader(
+                  peer: widget.peer,
+                  displayName: widget.displayName,
+                  isGroup: isGroup,
+                ),
+              ),
+            ),
           ),
         ),
         body: Stack(
@@ -663,7 +689,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 ],
               ),
             ),
-            _topBlurFade(),
           ],
         ),
       ),
