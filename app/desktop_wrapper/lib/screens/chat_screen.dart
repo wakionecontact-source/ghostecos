@@ -6,7 +6,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
-import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -550,6 +549,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final notif = ChatRepo.instance.messagesNotifier(widget.peer);
     final isGroup = widget.peer.startsWith('g:');
     return MeshBackground(
+      particleCount: 16,
       child: Scaffold(
         backgroundColor: Colors.transparent,
         resizeToAvoidBottomInset: true,
@@ -669,26 +669,25 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
-  // Блюр-фейд под шапкой: контент уезжает под неё размытым, нижний край мягко
-  // гаснет вниз (не резкая прямая линия). Positioned — живёт в Stack тела.
+  // Мягкий край под шапкой: градиент-затемнение, гаснущее вниз (не резкая прямая
+  // линия). БЕЗ BackdropFilter — он пересчитывал блюр КАЖДЫЙ кадр над анимир.
+  // mesh и дико лагал с фото. Дёшево: один градиент, ноль per-frame работы.
   Widget _topBlurFade() {
     return Positioned(
       top: 0,
       left: 0,
       right: 0,
-      height: 30,
+      height: 38,
       child: IgnorePointer(
-        child: ShaderMask(
-          shaderCallback: (r) => const LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.white, Colors.transparent],
-          ).createShader(r),
-          blendMode: BlendMode.dstIn,
-          child: ClipRect(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 11, sigmaY: 11),
-              child: const SizedBox.expand(),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                GE.bgDeep.withValues(alpha: 0.92),
+                GE.bg.withValues(alpha: 0.0),
+              ],
             ),
           ),
         ),
@@ -1021,18 +1020,16 @@ class _Bubble extends StatelessWidget {
             ),
             // Без фона — только мягкое свечение-подложка под текстом: тёмное
             // (читаемость над mesh) + акцент (фиолет у своих, primary2 у чужих).
+            // Одно лёгкое свечение-подложка (blur 9): тёмное у чужих для
+            // читаемости, фиолет у своих для акцента. Раньше было 2 тяжёлых
+            // тени (blur 18+22) на КАЖДОМ баббле — лагало на длинной ленте.
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.55),
-                blurRadius: 18,
-                spreadRadius: 1,
-              ),
-              BoxShadow(
-                color: (mine ? GE.primary : GE.primary2).withValues(
-                  alpha: 0.22,
+                color: (mine ? GE.primary : Colors.black).withValues(
+                  alpha: mine ? 0.34 : 0.5,
                 ),
-                blurRadius: 22,
-                spreadRadius: -3,
+                blurRadius: 9,
+                spreadRadius: 0.5,
               ),
             ],
           ),
@@ -1312,7 +1309,16 @@ class _MediaPartState extends State<_MediaPart> {
             child: InteractiveViewer(child: Image.memory(_bytes!)),
           ),
         ),
-        child: Image.memory(_bytes!, width: 240, fit: BoxFit.cover),
+        // cacheWidth: декодим фото в ~2x от ширины показа (240), а не в полном
+        // разрешении — иначе большой снимок жрёт десятки МБ и дико лагает.
+        child: Image.memory(
+          _bytes!,
+          width: 240,
+          fit: BoxFit.cover,
+          cacheWidth: 480,
+          gaplessPlayback: true,
+          filterQuality: FilterQuality.low,
+        ),
       ),
     );
   }
