@@ -3720,6 +3720,7 @@ def get_profile(username: str, offset: int = Query(0), authorization: Optional[s
         "user_id": u["id"],
         "username": u["username"],
         "display_name": u["display_name"],
+        "avatar_url": u.get("avatar_url"),
         "am_following": am_following,
         "is_me": uid == u["id"],
         "reputation_score": rep_score,
