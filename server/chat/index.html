@@ -1752,6 +1752,7 @@ function accountsAddOrUpdate(token, meObj){
     id: meObj.id || meObj.user_id || 0,
     username: meObj.username,
     display_name: meObj.display_name || meObj.username,
+    avatar_url: meObj.avatar_url || null,
   };
   const i = arr.findIndex(a => a && a.username === rec.username);
   if (i >= 0) arr[i] = rec;
@@ -5567,7 +5568,11 @@ function openProfileDrawer(){
       const chips = arr.map((a, i) => {
         const init = (a.display_name || a.username || '?').trim().charAt(0).toUpperCase();
         const onclick = i === cur ? '' : `onclick="accountsSwitchTo(${i})"`;
-        return `<button class="pd-acct ${i === cur ? 'active' : ''}" title="@${esc(a.username)}" ${onclick}>${esc(init)}</button>`;
+        const body = a.avatar_url
+          ? `<img src="${esc(a.avatar_url)}" alt="">`
+          : esc(init);
+        const bg = a.avatar_url ? ' style="background:transparent;"' : '';
+        return `<button class="pd-acct ${i === cur ? 'active' : ''}" title="@${esc(a.username)}"${bg} ${onclick}>${body}</button>`;
       }).join('');
       const addBtn = arr.length < ACCOUNTS_MAX
         ? `<button class="pd-acct-add" title="Добавить аккаунт (${arr.length}/${ACCOUNTS_MAX})" onclick="closeProfileDrawer();accountsAdd()"><i class="fa-solid fa-plus"></i></button>`

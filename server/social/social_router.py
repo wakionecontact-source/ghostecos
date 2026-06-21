@@ -2508,6 +2508,7 @@ def fmt_post(row: dict, user_id: int, reactions: Optional[dict] = None, am_follo
         "user_id": row["user_id"],
         "username": row["username"],
         "display_name": row["display_name"],
+        "avatar_url": row.get("avatar_url"),
         "reactions": reactions or {"counts": {}, "your_emoji": None, "total": 0},
         "comments_count": row["comments_count"],
         "media": media_list,
