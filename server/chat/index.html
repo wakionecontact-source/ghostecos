@@ -956,7 +956,38 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 .pd-head{position:relative;padding:calc(20px + env(safe-area-inset-top)) 20px 18px;background:linear-gradient(135deg, rgba(168,85,247,0.22), rgba(236,72,153,0.08) 60%, transparent);border-bottom:1px solid var(--border);flex-shrink:0;}
 .pd-close{position:absolute;top:calc(14px + env(safe-area-inset-top));right:12px;width:34px;height:34px;border-radius:50%;border:none;background:rgba(255,255,255,0.06);color:var(--text);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;}
 .pd-close:hover{background:rgba(255,255,255,0.12);}
-.pd-ava{width:78px;height:78px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;color:#fff;font-size:32px;font-weight:700;box-shadow:0 8px 28px rgba(168,85,247,0.35);margin-bottom:12px;overflow:hidden;}
+.pd-ava{width:78px;height:78px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;color:#fff;font-size:32px;font-weight:700;box-shadow:0 8px 28px rgba(168,85,247,0.35);margin-bottom:12px;overflow:hidden;cursor:pointer;}
+/* Hero-вариант: когда есть загруженная аватарка, она занимает весь header
+   (квадрат 1:1), имя+@handle позиционированы absolute снизу-слева поверх
+   градиента. Стиль TG profile. */
+.pd-head.has-avatar{padding:0;background:transparent;border-bottom:none;aspect-ratio:1;display:block;overflow:hidden;}
+.pd-head.has-avatar .pd-ava{width:100%;height:100%;border-radius:0;margin:0;box-shadow:none;background:#0c0a1c;}
+.pd-head.has-avatar .pd-ava img{width:100%;height:100%;object-fit:cover;border-radius:0;}
+.pd-head.has-avatar::after{content:"";position:absolute;left:0;right:0;bottom:0;height:55%;background:linear-gradient(180deg, transparent, rgba(0,0,0,0.85) 95%);pointer-events:none;z-index:1;}
+.pd-head.has-avatar .pd-name{position:absolute;left:20px;bottom:36px;z-index:2;color:#fff;font-size:24px;text-shadow:0 2px 8px rgba(0,0,0,0.6);margin:0;}
+.pd-head.has-avatar .pd-handle{position:absolute;left:20px;bottom:14px;z-index:2;color:rgba(255,255,255,0.85);text-shadow:0 2px 8px rgba(0,0,0,0.6);}
+.pd-head.has-avatar .pd-close{z-index:3;background:rgba(0,0,0,0.45);color:#fff;backdrop-filter:blur(8px);}
+.pd-head.has-avatar #pdAvaRemove{position:absolute;left:20px;bottom:62px;z-index:2;color:rgba(255,255,255,0.85);text-shadow:0 2px 6px rgba(0,0,0,0.6);}
+.pd-head.has-avatar .pd-acct-row{z-index:2;}
+.pd-head.has-avatar .pd-acct{border:2px solid rgba(255,255,255,0.4);}
+#pdAvaEdit{position:absolute;top:calc(14px + env(safe-area-inset-top));right:60px;z-index:3;width:34px;height:34px;border-radius:50%;border:none;background:rgba(0,0,0,0.45);color:#fff;backdrop-filter:blur(8px);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;}
+#pdAvaEdit:hover{background:rgba(0,0,0,0.65);}
+.pd-head:not(.has-avatar) #pdAvaEdit{display:none !important;}
+
+/* Avatar lightbox: TG-style fullscreen viewer */
+#avaLightbox{position:fixed;inset:0;z-index:1500;display:none;align-items:center;justify-content:center;}
+#avaLightbox.open{display:flex;}
+#avaLightbox .alb-overlay{position:absolute;inset:0;background:rgba(0,0,0,0.93);backdrop-filter:blur(12px);}
+#avaLightbox .alb-close{position:absolute;top:calc(18px + env(safe-area-inset-top));right:18px;width:42px;height:42px;border-radius:50%;border:none;background:rgba(255,255,255,0.12);color:#fff;font-size:18px;cursor:pointer;z-index:2;display:flex;align-items:center;justify-content:center;}
+#avaLightbox .alb-close:hover{background:rgba(255,255,255,0.22);}
+#avaLightbox .alb-counter{position:absolute;top:calc(28px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);color:#fff;font-size:14px;font-weight:600;z-index:2;background:rgba(0,0,0,0.4);padding:6px 14px;border-radius:99px;}
+#avaLightbox .alb-counter:empty{display:none;}
+#avaLightbox .alb-title{position:absolute;bottom:calc(28px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);color:#fff;font-size:15px;font-weight:600;z-index:2;}
+#avaLightbox .alb-nav{position:absolute;top:50%;transform:translateY(-50%);width:48px;height:48px;border-radius:50%;border:none;background:rgba(255,255,255,0.12);color:#fff;font-size:20px;cursor:pointer;z-index:2;display:flex;align-items:center;justify-content:center;}
+#avaLightbox .alb-nav:hover{background:rgba(255,255,255,0.22);}
+#avaLightbox .alb-prev{left:18px;}
+#avaLightbox .alb-next{right:18px;}
+#avaLightbox .alb-img{max-width:92vw;max-height:80vh;border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,0.6);object-fit:contain;z-index:1;}
 /* Ряд аккаунтов сверху шторки — мини-аватарки + кнопка «+» как в TG.
    Скрыто если аккаунт всего один (только текущий) — нечего показывать. */
 /* Ряд аккаунтов — правый нижний угол карточки профиля (.pd-head). */
@@ -1159,8 +1190,11 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
   <aside class="pd-drawer" id="pdDrawer" role="dialog" aria-label="Профиль">
     <div class="pd-head">
       <button class="pd-close" onclick="closeProfileDrawer()" title="Закрыть"><i class="fa-solid fa-xmark"></i></button>
-      <div class="pd-ava" id="pdAva" onclick="document.getElementById('avaUpInput').click()" title="Загрузить аватарку" style="cursor:pointer;">?</div>
+      <div class="pd-ava" id="pdAva" title="Аватарка">?</div>
       <input type="file" id="avaUpInput" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="onAvatarFileChosen(this)">
+      <button id="pdAvaEdit" onclick="document.getElementById('avaUpInput').click()" title="Изменить аватарку" style="display:none;">
+        <i class="fa-solid fa-camera"></i>
+      </button>
       <a id="pdAvaRemove" href="#" style="display:none;font-size:11px;color:var(--sub);margin-top:4px;" onclick="onAvatarRemove(event)">убрать</a>
       <div class="pd-name" id="pdName">—</div>
       <div class="pd-handle" id="pdHandle">@—</div>
@@ -4708,12 +4742,14 @@ async function ingestIncoming(m){
   }
   const added = await idbAddMessage(stored);
   if (!added) return false;
+  const peerAva = isMine ? null : (m.from_avatar_url || null);
   let d = dialogs.find(x => x.username === peerUsername);
   if (!d) {
-    d = { username: peerUsername, display_name: peerName || peerUsername, last_text: text, last_at: m.created_at, last_from_me: isMine, unread: 0 };
+    d = { username: peerUsername, display_name: peerName || peerUsername, last_text: text, last_at: m.created_at, last_from_me: isMine, unread: 0, avatar_url: peerAva };
     dialogs.unshift(d);
   } else {
     if (peerName) d.display_name = peerName;
+    if (peerAva !== null) d.avatar_url = peerAva;
     d.last_text = text;
     d.last_at = m.created_at;
     d.last_from_me = isMine;
@@ -5358,7 +5394,9 @@ function renderDialogs(filter=''){
     const isSupport = d.is_support;
     const avHtml = isSupport
       ? '<div class="d-av" style="background:linear-gradient(135deg,#a855f7,#ec4899);"><i class="fa-solid fa-shield-halved" style="color:#fff;font-size:14px;"></i></div>'
-      : `<div class="d-av">${ini(d.display_name||d.username)}</div>`;
+      : d.avatar_url
+        ? `<div class="d-av" style="background:transparent;"><img src="${esc(d.avatar_url)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;"></div>`
+        : `<div class="d-av">${ini(d.display_name||d.username)}</div>`;
     const nameLine = isSupport
       ? `<div class="d-name">${esc(d.display_name)} <span style="font-size:9px;background:linear-gradient(95deg,#a855f7,#ec4899);color:#fff;padding:1px 6px;border-radius:99px;margin-left:4px;font-weight:800;letter-spacing:.4px;vertical-align:middle;">PINNED</span></div>`
       : `<div class="d-name">${esc(d.display_name||d.username)}</div>`;
@@ -5393,6 +5431,56 @@ function onLeftBtn(e){
   e.stopPropagation();
   if (_backUrl) { location.href = _backUrl; return; }
   openProfileDrawer();
+}
+
+// Аватар-лайтбокс: fullscreen viewer с навигацией ←/→ и счётчиком 1/N.
+let _avaLbState = null;
+function openAvatarLightbox(urls, startIdx, title){
+  if (!urls || !urls.length) return;
+  _avaLbState = { urls, idx: Math.max(0, Math.min(startIdx || 0, urls.length - 1)), title: title || '' };
+  let lb = document.getElementById('avaLightbox');
+  if (!lb){
+    lb = document.createElement('div');
+    lb.id = 'avaLightbox';
+    lb.innerHTML = `
+      <div class="alb-overlay" onclick="closeAvatarLightbox()"></div>
+      <button class="alb-close" onclick="closeAvatarLightbox()" title="Закрыть"><i class="fa-solid fa-xmark"></i></button>
+      <div class="alb-counter" id="albCounter"></div>
+      <div class="alb-title" id="albTitle"></div>
+      <button class="alb-nav alb-prev" id="albPrev" onclick="avaLbNav(-1)"><i class="fa-solid fa-chevron-left"></i></button>
+      <button class="alb-nav alb-next" id="albNext" onclick="avaLbNav(1)"><i class="fa-solid fa-chevron-right"></i></button>
+      <img class="alb-img" id="albImg" onclick="event.stopPropagation()">`;
+    document.body.appendChild(lb);
+    document.addEventListener('keydown', _avaLbKey);
+  }
+  _avaLbRender();
+  lb.classList.add('open');
+}
+function _avaLbRender(){
+  if (!_avaLbState) return;
+  const { urls, idx, title } = _avaLbState;
+  document.getElementById('albImg').src = urls[idx];
+  document.getElementById('albCounter').textContent = urls.length > 1 ? `${idx + 1} из ${urls.length}` : '';
+  document.getElementById('albTitle').textContent = title;
+  document.getElementById('albPrev').style.display = urls.length > 1 ? '' : 'none';
+  document.getElementById('albNext').style.display = urls.length > 1 ? '' : 'none';
+}
+function avaLbNav(delta){
+  if (!_avaLbState) return;
+  const n = _avaLbState.urls.length;
+  _avaLbState.idx = (_avaLbState.idx + delta + n) % n;
+  _avaLbRender();
+}
+function closeAvatarLightbox(){
+  const lb = document.getElementById('avaLightbox');
+  if (lb) lb.classList.remove('open');
+  _avaLbState = null;
+}
+function _avaLbKey(e){
+  if (!_avaLbState) return;
+  if (e.key === 'Escape') closeAvatarLightbox();
+  else if (e.key === 'ArrowLeft') avaLbNav(-1);
+  else if (e.key === 'ArrowRight') avaLbNav(1);
 }
 
 async function onAvatarFileChosen(input){
@@ -5451,13 +5539,20 @@ function openProfileDrawer(){
   if (me){
     nm.textContent = me.display_name || me.username || '—';
     hd.textContent = '@' + (me.username || '');
+    const head = ava.closest('.pd-head');
     if (me.avatar_url){
-      ava.innerHTML = '<img src="' + esc(me.avatar_url) + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">';
+      ava.innerHTML = '<img src="' + esc(me.avatar_url) + '" alt="">';
+      if (head) head.classList.add('has-avatar');
+      ava.onclick = (e) => { e.stopPropagation(); openAvatarLightbox([me.avatar_url], 0, me.display_name || me.username); };
     } else {
       ava.textContent = ini(me.display_name || me.username || '?');
+      if (head) head.classList.remove('has-avatar');
+      ava.onclick = () => document.getElementById('avaUpInput').click();
     }
     const rm = document.getElementById('pdAvaRemove');
     if (rm) rm.style.display = me.avatar_url ? '' : 'none';
+    const ed = document.getElementById('pdAvaEdit');
+    if (ed) ed.style.display = me.avatar_url ? '' : 'none';
   }
   const ii = document.getElementById('pdInstallItem');
   if (ii) ii.style.display = (window._deferredInstallPrompt || window._pwaCanInstall) ? '' : 'none';
@@ -5529,12 +5624,25 @@ async function openChat(username, display_name){
   // личность администратора и показать чат как «официальный канал».
   const isSupport = !!(_supportAdmin && username === _supportAdmin.username);
   const isAdminInbox = isSupport && _supportAdmin.is_me;
+  const _dlgForPeer = dialogs.find(x => x.username === username);
   activePeer = {
     username,
     display_name: isSupport ? 'Поддержка GhostChat' : (display_name || username),
     is_support: isSupport,
     is_admin_inbox: isAdminInbox,
+    avatar_url: _dlgForPeer ? _dlgForPeer.avatar_url : null,
   };
+  // Подтянем свежий avatar_url асинхронно (TOFU кэш) — если есть, перерендерим шапку.
+  if (!isSupport){
+    wsFetchPeerPub(username).then(r => {
+      if (r && r.avatar_url && activePeer && activePeer.username === username && activePeer.avatar_url !== r.avatar_url){
+        activePeer.avatar_url = r.avatar_url;
+        renderChat();
+        const d = dialogs.find(x => x.username === username);
+        if (d){ d.avatar_url = r.avatar_url; idbPutDialog(d).catch(()=>{}); renderDialogs(document.getElementById('sbSearch').value); }
+      }
+    }).catch(()=>{});
+  }
   activeGroup = null;
   _peerTyping = false; _peerOnline = false;
   clearTimeout(_peerTypingTimer);
@@ -5771,9 +5879,14 @@ function backToList(){
 function renderChat(){
   const p = activePeer;
   const main = document.getElementById('chatMain');
+  const avClick = p.avatar_url
+    ? `event.stopPropagation();openAvatarLightbox([${jsAttr(p.avatar_url)}],0,${jsAttr(p.display_name)})`
+    : `openPeerProfile(${jsAttr(p.username)})`;
   const avHtml = p.is_support
     ? `<div class="chat-av" onclick="openPeerProfile(${jsAttr(p.username)})" style="background:linear-gradient(135deg,#a855f7,#ec4899);"><i class="fa-solid fa-shield-halved" style="color:#fff;font-size:15px;"></i></div>`
-    : `<div class="chat-av" onclick="openPeerProfile(${jsAttr(p.username)})">${ini(p.display_name)}</div>`;
+    : p.avatar_url
+      ? `<div class="chat-av" onclick="${avClick}" style="background:transparent;"><img src="${esc(p.avatar_url)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;"></div>`
+      : `<div class="chat-av" onclick="openPeerProfile(${jsAttr(p.username)})">${ini(p.display_name)}</div>`;
   const subLine = p.is_support
     ? (p.is_admin_inbox ? 'Inbox сообщений от юзеров' : 'Официальный канал · отвечают живые люди')
     : `@${esc(p.username)}`;

@@ -708,16 +708,13 @@ def get_user_pub_key(username: str, authorization: Optional[str] = Header(None))
     auth_member(authorization)
     c = db()
     row = c.execute(
-        "SELECT id, x25519_pub FROM users WHERE username=?",
+        "SELECT id, x25519_pub, display_name, avatar_url FROM users WHERE username=?",
         (username.lower(),),
     ).fetchone()
     if not row:
         c.close()
         raise HTTPException(404, "Юзер не найден")
     uid = row["id"]
-    # TDA-4: список pubkey'ев активных устройств юзера.
-    # Старые клиенты используют только x25519_pub (legacy single-device).
-    # Новые multi-device клиенты итерируют devices[].
     dev_rows = c.execute(
         "SELECT device_id, pub_key FROM user_devices "
         "WHERE user_id=? AND is_active=1 AND is_blocked=0 AND pub_key IS NOT NULL",
@@ -726,9 +723,9 @@ def get_user_pub_key(username: str, authorization: Optional[str] = Header(None))
     c.close()
     return {
         "username": username.lower(),
+        "display_name": row["display_name"],
+        "avatar_url": row["avatar_url"],
         "x25519_pub": row["x25519_pub"],
-        # TDA-4 privacy: device_id НЕ возвращаем пиру (metadata leak).
-        # Пиру достаточно списка pubkey'ев, чтобы зашифровать N envelope-ов.
         "device_pubkeys": [d["pub_key"] for d in dev_rows if d["pub_key"]],
     }
 
@@ -750,6 +747,8 @@ def send_message(body: SendBody, authorization: Optional[str] = Header(None)):
         c.close()
         raise HTTPException(400, "У получателя ещё нет E2E-ключей — попросите его зайти в /chat")
 
+    sender_ava_row = c.execute("SELECT avatar_url FROM users WHERE id=?", (user["id"],)).fetchone()
+    sender_ava = sender_ava_row["avatar_url"] if sender_ava_row else None
     c.execute(
         "INSERT INTO chat_dm (sender_id, receiver_id, text) VALUES (?,?,?)",
         (user["id"], to_user["id"], body.ciphertext),
@@ -761,6 +760,7 @@ def send_message(body: SendBody, authorization: Optional[str] = Header(None)):
         "id": msg_id,
         "from_username": user["username"],
         "from_display_name": user["display_name"],
+        "from_avatar_url": sender_ava,
         "to_username": to_user["username"],
         "ciphertext": body.ciphertext,
         "created_at": row["created_at"],
@@ -1214,7 +1214,7 @@ def get_pending(authorization: Optional[str] = Header(None),
     c = db()
     rows = c.execute(f"""
         SELECT m.id, m.sender_id, m.text as ciphertext, m.created_at,
-               u.username as from_username, u.display_name as from_display_name
+               u.username as from_username, u.display_name as from_display_name, u.avatar_url as from_avatar_url
         FROM chat_dm m JOIN users u ON u.id = m.sender_id
         WHERE m.receiver_id = ? AND {_not_delivered_filter(device_id)}
         ORDER BY m.id ASC
@@ -1227,6 +1227,7 @@ def get_pending(authorization: Optional[str] = Header(None),
                 "id": r["id"],
                 "from_username": r["from_username"],
                 "from_display_name": r["from_display_name"],
+                "from_avatar_url": r["from_avatar_url"],
                 "to_username": user["username"],
                 "ciphertext": r["ciphertext"],
                 "created_at": r["created_at"],
