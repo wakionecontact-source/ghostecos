@@ -14,6 +14,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import '../theme.dart';
+import '../mesh_background.dart';
 import '../services/chat_repo.dart';
 import '../services/db_service.dart';
 import '../services/auth_service.dart';
@@ -23,6 +24,7 @@ import 'profile_screen.dart';
 class ChatScreen extends StatefulWidget {
   final String peer;
   final String displayName;
+
   /// Если задан — после открытия проскролить и подсветить сообщение с этим sid.
   final int? highlightSid;
   const ChatScreen({
@@ -96,9 +98,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final msgs = ChatRepo.instance.messagesNotifier(widget.peer).value;
     final idx = msgs.indexWhere((m) => m.sid == sid);
     if (idx < 0 || !_scrollCtrl.hasClients) return;
-    final approx = (idx * 64.0).clamp(0.0, _scrollCtrl.position.maxScrollExtent);
-    _scrollCtrl.animateTo(approx,
-        duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+    final approx = (idx * 64.0).clamp(
+      0.0,
+      _scrollCtrl.position.maxScrollExtent,
+    );
+    _scrollCtrl.animateTo(
+      approx,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
   }
 
   @override
@@ -108,7 +116,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _recordTicker?.cancel();
     _inputCtrl.dispose();
     _scrollCtrl.dispose();
-    try { _recorder.dispose(); } catch (_) {}
+    try {
+      _recorder.dispose();
+    } catch (_) {}
     super.dispose();
   }
 
@@ -116,8 +126,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (!_scrollCtrl.hasClients) return;
     final pos = _scrollCtrl.position.maxScrollExtent;
     if (animate) {
-      _scrollCtrl.animateTo(pos,
-          duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
+      _scrollCtrl.animateTo(
+        pos,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+      );
     } else {
       _scrollCtrl.jumpTo(pos);
     }
@@ -126,31 +139,45 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<void> _send() async {
     final text = _inputCtrl.text.trim();
     if (text.isEmpty || _sending) return;
-    setState(() => _sending = true);
+    final replyTo = _replyTo;
+    final editing = _editing;
+    // Чистим поле СРАЗУ: текст уходит в pending-бабл, бар свободен (не висит с
+    // текстом, пока грузится отправка). При ошибке — вернём текст и контекст.
+    _inputCtrl.clear();
+    setState(() {
+      _sending = true;
+      _replyTo = null;
+      _editing = null;
+    });
     try {
-      if (_editing != null) {
+      if (editing != null) {
         await ChatRepo.instance.editDmMessage(
           toUsername: widget.peer,
-          sid: _editing!.sid,
+          sid: editing.sid,
           newText: text,
         );
-        setState(() => _editing = null);
       } else {
         await ChatRepo.instance.sendDmText(
           widget.peer,
           text,
-          replyTo: _replyTo?.sid,
-          replyPreview: _replyTo == null
+          replyTo: replyTo?.sid,
+          replyPreview: replyTo == null
               ? null
-              : (_replyTo!.text.length > 100
-                  ? '${_replyTo!.text.substring(0, 100)}…'
-                  : _replyTo!.text),
+              : (replyTo.text.length > 100
+                    ? '${replyTo.text.substring(0, 100)}…'
+                    : replyTo.text),
         );
       }
-      _inputCtrl.clear();
-      setState(() => _replyTo = null);
-      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom(true));
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _scrollToBottom(true),
+      );
     } catch (e) {
+      // Вернуть текст/ответ/правку, чтобы можно было переотправить.
+      _inputCtrl.text = text;
+      setState(() {
+        _replyTo = replyTo;
+        _editing = editing;
+      });
       _snack('Не отправилось: $e');
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -211,10 +238,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             radius: GE.radiusLg,
             child: Wrap(
               children: [
-                _attachTile(Icons.camera_alt, 'Камера',
-                    () => _pickAndSendImage(ImageSource.camera)),
-                _attachTile(Icons.photo_library, 'Галерея',
-                    () => _pickAndSendImage(ImageSource.gallery)),
+                _attachTile(
+                  Icons.camera_alt,
+                  'Камера',
+                  () => _pickAndSendImage(ImageSource.camera),
+                ),
+                _attachTile(
+                  Icons.photo_library,
+                  'Галерея',
+                  () => _pickAndSendImage(ImageSource.gallery),
+                ),
                 _attachTile(Icons.videocam, 'Видео', _pickAndSendVideo),
               ],
             ),
@@ -237,7 +270,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Container(
-                width: 44, height: 44,
+                width: 44,
+                height: 44,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: LinearGradient(colors: [GE.primary2, GE.primary]),
@@ -257,11 +291,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (_recording) return;
     try {
       final has = await _recorder.hasPermission();
-      if (!has) { _snack('Нет разрешения на микрофон'); return; }
+      if (!has) {
+        _snack('Нет разрешения на микрофон');
+        return;
+      }
       final dir = await getTemporaryDirectory();
-      final path = '${dir.path}/ghost_voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      final path =
+          '${dir.path}/ghost_voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
       await _recorder.start(
-        const RecordConfig(encoder: AudioEncoder.aacLc, sampleRate: 44100, numChannels: 1),
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          sampleRate: 44100,
+          numChannels: 1,
+        ),
         path: path,
       );
       _recordStartedAt = DateTime.now().millisecondsSinceEpoch;
@@ -273,8 +315,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _recordTicker?.cancel();
       _recordTicker = Timer.periodic(const Duration(milliseconds: 200), (_) {
         if (!mounted) return;
-        setState(() => _recordDur =
-            Duration(milliseconds: DateTime.now().millisecondsSinceEpoch - _recordStartedAt));
+        setState(
+          () => _recordDur = Duration(
+            milliseconds:
+                DateTime.now().millisecondsSinceEpoch - _recordStartedAt,
+          ),
+        );
       });
     } catch (e) {
       _snack('Запись не стартовала: $e');
@@ -300,7 +346,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         voice: true,
         duration: durSec,
       );
-      try { await file.delete(); } catch (_) {}
+      try {
+        await file.delete();
+      } catch (_) {}
     } catch (e) {
       _snack('Голосовое не отправилось: $e');
     }
@@ -326,10 +374,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 Divider(height: 1, color: GE.glassBorder),
                 _menuItem(ctx, Icons.reply, 'Ответить', 'reply'),
                 _menuItem(ctx, Icons.forward, 'Переслать', 'forward'),
-                if (canEdit) _menuItem(ctx, Icons.edit, 'Редактировать', 'edit'),
+                if (canEdit)
+                  _menuItem(ctx, Icons.edit, 'Редактировать', 'edit'),
                 _menuItem(ctx, Icons.copy, 'Копировать', 'copy'),
                 if (mine && !m.deleted)
-                  _menuItem(ctx, Icons.delete_outline, 'Удалить', 'delete', danger: true),
+                  _menuItem(
+                    ctx,
+                    Icons.delete_outline,
+                    'Удалить',
+                    'delete',
+                    danger: true,
+                  ),
               ],
             ),
           ),
@@ -341,8 +396,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final emoji = res.substring('react:'.length);
       try {
         await ChatRepo.instance.reactDmMessage(
-          toUsername: widget.peer, sid: m.sid, emoji: emoji);
-      } catch (e) { _snack('Не вышло: $e'); }
+          toUsername: widget.peer,
+          sid: m.sid,
+          emoji: emoji,
+        );
+      } catch (e) {
+        _snack('Не вышло: $e');
+      }
       return;
     }
     switch (res) {
@@ -363,8 +423,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       case 'delete':
         try {
           await ChatRepo.instance.deleteDmMessage(
-            toUsername: widget.peer, sid: m.sid);
-        } catch (e) { _snack('Не удалилось: $e'); }
+            toUsername: widget.peer,
+            sid: m.sid,
+          );
+        } catch (e) {
+          _snack('Не удалилось: $e');
+        }
         break;
       case 'forward':
         await _showForwardPicker(m);
@@ -372,7 +436,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  Widget _menuItem(BuildContext ctx, IconData icon, String label, String value, {bool danger = false}) {
+  Widget _menuItem(
+    BuildContext ctx,
+    IconData icon,
+    String label,
+    String value, {
+    bool danger = false,
+  }) {
     return InkWell(
       onTap: () => Navigator.pop(ctx, value),
       borderRadius: BorderRadius.circular(GE.radiusSm),
@@ -406,31 +476,58 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 8,
+                  ),
                   child: Align(
                     alignment: Alignment.centerLeft,
-                    child: Text('Переслать кому?',
-                        style: TextStyle(color: GE.text, fontWeight: FontWeight.w600)),
+                    child: Text(
+                      'Переслать кому?',
+                      style: TextStyle(
+                        color: GE.text,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ),
                 for (final d in dialogs)
                   InkWell(
                     onTap: () => Navigator.pop(ctx, d.username),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                      child: Row(children: [
-                        CircleAvatar(radius: 16, backgroundColor: GE.primary2,
-                            child: const Icon(Icons.person, color: Colors.white, size: 16)),
-                        const SizedBox(width: 10),
-                        Expanded(child: Text('@${d.username}',
-                            style: TextStyle(color: GE.text))),
-                      ]),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 16,
+                            backgroundColor: GE.primary2,
+                            child: const Icon(
+                              Icons.person,
+                              color: Colors.white,
+                              size: 16,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              '@${d.username}',
+                              style: TextStyle(color: GE.text),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 if (dialogs.isEmpty)
                   Padding(
                     padding: const EdgeInsets.all(20),
-                    child: Text('Нет других чатов', style: TextStyle(color: GE.sub)),
+                    child: Text(
+                      'Нет других чатов',
+                      style: TextStyle(color: GE.sub),
+                    ),
                   ),
               ],
             ),
@@ -451,75 +548,95 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final notif = ChatRepo.instance.messagesNotifier(widget.peer);
     final isGroup = widget.peer.startsWith('g:');
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      resizeToAvoidBottomInset: true,
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(64),
-        child: _ChatHeader(
-          peer: widget.peer,
-          displayName: widget.displayName,
-          isGroup: isGroup,
-        ),
-      ),
-      body: SafeArea(
-        top: false,
-        child: Column(
-        children: [
-          Expanded(
-            child: ValueListenableBuilder<List<StoredMessage>>(
-              valueListenable: notif,
-              builder: (_, msgs, __) {
-                if (msgs.isEmpty) return _empty();
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (mounted && _scrollCtrl.hasClients) {
-                    final at = _scrollCtrl.position.pixels;
-                    final max = _scrollCtrl.position.maxScrollExtent;
-                    if (max - at < 200) _scrollToBottom(true);
-                  }
-                });
-                return ListView.builder(
-                  controller: _scrollCtrl,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                  itemCount: msgs.length,
-                  itemBuilder: (_, i) {
-                    final m = msgs[i];
-                    return Dismissible(
-                      key: ValueKey('msg_${m.sid}_${m.tempSid ?? ""}'),
-                      direction: DismissDirection.startToEnd,
-                      confirmDismiss: (_) async {
-                        // Не «исчезаем», а только триггерим reply.
-                        setState(() => _replyTo = m);
-                        HapticFeedback.selectionClick();
-                        return false;
-                      },
-                      background: Container(
-                        alignment: Alignment.centerLeft,
-                        padding: const EdgeInsets.only(left: 24),
-                        child: Icon(Icons.reply, color: GE.primary, size: 22),
-                      ),
-                      child: GestureDetector(
-                        onLongPress: () => _openBubbleMenu(m),
-                        onDoubleTap: () async {
-                          try {
-                            await ChatRepo.instance.reactDmMessage(
-                                toUsername: widget.peer, sid: m.sid, emoji: '❤');
-                          } catch (_) {}
-                        },
-                        child: _Bubble(m,
-                            myUsername: _myUsername,
-                            highlighted: m.sid == _highlightSid),
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
+    return MeshBackground(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        resizeToAvoidBottomInset: true,
+        appBar: PreferredSize(
+          preferredSize: const Size.fromHeight(64),
+          child: _ChatHeader(
+            peer: widget.peer,
+            displayName: widget.displayName,
+            isGroup: isGroup,
           ),
-          if (_replyTo != null || _editing != null) _replyEditBar(),
-          _composer(),
-        ],
-      ),
+        ),
+        body: SafeArea(
+          top: false,
+          child: Column(
+            children: [
+              Expanded(
+                // Матовая подложка над mesh: mesh просвечивает, но сообщения читаемы.
+                // Без BackdropFilter на большом скролле — оптимизация (фрост даёт
+                // композер ниже + бабблы-стекло поверх).
+                child: ColoredBox(
+                  color: GE.bg.withValues(alpha: 0.5),
+                  child: ValueListenableBuilder<List<StoredMessage>>(
+                    valueListenable: notif,
+                    builder: (_, msgs, __) {
+                      if (msgs.isEmpty) return _empty();
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted && _scrollCtrl.hasClients) {
+                          final at = _scrollCtrl.position.pixels;
+                          final max = _scrollCtrl.position.maxScrollExtent;
+                          if (max - at < 200) _scrollToBottom(true);
+                        }
+                      });
+                      return ListView.builder(
+                        controller: _scrollCtrl,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 12,
+                        ),
+                        itemCount: msgs.length,
+                        itemBuilder: (_, i) {
+                          final m = msgs[i];
+                          return Dismissible(
+                            key: ValueKey('msg_${m.sid}_${m.tempSid ?? ""}'),
+                            direction: DismissDirection.startToEnd,
+                            confirmDismiss: (_) async {
+                              // Не «исчезаем», а только триггерим reply.
+                              setState(() => _replyTo = m);
+                              HapticFeedback.selectionClick();
+                              return false;
+                            },
+                            background: Container(
+                              alignment: Alignment.centerLeft,
+                              padding: const EdgeInsets.only(left: 24),
+                              child: Icon(
+                                Icons.reply,
+                                color: GE.primary,
+                                size: 22,
+                              ),
+                            ),
+                            child: GestureDetector(
+                              onLongPress: () => _openBubbleMenu(m),
+                              onDoubleTap: () async {
+                                try {
+                                  await ChatRepo.instance.reactDmMessage(
+                                    toUsername: widget.peer,
+                                    sid: m.sid,
+                                    emoji: '❤',
+                                  );
+                                } catch (_) {}
+                              },
+                              child: _Bubble(
+                                m,
+                                myUsername: _myUsername,
+                                highlighted: m.sid == _highlightSid,
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ),
+              if (_replyTo != null || _editing != null) _replyEditBar(),
+              _composer(),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -534,18 +651,30 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         radius: GE.radiusMd,
         child: Row(
           children: [
-            Icon(isEdit ? Icons.edit : Icons.reply, size: 16, color: GE.primary),
+            Icon(
+              isEdit ? Icons.edit : Icons.reply,
+              size: 16,
+              color: GE.primary,
+            ),
             const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(isEdit ? 'Редактирование' : 'Ответ',
-                      style: TextStyle(
-                          color: GE.primary, fontSize: 11, fontWeight: FontWeight.w600)),
-                  Text(m?.text ?? '',
-                      maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: GE.sub, fontSize: 12)),
+                  Text(
+                    isEdit ? 'Редактирование' : 'Ответ',
+                    style: TextStyle(
+                      color: GE.primary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    m?.text ?? '',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: GE.sub, fontSize: 12),
+                  ),
                 ],
               ),
             ),
@@ -576,11 +705,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           children: [
             Icon(Icons.chat_bubble_outline, size: 40, color: GE.primary),
             const SizedBox(height: 10),
-            Text('Напиши первое сообщение',
-                style: TextStyle(color: GE.text, fontWeight: FontWeight.w600)),
+            Text(
+              'Напиши первое сообщение',
+              style: TextStyle(color: GE.text, fontWeight: FontWeight.w600),
+            ),
             const SizedBox(height: 4),
-            Text('Всё шифруется на твоём устройстве',
-                style: TextStyle(color: GE.sub, fontSize: 12)),
+            Text(
+              'Всё шифруется на твоём устройстве',
+              style: TextStyle(color: GE.sub, fontSize: 12),
+            ),
           ],
         ),
       ),
@@ -597,66 +730,88 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       child: GlassCard(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         radius: GE.radiusLg,
-        child: _recording ? _recordingBar() : Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            IconButton(
-              icon: Icon(Icons.attach_file, color: GE.sub),
-              onPressed: _sending ? null : _openAttachSheet,
-            ),
-            Expanded(
-              child: TextField(
-                controller: _inputCtrl,
-                minLines: 1,
-                maxLines: 6,
-                style: TextStyle(color: GE.text, fontSize: 15),
-                cursorColor: GE.primary,
-                textInputAction: TextInputAction.newline,
-                onChanged: (_) => setState(() {}),
-                decoration: InputDecoration(
-                  hintText: 'Сообщение',
-                  hintStyle: TextStyle(color: GE.sub),
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                ),
-              ),
-            ),
-            Material(
-              color: Colors.transparent,
-              child: hasText
-                  ? InkWell(
-                      customBorder: const CircleBorder(),
-                      onTap: _sending ? null : _send,
-                      child: _circleBtn(_sending
-                          ? const SizedBox(
-                              width: 16, height: 16,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white))
-                          : const Icon(Icons.send, color: Colors.white, size: 18)),
-                    )
-                  : GestureDetector(
-                      onLongPressStart: (_) => _startRecording(),
-                      onLongPressEnd: (_) => _stopAndSendRecording(),
-                      onLongPressCancel: () => _stopAndSendRecording(cancel: true),
-                      child: _circleBtn(
-                          const Icon(Icons.mic, color: Colors.white, size: 20)),
+        child: _recording
+            ? _recordingBar()
+            : Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  IconButton(
+                    icon: Icon(Icons.attach_file, color: GE.sub),
+                    onPressed: _sending ? null : _openAttachSheet,
+                  ),
+                  Expanded(
+                    child: TextField(
+                      controller: _inputCtrl,
+                      minLines: 1,
+                      maxLines: 6,
+                      style: TextStyle(color: GE.text, fontSize: 15),
+                      cursorColor: GE.primary,
+                      textInputAction: TextInputAction.newline,
+                      onChanged: (_) => setState(() {}),
+                      decoration: InputDecoration(
+                        hintText: 'Сообщение',
+                        hintStyle: TextStyle(color: GE.sub),
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 10,
+                        ),
+                      ),
                     ),
-            ),
-          ],
-        ),
+                  ),
+                  Material(
+                    color: Colors.transparent,
+                    child: hasText
+                        ? InkWell(
+                            customBorder: const CircleBorder(),
+                            onTap: _sending ? null : _send,
+                            child: _circleBtn(
+                              _sending
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.send,
+                                      color: Colors.white,
+                                      size: 18,
+                                    ),
+                            ),
+                          )
+                        : GestureDetector(
+                            onLongPressStart: (_) => _startRecording(),
+                            onLongPressEnd: (_) => _stopAndSendRecording(),
+                            onLongPressCancel: () =>
+                                _stopAndSendRecording(cancel: true),
+                            child: _circleBtn(
+                              const Icon(
+                                Icons.mic,
+                                color: Colors.white,
+                                size: 20,
+                              ),
+                            ),
+                          ),
+                  ),
+                ],
+              ),
       ),
     );
   }
 
   Widget _circleBtn(Widget child) => Container(
-        width: 42, height: 42,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: LinearGradient(colors: [GE.primary2, GE.primary]),
-        ),
-        alignment: Alignment.center,
-        child: child,
-      );
+    width: 42,
+    height: 42,
+    decoration: BoxDecoration(
+      shape: BoxShape.circle,
+      gradient: LinearGradient(colors: [GE.primary2, GE.primary]),
+    ),
+    alignment: Alignment.center,
+    child: child,
+  );
 
   Widget _recordingBar() {
     final mm = _recordDur.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -669,10 +824,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ),
         Icon(Icons.fiber_manual_record, color: GE.red, size: 14),
         const SizedBox(width: 8),
-        Text('$mm:$ss',
-            style: TextStyle(color: GE.text, fontFeatures: const [FontFeature.tabularFigures()])),
+        Text(
+          '$mm:$ss',
+          style: TextStyle(
+            color: GE.text,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
         const Spacer(),
-        Text('Отпусти — отправит', style: TextStyle(color: GE.sub, fontSize: 12)),
+        Text(
+          'Отпусти — отправит',
+          style: TextStyle(color: GE.sub, fontSize: 12),
+        ),
         const SizedBox(width: 8),
       ],
     );
@@ -730,15 +893,35 @@ class _Pick {
 Widget _chatReactionIcon(String key, {double size = 12, required Color color}) {
   IconData? ic;
   switch (key) {
-    case '❤': case '❤️': case '♥': ic = Icons.favorite; break;
-    case '👍': ic = Icons.thumb_up; break;
-    case '😂': case '🤣': ic = Icons.sentiment_very_satisfied; break;
-    case '😮': case '😲': ic = Icons.sentiment_neutral; break;
-    case '😢': case '😭': ic = Icons.sentiment_dissatisfied; break;
-    case '🔥': ic = Icons.local_fire_department; break;
+    case '❤':
+    case '❤️':
+    case '♥':
+      ic = Icons.favorite;
+      break;
+    case '👍':
+      ic = Icons.thumb_up;
+      break;
+    case '😂':
+    case '🤣':
+      ic = Icons.sentiment_very_satisfied;
+      break;
+    case '😮':
+    case '😲':
+      ic = Icons.sentiment_neutral;
+      break;
+    case '😢':
+    case '😭':
+      ic = Icons.sentiment_dissatisfied;
+      break;
+    case '🔥':
+      ic = Icons.local_fire_department;
+      break;
   }
   if (ic == null) {
-    return Text(key, style: TextStyle(color: color, fontSize: size + 1));
+    return Text(
+      key,
+      style: TextStyle(color: color, fontSize: size + 1),
+    );
   }
   return Icon(ic, size: size, color: color);
 }
@@ -790,46 +973,80 @@ class _Bubble extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (m.forwardedFrom != null) ...[
-                Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.share, size: 11, color: textColor.withValues(alpha: 0.65)),
-                  const SizedBox(width: 4),
-                  Text('@${m.forwardedFrom}',
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.share,
+                      size: 11,
+                      color: textColor.withValues(alpha: 0.65),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      '@${m.forwardedFrom}',
                       style: TextStyle(
                         color: textColor.withValues(alpha: 0.75),
-                        fontSize: 11, fontWeight: FontWeight.w600,
-                      )),
-                ]),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 2),
               ],
               if (m.replyPreview != null && m.replyPreview!.isNotEmpty) ...[
                 Container(
                   margin: const EdgeInsets.only(bottom: 4),
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: textColor.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(6),
                     border: Border(
-                      left: BorderSide(color: textColor.withValues(alpha: 0.5), width: 3),
+                      left: BorderSide(
+                        color: textColor.withValues(alpha: 0.5),
+                        width: 3,
+                      ),
                     ),
                   ),
-                  child: Text(m.replyPreview!,
-                      maxLines: 2, overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          color: textColor.withValues(alpha: 0.85), fontSize: 12)),
+                  child: Text(
+                    m.replyPreview!,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: textColor.withValues(alpha: 0.85),
+                      fontSize: 12,
+                    ),
+                  ),
                 ),
               ],
               if (m.deleted)
-                Text('🗑 удалено',
-                    style: TextStyle(
-                        color: textColor.withValues(alpha: 0.55),
-                        fontStyle: FontStyle.italic, fontSize: 13))
+                Text(
+                  '🗑 удалено',
+                  style: TextStyle(
+                    color: textColor.withValues(alpha: 0.55),
+                    fontStyle: FontStyle.italic,
+                    fontSize: 13,
+                  ),
+                )
               else ...[
-                if (m.filePayload != null) _MediaPart(m: m, textColor: textColor),
+                if (m.filePayload != null)
+                  _MediaPart(m: m, textColor: textColor),
                 if (m.text.isNotEmpty)
                   Padding(
-                    padding: EdgeInsets.only(top: m.filePayload != null ? 4 : 0),
-                    child: Text(m.text,
-                        style: TextStyle(color: textColor, fontSize: 15, height: 1.35)),
+                    padding: EdgeInsets.only(
+                      top: m.filePayload != null ? 4 : 0,
+                    ),
+                    child: Text(
+                      m.text,
+                      style: TextStyle(
+                        color: textColor,
+                        fontSize: 15,
+                        height: 1.35,
+                      ),
+                    ),
                   ),
               ],
               if (m.reactions != null && m.reactions!.isNotEmpty)
@@ -840,19 +1057,32 @@ class _Bubble extends StatelessWidget {
                     children: [
                       for (final e in m.reactions!.entries)
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: textColor.withValues(alpha: 0.18),
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          child: Row(mainAxisSize: MainAxisSize.min, children: [
-                            _chatReactionIcon(e.key, size: 12, color: textColor),
-                            const SizedBox(width: 3),
-                            Text(
-                              '${e.value.length}',
-                              style: TextStyle(color: textColor, fontSize: 11),
-                            ),
-                          ]),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _chatReactionIcon(
+                                e.key,
+                                size: 12,
+                                color: textColor,
+                              ),
+                              const SizedBox(width: 3),
+                              Text(
+                                '${e.value.length}',
+                                style: TextStyle(
+                                  color: textColor,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                     ],
                   ),
@@ -862,17 +1092,22 @@ class _Bubble extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (m.edited)
-                    Text('изм. ', style: TextStyle(
-                        color: textColor.withValues(alpha: 0.55), fontSize: 10)),
-                  Text(_formatTime(m.createdAt),
+                    Text(
+                      'изм. ',
                       style: TextStyle(
-                          color: textColor.withValues(alpha: 0.65),
-                          fontSize: 10,
-                          fontFeatures: const [FontFeature.tabularFigures()])),
-                  if (mine) ...[
-                    const SizedBox(width: 4),
-                    _ticks(m),
-                  ],
+                        color: textColor.withValues(alpha: 0.55),
+                        fontSize: 10,
+                      ),
+                    ),
+                  Text(
+                    _formatTime(m.createdAt),
+                    style: TextStyle(
+                      color: textColor.withValues(alpha: 0.65),
+                      fontSize: 10,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                  if (mine) ...[const SizedBox(width: 4), _ticks(m)],
                 ],
               ),
             ],
@@ -907,7 +1142,9 @@ class _Bubble extends StatelessWidget {
       dt = at is int
           ? DateTime.fromMillisecondsSinceEpoch(at * 1000)
           : DateTime.parse(at.toString());
-    } catch (_) { return ''; }
+    } catch (_) {
+      return '';
+    }
     return DateFormat('HH:mm').format(dt.toLocal());
   }
 }
@@ -929,8 +1166,9 @@ class _MediaPartState extends State<_MediaPart> {
 
   bool get _isImage =>
       (widget.m.filePayload?['mime'] as String?)?.startsWith('image/') ?? false;
-  bool get _isVoice => widget.m.filePayload?['voice'] == true
-      || widget.m.filePayload?['voice'] == 1;
+  bool get _isVoice =>
+      widget.m.filePayload?['voice'] == true ||
+      widget.m.filePayload?['voice'] == 1;
 
   @override
   void initState() {
@@ -951,7 +1189,10 @@ class _MediaPartState extends State<_MediaPart> {
       });
     } catch (_) {
       if (!mounted) return;
-      setState(() { _failed = true; _loading = false; });
+      setState(() {
+        _failed = true;
+        _loading = false;
+      });
     }
   }
 
@@ -965,7 +1206,8 @@ class _MediaPartState extends State<_MediaPart> {
   Widget _imageView() {
     if (_loading) {
       return Container(
-        width: 240, height: 180,
+        width: 240,
+        height: 180,
         decoration: BoxDecoration(
           color: Colors.black26,
           borderRadius: BorderRadius.circular(12),
@@ -976,16 +1218,19 @@ class _MediaPartState extends State<_MediaPart> {
     }
     if (_failed || _bytes == null) {
       return Container(
-        width: 240, height: 80,
+        width: 240,
+        height: 80,
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
           color: Colors.black26,
           borderRadius: BorderRadius.circular(12),
         ),
         alignment: Alignment.center,
-        child: Text('Не удалось расшифровать картинку',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: GE.red, fontSize: 12)),
+        child: Text(
+          'Не удалось расшифровать картинку',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: GE.red, fontSize: 12),
+        ),
       );
     }
     return ClipRRect(
@@ -1028,13 +1273,17 @@ class _MediaPartState extends State<_MediaPart> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 36, height: 36,
+              width: 36,
+              height: 36,
               decoration: BoxDecoration(
                 color: widget.textColor.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(_loading ? Icons.hourglass_top : Icons.insert_drive_file,
-                  color: widget.textColor, size: 18),
+              child: Icon(
+                _loading ? Icons.hourglass_top : Icons.insert_drive_file,
+                color: widget.textColor,
+                size: 18,
+              ),
             ),
             const SizedBox(width: 8),
             Flexible(
@@ -1042,12 +1291,19 @@ class _MediaPartState extends State<_MediaPart> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(name,
-                      maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: widget.textColor, fontSize: 13)),
-                  Text(_humanSize(size),
-                      style: TextStyle(
-                          color: widget.textColor.withValues(alpha: 0.7), fontSize: 11)),
+                  Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: widget.textColor, fontSize: 13),
+                  ),
+                  Text(
+                    _humanSize(size),
+                    style: TextStyle(
+                      color: widget.textColor.withValues(alpha: 0.7),
+                      fontSize: 11,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -1097,7 +1353,11 @@ class _VoiceTileState extends State<_VoiceTile> {
       if (mounted) setState(() => _pos = p);
     });
     _stateSub = _player.onPlayerComplete.listen((_) {
-      if (mounted) setState(() { _playing = false; _pos = Duration.zero; });
+      if (mounted)
+        setState(() {
+          _playing = false;
+          _pos = Duration.zero;
+        });
     });
   }
 
@@ -1127,7 +1387,8 @@ class _VoiceTileState extends State<_VoiceTile> {
   Widget build(BuildContext context) {
     final total = Duration(seconds: widget.durationSec);
     final progress = total.inMilliseconds == 0
-        ? 0.0 : (_pos.inMilliseconds / total.inMilliseconds).clamp(0.0, 1.0);
+        ? 0.0
+        : (_pos.inMilliseconds / total.inMilliseconds).clamp(0.0, 1.0);
     return SizedBox(
       width: 220,
       child: Row(
@@ -1136,7 +1397,8 @@ class _VoiceTileState extends State<_VoiceTile> {
             onTap: _toggle,
             borderRadius: BorderRadius.circular(20),
             child: Container(
-              width: 36, height: 36,
+              width: 36,
+              height: 36,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: widget.textColor.withValues(alpha: 0.2),
@@ -1144,9 +1406,16 @@ class _VoiceTileState extends State<_VoiceTile> {
               child: widget.loading
                   ? const Padding(
                       padding: EdgeInsets.all(8),
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : Icon(_playing ? Icons.pause : Icons.play_arrow,
-                      color: widget.textColor, size: 22),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Icon(
+                      _playing ? Icons.pause : Icons.play_arrow,
+                      color: widget.textColor,
+                      size: 22,
+                    ),
             ),
           ),
           const SizedBox(width: 8),
@@ -1165,9 +1434,13 @@ class _VoiceTileState extends State<_VoiceTile> {
                   ),
                 ),
                 const SizedBox(height: 4),
-                Text(_fmt(total),
-                    style: TextStyle(color: widget.textColor.withValues(alpha: 0.7),
-                        fontSize: 11)),
+                Text(
+                  _fmt(total),
+                  style: TextStyle(
+                    color: widget.textColor.withValues(alpha: 0.7),
+                    fontSize: 11,
+                  ),
+                ),
               ],
             ),
           ),
@@ -1206,9 +1479,11 @@ class _ChatHeader extends StatelessWidget {
         child: InkWell(
           onTap: isGroup
               ? null
-              : () => Navigator.of(context).push(MaterialPageRoute(
+              : () => Navigator.of(context).push(
+                  MaterialPageRoute(
                     builder: (_) => ProfileScreen(username: peer),
-                  )),
+                  ),
+                ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(4, 8, 12, 8),
             child: Row(
@@ -1221,27 +1496,35 @@ class _ChatHeader extends StatelessWidget {
                   clipBehavior: Clip.none,
                   children: [
                     Container(
-                      width: 42, height: 42,
+                      width: 42,
+                      height: 42,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        gradient:
-                            LinearGradient(colors: [GE.primary2, GE.primary]),
+                        gradient: LinearGradient(
+                          colors: [GE.primary2, GE.primary],
+                        ),
                       ),
                       alignment: Alignment.center,
-                      child: Text(initial,
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 18)),
+                      child: Text(
+                        initial,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 18,
+                        ),
+                      ),
                     ),
                     if (!isGroup)
                       Positioned(
-                        right: -2, bottom: -2,
+                        right: -2,
+                        bottom: -2,
                         child: ValueListenableBuilder<bool>(
-                          valueListenable:
-                              ChatRepo.instance.watchPresence(peer),
+                          valueListenable: ChatRepo.instance.watchPresence(
+                            peer,
+                          ),
                           builder: (_, online, __) => Container(
-                            width: 14, height: 14,
+                            width: 14,
+                            height: 14,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               color: online ? GE.green : GE.muted,
@@ -1258,36 +1541,49 @@ class _ChatHeader extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text(displayName,
-                          maxLines: 1, overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              color: GE.text,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700)),
+                      Text(
+                        displayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: GE.text,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                       if (!isGroup)
                         ValueListenableBuilder<bool>(
-                          valueListenable:
-                              ChatRepo.instance.watchPresence(peer),
-                          builder: (_, online, __) => Row(children: [
-                            Text('@$peer',
-                                style: TextStyle(color: GE.sub, fontSize: 11)),
-                            const SizedBox(width: 6),
-                            Text('·',
-                                style: TextStyle(color: GE.sub, fontSize: 11)),
-                            const SizedBox(width: 6),
-                            Text(
-                              online ? 'в сети' : 'не в сети',
-                              style: TextStyle(
-                                color: online ? GE.green : GE.muted,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
+                          valueListenable: ChatRepo.instance.watchPresence(
+                            peer,
+                          ),
+                          builder: (_, online, __) => Row(
+                            children: [
+                              Text(
+                                '@$peer',
+                                style: TextStyle(color: GE.sub, fontSize: 11),
                               ),
-                            ),
-                          ]),
+                              const SizedBox(width: 6),
+                              Text(
+                                '·',
+                                style: TextStyle(color: GE.sub, fontSize: 11),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                online ? 'в сети' : 'не в сети',
+                                style: TextStyle(
+                                  color: online ? GE.green : GE.muted,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       if (isGroup)
-                        Text(peer,
-                            style: TextStyle(color: GE.sub, fontSize: 11)),
+                        Text(
+                          peer,
+                          style: TextStyle(color: GE.sub, fontSize: 11),
+                        ),
                     ],
                   ),
                 ),
