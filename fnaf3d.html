@@ -184,6 +184,7 @@ const HOUR=40000;                 // длина игрового часа (мс)
 const BATT_DRAIN=0.6, STAM_DRAIN=26, STAM_REGEN=14;
 const CONE=0.46, RANGE=18, CATCH=1.4;
 const SENSE_QUIET=10, SENSE_LOUD=30;   // дальность обнаружения: крадёшься / шумишь
+const LOCKER_DIST=3.8, LOCKER_FIND=2.6, CAMP_LIMIT=7;  // шкаф: радиус проверки / время найти / лимит отсидки
 
 const NIGHTS={
  1:[{n:'bonnie',start:2,spd:3.4}],
@@ -195,7 +196,7 @@ const NIGHTS={
 const NAMES={bonnie:'Бонни',chica:'Чика',foxy:'Фокси',freddy:'Фредди'};
 const EYECOL={bonnie:0xff3b3b,chica:0xff5ce0,foxy:0xffd24a,freddy:0x9fd0ff};
 const TIPS={
- 1:"Первая смена. По зданию бродит один аниматроник — он видит тебя по прямой и идёт следом. Свети ему в лицо (он замрёт) или прячься в шкаф (E). Дотяни до 6 утра.",
+ 1:"Первая смена. По зданию бродит один аниматроник — он видит тебя по прямой и идёт следом. Свети ему в лицо (он замрёт) или ненадолго ныряй в шкаф (E) — но сорвав ему взгляд, иначе придёт проверять. Дотяни до 6 утра.",
  2:"Их двое. Беги тихо: топот и фонарь слышно издалека. Крадёшься в темноте — заметят только вблизи.",
  3:"Фокси охотится рывком: увидел в коридоре — спринтует прямо на тебя. Разрывай линию взгляда — заходи за угол, ныряй в шкаф.",
  4:"Фредди не берёт фонарь — он замирает, только пока ты на него СМОТРИШЬ. Отвернулся — он уже ближе.",
@@ -357,10 +358,10 @@ const chars={}; ['bonnie','chica','foxy','freddy'].forEach(n=>{const b=buildChar
 
 function startNight(night){
   G={night,t:0,flashOn:false,batt:100,stam:100,canRun:true,over:false,won:false,paused:false,
-     anims:[],pathTimer:0,footT:0,hidden:false,nearLocker:null,blackoutT:rnd(18,38),hbT:0,breathT:0,danger:0};
+     anims:[],pathTimer:0,footT:0,hidden:false,hideLocker:null,hideTime:0,nearLocker:null,blackoutT:rnd(18,38),hbT:0,breathT:0,danger:0};
   NIGHTS[night].forEach(cfg=>{const s=startCell(cfg.n);const w=cellWorld(s[0],s[1]);
     const a={cfg,name:cfg.n,x:w.x,z:w.z,heading:0,active:false,frozen:false,state:'idle',lastSeen:null,wanderTo:null,
-             speed:cfg.spd,look:cfg.n==='freddy',foxy:cfg.n==='foxy',chargeT:0,recoverT:0,path:null,pathAge:9};
+             speed:cfg.spd,look:cfg.n==='freddy',foxy:cfg.n==='foxy',chargeT:0,recoverT:0,checkT:0,sawEnter:false,path:null,pathAge:9};
     chars[cfg.n].group.position.set(a.x,0,a.z);chars[cfg.n].group.visible=true;G.anims.push(a);});
   ['bonnie','chica','foxy','freddy'].forEach(n=>{if(!G.anims.find(a=>a.name===n))chars[n].group.visible=false;});
   pickups.forEach(p=>{p.used=false;p.m.visible=true;p.gl.visible=true;});
@@ -377,7 +378,7 @@ addEventListener('keydown',e=>{keys[e.code]=true;
   if(e.code==='KeyE'&&G&&!G.over&&!G.won)tryHide();
   if(e.code.startsWith('Arrow'))e.preventDefault();});
 addEventListener('keyup',e=>keys[e.code]=false);
-addEventListener('mousemove',e=>{if(!locked||!G||G.over||G.won||G.hidden)return;
+addEventListener('mousemove',e=>{if(!locked||!G||G.over||G.won)return;   // обзор работает и в укрытии
   yaw-=e.movementX*0.0022;pitch=clamp(pitch-e.movementY*0.0022,-1.4,1.4);});
 addEventListener('mousedown',e=>{if(locked&&G&&!G.over&&!G.won&&!G.hidden&&e.button===2)toggleFlash();});
 addEventListener('contextmenu',e=>e.preventDefault());
@@ -387,8 +388,11 @@ document.addEventListener('pointerlockchange',()=>{locked=document.pointerLockEl
 renderer.domElement.addEventListener('click',()=>{if(G&&!G.over&&!G.won&&!locked)requestLock();});
 function toggleFlash(){if(G.batt<=0)G.flashOn=false;else G.flashOn=!G.flashOn;setFlash(G.flashOn);sfxClick();}
 function setFlash(on){flash.intensity=on?150:0;$('flag').textContent=on?'фонарь вкл':'фонарь выкл';$('flag').className=on?'flagOn':'flagOff';}
-function tryHide(){ if(G.hidden){G.hidden=false;$('hideov').classList.remove('on');sfxClick();return;}
-  if(G.nearLocker){G.hidden=true;$('hideov').classList.add('on');G.flashOn=false;setFlash(false);sfxBreath();} }
+function tryHide(){ if(G.hidden){G.hidden=false;G.hideLocker=null;$('hideov').classList.remove('on');sfxClick();return;}
+  if(G.nearLocker){G.hidden=true;G.hideLocker=G.nearLocker;G.hideTime=0;$('hideov').classList.add('on');G.flashOn=false;setFlash(false);sfxBreath();
+    // засекли, как ты залезал? тогда придёт проверять
+    G.anims.forEach(a=>{a.checkT=0;a.sawEnter=a.active&&Math.hypot(a.x-camera.position.x,a.z-camera.position.z)<SENSE_LOUD&&los(a.x,a.z,camera.position.x,camera.position.z);
+      if(a.sawEnter)a.lastSeen={x:G.hideLocker.x,z:G.hideLocker.z};}); } }
 
 /* ---------------- линия видимости / путь ---------------- */
 function los(ax,az,bx,bz){const dx=bx-ax,dz=bz-az,d=Math.hypot(dx,dz),steps=Math.ceil(d/0.4);
@@ -476,11 +480,9 @@ const clock=new THREE.Clock();
 function update(dt){
   if(!G||G.over||G.won||G.paused)return;
   // обзор
-  const TURN=2.3;
-  if(!G.hidden){
-    if(keys['ArrowLeft'])yaw+=TURN*dt;if(keys['ArrowRight'])yaw-=TURN*dt;
-    if(keys['ArrowUp'])pitch=clamp(pitch+TURN*dt,-1.4,1.4);if(keys['ArrowDown'])pitch=clamp(pitch-TURN*dt,-1.4,1.4);
-  }
+  const TURN=2.3;   // обзор и в укрытии — следишь за подходящим через щель
+  if(keys['ArrowLeft'])yaw+=TURN*dt;if(keys['ArrowRight'])yaw-=TURN*dt;
+  if(keys['ArrowUp'])pitch=clamp(pitch+TURN*dt,-1.4,1.4);if(keys['ArrowDown'])pitch=clamp(pitch-TURN*dt,-1.4,1.4);
   camera.rotation.set(pitch,yaw,0);
   flashTarget.position.copy(camera.position).add(camera.getWorldDirection(new THREE.Vector3()).multiplyScalar(5));
 
@@ -525,18 +527,40 @@ function update(dt){
 
   // ИИ
   G.pathTimer-=dt;
-  let nearest=999,nearestA=null;
-  G.anims.forEach(a=>{if(!a.active&&hour>=a.cfg.start)a.active=true;if(!a.active){chars[a.name].group.position.set(a.x,0,a.z);return;}
+  let nearest=999,nearestA=null,checkMax=0;
+  G.anims.forEach(a=>{
+    if(!a.active&&hour>=a.cfg.start)a.active=true;
+    if(!a.active){chars[a.name].group.position.set(a.x,0,a.z);return;}
+    if(G.hidden&&G.hideLocker){                 // в укрытии: подошедший ПРОВЕРЯЕТ шкаф
+      const dL=Math.hypot(a.x-G.hideLocker.x,a.z-G.hideLocker.z);
+      if(dL<LOCKER_DIST){ a.lastSeen={x:G.hideLocker.x,z:G.hideLocker.z};
+        if(a.checkT===0)sfxKnock(a);
+        a.checkT+=dt*(a.sawEnter?1.6:1);
+        if(a.checkT>=LOCKER_FIND){jumpscare(a.name);return;}
+      } else a.checkT=Math.max(0,a.checkT-dt*0.6);
+      checkMax=Math.max(checkMax,a.checkT/LOCKER_FIND);
+    } else a.checkT=0;
     updateAnim(a,dt);
     const dp=Math.hypot(a.x-camera.position.x,a.z-camera.position.z);if(dp<nearest){nearest=dp;nearestA=a;}
-    if(dp<CATCH&&!G.hidden)jumpscare(a.name);});
+    if(dp<CATCH&&!G.hidden)jumpscare(a.name);
+  });
+  if(G.hidden){ G.hideTime+=dt;               // засиделся — ближайший идёт нюхать шкаф
+    if(G.hideTime>CAMP_LIMIT&&nearestA){nearestA.lastSeen={x:G.hideLocker.x,z:G.hideLocker.z};} }
 
   // атмосфера: опасность, сердцебиение, позиционный звук, блэкаут
   G.danger=lerp(G.danger,nearest<10?clamp(1-nearest/10,0,1):0,clamp(dt*4,0,1));
-  $('danger').style.opacity=(G.hidden?0.15:G.danger*0.9).toFixed(2);
-  G.hbT-=dt;if(nearest<7&&!G.hidden){if(G.hbT<=0){sfxHeart(clamp(1-nearest/7,0,1));G.hbT=lerp(0.85,0.4,clamp(1-nearest/7,0,1));}}
-  if(nearestA&&nearest<16){G.breathT-=dt;if(G.breathT<=0){sfxWhir3d(nearestA,clamp(1-nearest/16,0,1));G.breathT=rnd(0.5,1.0);}}
-  if(G.hidden){G.breathT-=dt;if(G.breathT<=0){sfxBreath();G.breathT=2.2;}}
+  if(G.hidden){
+    $('danger').style.opacity=(0.12+checkMax*0.85).toFixed(2);
+    const pr=$('prompt');pr.classList.add('on');
+    pr.innerHTML=checkMax>0.12?'<b style="color:#ff5a4a">ВЫЛЕЗАЙ — тебя ищут!</b> (E)':'<b>E</b> — выйти из укрытия';
+    G.hbT-=dt;
+    if(checkMax>0.12){ if(G.hbT<=0){sfxHeart(clamp(checkMax,0,1));G.hbT=lerp(0.7,0.28,checkMax);} }
+    else { G.breathT-=dt; if(G.breathT<=0){sfxBreath();G.breathT=2.2;} }
+  } else {
+    $('danger').style.opacity=(G.danger*0.9).toFixed(2);
+    G.hbT-=dt;if(nearest<7){if(G.hbT<=0){sfxHeart(clamp(1-nearest/7,0,1));G.hbT=lerp(0.85,0.4,clamp(1-nearest/7,0,1));}}
+    if(nearestA&&nearest<16){G.breathT-=dt;if(G.breathT<=0){sfxWhir3d(nearestA,clamp(1-nearest/16,0,1));G.breathT=rnd(0.5,1.0);}}
+  }
   // блэкаут
   G.blackoutT-=dt;let lampMul=1;
   if(G.blackoutT<0&&G.blackoutT>-0.5)lampMul=0.05;else if(G.blackoutT<-0.5){G.blackoutT=rnd(20,40);if(AC)sfxBoom();}
@@ -595,6 +619,7 @@ const sfxWhir3d=(a,p)=>{const pan=panOf(a);noise(.2,.04+.13*p,420+p*360,'bandpas
 const sfxBreath=()=>{noise(.6,.08,420,'lowpass');setTimeout(()=>noise(.5,.05,360,'lowpass'),650);};
 const sfxFoxy=(a)=>{const pan=panOf(a);noise(.5,.3,900,'bandpass',pan);for(let i=0;i<6;i++)setTimeout(()=>tone(300+i*40,.5,'sawtooth',.12,140,pan),i*40);};
 const sfxBoom=()=>{noise(.5,.3,120,'lowpass');tone(50,.5,'sine',.2,30);};
+const sfxKnock=(a)=>{const pan=panOf(a);noise(.12,.28,170,'lowpass',pan);setTimeout(()=>noise(.1,.2,150,'lowpass',pan),140);};
 function playScream(){if(!AC)return;noise(1,.5,1400);for(let i=0;i<5;i++){const f=600+i*60;tone(f,.9,'sawtooth',.12,f*.35);}tone(220,.9,'square',.12,90);}
 function playChime(){if(!AC)return;[523,659,784,1046].forEach((f,i)=>setTimeout(()=>tone(f,.6,'sine',.18),i*140));}
 function startAmbient(){ensureAudio();if(!AC||ambient)return;const s=AC.createBufferSource();s.buffer=nbuf(2);s.loop=true;
@@ -618,7 +643,7 @@ function buildTitle(){const box=$('nightSelect');box.innerHTML='';
     if(n<=unlocked)c.onclick=()=>{ensureAudio();startNight(n);};box.appendChild(c);}
   $('ctrlHint').innerHTML="Ходи по пиццерии и доживи до 6 утра. Аниматроники видят тебя по прямой, идут следом и срезают углы.<br>"+
     "<b style='color:#8b97a6'>WASD</b> ходьба · <b style='color:#8b97a6'>Shift</b> бег (выносливость) · <b style='color:#8b97a6'>мышь/стрелки</b> обзор · <b style='color:#8b97a6'>F/ПКМ</b> фонарь · <b style='color:#8b97a6'>E</b> спрятаться<br>"+
-    "<span style='color:#5b6675'>Свет в лицо — замирают. Бег и фонарь слышно издалека: крадись в темноте. Esc — пауза.</span>";}
+    "<span style='color:#5b6675'>Свет в лицо — замирают. Бег/фонарь слышно издалека — крадись в темноте. Шкаф — на время: заметят, как лезешь, или засидишься — проверят. Esc — пауза.</span>";}
 $('btnNew').onclick=()=>{ensureAudio();startNight(1);};
 $('btnRetry').onclick=()=>{ensureAudio();startNight(G?G.night:1);};
 $('btnNext').onclick=()=>{if(G&&G.night>=5)toMenu();else startNight((G?G.night:0)+1);};
