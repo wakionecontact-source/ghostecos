@@ -205,6 +205,7 @@ const BATT_DRAIN=0.6, STAM_DRAIN=18, STAM_REGEN=15;   // бег длится д�
 const CONE=0.46, RANGE=18, CATCH=1.4;
 const SENSE_QUIET=10, SENSE_LOUD=30;   // дальность обнаружения: крадёшься / шумишь
 const LOCKER_DIST=3.8, LOCKER_FIND=2.6, CAMP_LIMIT=10;  // шкаф: радиус проверки / время найти / лимит отсидки
+const FOXY_CAMP=6, FOXY_RUSH=9;                          // Фокси: сек отсидки до рывка / скорость рывка
 
 const NIGHTS={
  1:[{n:'bonnie',start:2,spd:3.4}],
@@ -218,7 +219,7 @@ const EYECOL={bonnie:0xff3b3b,chica:0xff5ce0,foxy:0xffd24a,freddy:0x9fd0ff};
 const TIPS={
  1:"Первая смена. По умолчанию ТЕМНО. Свет в лицо — аниматроник ЗАМИРАЕТ (твоя защита), но пока фонарь горит, тебя видно издалека и тянет остальных — свети точечно. В темноте замечают только вблизи: крадись, заходи со спины, прячься в шкаф (E). Дотяни до 6 утра.",
  2:"Их двое. Сорвал им взгляд (за угол) — идут к месту, где видели тебя, потом гадают, куда ты свернул, и ищут там. Этим и отрывайся; ныряй в шкаф (E).",
- 3:"Фокси охотится рывком: увидел или поймал лучом фонаря — спринтует прямо на тебя. Не свети на него и рви линию взгляда.",
+ 3:"Появился Фокси — сидит в бухте и наказывает за отсидку: засел в шкафу надолго → несётся к нему на бешеной скорости и убьёт прямо там. Услышал рывок — выскакивай или посвети ему, и он удерёт обратно.",
  4:"Фредди замирает, только пока ты на него СМОТРИШЬ. Не отворачивайся от него.",
  5:"Все четверо. Тихо, в темноте, со спины. Бег они слышат. Выживи.",
 };
@@ -382,6 +383,7 @@ function startNight(night){
   NIGHTS[night].forEach(cfg=>{const s=startCell(cfg.n);const w=cellWorld(s[0],s[1]);
     const a={cfg,name:cfg.n,x:w.x,z:w.z,heading:0,active:false,frozen:false,state:'idle',lastSeen:null,wanderTo:null,
              speed:cfg.spd,look:cfg.n==='freddy',foxy:cfg.n==='foxy',chargeT:0,recoverT:0,checkT:0,sawEnter:false,stunT:0,
+             home:{x:w.x,z:w.z},foxyState:'lurk',foxyHideT:0,rushTarget:null,
              searchPhase:0,searchT:0,seenDir:null,predict:null,heading:0,path:null,pathAge:9};
     chars[cfg.n].group.position.set(a.x,0,a.z);chars[cfg.n].group.visible=true;G.anims.push(a);});
   ['bonnie','chica','foxy','freddy'].forEach(n=>{if(!G.anims.find(a=>a.name===n))chars[n].group.visible=false;});
@@ -424,7 +426,7 @@ function tryHide(){
     G.hidden=false;G.hideLocker=null;$('hideov').classList.remove('on');return;
   }
   if(G.nearLocker){   // ПРЯЧЕМСЯ
-    const seen=G.anims.map(a=>a.active&&(a.stunT||0)<=0&&animSees(a));   // кто реально видел, как лезешь (до укрытия)
+    const seen=G.anims.map(a=>a.active&&(a.stunT||0)<=0&&Math.hypot(a.x-camera.position.x,a.z-camera.position.z)<11&&los(a.x,a.z,camera.position.x,camera.position.z));   // кто рядом и с прямой видимостью — видел, как лезешь
     G.hidden=true;G.hideLocker=G.nearLocker;G.hideTime=0;$('hideov').classList.add('on');G.flashOn=false;setFlash(false);sfxBreath();
     G.anims.forEach((a,i)=>{a.checkT=0;a.sawEnter=seen[i]; if(a.sawEnter)a.lastSeen={x:G.hideLocker.x,z:G.hideLocker.z};});
   }
@@ -441,9 +443,14 @@ function bfsPath(sc,sr,gc,gr){ if(sc===gc&&sr===gr)return[];
     for(const[dc,dr] of [[1,0],[-1,0],[0,1],[0,-1]]){const nc=c+dc,nr=r+dr;
       if(nc>=0&&nr>=0&&nc<W&&nr<Hh&&!seen[nr][nc]&&grid[nr][nc]===0){seen[nr][nc]=true;prev[nr][nc]=[c,r];q.push([nc,nr]);}}}
   return null;}
-// срез углов: дальняя точка пути с прямой видимостью из текущей позиции
+// видимость с учётом ШИРИНЫ тела — чтобы при срезе угла не цеплялись корпусом за выпуклый угол
+function losWide(ax,az,bx,bz){const dx=bx-ax,dz=bz-az,d=Math.hypot(dx,dz)||1,steps=Math.ceil(d/0.35);
+  const ox=-dz/d*0.4,oz=dx/d*0.4;
+  for(let i=1;i<steps;i++){const t=i/steps,x=ax+dx*t,z=az+dz*t;
+    if(isWall(x,z)||isWall(x+ox,z+oz)||isWall(x-ox,z-oz))return false;}return true;}
+// срез углов: дальняя точка пути, до которой коридор ШИРЕ тела (иначе застрянет на углу)
 function smoothTarget(px,pz,path){let tgt=null;
-  for(let i=path.length-1;i>=0;i--){const w=cellWorld(path[i][0],path[i][1]);if(los(px,pz,w.x,w.z)){tgt=w;break;}}
+  for(let i=path.length-1;i>=0;i--){const w=cellWorld(path[i][0],path[i][1]);if(losWide(px,pz,w.x,w.z)){tgt=w;break;}}
   if(!tgt&&path.length){const w=cellWorld(path[0][0],path[0][1]);tgt=w;}return tgt;}
 
 /* зрение / стимулы */
@@ -482,7 +489,7 @@ function pathStep(a,tx,tz,dt){ a.pathAge+=dt;
   const dx=gx-a.x,dz=gz-a.z,dd=Math.hypot(dx,dz)||1; return{x:dx/dd,z:dz/dd}; }
 
 /* движение с проскальзыванием вдоль стен */
-function moveEnt(e,dx,dz,sp){const r=0.4;
+function moveEnt(e,dx,dz,sp){const r=0.34;
   const nx=e.x+dx*sp;if(!isWall(nx-r,e.z-r)&&!isWall(nx+r,e.z-r)&&!isWall(nx-r,e.z+r)&&!isWall(nx+r,e.z+r))e.x=nx;
   const nz=e.z+dz*sp;if(!isWall(e.x-r,nz-r)&&!isWall(e.x+r,nz-r)&&!isWall(e.x-r,nz+r)&&!isWall(e.x+r,nz+r))e.z=nz;}
 
@@ -496,26 +503,38 @@ function updateAnim(a,dt){
   if(a.stunT>0){ a.stunT-=dt; a.lastSeen=null; a.state='wander';
     chars[a.name].eyeMat.color.setHex(0x66ffff); grp.position.set(a.x,0,a.z); return; }
 
-  // ЗАМОРОЗКА: Фредди — взглядом, остальные — фонарём в лицо (защита)
-  a.frozen = a.look ? isWatchedFreddy(a) : animLit(a);
-  if(a.frozen){ if(animSees(a)){a.lastSeen={x:px,z:pz};a.state='chase';}   // знает позицию, ТОЛЬКО если реально видит (не в спину)
+  // ЗАМОРОЗКА: Фредди — взглядом, Бонни/Чика — фонарём в лицо. Фокси НЕ морозится (своя реакция ниже)
+  a.frozen = a.look ? isWatchedFreddy(a) : (!a.foxy && animLit(a));
+  if(a.frozen){ a.lastSeen={x:px,z:pz}; a.state='chase';      // посветил (хоть в спину) — узнал, ОТКУДА свет, и рванёт туда
     chars[a.name].eyeMat.color.setHex(0xffffff); grp.position.set(a.x,0,a.z); return; }
-  if(a.look) chars.freddy.eyeMat.color.setHex(0x9fd0ff);      // не заморожен — обычные глаза
+  if(a.look) chars.freddy.eyeMat.color.setHex(0x9fd0ff);
+
+  // ФОКСИ: держится в бухте и наказывает за отсидку. Засиделся в шкафу -> рывок к шкафу и убивает там. Посветил -> удирает.
+  if(a.foxy){
+    if(animLit(a)) a.foxyState='retreat';                                  // посветили -> назад в бухту
+    if(a.foxyState==='retreat'){
+      if(Math.hypot(a.home.x-a.x,a.home.z-a.z)<1.2){a.foxyState='lurk';a.foxyHideT=0;}
+      else{const dir=pathStep(a,a.home.x,a.home.z,dt);moveEnt(a,dir.x,dir.z,(a.speed+3)*dt);faceMove(a,grp,dir.x,dir.z,dt);}
+      chars.foxy.eyeMat.color.setHex(0xffd24a);grp.position.set(a.x,0,a.z);return;
+    }
+    if(a.foxyState==='rush'){
+      const dx=a.rushTarget.x-a.x,dz=a.rushTarget.z-a.z,d=Math.hypot(dx,dz)||1;
+      moveEnt(a,dx/d,dz/d,FOXY_RUSH*dt);faceMove(a,grp,dx/d,dz/d,dt);grp.position.set(a.x,0,a.z);
+      chars.foxy.eyeMat.color.setHex(0xff2a2a);
+      if(d<CATCH){ if(G.hidden)jumpscare('foxy'); else a.foxyState='retreat'; }
+      return;
+    }
+    if(G.hidden){ a.foxyHideT+=dt; if(a.foxyHideT>FOXY_CAMP){a.foxyState='rush';a.rushTarget={x:G.hideLocker.x,z:G.hideLocker.z};sfxFoxy(a);} }
+    else a.foxyHideT=Math.max(0,a.foxyHideT-dt);
+    if(Math.hypot(a.home.x-a.x,a.home.z-a.z)>2.5){const dir=pathStep(a,a.home.x,a.home.z,dt);moveEnt(a,dir.x,dir.z,a.speed*0.5*dt);faceMove(a,grp,dir.x,dir.z,dt);}
+    chars.foxy.eyeMat.color.setHex(0xffd24a);grp.position.set(a.x,0,a.z);return;
+  }
 
   // обнаружение: только зрение (без фонаря — вблизи) + слух + свет притягивает. НИКТО не всезнающий
   const sees=animSees(a), hears=animHears(a,dToP), pull=animAttracted(a);
   const onYou = sees||hears||pull;
   if(onYou){ a.lastSeen={x:px,z:pz}; a.seenDir={x:G.moveDir.x,z:G.moveDir.z}; a.state='chase'; a.searchPhase=0; a.searchT=0; }
   if(!a.look) chars[a.name].eyeMat.color.setHex(a.state==='chase'?0xff2a2a:(a.state==='search'?0xffae33:EYECOL[a.name]));
-
-  // Фокси: рывок когда видит/учуял (свет в лицо его тоже морозит — обработано выше)
-  if(a.foxy){
-    if(a.recoverT>0){a.recoverT-=dt;faceMove(a,grp,0,0,dt);grp.position.set(a.x,0,a.z);return;}
-    if((sees||pull)&&dToP<18&&dToP>CATCH&&a.chargeT<=0){a.chargeT=2.2;sfxFoxy(a);}
-    if(a.chargeT>0){a.chargeT-=dt;const dx=(px-a.x)/(dToP||1),dz=(pz-a.z)/(dToP||1);
-      moveEnt(a,dx,dz,(a.speed+4.5)*dt);faceMove(a,grp,dx,dz,dt);grp.position.set(a.x,0,a.z);
-      if(!(sees||pull)&&a.chargeT<1.6){a.chargeT=0;a.recoverT=1.0;} return;}
-  }
 
   // выбор цели
   let tx,tz, direct=false;
