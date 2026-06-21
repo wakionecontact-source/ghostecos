@@ -567,34 +567,36 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         extendBodyBehindAppBar: true,
         appBar: PreferredSize(
           preferredSize: const Size.fromHeight(64),
-          // Стекло-фон САМОЙ шапки (frosted-бар): тинт читается на тёмном +
-          // BackdropFilter; нижний край мягко гаснет в контент (градиент → 0).
-          child: ClipRect(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  // Стекло РАВНОМЕРНОЕ по всей шапке (одинаковый тинт), и только
-                  // у нижнего края — распыление (фейд в ноль). Не градиент
-                  // сверху-вниз: размытие везде одинаковое, гаснет лишь низ.
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      glassTint.withValues(alpha: 0.6),
-                      glassTint.withValues(alpha: 0.6),
-                      glassTint.withValues(alpha: 0.0),
-                    ],
-                    stops: const [0.0, 0.74, 1.0],
+          // Вариант 3: блюр стекла ПОЛНЫЙ сверху → гаснет в НОЛЬ к нижнему краю
+          // (ShaderMask маскирует блюр+тинт). Контент шапки — поверх, НЕ гаснет.
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              ShaderMask(
+                shaderCallback: (r) => const LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.white, Colors.white, Colors.transparent],
+                  stops: [0.0, 0.42, 1.0],
+                ).createShader(r),
+                blendMode: BlendMode.dstIn,
+                child: ClipRect(
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 9, sigmaY: 9),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: glassTint.withValues(alpha: 0.5),
+                      ),
+                    ),
                   ),
                 ),
-                child: _ChatHeader(
-                  peer: widget.peer,
-                  displayName: widget.displayName,
-                  isGroup: isGroup,
-                ),
               ),
-            ),
+              _ChatHeader(
+                peer: widget.peer,
+                displayName: widget.displayName,
+                isGroup: isGroup,
+              ),
+            ],
           ),
         ),
         body: Stack(
