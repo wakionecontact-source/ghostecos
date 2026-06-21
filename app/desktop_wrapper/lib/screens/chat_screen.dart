@@ -549,9 +549,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final notif = ChatRepo.instance.messagesNotifier(widget.peer);
     final isGroup = widget.peer.startsWith('g:');
-    // Тинт стекла шапки: светлее тёмного фона, чтобы стекло читалось.
+    // Тинт стекла шапки: светлее тёмного фона, чтобы стекло читалось (не серое).
     final glassTint = Color.alphaBlend(
-      Colors.white.withValues(alpha: 0.10),
+      Colors.white.withValues(alpha: 0.16),
       GE.bgDeep,
     );
     return MeshBackground(
@@ -568,15 +568,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
               child: DecoratedBox(
                 decoration: BoxDecoration(
+                  // Непрерывный градиент стекла: сверху полностью → к нижнему
+                  // краю в ноль (стекло распыляется, не плоский серый верх).
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: [
-                      glassTint.withValues(alpha: 0.92),
-                      glassTint.withValues(alpha: 0.86),
+                      glassTint.withValues(alpha: 0.78),
+                      glassTint.withValues(alpha: 0.58),
+                      glassTint.withValues(alpha: 0.28),
                       glassTint.withValues(alpha: 0.0),
                     ],
-                    stops: const [0.0, 0.72, 1.0],
+                    stops: const [0.0, 0.45, 0.78, 1.0],
                   ),
                 ),
                 child: _ChatHeader(
