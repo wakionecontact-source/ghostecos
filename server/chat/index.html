@@ -2183,10 +2183,40 @@ async function _ensureKeysServer(password){
       throw new Error('Неверный пароль для расшифровки ключей');
     }
   }
+  // Если на сервере уже есть primary pub (просто encrypted_priv удалён) —
+  // не генерируем новый pair молча: другие устройства уже имеют локальный
+  // priv от этого pub и сломаются. Попробуем взять локальный priv из IDB
+  // и просто пере-загрузить encrypted с текущим паролем.
+  if (remote.x25519_pub) {
+    try {
+      const db = await openIDB();
+      if (db.objectStoreNames.contains('keys')) {
+        const tx = db.transaction('keys', 'readonly');
+        const privRec = await new Promise(r => { const q = tx.objectStore('keys').get('priv'); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
+        const pubRec = await new Promise(r => { const q = tx.objectStore('keys').get('pub'); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
+        if (privRec && privRec.data && pubRec && pubRec.data === remote.x25519_pub) {
+          console.log('[E2E] server priv missing but local matches server pub — re-uploading with current password');
+          const salt2 = crypto.getRandomValues(new Uint8Array(16));
+          const master2 = await deriveMasterKey(password, salt2);
+          const iv2 = crypto.getRandomValues(new Uint8Array(12));
+          const ct2 = await crypto.subtle.encrypt({name:'AES-GCM', iv:iv2}, master2, privRec.data);
+          const enc2 = new Uint8Array(12 + ct2.byteLength);
+          enc2.set(iv2); enc2.set(new Uint8Array(ct2), 12);
+          await wsKeysUpload({
+            x25519_pub: pubRec.data,
+            encrypted_private_key: b64e(enc2),
+            key_salt: b64e(salt2),
+            storage_mode: 'server',
+          });
+          myPriv = await crypto.subtle.importKey('pkcs8', privRec.data, ECDH_ALGO, false, ['deriveBits']);
+          myPub = pubRec.data;
+          console.log('[E2E] re-upload OK, primary pub unchanged');
+          return;
+        }
+      }
+    } catch(e){ console.warn('[E2E] re-upload from IDB failed:', e); }
+  }
   console.log('[E2E] no remote keys, generating new ECDH pair (P-256)...');
-  // ВАЖНО: на момент генерации ключ должен быть extractable, чтобы мы могли
-  // зашифровать его паролем и отправить на сервер для recovery с других устройств.
-  // СРАЗУ ПОСЛЕ — переимпортируем как non-extractable для рабочего использования.
   const pair = await crypto.subtle.generateKey(ECDH_ALGO, true, ['deriveBits']);
   const pubBytes = await crypto.subtle.exportKey('raw', pair.publicKey);
   myPub = b64e(pubBytes);
