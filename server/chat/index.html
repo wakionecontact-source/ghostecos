@@ -4342,6 +4342,7 @@ async function onReady(){
   setTimeout(() => { _keysHealthCheck().catch(e => console.warn('[E2E] health err', e)); }, 1500);
   setTimeout(() => { _ensureV2Identity().catch(e => console.warn('[v2 init err]', e)); }, 2500);
   startGSBadgePolling();
+  startPendingSafetyPoll();
   const params = new URLSearchParams(location.search);
   const to = params.get('to');
   const presetText = params.get('text');
@@ -4398,6 +4399,19 @@ function startGSBadgePolling(){
   };
   tick();
   _gsBadgeTimer = setInterval(tick, 20000);
+}
+
+// Safety-net poll: если WS push потерялся (новая регистрация → онбординг
+// занял время → push прошёл когда WS ещё не register'нулся в _by_uid),
+// каждые 30с тихо тянем pending. Это покрывает случай юзера с новым
+// инкогнито-аккаунтом, который писал «минуту ждал».
+let _pendingSafetyTimer = null;
+function startPendingSafetyPoll(){
+  if (_pendingSafetyTimer) return;
+  _pendingSafetyTimer = setInterval(() => {
+    if (document.hidden) return;
+    fetchPending().catch(()=>{});
+  }, 30000);
 }
 
 // PWA install prompt (iOS Safari)
