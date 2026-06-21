@@ -60,6 +60,56 @@ def _get_user_by_username(c, username: str) -> Optional[dict]:
     ).fetchone()
     return dict(row) if row else None
 
+
+# ─── Multi-device delivery (24h TTL после первого ack'a) ───────────────────────
+import json as _mdd_json
+import time as _mdd_time
+import hashlib as _mdd_hash
+
+_DELIVERY_TTL_SECONDS = 24 * 3600
+
+def _device_id_from_request(x_device_id: Optional[str], authorization: Optional[str]) -> str:
+    """Берёт ID устройства из заголовка X-Device-Id, иначе хэш токена.
+    Хэш-fallback — для старых клиентов которые ещё не шлют header."""
+    if x_device_id and isinstance(x_device_id, str) and 4 <= len(x_device_id) <= 80:
+        return x_device_id.strip()
+    tok = (authorization or "").removeprefix("Bearer ").strip()
+    if tok:
+        return "tok:" + _mdd_hash.sha256(tok.encode()).hexdigest()[:24]
+    return "anon:" + str(_mdd_time.time())
+
+def _mark_delivered(c, table: str, msg_id: int, device_id: str) -> bool:
+    """Помечает сообщение доставленным конкретному устройству.
+    Возвращает True если это была ПЕРВАЯ доставка (для chat.delivered к sender'у)."""
+    row = c.execute(f"SELECT delivered_to FROM {table} WHERE id=?", (msg_id,)).fetchone()
+    if not row:
+        return False
+    try:
+        devs = _mdd_json.loads(row["delivered_to"] or "[]")
+        if not isinstance(devs, list):
+            devs = []
+    except Exception:
+        devs = []
+    was_empty = len(devs) == 0
+    if device_id not in devs:
+        devs.append(device_id)
+    now = int(_mdd_time.time())
+    c.execute(
+        f"UPDATE {table} SET delivered_to=?, last_delivery_at=? WHERE id=?",
+        (_mdd_json.dumps(devs), now, msg_id),
+    )
+    return was_empty
+
+def _not_delivered_filter(device_id: str) -> str:
+    """SQL-фрагмент: сообщение НЕ доставлено этому device_id.
+    Поле delivered_to — JSON-массив; ищем точное вхождение строки."""
+    return "(delivered_to IS NULL OR delivered_to NOT LIKE ?)"
+
+def _not_delivered_param(device_id: str) -> str:
+    """Параметр к _not_delivered_filter — '%"<device_id>"%'."""
+    safe = device_id.replace('%', '').replace('_', '').replace('"', '')
+    return f'%"{safe}"%'
+
 @router.post("/keys/upload")
 def upload_keys(body: KeysUploadBody, authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
@@ -756,10 +806,19 @@ def delivery_status(body: DeliveryStatusBody, authorization: Optional[str] = Hea
     c = db()
     ph = ",".join("?" * len(ids))
     rows = c.execute(
-        f"SELECT id FROM chat_dm WHERE sender_id=? AND id IN ({ph})",
+        f"SELECT id, delivered_to FROM chat_dm WHERE sender_id=? AND id IN ({ph})",
         [user["id"]] + ids,
     ).fetchall()
-    still_pending = {r["id"] for r in rows}
+    # Раньше: сообщение в БД → pending; нет → delivered (удалено после ack).
+    # Сейчас сообщения живут 24ч после ack'a — смотрим delivered_to.
+    pending_ids = set()
+    for r in rows:
+        try:
+            devs = _mdd_json.loads(r["delivered_to"] or "[]")
+        except Exception:
+            devs = []
+        if not devs:
+            pending_ids.add(r["id"])
     read_rows = c.execute(
         f"SELECT msg_id FROM chat_dm_read_marks WHERE sender_id=? AND msg_id IN ({ph})",
         [user["id"]] + ids,
@@ -767,7 +826,7 @@ def delivery_status(body: DeliveryStatusBody, authorization: Optional[str] = Hea
     read_ids = {r["msg_id"] for r in read_rows}
     c.close()
     def _status(i):
-        if i in still_pending: return "pending"
+        if i in pending_ids: return "pending"
         if i in read_ids: return "read"
         return "delivered"
     return {str(i): _status(i) for i in ids}
@@ -829,14 +888,17 @@ def send_sealed(body: SendSealedBody, authorization: Optional[str] = Header(None
 
 
 @router.get("/pending_sealed")
-def pending_sealed(authorization: Optional[str] = Header(None)):
-    """Все накопленные мне sealed-сообщения. Клиент сам сделает /ack_sealed."""
+def pending_sealed(authorization: Optional[str] = Header(None),
+                   x_device_id: Optional[str] = Header(None, alias="X-Device-Id")):
+    """Sealed-сообщения, ещё не доставленные ЭТОМУ устройству."""
     user = auth_member(authorization)
     _rate_limit(f"pendsealed:{user['id']}", limit=30, window=60)
+    device_id = _device_id_from_request(x_device_id, authorization)
     c = db()
     rows = c.execute(
-        "SELECT id, ciphertext, created_at FROM chat_dm_sealed WHERE receiver_id=? ORDER BY id ASC LIMIT 500",
-        (user["id"],),
+        f"SELECT id, ciphertext, created_at FROM chat_dm_sealed "
+        f"WHERE receiver_id=? AND {_not_delivered_filter(device_id)} ORDER BY id ASC LIMIT 500",
+        (user["id"], _not_delivered_param(device_id)),
     ).fetchall()
     c.close()
     return {
@@ -852,54 +914,59 @@ class AckSealedBody(BaseModel):
 
 
 @router.post("/ack_sealed")
-def ack_sealed(body: AckSealedBody, authorization: Optional[str] = Header(None)):
-    """Receiver подтвердил приём — сервер удаляет. БЕЗ WS sender'у
-    (мы не знаем кто sender). Receiver сам шлёт sender'у уведомление
-    'delivered' через POST /send_sealed с envelope {type:'delivered', msg_sid}."""
+def ack_sealed(body: AckSealedBody, authorization: Optional[str] = Header(None),
+               x_device_id: Optional[str] = Header(None, alias="X-Device-Id")):
+    """Подтверждение конкретным устройством. Сообщение живёт 24ч после первого ack."""
     user = auth_member(authorization)
     if not body.ids or not isinstance(body.ids, list):
-        return {"deleted": 0}
+        return {"acked": 0}
     ids = [int(x) for x in body.ids if isinstance(x, (int, str)) and str(x).isdigit()][:500]
     if not ids:
-        return {"deleted": 0}
+        return {"acked": 0}
+    device_id = _device_id_from_request(x_device_id, authorization)
     c = db()
     ph = ",".join("?" * len(ids))
-    c.execute(
-        f"DELETE FROM chat_dm_sealed WHERE receiver_id=? AND id IN ({ph})",
+    rows = c.execute(
+        f"SELECT id FROM chat_dm_sealed WHERE receiver_id=? AND id IN ({ph})",
         [user["id"]] + ids,
-    )
-    deleted = c.total_changes
+    ).fetchall()
+    for r in rows:
+        _mark_delivered(c, "chat_dm_sealed", r["id"], device_id)
     c.commit()
     c.close()
-    return {"deleted": deleted}
+    return {"acked": len(rows), "device_id": device_id[:16]}
 
 
 @router.post("/ack")
-def ack_messages(body: AckBody, authorization: Optional[str] = Header(None)):
-    """Клиент подтверждает что получил и сохранил сообщения локально.
-    Сервер их удаляет + уведомляет отправителя через WS (для двойных галочек)."""
+def ack_messages(body: AckBody, authorization: Optional[str] = Header(None),
+                 x_device_id: Optional[str] = Header(None, alias="X-Device-Id")):
+    """Подтверждение получения сообщений конкретным устройством.
+    Сообщение НЕ удаляется — живёт 24ч после первого ack чтобы другие
+    устройства того же юзера тоже могли получить (cleanup task убирает по TTL)."""
     user = auth_member(authorization)
     if not body.ids or not isinstance(body.ids, list):
         return {"deleted": 0}
     ids = [int(x) for x in body.ids if isinstance(x, (int, str)) and str(x).isdigit()][:200]
     if not ids:
         return {"deleted": 0}
+    device_id = _device_id_from_request(x_device_id, authorization)
     c = db()
     ph = ",".join("?" * len(ids))
     rows = c.execute(
-        f"SELECT id, sender_id FROM chat_dm WHERE receiver_id=? AND id IN ({ph})",
+        f"SELECT id, sender_id, delivered_to FROM chat_dm WHERE receiver_id=? AND id IN ({ph})",
         [user["id"]] + ids,
     ).fetchall()
-    c.execute(f"DELETE FROM chat_dm WHERE receiver_id=? AND id IN ({ph})", [user["id"]] + ids)
-    deleted = c.total_changes
+    first_delivery_ids_by_sender = {}
+    for r in rows:
+        is_first = _mark_delivered(c, "chat_dm", r["id"], device_id)
+        if is_first:
+            first_delivery_ids_by_sender.setdefault(r["sender_id"], []).append(r["id"])
     c.commit()
     c.close()
-    by_sender = {}
-    for r in rows:
-        by_sender.setdefault(r["sender_id"], []).append(r["id"])
-    for sender_id, mids in by_sender.items():
+    # WS chat.delivered к sender'у — только на ПЕРВУЮ доставку (первое устройство).
+    for sender_id, mids in first_delivery_ids_by_sender.items():
         ws_hub.send_to(sender_id, "chat.delivered", {"ids": mids, "by_username": user["username"]})
-    return {"deleted": deleted}
+    return {"acked": len(rows), "device_id": device_id[:16]}
 
 
 class ReadBody(BaseModel):
@@ -1122,31 +1189,37 @@ def check_contact(username: str, authorization: Optional[str] = Header(None)):
     return {"in_contacts": r is not None}
 
 @router.get("/unread")
-def unread_count(authorization: Optional[str] = Header(None)):
-    """Сколько мне ждёт сообщений (pending). После ack они удалятся → станет 0."""
+def unread_count(authorization: Optional[str] = Header(None),
+                 x_device_id: Optional[str] = Header(None, alias="X-Device-Id")):
+    """Сколько мне ждёт сообщений (pending) для конкретного устройства."""
     user = auth_member(authorization)
+    device_id = _device_id_from_request(x_device_id, authorization)
     c = db()
     row = c.execute(
-        "SELECT COUNT(*) as cnt FROM chat_dm WHERE receiver_id=?", (user["id"],)
+        f"SELECT COUNT(*) as cnt FROM chat_dm WHERE receiver_id=? AND {_not_delivered_filter(device_id)}",
+        (user["id"], _not_delivered_param(device_id))
     ).fetchone()
     c.close()
     return {"count": row["cnt"]}
 
 @router.get("/pending")
-def get_pending(authorization: Optional[str] = Header(None)):
-    """Все накопленные мне сообщения (НЕ удаляет — клиент сам подтвердит через /ack).
-    Используется при login/reconnect когда мог пропустить что-то."""
+def get_pending(authorization: Optional[str] = Header(None),
+                x_device_id: Optional[str] = Header(None, alias="X-Device-Id")):
+    """Все сообщения, ещё не доставленные ЭТОМУ устройству.
+    Не удаляет — клиент сам подтвердит через /ack (сообщение проживёт 24ч после
+    первого ack чтобы другие устройства того же юзера тоже могли получить)."""
     user = auth_member(authorization)
     _rate_limit(f"pendlegacy:{user['id']}", limit=30, window=60)
+    device_id = _device_id_from_request(x_device_id, authorization)
     c = db()
-    rows = c.execute("""
+    rows = c.execute(f"""
         SELECT m.id, m.sender_id, m.text as ciphertext, m.created_at,
                u.username as from_username, u.display_name as from_display_name
         FROM chat_dm m JOIN users u ON u.id = m.sender_id
-        WHERE m.receiver_id = ?
+        WHERE m.receiver_id = ? AND {_not_delivered_filter(device_id)}
         ORDER BY m.id ASC
         LIMIT 500
-    """, (user["id"],)).fetchall()
+    """, (user["id"], _not_delivered_param(device_id))).fetchall()
     c.close()
     return {
         "messages": [
@@ -1563,24 +1636,25 @@ def group_send(gid: int, body: GroupSendBody, authorization: Optional[str] = Hea
 
 
 @router.get("/group/{gid}/pending")
-def group_pending(gid: int, authorization: Optional[str] = Header(None)):
-    """Сообщения в группе, которые я ещё не ack-ал."""
+def group_pending(gid: int, authorization: Optional[str] = Header(None),
+                  x_device_id: Optional[str] = Header(None, alias="X-Device-Id")):
+    """Сообщения в группе, ещё не доставленные ЭТОМУ устройству."""
     import json as _json
     user = auth_member(authorization)
     _rate_limit(f"grouppend:{user['id']}:{gid}", limit=20, window=60)
+    device_id = _device_id_from_request(x_device_id, authorization)
     c = db()
     if not _is_group_member(c, gid, user["id"]):
         c.close(); raise HTTPException(403, "Не участник группы")
-    rows = c.execute("""
+    rows = c.execute(f"""
         SELECT m.id, m.sender_id, m.ciphertext, m.envelope_keys, m.created_at,
                u.username as from_username, u.display_name as from_display_name
         FROM chat_group_messages m
         JOIN users u ON u.id = m.sender_id
-        LEFT JOIN chat_group_acks a ON a.msg_id = m.id AND a.user_id = ?
-        WHERE m.group_id = ? AND a.msg_id IS NULL AND m.sender_id <> ?
+        WHERE m.group_id = ? AND m.sender_id <> ? AND {_not_delivered_filter(device_id)}
         ORDER BY m.id ASC
         LIMIT 500
-    """, (user["id"], gid, user["id"])).fetchall()
+    """, (gid, user["id"], _not_delivered_param(device_id))).fetchall()
     c.close()
     out = []
     for r in rows:
@@ -1605,21 +1679,23 @@ def group_pending(gid: int, authorization: Optional[str] = Header(None)):
 
 
 @router.post("/group/{gid}/ack")
-def group_ack(gid: int, body: GroupAckBody, authorization: Optional[str] = Header(None)):
-    """Подтвердить получение сообщений. Если все участники ack-ли — удаляем msg.
-    Иначе только помечаем что юзер получил."""
+def group_ack(gid: int, body: GroupAckBody, authorization: Optional[str] = Header(None),
+              x_device_id: Optional[str] = Header(None, alias="X-Device-Id")):
+    """Подтвердить получение сообщений конкретным устройством.
+    Сообщения НЕ удаляются — живут 24ч после первого ack (любого устройства)
+    чтобы все устройства всех участников успели получить.
+    Cleanup task убирает по TTL."""
     user = auth_member(authorization)
     if not body.ids or not isinstance(body.ids, list):
         return {"acked": 0}
     ids = [int(x) for x in body.ids if isinstance(x, (int, str)) and str(x).isdigit()][:200]
     if not ids:
         return {"acked": 0}
+    device_id = _device_id_from_request(x_device_id, authorization)
     c = db()
     if not _is_group_member(c, gid, user["id"]):
         c.close(); raise HTTPException(403, "Не участник группы")
     ph = ",".join("?" * len(ids))
-    # ВАЖНО: ack-ать можно только сообщения которые реально в этой группе.
-    # Иначе можно перекрёстно ack-ать чужие сообщения и косвенно ускорять их purge.
     valid_ids = {r["id"] for r in c.execute(
         f"SELECT id FROM chat_group_messages WHERE group_id=? AND id IN ({ph})",
         [gid] + ids,
@@ -1627,33 +1703,14 @@ def group_ack(gid: int, body: GroupAckBody, authorization: Optional[str] = Heade
     ids = [i for i in ids if i in valid_ids]
     if not ids:
         c.close(); return {"acked": 0}
-    ph = ",".join("?" * len(ids))
     for mid in ids:
+        _mark_delivered(c, "chat_group_messages", mid, device_id)
         c.execute(
             "INSERT OR IGNORE INTO chat_group_acks (user_id, msg_id) VALUES (?,?)",
             (user["id"], mid),
         )
-    c.commit()
-    rows = c.execute(
-        f"SELECT id, sender_id FROM chat_group_messages WHERE group_id=? AND id IN ({ph})",
-        [gid] + ids,
-    ).fetchall()
-    deleted = 0
-    for r in rows:
-        members_cnt = c.execute(
-            "SELECT COUNT(*) as cnt FROM chat_group_members WHERE group_id=? AND user_id<>?",
-            (gid, r["sender_id"]),
-        ).fetchone()["cnt"]
-        acks_cnt = c.execute(
-            "SELECT COUNT(*) as cnt FROM chat_group_acks WHERE msg_id=?",
-            (r["id"],),
-        ).fetchone()["cnt"]
-        if acks_cnt >= members_cnt:
-            c.execute("DELETE FROM chat_group_messages WHERE id=?", (r["id"],))
-            c.execute("DELETE FROM chat_group_acks WHERE msg_id=?", (r["id"],))
-            deleted += 1
     c.commit(); c.close()
-    return {"acked": len(ids), "purged": deleted}
+    return {"acked": len(ids)}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

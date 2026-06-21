@@ -2225,6 +2225,17 @@ def init():
     try: c.execute("CREATE INDEX IF NOT EXISTS idx_dm_sealed_recv ON chat_dm_sealed(receiver_id, id DESC)")
     except sqlite3.OperationalError: pass
 
+    # Multi-device delivery: сообщения живут 24ч после первой доставки.
+    # delivered_to — JSON-массив device_id'ов которые уже подтвердили получение.
+    # last_delivery_at — для TTL-cleanup'a фоновой задачей.
+    for tbl in ('chat_dm', 'chat_dm_sealed', 'chat_group_messages'):
+        try: c.execute(f"ALTER TABLE {tbl} ADD COLUMN delivered_to TEXT NOT NULL DEFAULT '[]'")
+        except sqlite3.OperationalError: pass
+        try: c.execute(f"ALTER TABLE {tbl} ADD COLUMN last_delivery_at INTEGER NULL")
+        except sqlite3.OperationalError: pass
+        try: c.execute(f"CREATE INDEX IF NOT EXISTS idx_{tbl}_ttl ON {tbl}(last_delivery_at) WHERE last_delivery_at IS NOT NULL")
+        except sqlite3.OperationalError: pass
+
     try:
         c.execute("""
             CREATE TABLE IF NOT EXISTS soc_reposts (

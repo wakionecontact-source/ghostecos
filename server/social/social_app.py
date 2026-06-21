@@ -104,6 +104,44 @@ app.mount("/media", StaticFiles(directory="/opt/ghostchat/media"), name="media")
 app.include_router(social_router)
 app.include_router(chat_router)
 
+
+# ── TTL cleanup: удаляет доставленные сообщения старше 24ч ──
+# Multi-device delivery: сообщение живёт после первого ack пока не пройдёт
+# _DELIVERY_TTL_SECONDS — это окно для других устройств того же юзера.
+import asyncio as _aio_cleanup
+import sqlite3 as _sqlite_cleanup
+import time as _time_cleanup
+import logging as _log_cleanup
+from chat_router import _DELIVERY_TTL_SECONDS
+
+async def _delivery_cleanup_loop():
+    log = _log_cleanup.getLogger('gc.cleanup')
+    while True:
+        try:
+            await _aio_cleanup.sleep(3600)
+            cutoff = int(_time_cleanup.time()) - _DELIVERY_TTL_SECONDS
+            conn = _sqlite_cleanup.connect('/opt/ghostchat/ghostchat.db')
+            total = 0
+            for tbl in ('chat_dm', 'chat_dm_sealed', 'chat_group_messages'):
+                cur = conn.execute(
+                    f"DELETE FROM {tbl} WHERE last_delivery_at IS NOT NULL AND last_delivery_at < ?",
+                    (cutoff,)
+                )
+                total += cur.rowcount
+            conn.execute(
+                "DELETE FROM chat_group_acks WHERE msg_id NOT IN (SELECT id FROM chat_group_messages)"
+            )
+            conn.commit(); conn.close()
+            if total:
+                log.info(f"[delivery-cleanup] purged {total} delivered>24h messages")
+        except Exception as e:
+            log.warning(f"[delivery-cleanup] err: {e}")
+
+@app.on_event("startup")
+async def _start_cleanup():
+    _aio_cleanup.create_task(_delivery_cleanup_loop())
+
+
 @app.get("/api/soc/health")
 def health_check():
     return {"status": "working", "service": "GhostSocial Standalone"}

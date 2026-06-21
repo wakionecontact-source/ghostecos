@@ -228,6 +228,7 @@ button,input,textarea{font-family:inherit;}
 
 /* ── TG-style кастомный скроллбар ───────────────────────────────────── */
 .chat-body{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 14px 6px;display:flex;flex-direction:column;gap:2px;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(168,85,247,0.2) transparent;}
+.chat-body > *:first-child{margin-top:auto;}
 
 /* TDA pending — карточки запросов на вход в чате поддержки. */
 .tda-pendings-box{padding:10px 14px 0;display:flex;flex-direction:column;gap:10px;flex-shrink:0;}
@@ -1815,6 +1816,8 @@ function clearSsoCookie(){document.cookie='gs_token=; path=/; max-age=0; SameSit
 async function apiCall(base, path, method='GET', body=null){
   const h={'Content-Type':'application/json'};
   if(token)h['Authorization']='Bearer '+token;
+  // X-Device-Id: для multi-device delivery (24ч TTL после первого ack).
+  try { const did = localStorage.getItem('gs_device_id'); if(did) h['X-Device-Id'] = did; } catch(_){}
   // Тайм-аут 20с чтобы fetch не висел вечно если сервер не отвечает
   const ctrl = new AbortController();
   const tid = setTimeout(() => ctrl.abort(), 20000);
