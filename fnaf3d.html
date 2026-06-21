@@ -63,6 +63,11 @@
   @keyframes capb{50%{transform:translateY(-5px)}}
   #clickcap .cbig{font-size:21px;letter-spacing:.05em;color:#fff}
   #clickcap .csm{font-size:13px;color:#8b97a6;line-height:1.7;margin-top:4px}
+  /* тост-уведомление */
+  #toast{position:fixed;left:50%;top:24px;transform:translateX(-50%);z-index:50;background:rgba(14,17,23,.92);
+    border:1px solid var(--line);border-radius:10px;padding:10px 18px;color:#fff;font-size:13px;letter-spacing:.05em;
+    backdrop-filter:blur(6px);opacity:0;transition:opacity .2s;pointer-events:none}
+  #toast.show{opacity:1}
 
   /* ---- меню / оверлеи ---- */
   .ov{position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -169,6 +174,7 @@
 
   <div id="redflash"></div>
   <div id="scare"><svg id="scareSvg" viewBox="0 0 200 200"></svg></div>
+  <div id="toast" class="hidden"></div>
   <div id="loadErr">
     <div style="font-size:22px;color:#c0392b;font-weight:700;margin-bottom:10px">Не загрузился 3D-движок</div>
     <div>Этой версии нужен интернет (тянет Three.js с CDN при первом запуске).<br>Проверь соединение и обнови страницу.</div>
@@ -391,6 +397,7 @@ function startCell(n){return n==='foxy'?[13,21]:n==='chica'?[5,2]:n==='bonnie'?[
 addEventListener('keydown',e=>{keys[e.code]=true;
   if((e.code==='KeyF')&&G&&!G.over&&!G.won&&!G.hidden)toggleFlash();
   if(e.code==='KeyE'&&G&&!G.over&&!G.won)tryHide();
+  if(e.code==='KeyU')unlockAll();                      // хоткей: открыть все ночи
   if(e.code.startsWith('Arrow'))e.preventDefault();});
 addEventListener('keyup',e=>keys[e.code]=false);
 addEventListener('mousemove',e=>{if(!locked||!G||G.over||G.won)return;   // обзор работает и в укрытии
@@ -691,7 +698,13 @@ function buildTitle(){const box=$('nightSelect');box.innerHTML='';
     if(n<=unlocked)c.onclick=()=>{ensureAudio();startNight(n);};box.appendChild(c);}
   $('ctrlHint').innerHTML="Ходи по пиццерии и доживи до 6 утра. Аниматроники видят только ПЕРЕД собой — обходи со спины, держись вне взгляда.<br>"+
     "<b style='color:#8b97a6'>WASD</b> ходьба · <b style='color:#8b97a6'>Shift</b> бег (слышно) · <b style='color:#8b97a6'>мышь/стрелки</b> обзор · <b style='color:#8b97a6'>F/ПКМ</b> фонарь · <b style='color:#8b97a6'>E</b> спрятаться<br>"+
-    "<span style='color:#5b6675'>Фонарь ПРИВЛЕКАЕТ: посветишь на них — заметят и пойдут на свет. Сорвал взгляд — идут к последнему месту и ищут, куда ты свернул. Esc — пауза.</span>";}
+    "<span style='color:#5b6675'>Фонарь ПРИВЛЕКАЕТ: посветишь на них — заметят и пойдут на свет. Сорвал взгляд — идут к последнему месту и ищут, куда ты свернул. Esc — пауза.</span>"+
+    "<br><span style='color:#3a424d;font-size:11px'>U — открыть все 5 ночей</span>";}
+let toastT=null;
+function flashMsg(t){const el=$('toast');el.textContent=t;el.classList.remove('hidden');el.classList.add('show');
+  clearTimeout(toastT);toastT=setTimeout(()=>el.classList.remove('show'),1700);}
+function unlockAll(){ if(unlocked>=5){flashMsg('Все ночи уже открыты');return;}
+  unlocked=5; try{localStorage.setItem('fnaf3d_unlocked',5);}catch(e){} buildTitle(); flashMsg('Открыты все 5 ночей'); }
 $('btnNew').onclick=()=>{ensureAudio();startNight(1);};
 $('btnRetry').onclick=()=>{ensureAudio();startNight(G?G.night:1);};
 $('btnNext').onclick=()=>{if(G&&G.night>=5)toMenu();else startNight((G?G.night:0)+1);};
