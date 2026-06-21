@@ -498,7 +498,7 @@ function updateAnim(a,dt){
 
   // ЗАМОРОЗКА: Фредди — взглядом, остальные — фонарём в лицо (защита)
   a.frozen = a.look ? isWatchedFreddy(a) : animLit(a);
-  if(a.frozen){ a.lastSeen={x:px,z:pz}; a.state='chase';      // знает, где ты — рванёт, как отпустишь свет
+  if(a.frozen){ if(animSees(a)){a.lastSeen={x:px,z:pz};a.state='chase';}   // знает позицию, ТОЛЬКО если реально видит (не в спину)
     chars[a.name].eyeMat.color.setHex(0xffffff); grp.position.set(a.x,0,a.z); return; }
   if(a.look) chars.freddy.eyeMat.color.setHex(0x9fd0ff);      // не заморожен — обычные глаза
 
@@ -615,7 +615,7 @@ function update(dt){
     } else a.checkT=0;
     updateAnim(a,dt);
     const dp=Math.hypot(a.x-camera.position.x,a.z-camera.position.z);if(dp<nearest){nearest=dp;nearestA=a;}
-    if(dp<CATCH&&!G.hidden)jumpscare(a.name);
+    if(dp<CATCH&&!G.hidden&&a.stunT<=0)jumpscare(a.name);   // ошарашенный не хватает
   });
   if(G.hidden){ G.hideTime+=dt;               // засиделся — ближайший идёт нюхать шкаф
     if(G.hideTime>CAMP_LIMIT&&nearestA){nearestA.lastSeen={x:G.hideLocker.x,z:G.hideLocker.z};} }
