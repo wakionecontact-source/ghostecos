@@ -3333,8 +3333,10 @@ def get_post_counts(ids: str = Query(...), authorization: Optional[str] = Header
         post_ids = [int(x) for x in ids.split(",") if x.strip()]
     except Exception:
         raise HTTPException(400, "Invalid ids")
-    if not post_ids or len(post_ids) > 30:
-        raise HTTPException(400, "1-30 ids required")
+    if not post_ids:
+        raise HTTPException(400, "ids required")
+    if len(post_ids) > 200:
+        post_ids = post_ids[:200]
     c = db()
     placeholders = ",".join("?" * len(post_ids))
     comm_rows = c.execute(

@@ -44,7 +44,7 @@ app.add_middleware(_SecHeadersMiddleware)
 import time as _gtime
 from collections import deque as _gdq
 _RL_BUCKETS: dict = {}   # key → deque[timestamps]
-_RL_MAX = 300            # запросов
+_RL_MAX = 600            # запросов (300 не хватало активному юзеру: фид+wallet+notif+counts+newhere)
 _RL_WINDOW = 60          # за секунд
 _RL_EXCLUDE_PREFIXES = ("/api/soc/ws",)  # WebSocket свой keepalive имеет
 
