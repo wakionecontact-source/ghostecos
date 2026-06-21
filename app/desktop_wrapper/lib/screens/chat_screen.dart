@@ -572,9 +572,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           // вниз стекло «истончается», а не исчезает блюр (то была не-стекло v3).
           child: ClipRect(
             child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 9, sigmaY: 9),
+              filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
               child: DecoratedBox(
                 decoration: BoxDecoration(
+                  // Блик света на нижнем крае шапки.
+                  border: const Border(
+                    bottom: BorderSide(color: Color(0x30FFFFFF), width: 0.8),
+                  ),
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
@@ -1037,7 +1041,10 @@ class _Bubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final mine = m.fromMe;
     final align = mine ? Alignment.centerRight : Alignment.centerLeft;
-    final bg = mine ? LinearGradient(colors: [GE.primary2, GE.primary]) : null;
+    // Свои — ярко-фиолетовый градиент (чище в фиолет, без синевы).
+    final bg = mine
+        ? const LinearGradient(colors: [Color(0xFFB14DFF), Color(0xFF9333EA)])
+        : null;
     final textColor = mine ? Colors.white : GE.text;
     final isImg = _isImage(m);
     return AnimatedContainer(
@@ -1053,177 +1060,181 @@ class _Bubble extends StatelessWidget {
       padding: highlighted ? const EdgeInsets.all(4) : EdgeInsets.zero,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 320),
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 2),
-          padding: m.filePayload != null && isImg
-              ? const EdgeInsets.all(4)
-              : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.only(
-              topLeft: const Radius.circular(16),
-              topRight: const Radius.circular(16),
-              bottomLeft: Radius.circular(mine ? 16 : 4),
-              bottomRight: Radius.circular(mine ? 4 : 16),
-            ),
-            // Без фона — только мягкое свечение-подложка под текстом: тёмное
-            // (читаемость над mesh) + акцент (фиолет у своих, primary2 у чужих).
-            // Одно лёгкое свечение-подложка (blur 9): тёмное у чужих для
-            // читаемости, фиолет у своих для акцента. Раньше было 2 тяжёлых
-            // тени (blur 18+22) на КАЖДОМ баббле — лагало на длинной ленте.
-            boxShadow: [
-              BoxShadow(
-                color: (mine ? GE.primary : Colors.black).withValues(
-                  alpha: mine ? 0.34 : 0.5,
-                ),
-                blurRadius: 9,
-                spreadRadius: 0.5,
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (m.forwardedFrom != null) ...[
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.share,
-                      size: 11,
-                      color: textColor.withValues(alpha: 0.65),
+        child: Stack(
+          children: [
+            // Вариант 3: цветной фон В БЛЮРЕ позади (мягкий растворённый край),
+            // текст — резким слоем поверх.
+            Positioned.fill(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: ImageFiltered(
+                  imageFilter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: mine ? null : const Color(0xFF1E3A8A),
+                      gradient: bg,
+                      borderRadius: BorderRadius.only(
+                        topLeft: const Radius.circular(16),
+                        topRight: const Radius.circular(16),
+                        bottomLeft: Radius.circular(mine ? 16 : 4),
+                        bottomRight: Radius.circular(mine ? 4 : 16),
+                      ),
                     ),
-                    const SizedBox(width: 4),
-                    Text(
-                      '@${m.forwardedFrom}',
-                      style: TextStyle(
-                        color: textColor.withValues(alpha: 0.75),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 2),
+              padding: m.filePayload != null && isImg
+                  ? const EdgeInsets.all(4)
+                  : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (m.forwardedFrom != null) ...[
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.share,
+                          size: 11,
+                          color: textColor.withValues(alpha: 0.65),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '@${m.forwardedFrom}',
+                          style: TextStyle(
+                            color: textColor.withValues(alpha: 0.75),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                  ],
+                  if (m.replyPreview != null && m.replyPreview!.isNotEmpty) ...[
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: textColor.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border(
+                          left: BorderSide(
+                            color: textColor.withValues(alpha: 0.5),
+                            width: 3,
+                          ),
+                        ),
+                      ),
+                      child: Text(
+                        m.replyPreview!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: textColor.withValues(alpha: 0.85),
+                          fontSize: 12,
+                        ),
                       ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 2),
-              ],
-              if (m.replyPreview != null && m.replyPreview!.isNotEmpty) ...[
-                Container(
-                  margin: const EdgeInsets.only(bottom: 4),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: textColor.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border(
-                      left: BorderSide(
-                        color: textColor.withValues(alpha: 0.5),
-                        width: 3,
-                      ),
-                    ),
-                  ),
-                  child: Text(
-                    m.replyPreview!,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: textColor.withValues(alpha: 0.85),
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              ],
-              if (m.deleted)
-                Text(
-                  '🗑 удалено',
-                  style: TextStyle(
-                    color: textColor.withValues(alpha: 0.55),
-                    fontStyle: FontStyle.italic,
-                    fontSize: 13,
-                  ),
-                )
-              else ...[
-                if (m.filePayload != null)
-                  _MediaPart(m: m, textColor: textColor),
-                if (m.text.isNotEmpty)
-                  Padding(
-                    padding: EdgeInsets.only(
-                      top: m.filePayload != null ? 4 : 0,
-                    ),
-                    child: Text(
-                      m.text,
-                      style: TextStyle(
-                        color: textColor,
-                        fontSize: 15,
-                        height: 1.35,
-                      ),
-                    ),
-                  ),
-              ],
-              if (m.reactions != null && m.reactions!.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Wrap(
-                    spacing: 4,
-                    children: [
-                      for (final e in m.reactions!.entries)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: textColor.withValues(alpha: 0.18),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              _chatReactionIcon(
-                                e.key,
-                                size: 12,
-                                color: textColor,
-                              ),
-                              const SizedBox(width: 3),
-                              Text(
-                                '${e.value.length}',
-                                style: TextStyle(
-                                  color: textColor,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              const SizedBox(height: 2),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (m.edited)
+                  if (m.deleted)
                     Text(
-                      'изм. ',
+                      '🗑 удалено',
                       style: TextStyle(
                         color: textColor.withValues(alpha: 0.55),
-                        fontSize: 10,
+                        fontStyle: FontStyle.italic,
+                        fontSize: 13,
+                      ),
+                    )
+                  else ...[
+                    if (m.filePayload != null)
+                      _MediaPart(m: m, textColor: textColor),
+                    if (m.text.isNotEmpty)
+                      Padding(
+                        padding: EdgeInsets.only(
+                          top: m.filePayload != null ? 4 : 0,
+                        ),
+                        child: Text(
+                          m.text,
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 15,
+                            height: 1.35,
+                          ),
+                        ),
+                      ),
+                  ],
+                  if (m.reactions != null && m.reactions!.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Wrap(
+                        spacing: 4,
+                        children: [
+                          for (final e in m.reactions!.entries)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: textColor.withValues(alpha: 0.18),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _chatReactionIcon(
+                                    e.key,
+                                    size: 12,
+                                    color: textColor,
+                                  ),
+                                  const SizedBox(width: 3),
+                                  Text(
+                                    '${e.value.length}',
+                                    style: TextStyle(
+                                      color: textColor,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
                       ),
                     ),
-                  Text(
-                    _formatTime(m.createdAt),
-                    style: TextStyle(
-                      color: textColor.withValues(alpha: 0.65),
-                      fontSize: 10,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
+                  const SizedBox(height: 2),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (m.edited)
+                        Text(
+                          'изм. ',
+                          style: TextStyle(
+                            color: textColor.withValues(alpha: 0.55),
+                            fontSize: 10,
+                          ),
+                        ),
+                      Text(
+                        _formatTime(m.createdAt),
+                        style: TextStyle(
+                          color: textColor.withValues(alpha: 0.65),
+                          fontSize: 10,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                      if (mine) ...[const SizedBox(width: 4), _ticks(m)],
+                    ],
                   ),
-                  if (mine) ...[const SizedBox(width: 4), _ticks(m)],
                 ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -1670,6 +1681,9 @@ class _ChatHeader extends StatelessWidget {
                           color: GE.text,
                           fontSize: 15,
                           fontWeight: FontWeight.w700,
+                          shadows: const [
+                            Shadow(color: Color(0xCC000000), blurRadius: 5),
+                          ],
                         ),
                       ),
                       if (!isGroup)
@@ -1695,6 +1709,12 @@ class _ChatHeader extends StatelessWidget {
                                   color: online ? GE.green : GE.muted,
                                   fontSize: 11,
                                   fontWeight: FontWeight.w600,
+                                  shadows: const [
+                                    Shadow(
+                                      color: Color(0xCC000000),
+                                      blurRadius: 5,
+                                    ),
+                                  ],
                                 ),
                               ),
                             ],
