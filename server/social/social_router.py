@@ -850,7 +850,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 rid = data.get("request_id")
                 c = db()
                 rows = c.execute("""
-                    SELECT u.username, u.display_name, cc.added_at
+                    SELECT u.username, u.display_name, u.avatar_url, cc.added_at
                     FROM chat_contacts cc JOIN users u ON cc.contact_id = u.id
                     WHERE cc.owner_id = ?
                     ORDER BY u.display_name COLLATE NOCASE
@@ -976,7 +976,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 ).fetchone() is not None
                 rows = c.execute("""
                     SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
-                           u.username, u.display_name,
+                           u.username, u.display_name, u.avatar_url,
                            (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
                     FROM soc_posts p JOIN users u ON p.user_id=u.id
                     WHERE p.user_id=? ORDER BY p.created_at DESC LIMIT 15 OFFSET ?
@@ -1157,7 +1157,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 rid = data.get("request_id")
                 c = db()
                 rows = c.execute("""
-                    SELECT u.username, u.display_name, cc.added_at
+                    SELECT u.username, u.display_name, u.avatar_url, cc.added_at
                     FROM chat_contacts cc JOIN users u ON cc.contact_id = u.id
                     WHERE cc.owner_id = ?
                     ORDER BY u.display_name COLLATE NOCASE
@@ -1595,7 +1595,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 ).fetchone() is not None
                 rows = c.execute("""
                     SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
-                           u.username, u.display_name,
+                           u.username, u.display_name, u.avatar_url,
                            (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
                     FROM soc_posts p JOIN users u ON p.user_id=u.id
                     WHERE p.user_id=? ORDER BY p.created_at DESC LIMIT 15 OFFSET ?
@@ -3176,7 +3176,7 @@ def get_posts(
     params_with_uid = [uid] + params + [offset]
     rows = c.execute(f"""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
-               u.username, u.display_name, p.activity,
+               u.username, u.display_name, u.avatar_url, p.activity,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p
         JOIN users u ON p.user_id=u.id
@@ -3238,7 +3238,7 @@ def get_feed_candidates(
         follow_params = [uid] + list(excluded) + [MIN_ACTIVITY, n_follow]
     follow_rows = c.execute(f"""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
-               u.username, u.display_name,
+               u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p
         JOIN users u ON p.user_id=u.id
@@ -3259,7 +3259,7 @@ def get_feed_candidates(
         fresh_params = [MIN_ACTIVITY, n_new + offset]
     fresh = c.execute(f"""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
-               u.username, u.display_name,
+               u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
         WHERE p.kind='post' AND p.created_at >= datetime('now', '-1 day')
@@ -3278,7 +3278,7 @@ def get_feed_candidates(
         top_params = [MIN_ACTIVITY, n_top]
     top = c.execute(f"""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
-               u.username, u.display_name,
+               u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
         WHERE p.kind='post' AND p.created_at >= datetime('now', '-7 days')
@@ -3301,7 +3301,7 @@ def get_feed_candidates(
         rnd_params = [MIN_ACTIVITY, n_rnd]
     rnd = c.execute(f"""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
-               u.username, u.display_name,
+               u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
         {where_rnd}
@@ -3373,7 +3373,7 @@ def get_one_post(post_id: int, authorization: Optional[str] = Header(None)):
     c = db()
     row = c.execute("""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
-               u.username, u.display_name,
+               u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
         WHERE p.id=?
@@ -3483,7 +3483,7 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
     c2 = db()
     row = c2.execute("""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
-               u.username, u.display_name,
+               u.username, u.display_name, u.avatar_url,
                0 as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id WHERE p.id=?
     """, (post_id,)).fetchone()
@@ -3595,7 +3595,7 @@ def edit_post(post_id: int, body: EditPostBody, authorization: Optional[str] = H
     c.commit()
     row = c.execute("""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
-               u.username, u.display_name,
+               u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id WHERE p.id=?
     """, (post_id,)).fetchone()
@@ -3658,7 +3658,7 @@ def search(q: str = Query(..., max_length=120), offset: int = Query(0), authoriz
             c.close()
             return {"type": "users", "results": []}
         rows = c.execute("""
-            SELECT u.id, u.username, u.display_name,
+            SELECT u.id, u.username, u.display_name, u.avatar_url,
                    (SELECT COUNT(*) FROM soc_posts p WHERE p.user_id=u.id) as posts_count
             FROM users u
             WHERE ci_contains(u.username, ?) OR ci_contains(u.display_name, ?)
@@ -3669,7 +3669,7 @@ def search(q: str = Query(..., max_length=120), offset: int = Query(0), authoriz
     else:
         rows = c.execute("""
             SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
-                   u.username, u.display_name,
+                   u.username, u.display_name, u.avatar_url,
                    (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
             FROM soc_posts p JOIN users u ON p.user_id=u.id
             WHERE ci_contains(p.content, ?)
@@ -3697,7 +3697,7 @@ def get_profile(username: str, offset: int = Query(0), authorization: Optional[s
     ).fetchone() is not None
     rows = c.execute("""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
-               u.username, u.display_name,
+               u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
         WHERE p.user_id=? ORDER BY p.created_at DESC LIMIT 15 OFFSET ?
@@ -3742,7 +3742,7 @@ def get_profile_posts(username: str, offset: int = Query(0), authorization: Opti
         raise HTTPException(404, "User not found")
     rows = c.execute("""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
-               u.username, u.display_name,
+               u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
         WHERE p.user_id=? ORDER BY p.created_at DESC LIMIT 15 OFFSET ?
@@ -4217,7 +4217,7 @@ def get_comments(post_id: int, offset: int = Query(0), limit: int = Query(10),
         order_sql = "ORDER BY cm.created_at DESC"
     rows = c.execute(f"""
         SELECT cm.id, cm.text, cm.created_at, cm.parent_id, cm.reply_to_id,
-               u.username, u.display_name,
+               u.username, u.display_name, u.avatar_url,
                (COALESCE(rx.cnt, 0) + COALESCE(rp.cnt, 0)) as top_score
         FROM soc_comments cm
         JOIN users u ON cm.user_id = u.id
@@ -4260,7 +4260,7 @@ def get_replies(comment_id: int, offset: int = Query(0), limit: int = Query(10),
     c = db()
     rows = c.execute("""
         SELECT cm.id, cm.text, cm.created_at, cm.parent_id, cm.reply_to_id,
-               u.username, u.display_name,
+               u.username, u.display_name, u.avatar_url,
                rt.text as reply_to_text, rtu.username as reply_to_username, rtu.display_name as reply_to_name
         FROM soc_comments cm JOIN users u ON cm.user_id=u.id
         LEFT JOIN soc_comments rt ON cm.reply_to_id = rt.id
@@ -5029,7 +5029,7 @@ def wrapped_data(username: str, authorization: Optional[str] = Header(None)):
             me_id = 0
     c = db()
     u = c.execute(
-        "SELECT id, username, display_name, created_at, reputation_score FROM users WHERE username=?",
+        "SELECT id, username, display_name, created_at, reputation_score, avatar_url FROM users WHERE username=?",
         (uname,),
     ).fetchone()
     if not u:
@@ -5110,6 +5110,7 @@ def wrapped_data(username: str, authorization: Optional[str] = Header(None)):
     out = {
         "username": u["username"],
         "display_name": u["display_name"],
+        "avatar_url": u["avatar_url"],
         "days_in": days_in,
         "reputation": int(u["reputation_score"] or 100),
         "posts": posts, "miniska": miniska, "comments": comments,
@@ -5192,7 +5193,7 @@ def post_reposters(post_id: int, limit: int = Query(20)):
     """Все юзеры кто репостнул пост (публично). Лимит 20 по умолчанию."""
     c = db()
     rows = c.execute("""
-        SELECT u.id, u.username, u.display_name, r.created_at
+        SELECT u.id, u.username, u.display_name, u.avatar_url, r.created_at
         FROM soc_reposts r JOIN users u ON r.user_id=u.id
         WHERE r.post_id=? ORDER BY r.created_at DESC LIMIT ?
     """, (post_id, max(1, min(100, limit)))).fetchall()
@@ -5211,7 +5212,7 @@ def post_reposters_contacts(post_id: int, authorization: Optional[str] = Header(
     user = auth_member(authorization)
     c = db()
     rows = c.execute("""
-        SELECT u.id, u.username, u.display_name, r.created_at
+        SELECT u.id, u.username, u.display_name, u.avatar_url, r.created_at
         FROM soc_reposts r JOIN users u ON r.user_id=u.id
         WHERE r.post_id=? AND r.user_id IN (
             SELECT followee_id FROM soc_follows WHERE follower_id=?
@@ -5238,7 +5239,7 @@ def user_feed_combined(username: str, offset: int = Query(0), limit: int = Query
     rows = c.execute("""
         SELECT 'self' as kind, p.id, strftime('%s', p.created_at) as ts,
                p.content, p.media, p.is_nsfw, p.nsfw_set_by, p.user_id, p.created_at, p.edited_at, p.source_channel_id,
-               u.username, u.display_name,
+               u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count,
                NULL as repost_ts
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -5246,7 +5247,7 @@ def user_feed_combined(username: str, offset: int = Query(0), limit: int = Query
         UNION ALL
         SELECT 'repost' as kind, p.id, CAST(r.created_at AS TEXT) as ts,
                p.content, p.media, p.is_nsfw, p.nsfw_set_by, p.user_id, p.created_at, p.edited_at, p.source_channel_id,
-               u.username, u.display_name,
+               u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count,
                r.created_at as repost_ts
         FROM soc_reposts r
@@ -5461,7 +5462,7 @@ def me_reports_incoming(authorization: Optional[str] = Header(None)):
         c.close(); raise HTTPException(500, f"Ошибка: {e}")
     rows = c.execute("""
         SELECT r.reporter_id, r.reason, r.created_at,
-               r.post_id, u.username, u.display_name,
+               r.post_id, u.username, u.display_name, u.avatar_url,
                (SELECT content FROM soc_posts WHERE id=r.post_id) as post_preview
         FROM soc_reports r
         JOIN users u ON r.reporter_id = u.id
@@ -5658,7 +5659,7 @@ def status_feed(authorization: Optional[str] = Header(None)):
     uid = user["id"]
     c = db()
     rows = c.execute("""
-        SELECT u.id, u.username, u.display_name,
+        SELECT u.id, u.username, u.display_name, u.avatar_url,
                u.daily_status_text, u.daily_status_set_at, u.daily_status_mood,
                u.eternal_status_text, u.eternal_status_mood, u.eternal_status_purchased_at
         FROM users u
@@ -5881,7 +5882,7 @@ def mod_applications_list(authorization: Optional[str] = Header(None)):
     c = db()
     rows = c.execute("""
         SELECT a.id, a.user_id, a.created_at, a.status, a.quality_score, a.reviewed_at,
-               u.username, u.display_name,
+               u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_posts WHERE user_id=a.user_id) as posts_count,
                (SELECT COUNT(*) FROM soc_comments WHERE user_id=a.user_id) as comments_count,
                (SELECT gost FROM soc_wallets WHERE user_id=a.user_id) as gost_balance
@@ -6463,7 +6464,7 @@ def miniska_feed(
     c = db()
     rows = c.execute(f"""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
-               u.username, u.display_name,
+               u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
         WHERE p.kind='miniska' {excl_sql}

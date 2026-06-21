@@ -5597,7 +5597,13 @@ function applyLeftBtn(){
     btn.title = 'Назад';
   } else {
     btn.className = 'sb-avatar';
-    btn.textContent = ini(me && (me.display_name || me.username));
+    if (me && me.avatar_url){
+      btn.innerHTML = '<img src="' + esc(me.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">';
+      btn.style.background = 'transparent';
+    } else {
+      btn.textContent = ini(me && (me.display_name || me.username));
+      btn.style.background = '';
+    }
     btn.title = 'Меню';
   }
 }

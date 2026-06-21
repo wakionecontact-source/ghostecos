@@ -55,6 +55,12 @@ function highlightText(raw, query) {
 
 function ini(n) { return n ? n[0].toUpperCase() : '?'; }
 
+function avaInner(u){
+  const url = u && u.avatar_url;
+  if (url) return `<img src="${esc(url)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+  return ini(u && (u.display_name || u.username));
+}
+
 function ago(ts) {
   const d = new Date(ts.includes('Z') || ts.includes('+') ? ts : ts + 'Z');
   const s = Math.floor((Date.now() - d) / 1000);
@@ -127,7 +133,7 @@ function showApp() {
   document.getElementById('dtSideLeft').style.display = ''; // позволяет CSS @media решать
   document.body.style.paddingTop = ''; // переменная --header-h CSS возьмёт верх
   document.body.style.paddingBottom = 'calc(68px + env(safe-area-inset-bottom))';
-  if (me) document.getElementById('hAvatar').textContent = ini(me.display_name || me.username);
+  if (me) { const ha = document.getElementById('hAvatar'); ha.innerHTML = avaInner(me); if (me.avatar_url) ha.style.background = 'transparent'; }
   document.body.classList.toggle('guest-mode', isGuest());
   // Gost-pill в шапке скрываем для гостей (у них нет кошелька), показываем для всех остальных
   const gp = document.getElementById('gostPill');
@@ -365,7 +371,7 @@ function renderMinisky() {
       <div class="msk-overlay">
         <div class="msk-info">
           <div class="author" onclick="event.stopPropagation();openFullProfile(${jsAttr(p.username)})">
-            <div class="av">${ini(p.display_name)}</div>
+            <div class="av">${avaInner(p)}</div>
             <div>
               <div class="name">${esc(p.display_name)}</div>
               <div class="un">@${esc(p.username)}</div>
@@ -1945,7 +1951,7 @@ function postHTML(p, hq) {
       <span>Канал · <b>${esc(p.from_channel.name)}</b>${p.from_channel.username ? ' <span style="color:var(--sub);font-weight:500;">@'+esc(p.from_channel.username)+'</span>' : ''}</span>
     </div>` : ''}
     <div class="post-header" data-username="${esc(p.username)}">
-      <div class="post-av">${ini(p.display_name)}</div>
+      <div class="post-av">${avaInner(p)}</div>
       <div class="post-info">
         <div class="post-name">${esc(p.display_name)}${nsfwBadge}</div>
         <div class="post-user">@${esc(p.username)}</div>
@@ -3250,7 +3256,7 @@ function renderShareList(items, fromContacts){
     : '<div style="font-size:11px;color:var(--sub);font-weight:700;letter-spacing:0.6px;text-transform:uppercase;padding:6px 4px 10px;">Найдено</div>';
   list.innerHTML = label + items.map(u => `
     <div class="m-user" onclick="shareSendTo(${jsAttr(u.username)}, ${fromContacts ? 'false' : 'true'})" style="position:relative;">
-      <div class="av">${ini(u.display_name)}</div>
+      <div class="av">${avaInner(u)}</div>
       <div class="info"><div class="nm">${esc(u.display_name)}</div><div class="un">@${esc(u.username)}</div></div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
         ${fromContacts ? '' : '<span style="font-size:10px;color:var(--primary);background:rgba(168,85,247,0.12);border:1px solid rgba(168,85,247,0.25);padding:3px 8px;border-radius:999px;font-weight:700;letter-spacing:0.3px;">+ В КОНТАКТЫ</span>'}
@@ -3471,7 +3477,7 @@ async function loadRepostPill(postId, el) {
     let idx = 0;
     const render = () => {
       const u = items[idx % items.length];
-      el.innerHTML = `<span class="repost-pill-av">${ini(u.display_name || u.username)}</span> <span>@${esc(u.username)} репостнул${items.length > 1 ? ` (+${items.length - 1})` : ''}</span>`;
+      el.innerHTML = `<span class="repost-pill-av">${avaInner(u)}</span> <span>@${esc(u.username)} репостнул${items.length > 1 ? ` (+${items.length - 1})` : ''}</span>`;
       el.title = items.map(x => '@' + x.username).join(', ');
       idx++;
     };
@@ -3583,7 +3589,7 @@ function _renderShareContacts(list) {
   box.innerHTML = list.map(u => {
     const sel = _shareSelected.has(u.username) ? 'selected' : '';
     return `<button class="share-contact ${sel}" data-user="${esc(u.username)}">
-      <div class="share-contact-av">${ini(u.display_name || u.username)}</div>
+      <div class="share-contact-av">${avaInner(u)}</div>
       <div class="share-contact-name">@${esc(u.username)}</div>
     </button>`;
   }).join('');
@@ -3965,7 +3971,7 @@ async function openFullProfile(username) {
   document.getElementById('fpList').innerHTML = skeletonPosts(2);
   try {
     const d = await api(`/prof/${username}`);
-    document.getElementById('fpAv').textContent = ini(d.display_name);
+    document.getElementById('fpAv').innerHTML = avaInner(d); if (d && d.avatar_url) document.getElementById('fpAv').style.background = 'transparent';
     document.getElementById('fpName').textContent = d.display_name;
     document.getElementById('fpUser').textContent = '@' + d.username;
     renderDailyStatus('fpStatus', d.daily_status);
@@ -4255,7 +4261,7 @@ async function doSearch(q) {
       if (!d.results.length) { res.innerHTML = '<div class="empty"><i class="fa-solid fa-user-slash"></i><p>Пользователи не найдены</p></div>'; return; }
       res.innerHTML = d.results.map(u => `
         <div class="user-card" onclick="openFullProfile(${jsAttr(u.username)})">
-          <div class="user-card-av">${ini(u.display_name)}</div>
+          <div class="user-card-av">${avaInner(u)}</div>
           <div class="user-card-info">
             <div class="user-card-name">${highlightText(u.display_name, hlQuery)}</div>
             <div class="user-card-user">@${highlightText(u.username, hlQuery)}</div>
@@ -4645,7 +4651,7 @@ function _mskCardHTML(p) {
     <div class="msk-play-overlay"><i class="fa-solid fa-play"></i></div>
     <div class="msk-overlay"><div class="msk-info">
       <div class="author" onclick="event.stopPropagation();openFullProfile(${jsAttr(p.username)})">
-        <div class="av">${ini(p.display_name)}</div>
+        <div class="av">${avaInner(p)}</div>
         <div><div class="name">${esc(p.display_name)}</div><div class="un">@${esc(p.username)}</div></div>
       </div>
       <div class="caption">${linkifyContent(p.content || '', '')}</div>
