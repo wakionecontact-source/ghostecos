@@ -740,7 +740,8 @@ class ChatRepo {
   //     ОТКЛЮЧЁН: см. chat/index.html — для отправки используется /send,
   //     /send_sealed только для delivered-echo. Чтобы веб-получатель видел
   //     мои сообщения, шлём legacy способом.) ──────────────────────────────
-  Future<void> sendDmText(String toUsername, String text) async {
+  Future<void> sendDmText(String toUsername, String text,
+      {int? replyTo, String? replyPreview}) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
     final tempSid = -DateTime.now().microsecondsSinceEpoch;
@@ -752,6 +753,8 @@ class ChatRepo {
       createdAt: DateTime.now().toUtc().toIso8601String(),
       pending: true,
       tempSid: 'tmp-$tempSid',
+      replyTo: replyTo,
+      replyPreview: replyPreview,
     );
     await _db.upsertMessage(optimistic);
     await _refreshMessages(toUsername);
@@ -760,7 +763,13 @@ class ChatRepo {
     try {
       // TDA-4 fanout: шифруем под все pubkey'и пира (multi-device).
       final peerDevPubs = await getPeerDevicePubs(toUsername);
-      final payload = jsonEncode({'type': 'msg', 'text': trimmed});
+      final payload = jsonEncode({
+        'type': 'msg',
+        'text': trimmed,
+        if (replyTo != null) 'reply_to': replyTo,
+        if (replyPreview != null && replyPreview.isNotEmpty)
+          'reply_preview': replyPreview,
+      });
 
       // Первый /send — основной (он же возвращает sid). Дополнительные
       // device-копии отправляются параллельно через sealed-канал.

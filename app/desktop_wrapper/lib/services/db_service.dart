@@ -279,29 +279,46 @@ class DbService {
     required int realSid,
     required dynamic createdAt,
   }) async {
-    // Если на (peer, realSid) уже лежит запись (старая дубль с сервера до
-    // того как мы успели promote) — удаляем её, иначе UPDATE упадёт на
-    // UNIQUE constraint PRIMARY KEY (sid, peer).
-    // Удаляем ЛЮБУЮ запись с этим sid КРОМЕ нашего optimistic-target —
-    // покрывает кейс когда там finalized из WS-echo, ИЛИ другой optimistic
-    // с тем же sid (бывает при гонке двух последовательных send'ов).
-    await _safeDb.delete(
-      'messages',
-      where: 'peer = ? AND sid = ? AND (temp_sid IS NULL OR temp_sid != ?)',
-      whereArgs: [peer, realSid, tempSid],
+    // На (peer, realSid) уже может лежать ФИНАЛЬНАЯ запись — WS-echo с реальным
+    // sid пришёл раньше, чем мы успели promote. Тогда UPDATE optimistic→realSid
+    // упал бы на UNIQUE constraint PRIMARY KEY (sid, peer) и оставил дубль.
+    // Проверяем заранее: если финальная есть — удаляем НАШ optimistic (не апдейтим).
+    final existing = await _safeDb.rawQuery(
+      'SELECT 1 FROM messages WHERE peer = ? AND sid = ? '
+      'AND (temp_sid IS NULL OR temp_sid != ?) LIMIT 1',
+      [peer, realSid, tempSid],
     );
-    final updated = await _safeDb.update(
-      'messages',
-      {
-        'sid': realSid,
-        'created_at': createdAt is int ? createdAt : createdAt?.toString(),
-        'pending': 0,
-        'temp_sid': null,
-      },
-      where: 'peer = ? AND temp_sid = ?',
-      whereArgs: [peer, tempSid],
-    );
-    return updated > 0;
+    if (existing.isNotEmpty) {
+      await _safeDb.delete(
+        'messages',
+        where: 'peer = ? AND temp_sid = ?',
+        whereArgs: [peer, tempSid],
+      );
+      return true;
+    }
+    try {
+      final updated = await _safeDb.update(
+        'messages',
+        {
+          'sid': realSid,
+          'created_at': createdAt is int ? createdAt : createdAt?.toString(),
+          'pending': 0,
+          'temp_sid': null,
+        },
+        where: 'peer = ? AND temp_sid = ?',
+        whereArgs: [peer, tempSid],
+      );
+      return updated > 0;
+    } catch (_) {
+      // Гонка: финальная запись появилась между проверкой и UPDATE → вместо
+      // падения на UNIQUE просто удаляем optimistic-дубль.
+      await _safeDb.delete(
+        'messages',
+        where: 'peer = ? AND temp_sid = ?',
+        whereArgs: [peer, tempSid],
+      );
+      return true;
+    }
   }
 
   Future<void> updateMessageFlags(String peer, int sid, Map<String, dynamic> patch) async {

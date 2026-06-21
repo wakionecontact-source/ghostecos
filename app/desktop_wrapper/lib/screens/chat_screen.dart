@@ -136,7 +136,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         );
         setState(() => _editing = null);
       } else {
-        await ChatRepo.instance.sendDmText(widget.peer, text);
+        await ChatRepo.instance.sendDmText(
+          widget.peer,
+          text,
+          replyTo: _replyTo?.sid,
+          replyPreview: _replyTo == null
+              ? null
+              : (_replyTo!.text.length > 100
+                  ? '${_replyTo!.text.substring(0, 100)}…'
+                  : _replyTo!.text),
+        );
       }
       _inputCtrl.clear();
       setState(() => _replyTo = null);
@@ -674,7 +683,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 class _ReactionsBar extends StatelessWidget {
   final void Function(String emoji) onPick;
   const _ReactionsBar({required this.onPick});
-  static const _emojis = ['❤', '👍', '😂', '😮', '😢', '🔥'];
+  // Server-сторона хранит raw-emoji строкой — сохраняем совместимость.
+  // Визуально рендерим Material иконку для каждого (одинаково на всех ОС).
+  static const _picks = <_Pick>[
+    _Pick('❤', Icons.favorite, Color(0xFFef4444)),
+    _Pick('👍', Icons.thumb_up, Color(0xFF60a5fa)),
+    _Pick('😂', Icons.sentiment_very_satisfied, Color(0xFFfacc15)),
+    _Pick('😮', Icons.sentiment_neutral, Color(0xFFfb923c)),
+    _Pick('😢', Icons.sentiment_dissatisfied, Color(0xFF60a5fa)),
+    _Pick('🔥', Icons.local_fire_department, Color(0xFFf97316)),
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -684,21 +702,47 @@ class _ReactionsBar extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 10),
         itemBuilder: (_, i) => InkWell(
-          onTap: () => onPick(_emojis[i]),
+          onTap: () => onPick(_picks[i].emoji),
           borderRadius: BorderRadius.circular(20),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: Text(_emojis[i], style: const TextStyle(fontSize: 22)),
+            child: Icon(_picks[i].icon, color: _picks[i].color, size: 26),
           ),
         ),
         separatorBuilder: (_, _) => const SizedBox(width: 2),
-        itemCount: _emojis.length,
+        itemCount: _picks.length,
       ),
     );
   }
 }
 
+class _Pick {
+  final String emoji;
+  final IconData icon;
+  final Color color;
+  const _Pick(this.emoji, this.icon, this.color);
+}
+
 // ────────────────────────────────────────────────────────────────────────
+/// Маппинг raw-emoji → Material иконка для отображения реакции на сообщении.
+/// Сохраняет совместимость с сервером (он хранит raw-symbol), но рендерит
+/// стилистически единый Material набор поверх любой ОС.
+Widget _chatReactionIcon(String key, {double size = 12, required Color color}) {
+  IconData? ic;
+  switch (key) {
+    case '❤': case '❤️': case '♥': ic = Icons.favorite; break;
+    case '👍': ic = Icons.thumb_up; break;
+    case '😂': case '🤣': ic = Icons.sentiment_very_satisfied; break;
+    case '😮': case '😲': ic = Icons.sentiment_neutral; break;
+    case '😢': case '😭': ic = Icons.sentiment_dissatisfied; break;
+    case '🔥': ic = Icons.local_fire_department; break;
+  }
+  if (ic == null) {
+    return Text(key, style: TextStyle(color: color, fontSize: size + 1));
+  }
+  return Icon(ic, size: size, color: color);
+}
+
 class _Bubble extends StatelessWidget {
   final StoredMessage m;
   final String? myUsername;
@@ -801,10 +845,14 @@ class _Bubble extends StatelessWidget {
                             color: textColor.withValues(alpha: 0.18),
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          child: Text(
-                            '${e.key} ${e.value.length}',
-                            style: TextStyle(color: textColor, fontSize: 11),
-                          ),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            _chatReactionIcon(e.key, size: 12, color: textColor),
+                            const SizedBox(width: 3),
+                            Text(
+                              '${e.value.length}',
+                              style: TextStyle(color: textColor, fontSize: 11),
+                            ),
+                          ]),
                         ),
                     ],
                   ),
