@@ -567,36 +567,32 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         extendBodyBehindAppBar: true,
         appBar: PreferredSize(
           preferredSize: const Size.fromHeight(64),
-          // Вариант 3: блюр стекла ПОЛНЫЙ сверху → гаснет в НОЛЬ к нижнему краю
-          // (ShaderMask маскирует блюр+тинт). Контент шапки — поверх, НЕ гаснет.
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              ShaderMask(
-                shaderCallback: (r) => const LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Colors.white, Colors.white, Colors.transparent],
-                  stops: [0.0, 0.42, 1.0],
-                ).createShader(r),
-                blendMode: BlendMode.dstIn,
-                child: ClipRect(
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 9, sigmaY: 9),
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: glassTint.withValues(alpha: 0.5),
-                      ),
-                    ),
+          // Вариант 1: стекло РАВНОМЕРНОЕ (блюр одинаковый по всей шапке), а тинт
+          // плавно тает в прозрачность к нижнему краю. Фрост везде = это стекло;
+          // вниз стекло «истончается», а не исчезает блюр (то была не-стекло v3).
+          child: ClipRect(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 9, sigmaY: 9),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      glassTint.withValues(alpha: 0.6),
+                      glassTint.withValues(alpha: 0.32),
+                      glassTint.withValues(alpha: 0.0),
+                    ],
+                    stops: const [0.0, 0.6, 1.0],
                   ),
                 ),
+                child: _ChatHeader(
+                  peer: widget.peer,
+                  displayName: widget.displayName,
+                  isGroup: isGroup,
+                ),
               ),
-              _ChatHeader(
-                peer: widget.peer,
-                displayName: widget.displayName,
-                isGroup: isGroup,
-              ),
-            ],
+            ),
           ),
         ),
         body: Stack(
