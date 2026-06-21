@@ -266,9 +266,9 @@ renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(innerWidt
 const scene=new THREE.Scene(); scene.background=new THREE.Color(0x04050a);
 scene.fog=new THREE.FogExp2(0x04050a,0.05);
 const camera=new THREE.PerspectiveCamera(76,innerWidth/innerHeight,0.05,80); camera.rotation.order='YXZ';
-const amb=new THREE.AmbientLight(0x2a3a55,0.07); scene.add(amb);   // почти темно — фонарь обязателен
-const hemi=new THREE.HemisphereLight(0x1a2740,0x04060a,0.08); scene.add(hemi);
-const flash=new THREE.SpotLight(0xfff2cc,0,RANGE+6,CONE+0.05,0.5,1.0);
+const amb=new THREE.AmbientLight(0x2a3a55,0.04); scene.add(amb);   // максимально темно, но стены/шкафы ещё угадываются
+const hemi=new THREE.HemisphereLight(0x1a2740,0x04060a,0.045); scene.add(hemi);
+const flash=new THREE.SpotLight(0xfff2cc,0,60,CONE+0.05,0.5,0.9);  // луч добивает далеко
 const flashTarget=new THREE.Object3D(); scene.add(flashTarget); flash.target=flashTarget;
 camera.add(flash); scene.add(camera);
 
@@ -445,16 +445,14 @@ function lookInfo(a){camera.getWorldDirection(fwd);tmp.set(a.x-camera.position.x
   const dist=tmp.length();tmp.normalize();const f=fwd.clone();f.y=0;f.normalize();
   return{dist,ang:Math.acos(clamp(f.dot(tmp),-1,1))};}
 // ЛУЧЕВОЙ ВЗГЛЯД: видит только то, что в конусе ПЕРЕД ним и без стены на пути
-function animSees(a,d){ if(G.hidden)return false;
-  let range=13; if(G.flashOn)range=20; if(a.foxy)range+=4;        // с фонарём ты заметнее
-  if(d>range)return false;
+function animSees(a,d){ if(G.hidden)return false;        // дальность взгляда БЕЗГРАНИЧНА — ограничивают только стены
   const toP=Math.atan2(camera.position.x-a.x,camera.position.z-a.z);
   const da=Math.abs(((toP-a.heading+Math.PI)%(2*Math.PI))-Math.PI);
-  if(da>0.85)return false;                                        // ~98° поле зрения
+  if(da>1.35)return false;                               // широкий конус ~155°
   return los(a.x,a.z,camera.position.x,camera.position.z); }
-// ФОНАРЬ НА НЁМ: заметит и пойдёт на свет, даже если стоял спиной
-function animLit(a){ if(!G.flashOn||G.hidden)return false; const{dist,ang}=lookInfo(a);
-  return ang<CONE&&dist<RANGE&&los(a.x,a.z,camera.position.x,camera.position.z); }
+// ФОНАРЬ НА НЁМ: заметит и пойдёт на свет с любой дистанции, даже стоя спиной
+function animLit(a){ if(!G.flashOn||G.hidden)return false; const{ang}=lookInfo(a);
+  return ang<CONE&&los(a.x,a.z,camera.position.x,camera.position.z); }   // дальность луча безграничная
 // услышал бег
 function animHears(a,d){ if(G.hidden)return false; if(!(keys['ShiftLeft']||keys['ShiftRight']))return false;
   return d<9&&los(a.x,a.z,camera.position.x,camera.position.z); }
@@ -696,16 +694,17 @@ function toMenu(){if(G)G.over=true;stopAmbient();document.exitPointerLock?.();G=
 function buildTitle(){const box=$('nightSelect');box.innerHTML='';
   for(let n=1;n<=5;n++){const c=document.createElement('button');c.className='nightchip'+(n<=unlocked?'':' locked')+(n===unlocked?' on':'');c.textContent=n;
     if(n<=unlocked)c.onclick=()=>{ensureAudio();startNight(n);};box.appendChild(c);}
+  $('btnNew').textContent = unlocked>1 ? ('Играть — ночь '+unlocked) : 'Новая игра';
   $('ctrlHint').innerHTML="Ходи по пиццерии и доживи до 6 утра. Аниматроники видят только ПЕРЕД собой — обходи со спины, держись вне взгляда.<br>"+
     "<b style='color:#8b97a6'>WASD</b> ходьба · <b style='color:#8b97a6'>Shift</b> бег (слышно) · <b style='color:#8b97a6'>мышь/стрелки</b> обзор · <b style='color:#8b97a6'>F/ПКМ</b> фонарь · <b style='color:#8b97a6'>E</b> спрятаться<br>"+
     "<span style='color:#5b6675'>Фонарь ПРИВЛЕКАЕТ: посветишь на них — заметят и пойдут на свет. Сорвал взгляд — идут к последнему месту и ищут, куда ты свернул. Esc — пауза.</span>"+
-    "<br><span style='color:#3a424d;font-size:11px'>U — открыть все 5 ночей</span>";}
+    "<br><span style='color:#3a424d;font-size:11px'>Кнопка — последняя открытая ночь · кликни цифру — любая ночь · U — открыть все</span>";}
 let toastT=null;
 function flashMsg(t){const el=$('toast');el.textContent=t;el.classList.remove('hidden');el.classList.add('show');
   clearTimeout(toastT);toastT=setTimeout(()=>el.classList.remove('show'),1700);}
 function unlockAll(){ if(unlocked>=5){flashMsg('Все ночи уже открыты');return;}
   unlocked=5; try{localStorage.setItem('fnaf3d_unlocked',5);}catch(e){} buildTitle(); flashMsg('Открыты все 5 ночей'); }
-$('btnNew').onclick=()=>{ensureAudio();startNight(1);};
+$('btnNew').onclick=()=>{ensureAudio();startNight(unlocked);};   // играть последнюю открытую ночь
 $('btnRetry').onclick=()=>{ensureAudio();startNight(G?G.night:1);};
 $('btnNext').onclick=()=>{if(G&&G.night>=5)toMenu();else startNight((G?G.night:0)+1);};
 $('btnResume').onclick=()=>requestLock();
