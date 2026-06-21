@@ -2510,7 +2510,7 @@ function notifHTML(n) {
     ? `openFullProfile(${jsAttr(n.actor_username)})`
     : `goToPost(${Number(n.post_id) || 0})`;
   return `<div class="notif-card${n.is_read ? '' : ' unread'}" onclick="${click}">
-    <div class="notif-av">${ini(n.actor_name)}${icon}</div>
+    <div class="notif-av"${n.actor_avatar_url ? ' style="background:transparent;overflow:hidden;"' : ''}>${n.actor_avatar_url ? `<img src="${esc(n.actor_avatar_url)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">` : ini(n.actor_name)}${icon}</div>
     <div class="notif-body">
       <div class="notif-text">${text}</div>
       ${preview}
@@ -3873,11 +3873,14 @@ async function loadComments(append = false) {
 function commentHTML(c) {
   const post = findPost(curCommentPostId);
   const canDelete = me && (c.username === me.username || (post && post.user_id === me.id));
+  const _cav = c.avatar_url
+    ? `<span class="comment-av" style="width:22px;height:22px;border-radius:50%;overflow:hidden;background:transparent;display:inline-block;vertical-align:middle;margin-right:6px;"><img src="${esc(c.avatar_url)}" style="width:100%;height:100%;object-fit:cover;display:block;"></span>`
+    : `<span class="comment-av" style="width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,var(--primary,#a855f7),var(--primary2,#ec4899));color:#fff;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;margin-right:6px;">${ini(c.display_name||c.username)}</span>`;
   return `<div class="comment-item" data-cid="${c.id}">
     <div class="comment-item-row">
       <div class="comment-item-body">
         <div class="comment-author">
-          <a class="mention" href="#u=${encodeURIComponent(c.username)}" onclick="event.preventDefault();closeModal('commentsModal');openFullProfile(${jsAttr(c.username)})">@${esc(c.username)}</a>
+          ${_cav}<a class="mention" href="#u=${encodeURIComponent(c.username)}" onclick="event.preventDefault();closeModal('commentsModal');openFullProfile(${jsAttr(c.username)})">@${esc(c.username)}</a>
           <span style="color:#334155;font-weight:400">${esc(c.display_name)}</span>
         </div>
         <div class="comment-text">${linkifyContent(c.text)}</div>
@@ -4129,7 +4132,7 @@ async function loadMyProfile() {
   document.getElementById('profList').innerHTML = skeletonPosts(2);
   try {
     const d = await api(`/prof/${me.username}`);
-    document.getElementById('profAv').textContent = ini(d.display_name);
+    { const el = document.getElementById('profAv'); if (el) { el.innerHTML = (typeof avaInner === 'function') ? avaInner(d) : (d.avatar_url ? `<img src="${esc(d.avatar_url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">` : esc(ini(d.display_name))); if (d.avatar_url) el.style.background = 'transparent'; } }
     document.getElementById('profName').textContent = d.display_name;
     document.getElementById('profUser').textContent = '@' + d.username;
     renderDailyStatus('profStatus', d.daily_status);
@@ -4218,7 +4221,7 @@ document.getElementById('editProfileBtn').addEventListener('click', async () => 
     me.display_name = r.display_name;
     me.username = r.username;
     localStorage.setItem('gs_me', JSON.stringify(me));
-    document.getElementById('hAvatar').textContent = ini(me.display_name);
+    { const el = document.getElementById('hAvatar'); if (el) { el.innerHTML = (typeof avaInner === 'function') ? avaInner(me) : (me.avatar_url ? `<img src="${esc(me.avatar_url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">` : esc(ini(me.display_name))); if (me.avatar_url) el.style.background = 'transparent'; } }
     closeModal('editProfileModal');
     showToast('Профиль обновлён');
     loadMyProfile();
@@ -5598,7 +5601,7 @@ function commentHTML(c){
   return '<div class="comment-item" data-cid="' + c.id + '">'
     + '<div class="comment-item-row">'
     +   '<div class="comment-item-body">'
-    +     '<div class="comment-author"><a class="mention" href="#u=' + encodeURIComponent(c.username) + '" onclick="event.preventDefault();closeModal(\'commentsModal\');openFullProfile(' + jsAttr(c.username) + ')">@' + esc(c.username) + '</a> <span style="color:#334155;font-weight:400">' + esc(c.display_name) + '</span></div>'
+    +     '<div class="comment-author">' + (c.avatar_url ? ('<span class="comment-av" style="width:22px;height:22px;border-radius:50%;overflow:hidden;background:transparent;display:inline-block;vertical-align:middle;margin-right:6px;"><img src="' + esc(c.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;display:block;"></span>') : ('<span class="comment-av" style="width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,var(--primary,#a855f7),var(--primary2,#ec4899));color:#fff;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;margin-right:6px;">' + ini(c.display_name||c.username) + '</span>')) + '<a class="mention" href="#u=' + encodeURIComponent(c.username) + '" onclick="event.preventDefault();closeModal(\'commentsModal\');openFullProfile(' + jsAttr(c.username) + ')">@' + esc(c.username) + '</a> <span style="color:#334155;font-weight:400">' + esc(c.display_name) + '</span></div>'
     +     quote
     +     '<div class="comment-text">' + linkifyContent(c.text) + '</div>'
     +     '<div class="comment-meta"><span class="comment-time">' + ago(c.created_at) + '</span><button class="com-reply" data-cid="' + c.id + '" data-un="' + esc(c.username) + '">Ответить</button></div>'

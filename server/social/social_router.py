@@ -858,7 +858,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 c.close()
                 await _send_safe({"type":"contacts.list.ok","data":{
                     "request_id": rid,
-                    "contacts": [{"username":r["username"],"display_name":r["display_name"],"added_at":r["added_at"]} for r in rows],
+                    "contacts": [{"username":r["username"],"display_name":r["display_name"],"avatar_url":(r["avatar_url"] if "avatar_url" in r.keys() else None),"added_at":r["added_at"]} for r in rows],
                 }})
 
             elif t == "contacts.add" and uid:
@@ -871,7 +871,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     continue
                 target = (data.get("username") or "").lower().strip().lstrip("@")
                 c = db()
-                peer = c.execute("SELECT id, username, display_name FROM users WHERE username=?", (target,)).fetchone()
+                peer = c.execute("SELECT id, username, display_name, avatar_url FROM users WHERE username=?", (target,)).fetchone()
                 if not peer:
                     c.close()
                     await _send_safe({"type":"contacts.add.err","data":{"request_id":rid,"error":"Юзер не найден"}})
@@ -883,7 +883,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 c.execute("INSERT OR IGNORE INTO chat_contacts (owner_id, contact_id) VALUES (?,?)", (uid, peer["id"]))
                 c.commit()
                 c.close()
-                await _send_safe({"type":"contacts.add.ok","data":{"request_id":rid,"status":"ok","username":peer["username"],"display_name":peer["display_name"]}})
+                await _send_safe({"type":"contacts.add.ok","data":{"request_id":rid,"status":"ok","username":peer["username"],"display_name":peer["display_name"],"avatar_url":(peer["avatar_url"] if "avatar_url" in peer.keys() else None)}})
             elif t == "contacts.remove" and uid:
                 rid = data.get("request_id")
                 try:
@@ -1165,7 +1165,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                 c.close()
                 await _send_safe({"type": "contacts.list.ok", "data": {
                     "request_id": rid,
-                    "contacts": [{"username": r["username"], "display_name": r["display_name"], "added_at": r["added_at"]} for r in rows],
+                    "contacts": [{"username": r["username"], "display_name": r["display_name"], "avatar_url": r["avatar_url"], "added_at": r["added_at"]} for r in rows],
                 }})
 
             elif t == "contacts.add" and uid:
@@ -1192,7 +1192,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     continue
                 c.execute("INSERT OR IGNORE INTO chat_contacts (owner_id, contact_id) VALUES (?,?)", (uid, peer["id"]))
                 c.commit(); c.close()
-                await _send_safe({"type": "contacts.add.ok", "data": {"request_id": rid, "username": peer["username"], "display_name": peer["display_name"]}})
+                await _send_safe({"type": "contacts.add.ok", "data": {"request_id": rid, "username": peer["username"], "display_name": peer["display_name"], "avatar_url": (peer["avatar_url"] if "avatar_url" in peer.keys() else None)}})
 
             elif t == "contacts.remove" and uid:
                 rid = data.get("request_id")
@@ -4338,6 +4338,7 @@ def write_comment(post_id: int, body: CommentBody, authorization: Optional[str] 
         "comment": {
             "id": comment_id, "text": text, "parent_id": parent_id,
             "username": user["username"], "display_name": user["display_name"],
+            "avatar_url": user.get("avatar_url") if hasattr(user, 'get') else (user["avatar_url"] if "avatar_url" in user.keys() else None),
         },
     })
     return {"status": "ok", "comment_id": comment_id, "parent_id": parent_id}
@@ -4405,7 +4406,8 @@ def get_notifications(offset: int = Query(0), authorization: Optional[str] = Hea
     c = db()
     rows = c.execute("""
         SELECT n.id, n.type, n.post_id, n.preview, n.is_read, n.created_at,
-               a.username as actor_username, a.display_name as actor_name
+               a.username as actor_username, a.display_name as actor_name,
+               a.avatar_url as actor_avatar_url
         FROM soc_notifications n
         JOIN users a ON n.actor_id = a.id
         WHERE n.user_id = ?
@@ -5168,6 +5170,8 @@ def repost_post(post_id: int, authorization: Optional[str] = Header(None)):
         try:
             ws_hub.send_to(p["user_id"], "post.reposted", {
                 "post_id": post_id, "by_user_id": user["id"], "by_username": user["username"],
+                "by_display_name": user["display_name"],
+                "by_avatar_url": (user["avatar_url"] if "avatar_url" in user.keys() else None),
             })
         except Exception: pass
         return {"status": "ok", "existing": False, "created_at": now}
@@ -5203,7 +5207,8 @@ def post_reposters(post_id: int, limit: int = Query(20)):
     return {
         "total": total,
         "items": [{"user_id": r["id"], "username": r["username"],
-                   "display_name": r["display_name"], "created_at": r["created_at"]} for r in rows],
+                   "display_name": r["display_name"], "avatar_url": r["avatar_url"],
+                   "created_at": r["created_at"]} for r in rows],
     }
 
 
@@ -5222,7 +5227,8 @@ def post_reposters_contacts(post_id: int, authorization: Optional[str] = Header(
     """, (post_id, user["id"])).fetchall()
     c.close()
     return [{"user_id": r["id"], "username": r["username"],
-             "display_name": r["display_name"], "created_at": r["created_at"]} for r in rows]
+             "display_name": r["display_name"], "avatar_url": r["avatar_url"],
+             "created_at": r["created_at"]} for r in rows]
 
 
 @router.get("/user/{username}/feed_combined")
@@ -5283,7 +5289,7 @@ def user_reposts(username: str, offset: int = Query(0), limit: int = Query(20), 
         c.close(); raise HTTPException(404, "User not found")
     rows = c.execute("""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
-               u2.username, u2.display_name,
+               u2.username, u2.display_name, u2.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count,
                r.created_at as reposted_at
         FROM soc_reposts r
@@ -8382,7 +8388,7 @@ def my_saved(offset: int = Query(0), limit: int = Query(20), authorization: Opti
     rows = c.execute("""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
                p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
-               u2.username, u2.display_name,
+               u2.username, u2.display_name, u2.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count,
                s.created_at as saved_at
         FROM soc_saved s
@@ -8405,7 +8411,7 @@ def my_reacted(offset: int = Query(0), limit: int = Query(20), authorization: Op
     rows = c.execute("""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
                p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
-               u2.username, u2.display_name,
+               u2.username, u2.display_name, u2.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_reactions rx
         JOIN soc_posts p ON rx.post_id=p.id
