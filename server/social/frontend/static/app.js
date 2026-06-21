@@ -366,7 +366,7 @@ function renderMinisky() {
     return `<div class="msk-card" data-id="${p.id}">
       <div class="msk-progress"><div class="msk-progress-fill"></div></div>
       <div class="msk-ttl ${ttl.cls}" title="Миниски хранятся 48 часов"><i class="fa-regular fa-clock"></i>${ttl.text}</div>
-      <video src="${esc(video.url)}" preload="metadata" playsinline loop muted></video>
+      <video src="${esc(video.url)}" preload="none" playsinline loop muted></video>
       <div class="msk-play-overlay"><i class="fa-solid fa-play"></i></div>
       <div class="msk-overlay">
         <div class="msk-info">
@@ -1772,7 +1772,7 @@ function mediaHTML(media) {
         </div>`;
       } else {
         html += `<div class="mg-item ${tall} media-el" data-media-url="${urlAttr}" onclick="openViewer(${urlJs},'video')">
-          <video src="${urlAttr}" preload="metadata" muted playsinline></video>
+          <video src="${urlAttr}" preload="none" muted playsinline></video>
           <div class="video-play-overlay"><div class="video-play-btn"><i class="fa-solid fa-play"></i></div></div>
         </div>`;
       }
@@ -2721,7 +2721,7 @@ function renderMediaPreview() {
       if (f.type === 'image') {
         iconCell = `<div class="media-preview-icon mp-thumb" onclick="openViewer(${ujs},'image')"><img src="${url}" alt=""></div>`;
       } else if (f.type === 'video') {
-        iconCell = `<div class="media-preview-icon mp-thumb" onclick="openViewer(${ujs},'video')"><video src="${url}#t=0.1" muted playsinline preload="metadata"></video><span class="mp-play"><i class="fa-solid fa-play"></i></span></div>`;
+        iconCell = `<div class="media-preview-icon mp-thumb" onclick="openViewer(${ujs},'video')"><video src="${url}#t=0.1" muted playsinline preload="none"></video><span class="mp-play"><i class="fa-solid fa-play"></i></span></div>`;
       } else if (f.type === 'audio') {
         iconCell = `<div class="media-preview-icon mp-thumb" onclick="toggleAudioCard(${i})"><i class="fa-solid fa-music"></i><span class="mp-play"><i class="fa-solid fa-play"></i></span></div>`;
       } else {
@@ -3425,7 +3425,7 @@ function renderRepostMosaic(reposts, profileUsername) {
       if (mediaUrl && isPic) {
         nsfwMedia = `<img class="mosaic-img mosaic-blur" src="${mediaUrl}" alt="" onerror="this.classList.add('failed')" loading="lazy">`;
       } else if (mediaUrl && isVideo) {
-        nsfwMedia = `<video class="mosaic-video mosaic-blur" src="${mediaUrl}#t=0.1" muted preload="metadata" playsinline onerror="this.classList.add('failed')"></video>`;
+        nsfwMedia = `<video class="mosaic-video mosaic-blur" src="${mediaUrl}#t=0.1" muted preload="none" playsinline onerror="this.classList.add('failed')"></video>`;
       }
       const hasNsfwMedia = !!(mediaUrl && (isPic || isVideo));
       return `<a class="mosaic-cell nsfw${hasNsfwMedia ? ' has-media' : ''}" href="/social/#p=${p.id}" data-post-id="${p.id}" title="@${esc(p.username)}">
@@ -3441,7 +3441,7 @@ function renderRepostMosaic(reposts, profileUsername) {
     if (mediaUrl && isPic) {
       mediaLayer = `<img class="mosaic-img" src="${mediaUrl}" alt="" onerror="this.classList.add('failed')" loading="lazy">`;
     } else if (mediaUrl && isVideo) {
-      mediaLayer = `<video class="mosaic-video" src="${mediaUrl}#t=0.1" muted preload="metadata" playsinline onerror="this.classList.add('failed')"></video><div class="mosaic-video-icon"><i class="fa-solid fa-play"></i></div>`;
+      mediaLayer = `<video class="mosaic-video" src="${mediaUrl}#t=0.1" muted preload="none" playsinline onerror="this.classList.add('failed')"></video><div class="mosaic-video-icon"><i class="fa-solid fa-play"></i></div>`;
     }
     const hasMedia = !!mediaUrl;
     // Текст показываем только если медиа нет ВООБЩЕ. Если медиа есть — оно само превью.
@@ -4650,7 +4650,7 @@ function _mskCardHTML(p) {
   const reactsTotal = (p.reactions && p.reactions.total) || 0;
   return `<div class="msk-card" data-id="${p.id}">
     <div class="msk-progress"><div class="msk-progress-fill"></div></div>
-    <video src="${esc(video.url)}" preload="metadata" playsinline loop muted></video>
+    <video src="${esc(video.url)}" preload="none" playsinline loop muted></video>
     <div class="msk-play-overlay"><i class="fa-solid fa-play"></i></div>
     <div class="msk-overlay"><div class="msk-info">
       <div class="author" onclick="event.stopPropagation();openFullProfile(${jsAttr(p.username)})">
