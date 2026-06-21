@@ -666,6 +666,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     m,
                                     myUsername: _myUsername,
                                     highlighted: m.sid == _highlightSid,
+                                    prevSame:
+                                        i > 0 && msgs[i - 1].fromMe == m.fromMe,
                                   ),
                                 ),
                               );
@@ -1035,18 +1037,27 @@ class _Bubble extends StatelessWidget {
   final StoredMessage m;
   final String? myUsername;
   final bool highlighted;
-  const _Bubble(this.m, {this.myUsername, this.highlighted = false});
+  final bool prevSame;
+  const _Bubble(
+    this.m, {
+    this.myUsername,
+    this.highlighted = false,
+    this.prevSame = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     final mine = m.fromMe;
     final align = mine ? Alignment.centerRight : Alignment.centerLeft;
-    // Свои — ярко-фиолетовый градиент (чище в фиолет, без синевы).
+    // Градиент на ВСЕХ: свои — ярко-фиолетовый, чужие — тёмно-синий.
     final bg = mine
         ? const LinearGradient(colors: [Color(0xFFB14DFF), Color(0xFF9333EA)])
-        : null;
+        : const LinearGradient(colors: [Color(0xFF234494), Color(0xFF13254A)]);
     final textColor = mine ? Colors.white : GE.text;
     final isImg = _isImage(m);
+    // Подряд идущие сообщения одного автора — теснее (верх 1), их размытие
+    // соединяется; на смене автора — отступ больше (верх 5).
+    final vPad = EdgeInsets.only(top: prevSame ? 1.0 : 5.0, bottom: 1.0);
     return AnimatedContainer(
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOut,
@@ -1066,12 +1077,11 @@ class _Bubble extends StatelessWidget {
             // текст — резким слоем поверх.
             Positioned.fill(
               child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
+                padding: vPad,
                 child: ImageFiltered(
                   imageFilter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: mine ? null : const Color(0xFF1E3A8A),
                       gradient: bg,
                       borderRadius: BorderRadius.only(
                         topLeft: const Radius.circular(16),
@@ -1085,7 +1095,7 @@ class _Bubble extends StatelessWidget {
               ),
             ),
             Container(
-              margin: const EdgeInsets.symmetric(vertical: 2),
+              margin: vPad,
               padding: m.filePayload != null && isImg
                   ? const EdgeInsets.all(4)
                   : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
