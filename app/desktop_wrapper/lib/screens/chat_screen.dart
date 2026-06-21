@@ -569,7 +569,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 // Без BackdropFilter на большом скролле — оптимизация (фрост даёт
                 // композер ниже + бабблы-стекло поверх).
                 child: ColoredBox(
-                  color: GE.bg.withValues(alpha: 0.5),
+                  color: GE.bg.withValues(alpha: 0.0),
                   child: ValueListenableBuilder<List<StoredMessage>>(
                     valueListenable: notif,
                     builder: (_, msgs, __) {
@@ -958,15 +958,26 @@ class _Bubble extends StatelessWidget {
               ? const EdgeInsets.all(4)
               : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: mine ? null : GE.glassFill,
-            gradient: bg,
             borderRadius: BorderRadius.only(
               topLeft: const Radius.circular(16),
               topRight: const Radius.circular(16),
               bottomLeft: Radius.circular(mine ? 16 : 4),
               bottomRight: Radius.circular(mine ? 4 : 16),
             ),
-            border: mine ? null : Border.all(color: GE.glassBorder, width: 0.5),
+            // Без фона — только мягкое свечение-подложка под текстом: тёмное
+            // (читаемость над mesh) + акцент (фиолет у своих, primary2 у чужих).
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.55),
+                blurRadius: 18,
+                spreadRadius: 1,
+              ),
+              BoxShadow(
+                color: (mine ? GE.primary : GE.primary2).withValues(alpha: 0.22),
+                blurRadius: 22,
+                spreadRadius: -3,
+              ),
+            ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
