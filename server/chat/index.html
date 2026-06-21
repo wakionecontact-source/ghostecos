@@ -7127,6 +7127,11 @@ function _onTabVisible(){
     _wsPausedByVisibility = false;
     wsReconnect = 1000;  // сразу, без backoff
     connectWS();
+    // Параллельно сразу тянем pending по REST — иначе пока WS handshake
+    // (~2-5с), новые сообщения висят. WS-push догонит когда установится.
+    _lastPendingAt = Date.now();
+    _fetchPendingWithRetry();
+    loadGroups().catch(()=>{});
   }
 }
 document.addEventListener('visibilitychange', () => {
