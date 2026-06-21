@@ -6967,8 +6967,16 @@ async function wsCall(action, data, fallbackHttp, timeoutMs){
     if (_wsAesKey){
       try { return await wsRpc(action, data || {}, timeoutMs || 5000); }
       catch(e){
-        if (ws && ws.readyState === 1){ throw e; }
-        console.warn('[wsCall]', action, 'WS dropped, REST fallback:', e.message);
+        // Таймаут на живой связи = WS endpoint не существует на сервере
+        // (или server-side handler не отвечает). Пробуем REST если он есть.
+        const isTimeout = /WS timeout/.test(e.message || '');
+        if (isTimeout && typeof fallbackHttp === 'function'){
+          console.warn('[wsCall]', action, 'WS timeout → REST fallback');
+        } else if (ws && ws.readyState === 1 && !isTimeout){
+          throw e;
+        } else {
+          console.warn('[wsCall]', action, 'WS dropped, REST fallback:', e.message);
+        }
       }
     }
   }
