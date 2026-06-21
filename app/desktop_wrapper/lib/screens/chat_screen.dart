@@ -674,29 +674,53 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   // шапку, + градиент-тинт для мягкого края (не резкая прямая линия). Раньше
   // дико лагало НЕ из-за этого блюра (он мелкий), а из-за расшифровки фото на
   // главном потоке — её вынесли в изолят, так что блюр теперь по карману.
+  // Стекло-фон ПОД шапкой, нижний край которого РАСТВОРЯЕТСЯ. Без ShaderMask
+  // (на этой сборке он гасит сам блюр — стекло пропадало). Двухслойно: лёгкий
+  // блюр на всю высоту («хвост») + сильный блюр+тинт только сверху → книзу блюр
+  // слабеет и гаснет, нижний край мягкий, не резкая линия.
   Widget _topBlurFade() {
     return Positioned(
       top: 0,
       left: 0,
       right: 0,
-      height: 52,
+      height: 60,
       child: IgnorePointer(
-        child: ClipRect(
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    GE.bgDeep.withValues(alpha: 0.55),
-                    GE.bg.withValues(alpha: 0.0),
-                  ],
+        child: Stack(
+          children: [
+            // Хвост: лёгкий блюр на всю высоту — растворяет низ стекла.
+            Positioned.fill(
+              child: ClipRect(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+                  child: const SizedBox.expand(),
                 ),
               ),
             ),
-          ),
+            // Основное стекло: сильный блюр + тинт, только верхняя часть.
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 40,
+              child: ClipRect(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          GE.bgDeep.withValues(alpha: 0.5),
+                          GE.bgDeep.withValues(alpha: 0.0),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
