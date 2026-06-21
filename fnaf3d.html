@@ -196,11 +196,11 @@ const NIGHTS={
 const NAMES={bonnie:'Бонни',chica:'Чика',foxy:'Фокси',freddy:'Фредди'};
 const EYECOL={bonnie:0xff3b3b,chica:0xff5ce0,foxy:0xffd24a,freddy:0x9fd0ff};
 const TIPS={
- 1:"Первая смена. По зданию бродит один аниматроник — он видит тебя по прямой и идёт следом. Свети ему в лицо (он замрёт) или ненадолго ныряй в шкаф (E) — но сорвав ему взгляд, иначе придёт проверять. Дотяни до 6 утра.",
- 2:"Их двое. Беги тихо: топот и фонарь слышно издалека. Крадёшься в темноте — заметят только вблизи.",
- 3:"Фокси охотится рывком: увидел в коридоре — спринтует прямо на тебя. Разрывай линию взгляда — заходи за угол, ныряй в шкаф.",
- 4:"Фредди не берёт фонарь — он замирает, только пока ты на него СМОТРИШЬ. Отвернулся — он уже ближе.",
- 5:"Все четверо, с первого часа. Они срезают углы и заходят с флангов. Выживи.",
+ 1:"Первая смена. Аниматроник видит только то, что ПЕРЕД ним — держись вне взгляда, заходи со спины. Фонарь нужен в темноте, но он ПРИВЛЕКАЕТ: посветил на него — заметит и пойдёт на свет. Дотяни до 6 утра.",
+ 2:"Их двое. Сорвал им взгляд (за угол) — идут к месту, где видели тебя, потом гадают, куда ты свернул, и ищут там. Этим и отрывайся; ныряй в шкаф (E).",
+ 3:"Фокси охотится рывком: увидел или поймал лучом фонаря — спринтует прямо на тебя. Не свети на него и рви линию взгляда.",
+ 4:"Фредди замирает, только пока ты на него СМОТРИШЬ. Не отворачивайся от него.",
+ 5:"Все четверо. Тихо, в темноте, со спины. Бег они слышат. Выживи.",
 };
 
 /* ---------------- КАРТА (3×3 зоны + кольцевые коридоры) ---------------- */
@@ -358,10 +358,11 @@ const chars={}; ['bonnie','chica','foxy','freddy'].forEach(n=>{const b=buildChar
 
 function startNight(night){
   G={night,t:0,flashOn:false,batt:100,stam:100,canRun:true,over:false,won:false,paused:false,
-     anims:[],pathTimer:0,footT:0,hidden:false,hideLocker:null,hideTime:0,nearLocker:null,blackoutT:rnd(18,38),hbT:0,breathT:0,danger:0};
+     anims:[],pathTimer:0,footT:0,hidden:false,hideLocker:null,hideTime:0,nearLocker:null,moveDir:{x:0,z:1},blackoutT:rnd(18,38),hbT:0,breathT:0,danger:0};
   NIGHTS[night].forEach(cfg=>{const s=startCell(cfg.n);const w=cellWorld(s[0],s[1]);
     const a={cfg,name:cfg.n,x:w.x,z:w.z,heading:0,active:false,frozen:false,state:'idle',lastSeen:null,wanderTo:null,
-             speed:cfg.spd,look:cfg.n==='freddy',foxy:cfg.n==='foxy',chargeT:0,recoverT:0,checkT:0,sawEnter:false,path:null,pathAge:9};
+             speed:cfg.spd,look:cfg.n==='freddy',foxy:cfg.n==='foxy',chargeT:0,recoverT:0,checkT:0,sawEnter:false,
+             searchPhase:0,searchT:0,seenDir:null,predict:null,heading:0,path:null,pathAge:9};
     chars[cfg.n].group.position.set(a.x,0,a.z);chars[cfg.n].group.visible=true;G.anims.push(a);});
   ['bonnie','chica','foxy','freddy'].forEach(n=>{if(!G.anims.find(a=>a.name===n))chars[n].group.visible=false;});
   pickups.forEach(p=>{p.used=false;p.m.visible=true;p.gl.visible=true;});
@@ -410,16 +411,33 @@ function smoothTarget(px,pz,path){let tgt=null;
   for(let i=path.length-1;i>=0;i--){const w=cellWorld(path[i][0],path[i][1]);if(los(px,pz,w.x,w.z)){tgt=w;break;}}
   if(!tgt&&path.length){const w=cellWorld(path[0][0],path[0][1]);tgt=w;}return tgt;}
 
-/* замирание */
+/* зрение / стимулы */
 const fwd=new THREE.Vector3(),tmp=new THREE.Vector3();
 function lookInfo(a){camera.getWorldDirection(fwd);tmp.set(a.x-camera.position.x,0,a.z-camera.position.z);
   const dist=tmp.length();tmp.normalize();const f=fwd.clone();f.y=0;f.normalize();
   return{dist,ang:Math.acos(clamp(f.dot(tmp),-1,1))};}
-function isFrozen(a){const{dist,ang}=lookInfo(a);
-  if(a.look) return ang<0.5&&dist<24&&los(a.x,a.z,camera.position.x,camera.position.z);     // Фредди — взгляд
-  if(a.foxy) return false;                                                                    // Фокси не морозится
-  return G.flashOn&&ang<CONE&&dist<RANGE&&los(a.x,a.z,camera.position.x,camera.position.z);    // свет
-}
+// ЛУЧЕВОЙ ВЗГЛЯД: видит только то, что в конусе ПЕРЕД ним и без стены на пути
+function animSees(a,d){ if(G.hidden)return false;
+  let range=13; if(G.flashOn)range=20; if(a.foxy)range+=4;        // с фонарём ты заметнее
+  if(d>range)return false;
+  const toP=Math.atan2(camera.position.x-a.x,camera.position.z-a.z);
+  const da=Math.abs(((toP-a.heading+Math.PI)%(2*Math.PI))-Math.PI);
+  if(da>0.85)return false;                                        // ~98° поле зрения
+  return los(a.x,a.z,camera.position.x,camera.position.z); }
+// ФОНАРЬ НА НЁМ: заметит и пойдёт на свет, даже если стоял спиной
+function animLit(a){ if(!G.flashOn||G.hidden)return false; const{dist,ang}=lookInfo(a);
+  return ang<CONE&&dist<RANGE&&los(a.x,a.z,camera.position.x,camera.position.z); }
+// услышал бег
+function animHears(a,d){ if(G.hidden)return false; if(!(keys['ShiftLeft']||keys['ShiftRight']))return false;
+  return d<9&&los(a.x,a.z,camera.position.x,camera.position.z); }
+// Фредди замирает под взглядом
+function isWatchedFreddy(a){const{dist,ang}=lookInfo(a);return ang<0.5&&dist<24&&los(a.x,a.z,camera.position.x,camera.position.z);}
+// шаг по пути со срезанием углов -> единичное направление
+function pathStep(a,tx,tz,dt){ a.pathAge+=dt;
+  const ac=worldCell(a.x,a.z),tc=worldCell(tx,tz);
+  if(!a.path||a.pathAge>0.35||a._pg!==tc.c+','+tc.r){a.path=bfsPath(ac.c,ac.r,tc.c,tc.r);a.pathAge=0;a._pg=tc.c+','+tc.r;}
+  let gx=tx,gz=tz; if(a.path&&a.path.length){const w=smoothTarget(a.x,a.z,a.path);if(w){gx=w.x;gz=w.z;}}
+  const dx=gx-a.x,dz=gz-a.z,dd=Math.hypot(dx,dz)||1; return{x:dx/dd,z:dz/dd}; }
 
 /* движение с проскальзыванием вдоль стен */
 function moveEnt(e,dx,dz,sp){const r=0.4;
@@ -429,48 +447,49 @@ function moveEnt(e,dx,dz,sp){const r=0.4;
 /* ---------------- ИИ ---------------- */
 function updateAnim(a,dt){
   const grp=chars[a.name].group;
-  a.frozen=isFrozen(a);
-  chars[a.name].eyeMat.color.setHex(a.frozen?0xffffff:EYECOL[a.name]);
-  if(a.frozen){grp.position.set(a.x,0,a.z);return;}
-
   const px=camera.position.x,pz=camera.position.z;
   const dToP=Math.hypot(a.x-px,a.z-pz);
-  const sense=playerNoisy()?SENSE_LOUD:SENSE_QUIET;
-  const canSee=!G.hidden && dToP<sense && los(a.x,a.z,px,pz);
-  if(canSee){a.lastSeen={x:px,z:pz};a.state='chase';}
 
-  // Фокси: рывок при виде
+  // Фредди: замирает, пока на него смотришь
+  if(a.look){ a.frozen=isWatchedFreddy(a); chars.freddy.eyeMat.color.setHex(a.frozen?0xffffff:0x9fd0ff);
+    if(a.frozen){grp.position.set(a.x,0,a.z);return;} }
+
+  // обнаружение: конус зрения / свет фонаря / слышит бег
+  const sees=animSees(a,dToP), lit=animLit(a), hears=animHears(a,dToP);
+  const onYou = sees||lit||hears||(a.look&&!G.hidden);
+  if(onYou){ a.lastSeen={x:px,z:pz}; a.seenDir={x:G.moveDir.x,z:G.moveDir.z}; a.state='chase'; a.searchPhase=0; a.searchT=0; }
+  if(!a.look) chars[a.name].eyeMat.color.setHex(a.state==='chase'?0xff2a2a:(a.state==='search'?0xffae33:EYECOL[a.name]));
+
+  // Фокси: рывок когда видит или освещён
   if(a.foxy){
-    if(a.recoverT>0){a.recoverT-=dt;grp.position.set(a.x,0,a.z);faceMove(a,grp,0,0,dt);return;}
-    if(canSee && dToP<17 && dToP>CATCH){ if(a.chargeT<=0){a.chargeT=2.2;sfxFoxy(a);} }
-    if(a.chargeT>0){a.chargeT-=dt;
-      const dx=(px-a.x)/dToP,dz=(pz-a.z)/dToP; moveEnt(a,dx,dz,(a.speed+4.5)*dt); faceMove(a,grp,dx,dz,dt);
-      grp.position.set(a.x,0,a.z);
-      if(!canSee&&a.chargeT<1.6){a.chargeT=0;a.recoverT=1.0;}
-      return;}
+    if(a.recoverT>0){a.recoverT-=dt;faceMove(a,grp,0,0,dt);grp.position.set(a.x,0,a.z);return;}
+    if((sees||lit)&&dToP<18&&dToP>CATCH&&a.chargeT<=0){a.chargeT=2.2;sfxFoxy(a);}
+    if(a.chargeT>0){a.chargeT-=dt;const dx=(px-a.x)/(dToP||1),dz=(pz-a.z)/(dToP||1);
+      moveEnt(a,dx,dz,(a.speed+4.5)*dt);faceMove(a,grp,dx,dz,dt);grp.position.set(a.x,0,a.z);
+      if(!(sees||lit)&&a.chargeT<1.6){a.chargeT=0;a.recoverT=1.0;} return;}
   }
 
-  // цель
-  let tx,tz;
-  if(canSee){tx=px;tz=pz;}
-  else if(a.lastSeen){
-    a.pathAge+=dt;
-    const ac=worldCell(a.x,a.z),lc=worldCell(a.lastSeen.x,a.lastSeen.z);
-    if(!a.path||a.pathAge>0.35||a._pg!==lc.c+','+lc.r){a.path=bfsPath(ac.c,ac.r,lc.c,lc.r);a.pathAge=0;a._pg=lc.c+','+lc.r;}
-    const t=(a.path&&a.path.length)?smoothTarget(a.x,a.z,a.path):a.lastSeen;
-    tx=t?t.x:a.lastSeen.x; tz=t?t.z:a.lastSeen.z;
-    if(Math.hypot(a.x-a.lastSeen.x,a.z-a.lastSeen.z)<0.7){a.lastSeen=null;a.state='wander';}
-  } else { // патруль
+  // выбор цели
+  let tx,tz, direct=false;
+  if(onYou){ tx=px; tz=pz; direct=(sees||lit||a.look); }   // видит/освещён/смотрит — прямо на тебя
+  else if(a.lastSeen){                                      // потерял -> к месту, потом по направлению ухода
+    a.state='search';
+    if(a.searchPhase!==1){ a.searchPhase=0; tx=a.lastSeen.x; tz=a.lastSeen.z;
+      if(!G.hidden && Math.hypot(a.x-tx,a.z-tz)<0.9){ a.searchPhase=1; a.searchT=0;
+        a.predict={x:a.lastSeen.x+(a.seenDir?a.seenDir.x:0)*6, z:a.lastSeen.z+(a.seenDir?a.seenDir.z:0)*6}; } }
+    else { a.searchT+=dt; tx=a.predict?a.predict.x:a.lastSeen.x; tz=a.predict?a.predict.z:a.lastSeen.z;
+      if(a.searchT>4 || Math.hypot(a.x-tx,a.z-tz)<0.9){ a.lastSeen=null; a.state='wander'; } }
+  } else {                                                  // патруль
     if(!a.wanderTo||Math.hypot(a.x-a.wanderTo.x,a.z-a.wanderTo.z)<0.8){const f=floorCells[(Math.random()*floorCells.length)|0];a.wanderTo=cellWorld(f[0],f[1]);}
-    const ac=worldCell(a.x,a.z),wc=worldCell(a.wanderTo.x,a.wanderTo.z);
-    if(!a.path||a.pathAge>0.5){a.path=bfsPath(ac.c,ac.r,wc.c,wc.r);a.pathAge=0;} a.pathAge+=dt;
-    const t=(a.path&&a.path.length)?smoothTarget(a.x,a.z,a.path):a.wanderTo;
-    tx=t?t.x:a.wanderTo.x; tz=t?t.z:a.wanderTo.z;
+    tx=a.wanderTo.x; tz=a.wanderTo.z;
   }
-  const dx=tx-a.x,dz=tz-a.z,d=Math.hypot(dx,dz)||1;
-  const sp=a.speed*(a.state==='wander'?0.6:1)*dt;
-  moveEnt(a,dx/d,dz/d,sp); faceMove(a,grp,dx/d,dz/d,dt);
-  grp.position.set(a.x,0,a.z);
+
+  // направление: прямая погоня — в лоб, иначе путь со срезанием углов
+  let dir;
+  if(direct){ const d=dToP||1; dir={x:(tx-a.x)/d,z:(tz-a.z)/d}; }
+  else dir=pathStep(a,tx,tz,dt);
+  const sp=a.speed*(a.state==='wander'?0.6:a.state==='search'?0.85:1)*dt;
+  moveEnt(a,dir.x,dir.z,sp); faceMove(a,grp,dir.x,dir.z,dt); grp.position.set(a.x,0,a.z);
 }
 function faceMove(a,grp,dx,dz,dt){ if(dx||dz){a.heading=angLerp(a.heading,Math.atan2(dx,dz),clamp(dt*8,0,1));} grp.rotation.y=a.heading; }
 function playerNoisy(){return G.flashOn||keys['ShiftLeft']||keys['ShiftRight'];}
@@ -496,6 +515,7 @@ function update(dt){
     const wantRun=(keys['ShiftLeft']||keys['ShiftRight'])&&G.stam>1;
     const len=Math.hypot(mx,mz);
     if(len>0){mx/=len;mz/=len;const sp=(wantRun?RUN:WALK)*dt;
+      G.moveDir={x:mx,z:mz};                 // запоминаем, куда ты двигался (для предугадывания)
       moveEnt(camera.position,mx,mz,sp);
       G.footT-=dt*(wantRun?1.7:1);if(G.footT<=0){sfxStep();G.footT=0.45;}
       if(wantRun)G.stam=clamp(G.stam-STAM_DRAIN*dt,0,100);
@@ -641,9 +661,9 @@ function toMenu(){if(G)G.over=true;stopAmbient();document.exitPointerLock?.();G=
 function buildTitle(){const box=$('nightSelect');box.innerHTML='';
   for(let n=1;n<=5;n++){const c=document.createElement('button');c.className='nightchip'+(n<=unlocked?'':' locked')+(n===unlocked?' on':'');c.textContent=n;
     if(n<=unlocked)c.onclick=()=>{ensureAudio();startNight(n);};box.appendChild(c);}
-  $('ctrlHint').innerHTML="Ходи по пиццерии и доживи до 6 утра. Аниматроники видят тебя по прямой, идут следом и срезают углы.<br>"+
-    "<b style='color:#8b97a6'>WASD</b> ходьба · <b style='color:#8b97a6'>Shift</b> бег (выносливость) · <b style='color:#8b97a6'>мышь/стрелки</b> обзор · <b style='color:#8b97a6'>F/ПКМ</b> фонарь · <b style='color:#8b97a6'>E</b> спрятаться<br>"+
-    "<span style='color:#5b6675'>Свет в лицо — замирают. Бег/фонарь слышно издалека — крадись в темноте. Шкаф — на время: заметят, как лезешь, или засидишься — проверят. Esc — пауза.</span>";}
+  $('ctrlHint').innerHTML="Ходи по пиццерии и доживи до 6 утра. Аниматроники видят только ПЕРЕД собой — обходи со спины, держись вне взгляда.<br>"+
+    "<b style='color:#8b97a6'>WASD</b> ходьба · <b style='color:#8b97a6'>Shift</b> бег (слышно) · <b style='color:#8b97a6'>мышь/стрелки</b> обзор · <b style='color:#8b97a6'>F/ПКМ</b> фонарь · <b style='color:#8b97a6'>E</b> спрятаться<br>"+
+    "<span style='color:#5b6675'>Фонарь ПРИВЛЕКАЕТ: посветишь на них — заметят и пойдут на свет. Сорвал взгляд — идут к последнему месту и ищут, куда ты свернул. Esc — пауза.</span>";}
 $('btnNew').onclick=()=>{ensureAudio();startNight(1);};
 $('btnRetry').onclick=()=>{ensureAudio();startNight(G?G.night:1);};
 $('btnNext').onclick=()=>{if(G&&G.night>=5)toMenu();else startNight((G?G.night:0)+1);};
@@ -657,7 +677,7 @@ window.__game={get G(){return G;},camera,scene,renderer,chars,startNight,
   pauseRender(){renderer.setAnimationLoop(null);renderer.render(scene,camera);},
   step(n){renderer.setAnimationLoop(null);for(let i=0;i<(n||1);i++){if(G)update(0.016);}renderer.render(scene,camera);},
   resumeRender(){renderer.setAnimationLoop(()=>{const dt=Math.min(clock.getDelta(),0.05);if(G)update(dt);renderer.render(scene,camera);});},
-  los,bfsPath};
+  los,bfsPath,animSees,animLit};
 </script>
 </body>
 </html>
