@@ -1,8 +1,20 @@
 // Mesh-сеть на canvas: точки с линиями, разбегаются от курсора.
 // Вставляет <canvas id="mesh-bg"> в body и сам его рисует.
 (function () {
-  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    return; // уважаем настройки пользователя
+  // Уважаем prefers-reduced-motion — реактивно (если юзер включит позже, остановимся)
+  const mqReduce = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+  if (mqReduce && mqReduce.matches) {
+    return;
+  }
+  // Listener вешаем уже здесь — `running` будет управляться позже
+  let _stopOnReduce = null;
+  if (mqReduce) {
+    _stopOnReduce = (e) => {
+      if (e.matches && typeof window._meshStop === 'function') window._meshStop();
+    };
+    try { mqReduce.addEventListener('change', _stopOnReduce); } catch(_) {
+      try { mqReduce.addListener(_stopOnReduce); } catch(__){}
+    }
   }
   const canvas = document.createElement("canvas");
   canvas.id = "mesh-bg";
@@ -17,19 +29,25 @@
   const COLOR_DOT = "rgba(168, 85, 247, 0.85)";   // --primary
   const LINE_RGB  = "168, 85, 247";               // для rgba с альфой
   function countFor(area) {
-    // ~1 точка на 9000 px², ограничим разумными рамками
-    const n = Math.round(area / 9000);
-    return Math.max(35, Math.min(n, 110));
+    // ~1 точка на 16000 px², ограничим разумными рамками.
+    // (Раньше было 9000 + max 110 → mesh жрал 51.9% main thread по профилю
+    // юзера. Уменьшил плотность вдвое, max до 60 — O(n²) проверок соседей
+    // упало с 110*110≈12100 до 60*60=3600 за кадр.)
+    const n = Math.round(area / 16000);
+    return Math.max(25, Math.min(n, 60));
   }
   function resize() {
     W = window.innerWidth;
     H = window.innerHeight;
     DPR = Math.min(window.devicePixelRatio || 1, 2);
+    // Присвоение width/height стирает содержимое — это и нужно при wake-up
+    // из suspended-state, когда browser показывает старый кадр поверх.
     canvas.width  = Math.floor(W * DPR);
     canvas.height = Math.floor(H * DPR);
     canvas.style.width  = W + "px";
     canvas.style.height = H + "px";
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.clearRect(0, 0, W, H);  // явная очистка на случай если W/H не изменились
     const want = countFor(W * H);
     if (particles.length === 0) {
       // заново создаём
@@ -72,6 +90,13 @@
   let rafId = 0; // guard от двойного rAF при visibilitychange
   function tick() {
     rafId = 0;
+    // Если размеры окна разошлись с canvas (юзер ресайзнул пока tab был в фоне,
+    // или DPR поменялся при смене монитора) — пересоздаём canvas. Без этого
+    // ctx.clearRect(0,0,W,H) очищает только старую область, по краям остаются
+    // trails — фиолетовые полосы рендерятся поверх предыдущих кадров.
+    if (W !== window.innerWidth || H !== window.innerHeight) {
+      resize();
+    }
     ctx.clearRect(0, 0, W, H);
     // --- обновление + рисуем точки ---
     for (let i = 0; i < particles.length; i++) {
@@ -160,15 +185,33 @@
     // случай, когда visibilitychange запросил ещё один rAF параллельно текущему —
     // без guard со временем накапливалось N параллельных tick-циклов и
     // частицы летали с N-кратной скоростью.
-    if (running && !rafId) rafId = requestAnimationFrame(tick);
+    if (running && !rafId) rafId = requestAnimationFrame(_throttledTick);
+  }
+  // FPS-throttle: рисуем mesh раз в 2 кадра монитора (60Hz → 30fps).
+  // На анимации движущихся частиц глаз почти не отличит, зато main thread
+  // в 2 раза меньше времени на расчёт O(n²) соседей.
+  let _meshFrameN = 0;
+  function _throttledTick(){
+    _meshFrameN++;
+    if (_meshFrameN % 2 === 0){
+      rafId = 0;
+      if (running && !rafId) rafId = requestAnimationFrame(_throttledTick);
+      return;
+    }
+    tick();
   }
 
   function schedule() {
-    if (running && !rafId) rafId = requestAnimationFrame(tick);
+    if (running && !rafId) rafId = requestAnimationFrame(_throttledTick);
   }
 
   document.addEventListener("visibilitychange", () => {
     running = !document.hidden;
+    if (running) {
+      // На wake принудительно пересоздаём canvas — гарантирует чистый старт
+      // и правильный размер если окно/DPR менялись пока вкладка была suspended.
+      resize();
+    }
     schedule();
   });
   window.addEventListener("resize", resize, { passive: true });
@@ -178,4 +221,10 @@
   window.addEventListener("touchend", onLeave, { passive: true });
   resize();
   schedule();
+
+  // Глобальная точка остановки (для реактивного prefers-reduced-motion)
+  window._meshStop = function() {
+    running = false;
+    if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+  };
 })();

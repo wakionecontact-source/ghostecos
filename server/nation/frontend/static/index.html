@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>GhostNation — основай своё государство</title>
+
+  <!-- Leaflet (single external dependency) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <link rel="stylesheet" href="style.css?v=18"/>
+</head>
+<body>
+  <div id="map"></div>
+  <canvas id="sim"></canvas>
+
+  <!-- ── STATE BANNER (top-left) ── -->
+  <header id="banner" class="panel">
+    <button id="flag" class="flag-chip" title="Цвет флага"></button>
+    <div class="banner-text">
+      <input id="state-name" maxlength="28" placeholder="Безымянная земля" spellcheck="false"/>
+      <div class="stats">
+        <span id="stat-area">0 км²</span>
+        <span class="dot">·</span>
+        <span id="stat-builds">0 построек</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── MODE TOGGLE + MULTIPLAYER BAR (top-right) ── -->
+  <div id="mode-toggle" class="panel">
+    <button id="mode-local" class="mode-btn active">Локально</button>
+    <button id="mode-mp" class="mode-btn">Мир</button>
+  </div>
+  <div id="mp-bar" class="panel hidden">
+    <b id="mp-balance">0 gost</b>
+    <span id="mp-pop">0 чел</span>
+    <button id="mp-logout" class="mini ghost hidden">Выйти</button>
+  </div>
+
+  <!-- ── MP LOGIN OVERLAY ── -->
+  <div id="mp-login" class="hidden">
+    <div class="mp-login-box panel">
+      <div class="mp-login-title">Вход в общий мир</div>
+      <div class="mp-login-sub">Аккаунт GhostEcos — тот же, что в GhostChat, GhostSocial и на сайте</div>
+      <input id="mp-user" placeholder="Логин (или оставь пустым → откроется GS)" spellcheck="false" autocomplete="username"/>
+      <input id="mp-pass" type="password" placeholder="Пароль" autocomplete="current-password"/>
+      <div class="mp-login-actions">
+        <button id="mp-login-cancel" class="mini ghost">Отмена</button>
+        <button id="mp-login-go" class="mini primary">Войти</button>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:6px;justify-content:center;">
+        <button id="mp-login-register" class="mini ghost" style="flex:1;">Регистрация в GhostEcos</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── TOOLBAR (left) ── -->
+  <nav id="toolbar" class="panel">
+    <button id="tb-collapse" class="tb-collapse" title="Свернуть / развернуть панель">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M15 6 L9 12 L15 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button class="tool" data-tool="borders"  title="Провозгласить границы"></button>
+    <button class="tool" data-tool="house"    title="Жилой дом · зелёная крыша"></button>
+    <button class="tool" data-tool="shop"     title="Магазин · синяя крыша"></button>
+    <button class="tool" data-tool="road"     title="Дорога"></button>
+    <button class="tool" data-tool="alley"    title="Переулок · узкая дорога без разметки"></button>
+    <button class="tool" data-tool="rail"     title="Железная дорога"></button>
+    <button class="tool" data-tool="path"     title="Пешая тропинка (1 м)"></button>
+    <button class="tool" data-tool="tree"     title="Дерево"></button>
+    <button class="tool" data-tool="district" title="Район · зона внутри границ"></button>
+    <button class="tool" data-tool="light"    title="Светофор · ставится на перекрёстке"></button>
+    <button class="tool" data-tool="crosswalk" title="Пешеходный переход · ставится где угодно (клик по дороге)"></button>
+    <div class="tool-sep"></div>
+    <button class="tool" data-tool="select"  title="Изменить · выбрать постройку"></button>
+    <button class="tool" data-tool="erase"   title="Снести · клик по объекту"></button>
+    <div class="tool-sep"></div>
+    <button class="tool" data-action="undo"  title="Отменить (Ctrl+Z)"></button>
+    <button class="tool" data-action="save"  title="Сохранить в файл"></button>
+    <button class="tool" data-action="load"  title="Загрузить из файла"></button>
+    <button class="tool" data-action="sim"   title="Движение · машины и люди"></button>
+    <button id="locate" class="tool" title="К своей стране"></button>
+  </nav>
+  <input type="file" id="import-file" accept="application/json,.json" hidden/>
+
+  <!-- ── DRAW CONTROLS (appear while drawing) ── -->
+  <div id="draw-bar" class="panel hidden">
+    <span id="draw-hint">Кликай по карте, чтобы ставить точки</span>
+    <button id="draw-undo" class="mini">Назад</button>
+    <button id="draw-done" class="mini primary">Готово</button>
+    <button id="draw-cancel" class="mini ghost">Отмена</button>
+  </div>
+
+  <!-- ── EDIT PANEL (selected building) ── -->
+  <div id="edit" class="panel hidden">
+    <div class="edit-head">
+      <span id="edit-title">Постройка</span>
+      <span id="edit-meta">—</span>
+      <button id="edit-collapse" class="edit-collapse" title="Свернуть / развернуть">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M6 9 L12 15 L18 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div class="edit-hint">Тяни ручки на карте: <b>центр</b> — двигать, <b>зелёная</b> — крутить, <b>оранжевая</b> — размер</div>
+    <div class="edit-actions">
+      <button id="edit-del" class="mini danger">Удалить</button>
+      <button id="edit-done" class="mini ghost">Готово</button>
+    </div>
+  </div>
+
+  <!-- ── ROAD CONTEXT MENU ── -->
+  <div id="ctx-menu" class="panel hidden"></div>
+
+  <!-- ── CITIZEN INFO (selected during sim) ── -->
+  <div id="citizen" class="panel hidden">
+    <div class="cz-head">
+      <span id="cz-name">Житель</span>
+      <button id="cz-close" class="cz-close" title="Закрыть">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div id="cz-body"></div>
+    <div class="cz-foot">Камера следует за жителем · клик по пустому месту — снять выбор</div>
+  </div>
+
+  <!-- ── AUTO-BUILD SEGMENT SELECTION BAR ── -->
+  <div id="gen-bar" class="panel hidden">
+    <span id="gen-hint">Кликай по улицам, что застроить:</span>
+    <button id="gen-side" class="zone">Сторона: обе</button>
+    <div id="gen-zones">
+      <button class="zone active" data-zone="res">Жилая</button>
+      <button class="zone" data-zone="pureRes">Без магазинов</button>
+      <button class="zone" data-zone="commercial">Торговая</button>
+    </div>
+    <button id="gen-ok" class="mini primary">ОК</button>
+    <button id="gen-cancel" class="mini ghost">Отмена</button>
+  </div>
+
+  <!-- ── SIDEWALK SIDE BAR (after drawing a road) ── -->
+  <div id="walk-bar" class="panel hidden">
+    <span>Тротуар:</span>
+    <div id="walk-opts">
+      <button class="zone active" data-walk="none">Нет</button>
+      <button class="zone" data-walk="left">Слева</button>
+      <button class="zone" data-walk="right">Справа</button>
+      <button class="zone" data-walk="both">С обеих</button>
+    </div>
+  </div>
+
+  <!-- ── BORDER EDIT BAR ── -->
+  <div id="border-bar" class="panel hidden">
+    <span>Граница: тяни точки · средние — добавить · ПКМ — удалить</span>
+    <button id="border-redraw" class="mini ghost">Заново</button>
+    <button id="border-done" class="mini primary">Готово</button>
+  </div>
+
+  <!-- ── TOAST (transient feedback) ── -->
+  <div id="toast" class="panel hidden"></div>
+
+  <!-- ── LAYER SWITCH (bottom-right) ── -->
+  <div id="layers" class="panel">
+    <button class="layer active" data-layer="esri">Esri</button>
+    <button class="layer" data-layer="google">Google</button>
+  </div>
+
+  <!-- ── FLAG COLOR PICKER ── -->
+  <div id="palette" class="panel hidden"></div>
+
+  <script src="app.js?v=18"></script>
+</body>
+</html>

@@ -64,11 +64,12 @@ main{max-width:720px;margin:0 auto;padding:18px 16px 30px;}
 
 /* ── СВИТЧЕР ВАЛЮТ ── */
 .cur-switcher{display:grid;grid-template-columns:1fr 1.6fr 1fr;gap:10px;margin-bottom:22px;}
-.cur-card{position:relative;overflow:hidden;background:var(--surface);border:1px solid var(--border-strong);border-radius:18px;padding:14px;backdrop-filter:blur(8px);cursor:pointer;transition:all 0.5s cubic-bezier(0.34,1.56,0.64,1);display:flex;flex-direction:column;justify-content:space-between;min-height:110px;}
-.cur-card::before{content:'';position:absolute;top:-50%;right:-30%;width:200%;height:200%;background:radial-gradient(circle,var(--accent-color,transparent) 0%,transparent 60%);opacity:0.25;pointer-events:none;transition:opacity 0.4s;}
-.cur-card.active{border-color:var(--accent-color);box-shadow:0 12px 32px rgba(0,0,0,0.35),0 0 0 1px var(--accent-color);transform:scale(1.04);}
+.cur-card{position:relative;overflow:hidden;background:var(--surface);border:1px solid var(--border-strong);border-radius:18px;padding:14px;backdrop-filter:blur(8px);cursor:pointer;transition:opacity 0.2s ease-out,border-color 0.2s ease-out,box-shadow 0.2s ease-out;display:flex;flex-direction:column;justify-content:space-between;min-height:110px;pointer-events:auto;}
+.cur-card *{pointer-events:none;}
+.cur-card::before{content:'';position:absolute;top:-50%;right:-30%;width:200%;height:200%;background:radial-gradient(circle,var(--accent-color,transparent) 0%,transparent 60%);opacity:0.25;pointer-events:none;transition:opacity 0.2s ease-out;}
+.cur-card.active{border-color:var(--accent-color);box-shadow:0 12px 32px rgba(0,0,0,0.35),0 0 0 1px var(--accent-color);}
 .cur-card.active::before{opacity:0.45;}
-.cur-card:not(.active){opacity:0.78;transform:scale(0.96);}
+.cur-card:not(.active){opacity:0.7;}
 .cur-card:not(.active):hover{opacity:1;border-color:var(--accent-color);}
 .cur-card[data-currency="gost"]{--accent-color:rgba(168,85,247,0.5);}
 .cur-card[data-currency="soul"]{--accent-color:rgba(236,72,153,0.5);}
@@ -288,6 +289,7 @@ nav#appNav a:not(.active):hover{color:var(--text);}
 
 <div id="mesh-bg"></div>
 <script src="/mesh.js"></script>
+<script src="/dialog.js"></script>
 
 <header>
   <div class="header-top">
@@ -326,6 +328,14 @@ nav#appNav a:not(.active):hover{color:var(--text);}
 
     <!-- PANEL GOST -->
     <div class="panel" data-panel="gost">
+      <a href="/bank/giveaway/" style="display:flex;align-items:center;gap:13px;background:linear-gradient(90deg,rgba(168,85,247,0.16),rgba(236,72,153,0.12));border:1px solid rgba(168,85,247,0.35);border-radius:16px;padding:14px 16px;margin-bottom:22px;text-decoration:none;">
+        <div style="width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,var(--primary),var(--primary3));display:flex;align-items:center;justify-content:center;font-size:18px;color:#fff;flex-shrink:0;"><i class="fa-solid fa-gift"></i></div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:700;color:var(--text);">Розыгрыши Gost</div>
+          <div style="font-size:12px;color:var(--sub);">Бесплатно, 1 билет на аккаунт — испытай удачу</div>
+        </div>
+        <i class="fa-solid fa-chevron-right" style="color:var(--sub);font-size:13px;"></i>
+      </a>
       <div class="section">
         <div class="section-title"><i class="fa-solid fa-gift"></i>Ежедневный бонус</div>
         <button class="claim-btn" id="claimBtn" onclick="claimDaily()">
@@ -341,7 +351,25 @@ nav#appNav a:not(.active):hover{color:var(--text);}
           <div class="src"><i class="fa-solid fa-heart"></i><span class="label">Лайк на твой пост</span><b>+1</b></div>
           <div class="src"><i class="fa-solid fa-comment"></i><span class="label">Коммент</span><b>+2</b></div>
           <div class="src"><i class="fa-solid fa-user-plus"></i><span class="label">Подписчик</span><b>+5</b></div>
+          <div class="src"><i class="fa-solid fa-user-group"></i><span class="label">Приведённый друг</span><b>+10</b></div>
           <div class="src"><i class="fa-solid fa-trophy"></i><span class="label">Welcome</span><b>+100</b></div>
+        </div>
+      </div>
+      <!-- Реферальная программа -->
+      <div class="section" id="refSection" style="display:none;">
+        <div class="section-title"><i class="fa-solid fa-share-nodes"></i>Пригласи друзей<span class="right" id="refStats" style="font-size:10px;color:var(--sub);font-weight:600;"></span></div>
+        <div style="background:linear-gradient(135deg,rgba(168,85,247,0.10),rgba(236,72,153,0.10));border:1px solid rgba(168,85,247,0.30);border-radius:14px;padding:14px;">
+          <div style="font-size:12px;color:var(--sub);margin-bottom:8px;line-height:1.5;">
+            Делись ссылкой — друг получит <b style="color:var(--primary);">+30 Gost</b> при регистрации, ты — <b style="color:var(--primary);">+10 Gost</b> за каждого.
+          </div>
+          <div style="display:flex;gap:6px;margin-bottom:10px;">
+            <input id="refLinkInp" readonly style="flex:1;padding:9px 11px;border-radius:8px;border:1px solid var(--border-strong);background:rgba(0,0,0,0.25);color:var(--text);font-family:'SF Mono',Menlo,monospace;font-size:12px;">
+            <button onclick="copyRefLink()" id="refCopyBtn" style="padding:9px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;"><i class="fa-solid fa-copy"></i></button>
+          </div>
+          <button onclick="shareRefLink()" style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;">
+            <i class="fa-solid fa-share"></i>&nbsp; Поделиться
+          </button>
+          <div id="refInvitedList" style="margin-top:12px;"></div>
         </div>
       </div>
       <div class="section">
@@ -435,6 +463,7 @@ nav#appNav a:not(.active):hover{color:var(--text);}
   <a href="/social/"><i class="fa-solid fa-house"></i>Лента</a>
   <a href="/social/#screenMinisky"><i class="fa-solid fa-video"></i>Миниски</a>
   <a href="#" class="active"><i class="fa-solid fa-wallet"></i>Банк</a>
+  <a href="/bank/giveaway/"><i class="fa-solid fa-gift"></i>Розыгрыши</a>
   <a href="/chat/"><i class="fa-solid fa-comments"></i>Чаты</a>
   <a href="/"><i class="fa-solid fa-ghost"></i>Главная</a>
 </nav>
@@ -629,6 +658,8 @@ async function loadWallet(){
     document.getElementById('claimAmt').textContent = w.daily_reward;
     setupDailyClaim(w.next_daily_in || 0);
     renderGostTx(txGost.transactions || []);
+    // Реф-блок — параллельно, не блокируем кошелёк если упадёт
+    loadRefBlock().catch(() => {});
     // Soul state
     document.getElementById('soulRate').textContent = state.rate_paused ? '⏸ паузa' : fmtNum(state.soul_rate_gost);
     document.getElementById('sysBal').textContent = fmtNum(state.system_balance);
@@ -738,7 +769,7 @@ function renderCatalog(items){
     else if (it.floor_soul != null) floorHTML = `от ${pricePill(it.floor_soul, 'soul')}`;
     else floorHTML = `от ${pricePill(it.start_price_gost, 'gost')}`;
     return `
-    <div class="cat-card" data-rarity="${it.rarity}" onclick="openCatalogModal('${esc(it.slug)}')" title="${esc(it.description)}">
+    <div class="cat-card" data-rarity="${it.rarity}" onclick="openCatalogModal(${jsArg(it.slug)})" title="${esc(it.description)}">
       <div class="cat-art">${nftArt(it)}</div>
       <div class="cat-name">${esc(it.name)}</div>
       <div class="cat-meta">${rarityIcon(it.rarity)} ${it.listed}/${it.max_supply}</div>
@@ -749,7 +780,7 @@ function renderCatalog(items){
 function renderMarketFilters(items){
   const wrap = document.getElementById('marketFilters');
   wrap.innerHTML = '<button class="mf-chip ' + (_activeMarketSlug === '' ? 'active' : '') + '" data-slug="" onclick="setMarketFilter(\'\')">Все</button>' +
-    items.map(it => `<button class="mf-chip ${_activeMarketSlug === it.slug ? 'active' : ''}" data-slug="${esc(it.slug)}" onclick="setMarketFilter('${esc(it.slug)}')">${esc(it.name)}</button>`).join('');
+    items.map(it => `<button class="mf-chip ${_activeMarketSlug === it.slug ? 'active' : ''}" data-slug="${esc(it.slug)}" onclick="setMarketFilter(${jsArg(it.slug)})">${esc(it.name)}</button>`).join('');
 }
 function setMarketFilter(slug){
   _activeMarketSlug = slug;
@@ -857,7 +888,7 @@ async function openCatalogModal(slug){
       </div>
       <div class="modal-actions">
         <button class="btn ghost" onclick="closeModal('nftModal')">Закрыть</button>
-        <button class="btn primary" onclick="closeModal('nftModal');setMarketFilter('${esc(slug)}');scrollToSection('marketSection');">Купить на маркете</button>
+        <button class="btn primary" onclick="closeModal('nftModal');setMarketFilter(${jsArg(slug)});scrollToSection('marketSection');">Купить на маркете</button>
       </div>`;
     openModal('nftModal');
   } catch(e) { console.error(e); }
@@ -948,7 +979,16 @@ async function openMyNftModal(nftId){
   } catch(e) { console.error(e); }
 }
 
+// Глобальный in-flight guard для финансовых операций — защита от двойных кликов
+const _inFlight = new Set();
+async function withLock(key, fn) {
+  if (_inFlight.has(key)) { showToast('Уже выполняется...', true); return; }
+  _inFlight.add(key);
+  try { return await fn(); } finally { _inFlight.delete(key); }
+}
+
 async function buyListing(nftId){
+  return withLock('buy:'+nftId, async () => {
   try {
     const r = await api(`/nft/buy/${nftId}`, 'POST');
     const cur = r.currency || 'soul';
@@ -957,6 +997,7 @@ async function buyListing(nftId){
     closeModal('nftModal');
     await Promise.all([loadWallet(), loadMyNfts(), loadMarket(), loadCatalog()]);
   } catch(e) { showToast(e.message || 'Ошибка покупки', true); }
+  });
 }
 
 async function listMyNft(nftId){
@@ -979,17 +1020,21 @@ async function unlistNft(nftId){
   } catch(e) { showToast(e.message || 'Ошибка', true); }
 }
 
-function openTransferNft(nftId){
-  const username = prompt('Username получателя:');
+async function openTransferNft(nftId){
+  const raw = await Dialog.prompt('Username получателя:', '',
+    { title: 'Передать NFT', placeholder: '@user', okText: 'Далее' });
+  if (raw == null) return;
+  const username = raw.trim().replace(/^@/, '').toLowerCase();
   if (!username) return;
-  if (!confirm(`Передать NFT юзеру @${username}?\nКомиссия 1 Soul.`)) return;
-  api('/nft/transfer', 'POST', { nft_id: nftId, to_username: username.trim().toLowerCase() })
-    .then(r => {
-      showToast(`NFT передан @${r.recipient.username}`);
-      closeModal('nftModal');
-      loadWallet(); loadMyNfts();
-    })
-    .catch(e => showToast(e.message || 'Ошибка', true));
+  const ok = await Dialog.confirm(`Передать NFT юзеру @${username}?\n\nКомиссия: 1 Soul.`,
+    { title: 'Подтвердить передачу', okText: 'Передать' });
+  if (!ok) return;
+  try {
+    const r = await api('/nft/transfer', 'POST', { nft_id: nftId, to_username: username });
+    showToast(`NFT передан @${r.recipient.username}`);
+    closeModal('nftModal');
+    loadWallet(); loadMyNfts();
+  } catch(e) { showToast(e.message || 'Ошибка', true); }
 }
 
 // ── Soul transfer ──
@@ -1059,9 +1104,11 @@ function copyInvLink(ev, code){
   navigator.clipboard.writeText(url).then(() => showToast('Ссылка скопирована'));
 }
 async function cancelInvoice(code){
-  if (!confirm('Отменить счёт?')) return;
-  try { await api(`/invoice/${code}`, 'DELETE'); showToast('Отменён'); loadInvoices(); }
-  catch(e) { showToast(e.message, true); }
+  if (!await Dialog.confirm('Отменить счёт?', { title: 'Отменить счёт', danger: true })) return;
+  return withLock('inv-cancel:'+code, async () => {
+    try { await api(`/invoice/${code}`, 'DELETE'); showToast('Отменён'); loadInvoices(); }
+    catch(e) { showToast(e.message, true); }
+  });
 }
 function openInvoiceCreate(){
   document.getElementById('invcAmount').value = '';
@@ -1071,16 +1118,17 @@ function openInvoiceCreate(){
 async function doCreateInvoice(){
   const amount = +document.getElementById('invcAmount').value;
   const note = document.getElementById('invcNote').value.trim();
-  if (!amount || amount < 1) { showToast('Введите сумму', true); return; }
-  try {
-    const r = await api('/invoice/create', 'POST', { amount_soul: amount, note: note || null });
-    showToast(`Счёт создан · ${r.code}`);
-    closeModal('invCreateModal');
-    await Promise.all([loadInvoices(), loadWallet()]);
-    // Сразу копируем ссылку
-    const url = `${location.origin}/bank/?pay=${encodeURIComponent(r.code)}`;
-    navigator.clipboard.writeText(url).then(() => showToast('Ссылка скопирована'));
-  } catch(e) { showToast(e.message, true); }
+  if (!amount || !Number.isFinite(amount) || amount < 1) { showToast('Введите сумму', true); return; }
+  return withLock('inv-create', async () => {
+    try {
+      const r = await api('/invoice/create', 'POST', { amount_soul: amount, note: note || null });
+      showToast(`Счёт создан · ${r.code}`);
+      closeModal('invCreateModal');
+      await Promise.all([loadInvoices(), loadWallet()]);
+      const url = `${location.origin}/bank/?pay=${encodeURIComponent(r.code)}`;
+      navigator.clipboard.writeText(url).then(() => showToast('Ссылка скопирована'));
+    } catch(e) { showToast(e.message, true); }
+  });
 }
 
 // Открыть страницу оплаты при ?pay=CODE
@@ -1116,13 +1164,15 @@ async function checkInvoicePayParam(){
   } catch(e) { showToast(e.message || 'Счёт не найден', true); }
 }
 async function payInvoice(code){
-  try {
-    const r = await api(`/invoice/${encodeURIComponent(code)}/pay`, 'POST');
-    showToast(`Оплачено! −${fmtNum(r.amount + r.fee)} Soul`);
-    closeModal('invPayModal');
-    history.replaceState(null, '', location.pathname);
-    loadWallet();
-  } catch(e) { showToast(e.message, true); }
+  return withLock('pay:'+code, async () => {
+    try {
+      const r = await api(`/invoice/${encodeURIComponent(code)}/pay`, 'POST');
+      showToast(`Оплачено! −${fmtNum(r.amount + r.fee)} Soul`);
+      closeModal('invPayModal');
+      history.replaceState(null, '', location.pathname);
+      loadWallet();
+    } catch(e) { showToast(e.message, true); }
+  });
 }
 
 // ══════════════ USERNAMES ══════════════
@@ -1172,7 +1222,7 @@ async function doCreateUsername(){
   } catch(e) { showToast(e.message, true); }
 }
 async function setUsernamePrimary(u){
-  if (!confirm(`Сделать @${u} основным username?`)) return;
+  if (!await Dialog.confirm(`Сделать @${u} основным username?`, { title: 'Сменить основной', okText: 'Сделать основным' })) return;
   try {
     const r = await api('/username/set_primary', 'POST', { username: u });
     showToast(`Теперь @${r.primary}`);
@@ -1183,12 +1233,15 @@ async function setUsernamePrimary(u){
 }
 async function listUsernameForSale(u, currentPrice){
   if (currentPrice !== null) {
-    if (!confirm(`Снять @${u} с продажи?`)) return;
+    if (!await Dialog.confirm(`Снять @${u} с продажи?`, { title: 'Снять', okText: 'Снять' })) return;
     try { await api('/username/list', 'POST', { username: u, price_soul: null }); showToast('Снят'); openUsername(); }
     catch(e) { showToast(e.message, true); }
     return;
   }
-  const price = +prompt(`Цена для @${u} в Soul:`, '50');
+  const raw = await Dialog.prompt(`Цена в Soul за @${u}:`, '50',
+    { title: 'Выставить на продажу', placeholder: 'число', okText: 'Выставить' });
+  if (raw == null) return;
+  const price = +raw;
   if (!price || price < 1) return;
   try { await api('/username/list', 'POST', { username: u, price_soul: price }); showToast(`Выставлен за ${price} Soul`); openUsername(); }
   catch(e) { showToast(e.message, true); }
@@ -1237,12 +1290,16 @@ async function doMintNft(){
     sell_price_soul: +document.getElementById('mintSellPrice').value,
   };
   if (!body.slug || !body.name || !body.image_emoji) { showToast('Заполните slug, имя и эмодзи', true); return; }
-  try {
-    const r = await api('/nft/mint', 'POST', body);
-    showToast(`NFT создан! −${r.gost_paid} Gost, +${r.soul_received} Soul`);
-    closeModal('mintModal');
-    await Promise.all([loadWallet(), loadCatalog(), loadMyNfts(), loadMarket()]);
-  } catch(e) { showToast(e.message, true); }
+  if (!Number.isInteger(body.supply) || body.supply < 1) { showToast('Тираж: целое число > 0', true); return; }
+  if (!Number.isFinite(body.sell_price_soul) || body.sell_price_soul < 0) { showToast('Цена: число ≥ 0', true); return; }
+  return withLock('mint:'+body.slug, async () => {
+    try {
+      const r = await api('/nft/mint', 'POST', body);
+      showToast(`NFT создан! −${r.gost_paid} Gost, +${r.soul_received} Soul`);
+      closeModal('mintModal');
+      await Promise.all([loadWallet(), loadCatalog(), loadMyNfts(), loadMarket()]);
+    } catch(e) { showToast(e.message, true); }
+  });
 }
 
 // ══════════════ SEED PHRASE ══════════════
@@ -1333,6 +1390,70 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('focus', () => { if (token) loadWallet(); });
 
 init();
+
+// ── Реферальная программа ──
+async function loadRefBlock(){
+  let data;
+  try { data = await api('/ref/me'); }
+  catch(e) { return; }
+  const sec = document.getElementById('refSection');
+  if (!sec) return;
+  sec.style.display = '';
+  const origin = location.origin || 'https://ghostecos.duckdns.org';
+  const fullLink = origin + '/?ref=' + encodeURIComponent(data.username);
+  document.getElementById('refLinkInp').value = fullLink;
+  const stats = document.getElementById('refStats');
+  if (stats) stats.textContent = `${data.total_invited} · +${data.total_earned_gost} Gost`;
+  // Список приглашённых
+  const list = document.getElementById('refInvitedList');
+  if (data.invited && data.invited.length) {
+    list.innerHTML = `<div style="font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Кого ты привёл (${data.total_invited})</div>` +
+      data.invited.slice(0, 5).map(u =>
+        `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+           <div style="width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700;">${(u.display_name||u.username||'?')[0].toUpperCase()}</div>
+           <div style="flex:1;font-size:12px;">${escape_(u.display_name || u.username)}</div>
+           <div style="font-size:10px;color:var(--muted);">@${escape_(u.username)}</div>
+         </div>`
+      ).join('') +
+      (data.total_invited > 5 ? `<div style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px;">+ ещё ${data.total_invited - 5}</div>` : '');
+  } else {
+    list.innerHTML = '';
+  }
+}
+
+function escape_(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function copyRefLink(){
+  const inp = document.getElementById('refLinkInp');
+  if (!inp || !inp.value) return;
+  try {
+    await navigator.clipboard.writeText(inp.value);
+    const btn = document.getElementById('refCopyBtn');
+    const old = btn.innerHTML;
+    btn.innerHTML = '<i class="fa-solid fa-check"></i>';
+    setTimeout(() => { btn.innerHTML = old; }, 1500);
+    showToast('Ссылка скопирована');
+  } catch(_) {
+    inp.select(); document.execCommand('copy');
+    showToast('Ссылка скопирована');
+  }
+}
+
+async function shareRefLink(){
+  const link = document.getElementById('refLinkInp').value;
+  if (!link) return;
+  const text = 'Заходи в GhostChat — мессенджер где сервер не видит твои сообщения. Получишь +30 Gost: ' + link;
+  if (navigator.share) {
+    try { await navigator.share({title:'GhostChat', text, url: link}); return; } catch(_) {}
+  }
+  // Fallback: копируем
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('Текст скопирован');
+  } catch(_) { showToast('Скопируйте ссылку вручную', true); }
+}
 </script>
 </body>
 </html>

@@ -42,8 +42,18 @@ media/
 *_secret.*
 *credentials*
 
-# Mobile app (Flutter) — пока публикуем только серверный код
-app/
+# Flutter (Ghost native app)
+app/desktop_wrapper/build/
+app/desktop_wrapper/.dart_tool/
+app/desktop_wrapper/.flutter-plugins
+app/desktop_wrapper/.flutter-plugins-dependencies
+app/desktop_wrapper/pubspec.lock
+app/desktop_wrapper/windows/flutter/ephemeral/
+app/desktop_wrapper/linux/flutter/ephemeral/
+app/desktop_wrapper/macos/Flutter/ephemeral/
+app/desktop_wrapper/android/.gradle/
+app/desktop_wrapper/android/app/build/
+app/desktop_wrapper/ios/Pods/
 
 # Claude AI sessions
 .claude/
@@ -60,3 +70,4 @@ Thumbs.db
 /photo_*.jpg
 /ghostchat_*.apk
 /mine.html
+/ghostcraft.html

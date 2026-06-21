@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <!-- road surface, narrowing to horizon -->
+  <path d="M8 21 L4 21 L10 3 L14 3 L20 21 L16 21 Z" fill="currentColor" fill-opacity="0.18" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <!-- center dashes -->
+  <path d="M12 5 L12 8 M12 11 L12 14 M12 17 L12 20" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+</svg>

@@ -236,6 +236,266 @@ async def privacy():
         return FileResponse(p)
     return {"error": "not found"}
 
+@app.get("/terms", include_in_schema=False)
+async def terms():
+    p = os.path.join(_SITE_DIR, "terms.html")
+    if os.path.exists(p):
+        return FileResponse(p)
+    return {"error": "not found"}
+
+def _esc_attr(s: str) -> str:
+    s = s or ""
+    return s.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _serve_og_html(file_path: str, og_title: str, og_desc: str, og_image: str, og_url: str):
+    """Подставляет OG meta-теги в HTML файл (заменяет <head>...<title>... блок).
+    Краулеры (TG/WA/Twitter) читают meta-теги в первом байте — без JS."""
+    from fastapi.responses import HTMLResponse
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            html = f.read()
+    except Exception:
+        return {"error": "not found"}
+    # Собираем блок OG
+    og_block = (
+        f'<title>{_esc_attr(og_title)}</title>\n'
+        f'  <meta name="description" content="{_esc_attr(og_desc)}">\n'
+        f'  <meta property="og:title" content="{_esc_attr(og_title)}">\n'
+        f'  <meta property="og:description" content="{_esc_attr(og_desc)}">\n'
+        f'  <meta property="og:image" content="{_esc_attr(og_image)}">\n'
+        f'  <meta property="og:url" content="{_esc_attr(og_url)}">\n'
+        f'  <meta property="og:type" content="website">\n'
+        f'  <meta name="twitter:card" content="summary_large_image">\n'
+        f'  <meta name="twitter:title" content="{_esc_attr(og_title)}">\n'
+        f'  <meta name="twitter:description" content="{_esc_attr(og_desc)}">\n'
+        f'  <meta name="twitter:image" content="{_esc_attr(og_image)}">'
+    )
+    # Заменяем существующий <title>...</title> и все meta og:*/twitter:*/description на новый блок
+    import re as _re
+    # Сначала вырезаем старые
+    html = _re.sub(r'<title>[^<]*</title>', '', html, count=1)
+    html = _re.sub(r'<meta\s+name="description"[^>]*>', '', html, flags=_re.IGNORECASE)
+    html = _re.sub(r'<meta\s+property="og:[^"]+"[^>]*>', '', html, flags=_re.IGNORECASE)
+    html = _re.sub(r'<meta\s+name="twitter:[^"]+"[^>]*>', '', html, flags=_re.IGNORECASE)
+    # Вставляем новый блок перед </head>
+    html = html.replace('</head>', f'  {og_block}\n</head>', 1)
+    return HTMLResponse(content=html)
+
+
+@app.get("/wrapped", include_in_schema=False)
+async def wrapped_index():
+    return FileResponse(os.path.join(_SITE_DIR, "wrapped.html"))
+
+
+@app.get("/wrapped/{username}", include_in_schema=False)
+async def wrapped(username: str):
+    p = os.path.join(_SITE_DIR, "wrapped.html")
+    if not os.path.exists(p):
+        return {"error": "not found"}
+    uname = (username or "").strip().lower().lstrip("@")
+    if not uname:
+        return FileResponse(p)
+    # Дергаем social API на 127.0.0.1:8005 за данными
+    import urllib.request, json as _json
+    title = f"@{uname} — Wrapped в GhostEcos"
+    desc = "Личная статистика, реакции и любимые посты"
+    try:
+        r = urllib.request.urlopen(
+            f"http://127.0.0.1:8005/api/soc/wrapped/{uname}", timeout=3
+        )
+        d = _json.loads(r.read())
+        title = f"{d['display_name']}: год в GhostEcos"
+        posts = d.get("posts", 0) + d.get("miniska", 0)
+        desc = f"@{d['username']} · {posts} публикаций · {d.get('reactions_received', 0)} реакций · репутация {d.get('reputation', 100)}/100"
+    except Exception:
+        pass
+    base = "https://ghostecos.duckdns.org"
+    return _serve_og_html(
+        p,
+        og_title=title,
+        og_desc=desc,
+        og_image=f"{base}/api/soc/og/wrapped/{uname}.png",
+        og_url=f"{base}/wrapped/{uname}",
+    )
+
+
+@app.get("/p/{post_id}", include_in_schema=False)
+async def og_post_page(post_id: int):
+    """Публичная shareable страница для поста — отдаёт HTML с OG-meta + редирект в /social."""
+    import urllib.request, json as _json
+    title = "Пост в GhostSocial"
+    desc = "Открыть в приложении"
+    try:
+        r = urllib.request.urlopen(
+            f"http://127.0.0.1:8005/api/soc/post/{post_id}", timeout=3,
+        )
+        d = _json.loads(r.read())
+        if d.get("is_nsfw"):
+            title = f"Пост (18+) от {d.get('display_name', '?')}"
+            desc = "Контент 18+ — откройте в приложении"
+        else:
+            content = (d.get("content") or "").strip()
+            title = (content[:80] + ("..." if len(content) > 80 else "")) if content else "Пост в GhostSocial"
+            desc = f"{d.get('display_name', '?')} (@{d.get('username', '?')})"
+    except Exception:
+        pass
+    base = "https://ghostecos.duckdns.org"
+    # Минимальный HTML с OG + JS-редирект в /social
+    from fastapi.responses import HTMLResponse
+    html = f"""<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>{_esc_attr(title)}</title>
+  <meta name="description" content="{_esc_attr(desc)}">
+  <meta property="og:title" content="{_esc_attr(title)}">
+  <meta property="og:description" content="{_esc_attr(desc)}">
+  <meta property="og:image" content="{base}/api/soc/og/post/{post_id}.png">
+  <meta property="og:url" content="{base}/p/{post_id}">
+  <meta property="og:type" content="article">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="{base}/api/soc/og/post/{post_id}.png">
+  <meta http-equiv="refresh" content="0;url=/social/#p={post_id}">
+  <link rel="canonical" href="{base}/social/#p={post_id}">
+</head>
+<body style="background:#020617;color:#94a3b8;font-family:sans-serif;text-align:center;padding:80px 20px;">
+  <p>Открываю пост в GhostSocial...</p>
+  <p><a href="/social/#p={post_id}" style="color:#a855f7;">Перейти вручную</a></p>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+def _og_redirect_page(title: str, desc: str, og_image: str, og_url: str,
+                      redirect_url: str, og_type: str = "website") -> "HTMLResponse":
+    """Минимальная HTML-страница с OG-meta + JS-редирект в приложение."""
+    from fastapi.responses import HTMLResponse
+    html = f"""<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>{_esc_attr(title)}</title>
+  <meta name="description" content="{_esc_attr(desc)}">
+  <meta property="og:title" content="{_esc_attr(title)}">
+  <meta property="og:description" content="{_esc_attr(desc)}">
+  <meta property="og:image" content="{_esc_attr(og_image)}">
+  <meta property="og:url" content="{_esc_attr(og_url)}">
+  <meta property="og:type" content="{og_type}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="{_esc_attr(og_image)}">
+  <meta http-equiv="refresh" content="0;url={_esc_attr(redirect_url)}">
+  <link rel="canonical" href="{_esc_attr(og_url)}">
+</head>
+<body style="background:#020617;color:#94a3b8;font-family:sans-serif;text-align:center;padding:80px 20px;">
+  <p>Открываю...</p>
+  <p><a href="{_esc_attr(redirect_url)}" style="color:#a855f7;">Перейти вручную</a></p>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+@app.get("/g/{group_id}", include_in_schema=False)
+async def og_group_page(group_id: int):
+    """Публичная shareable страница для группы/канала по id."""
+    import urllib.request, json as _json
+    base = "https://ghostecos.duckdns.org"
+    title, desc = f"Группа в GhostChat", "Открыть"
+    redirect = f"/chat/?group={group_id}"
+    try:
+        # Берём из социалки (там есть chat_groups таблица)
+        r = urllib.request.urlopen(f"http://127.0.0.1:8005/api/soc/og/group/{group_id}.png", timeout=3)
+        r.read()  # прогреем кэш PNG
+        # title не вытащить из PNG; обращаемся к public-эндпоинту если есть, иначе общий title
+    except Exception:
+        pass
+    return _og_redirect_page(
+        title=title, desc=desc,
+        og_image=f"{base}/api/soc/og/group/{group_id}.png",
+        og_url=f"{base}/g/{group_id}",
+        redirect_url=redirect,
+    )
+
+
+@app.get("/c/{username}", include_in_schema=False)
+async def og_channel_page(username: str):
+    uname = (username or "").strip().lower().lstrip("@")
+    base = "https://ghostecos.duckdns.org"
+    return _og_redirect_page(
+        title=f"@{uname} — канал в GhostChat", desc="Открыть канал",
+        og_image=f"{base}/api/soc/og/channel/{uname}.png",
+        og_url=f"{base}/c/{uname}",
+        redirect_url=f"/chat/?channel={uname}",
+    )
+
+
+@app.get("/m/{post_id}", include_in_schema=False)
+async def og_miniska_page(post_id: int):
+    base = "https://ghostecos.duckdns.org"
+    return _og_redirect_page(
+        title=f"Миниска в GhostSocial", desc="Короткое видео · 48 ч",
+        og_image=f"{base}/api/soc/og/miniska/{post_id}.png",
+        og_url=f"{base}/m/{post_id}",
+        redirect_url=f"/social/?msk={post_id}",
+        og_type="video.other",
+    )
+
+
+@app.get("/nft/{nft_id}", include_in_schema=False)
+async def og_nft_page(nft_id: int):
+    base = "https://ghostecos.duckdns.org"
+    return _og_redirect_page(
+        title=f"NFT #{nft_id} в GhostBank", desc="Цифровой объект в коллекции",
+        og_image=f"{base}/api/soc/og/nft/{nft_id}.png",
+        og_url=f"{base}/nft/{nft_id}",
+        redirect_url=f"/bank/?nft={nft_id}",
+    )
+
+
+@app.get("/u/{username}", include_in_schema=False)
+async def og_user_page(username: str):
+    """Публичная shareable страница для профиля — HTML с OG + редирект в /social."""
+    import urllib.request, json as _json
+    uname = (username or "").strip().lower().lstrip("@")
+    title = f"@{uname} в GhostEcos"
+    desc = "Открыть профиль"
+    try:
+        r = urllib.request.urlopen(
+            f"http://127.0.0.1:8005/api/soc/prof/{uname}",
+            timeout=3,
+            # Без авторизации сработает как guest — отдаст public-инфу
+        )
+        d = _json.loads(r.read())
+        title = f"{d.get('display_name', uname)} в GhostEcos"
+        rep = d.get("reputation_score", 100)
+        desc = f"@{d.get('username', uname)} · {d.get('posts_count', 0)} постов · {d.get('followers_count', 0)} подписчиков · репутация {rep}/100"
+    except Exception:
+        pass
+    base = "https://ghostecos.duckdns.org"
+    from fastapi.responses import HTMLResponse
+    html = f"""<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>{_esc_attr(title)}</title>
+  <meta name="description" content="{_esc_attr(desc)}">
+  <meta property="og:title" content="{_esc_attr(title)}">
+  <meta property="og:description" content="{_esc_attr(desc)}">
+  <meta property="og:image" content="{base}/api/soc/og/user/{uname}.png">
+  <meta property="og:url" content="{base}/u/{uname}">
+  <meta property="og:type" content="profile">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="{base}/api/soc/og/user/{uname}.png">
+  <meta http-equiv="refresh" content="0;url=/social/#u={uname}">
+  <link rel="canonical" href="{base}/social/#u={uname}">
+</head>
+<body style="background:#020617;color:#94a3b8;font-family:sans-serif;text-align:center;padding:80px 20px;">
+  <p>Открываю профиль...</p>
+  <p><a href="/social/#u={uname}" style="color:#a855f7;">Перейти вручную</a></p>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
 @app.get("/api/download/latest", include_in_schema=False)
 async def download_latest():
     apks = sorted(

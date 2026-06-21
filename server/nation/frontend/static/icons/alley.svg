@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <!-- narrow lane: two close kerbs, no markings -->
+  <path d="M9 3 L9 21 M15 3 L15 21" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+  <path d="M9 3 L15 3 M9 21 L15 21" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.5"/>
+</svg>

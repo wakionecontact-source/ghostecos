@@ -1,0 +1,104 @@
+name: ghost
+description: Ghost — приватный мессенджер с экосистемой (чат, лента, банк) на Mesh + жидкое стекло.
+publish_to: 'none'
+version: 1.1.0+4
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # ─── Сеть ───
+  dio: ^5.7.0                      # HTTP client с интерсепторами, retry, multipart
+  web_socket_channel: ^3.0.0       # WebSocket для real-time
+
+  # ─── Crypto (E2E совместимо с WebCrypto API на web-фронте) ───
+  # pointycastle — pure Dart, поддерживает ECDH P-256 / HKDF-SHA256 /
+  # AES-GCM. Никаких native bindings → строится на любой compileSdk.
+  pointycastle: ^4.0.0
+  convert: ^3.1.1                  # hex/base64
+  asn1lib: ^1.5.3                  # парсинг PKCS8/SPKI если понадобится миграция
+
+  # ─── Локальное хранилище ───
+  sqflite: ^2.4.0                  # SQL DB для сообщений / диалогов / кэша
+  # sqflite_common_ffi отключён пока — он тянет sqlite3 native и build падает
+  # на handshake. Для desktop добавим обратно в M9 когда зашейпим релиз.
+  path_provider: ^2.1.5            # пути к app dir
+  flutter_secure_storage: ^10.3.1   # для приват-ключа и токена
+  shared_preferences: ^2.3.3       # для не-секретных настроек (тема, иконка)
+
+  # ─── State management ───
+  provider: ^6.1.2                 # простой, понятный
+
+  # ─── UI ───
+  flutter_svg: ^2.0.10             # SVG для иконок и NFT
+  font_awesome_flutter: ^11.0.0    # иконки в стиле сайта
+  flutter_markdown: ^0.7.4         # для рендера markdown
+  # image_picker / file_picker — отложены до M5 (вернутся вместе с attach UI)
+  # image_picker: ^1.1.2
+  # file_picker: ^11.0.2
+  # cached_network_image: ^3.4.1   # disabled пока system_tray есть (uuid conflict), вернём в M5
+  intl: ^0.20.1                    # форматирование дат
+  url_launcher: ^6.3.1             # внешние ссылки
+
+  # ─── Голосовые ───
+  record: ^6.1.1                   # запись аудио, новая версия чтоб обойти record_linux баг
+  audioplayers: ^6.1.0             # воспроизведение
+  # ─── Attach (картинки/видео) ───
+  image_picker: ^1.1.2
+  # file_picker 11 ломает Android-сборку (broken plugin.xml) — оставляем
+  # только image_picker. Произвольные файлы добавим через intent позже.
+
+  # ─── Уведомления + системные ───
+  flutter_local_notifications: ^18.0.1
+  package_info_plus: ^8.1.4         # 9.x ломает компиляцию package_info_plus android
+
+  # ─── Desktop only ───
+  window_manager: ^0.5.1
+  tray_manager: ^0.5.2             # совместим с современным uuid ^4.x
+  launch_at_startup: ^0.5.1
+
+  # WebView и system_tray больше не используются — MainShell нативный (M4).
+
+  # ─── HTTP (для совместимости со старым кодом) ───
+  http: ^1.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  msix: ^3.16.7
+  flutter_launcher_icons: ^0.14.4
+
+# Genericiator иконок: запустить `dart run flutter_launcher_icons` после замены
+# assets/icon.png. Создаст mipmap-*, AppIcon.appiconset, Windows favicon.
+flutter_launcher_icons:
+  android: true
+  ios: false                          # включим когда заведём Xcode-проект (M9)
+  image_path: "assets/icon.png"
+  min_sdk_android: 24
+  adaptive_icon_background: "#3B0C93"
+  adaptive_icon_foreground: "assets/icon.png"
+  windows:
+    generate: true
+    image_path: "assets/icon.png"
+    icon_size: 256
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icon.ico
+    - assets/icon.png
+
+# MSIX (Windows installer)
+msix_config:
+  display_name: Ghost
+  publisher_display_name: Ghost
+  identity_name: online.ghost_chat.Ghost
+  msix_version: 0.3.0.2
+  logo_path: assets/icon.png
+  capabilities: internetClient, microphone
+  publisher: CN=Ghost

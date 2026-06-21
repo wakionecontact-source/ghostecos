@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <!-- awning -->
+  <path d="M3 9 L4 4 L20 4 L21 9 Z" fill="currentColor" fill-opacity="0.28" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M3 9 L21 9" stroke="currentColor" stroke-width="1.6"/>
+  <!-- body -->
+  <path d="M5 9 L5 20 L19 20 L19 9" fill="currentColor" fill-opacity="0.12" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <!-- door -->
+  <path d="M13 20 L13 13 L17 13 L17 20" fill="currentColor" fill-opacity="0.3" stroke="currentColor" stroke-width="1.4"/>
+  <!-- window -->
+  <path d="M7 12.5 L10.5 12.5 L10.5 16 L7 16 Z" fill="currentColor" fill-opacity="0.3"/>
+</svg>

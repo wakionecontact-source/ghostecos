@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <!-- free-form territory outline, dashed -->
+  <path d="M4 7 L9 3 L16 5 L21 10 L18 17 L11 21 L4 17 Z"
+        fill="currentColor" fill-opacity="0.12"
+        stroke="currentColor" stroke-width="1.6"
+        stroke-linejoin="round" stroke-dasharray="3 2.5"/>
+  <!-- vertices -->
+  <circle cx="4"  cy="7"  r="1.5" fill="currentColor"/>
+  <circle cx="9"  cy="3"  r="1.5" fill="currentColor"/>
+  <circle cx="16" cy="5"  r="1.5" fill="currentColor"/>
+  <circle cx="21" cy="10" r="1.5" fill="currentColor"/>
+  <circle cx="18" cy="17" r="1.5" fill="currentColor"/>
+  <circle cx="11" cy="21" r="1.5" fill="currentColor"/>
+  <circle cx="4"  cy="17" r="1.5" fill="currentColor"/>
+</svg>

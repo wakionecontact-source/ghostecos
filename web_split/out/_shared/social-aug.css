@@ -1,0 +1,848 @@
+/* ════════════════════════════════════════════════════════════════════
+   social-aug.css — комменты-таблетка для GhostSocial
+   DESKTOP (≥1024px): рядом с каждым .post-card висит .post-comments-aside
+   MOBILE  (<1024px): aside скрыт, по клику на «комменты» — bottom-sheet
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ─── COMMENTS v3 (TT-style: heart справа, reply через banner) ─── */
+.ca-item {
+  padding: 10px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.ca-item.ca-reply {
+  margin-left: 22px;
+  border-left: 2px solid rgba(168, 85, 247, 0.25);
+  padding-left: 10px;
+  background: rgba(255, 255, 255, 0.015);
+  border-radius: 0 8px 8px 0;
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+.ca-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.ca-main {
+  flex: 1;
+  min-width: 0;
+}
+.ca-head {
+  font-size: 12px;
+  line-height: 1.3;
+  margin-bottom: 4px;
+}
+.ca-user {
+  color: var(--primary, #a855f7);
+  font-weight: 700;
+}
+.ca-name {
+  color: #94a3b8;
+  font-weight: 500;
+  margin-left: 4px;
+}
+.ca-text {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text, #f0efec);
+  margin-bottom: 4px;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.ca-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.ca-reply-link,
+.ca-replies-btn {
+  background: none;
+  border: none;
+  color: #64748b;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 0;
+  border-radius: 4px;
+  transition: color 0.16s;
+  text-align: left;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ca-reply-link:hover,
+.ca-replies-btn:hover { color: var(--primary, #a855f7); }
+.ca-replies-btn { font-weight: 600; }
+.ca-replies-btn .ca-arrow-icon {
+  transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.ca-replies-btn.open .ca-arrow-icon {
+  transform: rotate(180deg);
+  color: var(--primary, #a855f7);
+}
+.ca-arrow-icon { vertical-align: middle; flex-shrink: 0; }
+
+/* Heart-кнопка справа от коммента (как у TikTok / iOS) */
+.ca-react {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 32px;
+  position: relative; /* react-trigger для эмодзи-палитры */
+}
+.ca-heart {
+  background: none;
+  border: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #64748b;
+  font-size: 16px;
+  padding: 0;
+  transition: transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1),
+              color 0.16s, background 0.16s;
+}
+.ca-heart:hover { transform: scale(1.1); background: rgba(255, 255, 255, 0.04); }
+.ca-heart:active { transform: scale(0.85); }
+.ca-heart.has-mine { color: #ec4899; }
+.ca-heart svg, .ca-heart img { width: 18px; height: 18px; }
+.ca-react-n {
+  font-size: 10px;
+  color: #94a3b8;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Палитра 6 эмодзи (long-press) — рендерится на body c position:fixed,
+   координаты вычисляет JS относительно heart-кнопки. Это гарантирует что
+   palette не обрежется рамкой .post-comments-aside (overflow:hidden). */
+.ca-palette {
+  position: fixed;
+  display: flex;
+  gap: 6px;
+  padding: 7px 10px;
+  background: rgba(20, 14, 40, 0.96);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  border: 1px solid rgba(168, 85, 247, 0.40);
+  border-radius: 999px;
+  z-index: 2147483646;
+  opacity: 0;
+  transform: translateY(6px) scale(0.92);
+  transform-origin: center bottom;
+  transition: opacity 0.18s ease, transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255,255,255,0.04) inset;
+  pointer-events: auto;
+}
+.ca-palette.open { opacity: 1; transform: translateY(0) scale(1); }
+.ca-palette.drop-down { transform-origin: center top; transform: translateY(-6px) scale(0.92); }
+.ca-palette.drop-down.open { transform: translateY(0) scale(1); }
+
+.ca-pal-btn {
+  background: none;
+  border: none;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1),
+              background 0.16s ease, box-shadow 0.16s ease;
+}
+.ca-pal-btn:hover { transform: scale(1.22); background: rgba(255, 255, 255, 0.08); }
+.ca-pal-btn:active { transform: scale(0.92); }
+.ca-pal-btn.active {
+  background: rgba(168, 85, 247, 0.32) !important;
+  box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.70) !important;
+}
+.ca-pal-btn svg, .ca-pal-btn img { width: 22px; height: 22px; pointer-events: none; }
+.ca-palette .emoji-btn {
+  background: none;
+  border: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.14s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.14s;
+}
+.ca-palette .emoji-btn:hover { transform: scale(1.18); background: rgba(255, 255, 255, 0.08); }
+.ca-palette .emoji-btn.active { background: rgba(168, 85, 247, 0.30); }
+.ca-palette .emoji-btn svg, .ca-palette .emoji-btn img { width: 20px; height: 20px; }
+
+.ca-replies {
+  margin-top: 8px;
+  padding-top: 4px;
+  position: relative;
+  overflow: hidden;
+}
+.ca-replies > .ca-item:last-child { border-bottom: 0; }
+
+/* Анимация раскрытия replies (expand) и сворачивания (collapse) */
+@keyframes caExpand {
+  from { opacity: 0; max-height: 0; transform: translateY(-8px); }
+  to   { opacity: 1; max-height: 2000px; transform: translateY(0); }
+}
+@keyframes caCollapse {
+  from { opacity: 1; max-height: 2000px; transform: translateY(0); }
+  to   { opacity: 0; max-height: 0; transform: translateY(-6px); }
+}
+.ca-replies:not([hidden]):not(.ca-collapsing) {
+  animation: caExpand 0.30s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.ca-replies.ca-collapsing {
+  animation: caCollapse 0.24s ease-in forwards;
+}
+/* Анимация появления каждого нового коммента (rise-blur тонко) */
+@keyframes caItemIn {
+  0%   { opacity: 0; transform: translateY(8px); filter: blur(2px); }
+  100% { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+.ca-item { animation: caItemIn 0.32s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+
+/* ─── Quote-плашка в reply: «↳ @user: текст» ─── */
+.ca-quote {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 5px 9px;
+  background: rgba(168, 85, 247, 0.10);
+  border: 1px solid rgba(168, 85, 247, 0.20);
+  border-left: 3px solid var(--primary, #a855f7);
+  border-radius: 4px 8px 8px 4px;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font-size: 11px;
+  transition: background 0.16s, border-color 0.16s, transform 0.16s;
+  overflow: hidden;
+}
+.ca-quote:hover {
+  background: rgba(168, 85, 247, 0.18);
+  border-color: rgba(168, 85, 247, 0.45);
+  transform: translateX(2px);
+}
+.ca-quote .ca-arrow-icon {
+  color: var(--primary, #a855f7);
+  flex-shrink: 0;
+}
+.ca-quote-to {
+  color: var(--primary, #a855f7);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.ca-quote-text {
+  color: #94a3b8;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Flash-подсветка коммента при переходе через quote-кнопку */
+@keyframes caFlash {
+  0%   { background: rgba(168, 85, 247, 0.30); }
+  100% { background: transparent; }
+}
+.ca-item.ca-flash {
+  animation: caFlash 1.4s ease-out;
+  border-radius: 8px;
+}
+
+/* Скрытый счётчик реакций (когда total=0) */
+.ca-react-n[hidden] { display: none; }
+
+/* ─── Reply-banner НАД composer-формой (вместо inline-формы) ─── */
+.pca-reply-banner {
+  padding: 8px 10px;
+  background: rgba(168, 85, 247, 0.10);
+  border-top: 1px solid rgba(168, 85, 247, 0.30);
+  border-bottom: 1px solid rgba(168, 85, 247, 0.30);
+}
+.pca-reply-banner .prb-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-left: 3px solid var(--primary, #a855f7);
+  padding-left: 8px;
+}
+.pca-reply-banner .prb-text {
+  flex: 1;
+  min-width: 0;
+}
+.pca-reply-banner .prb-to {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--primary, #a855f7);
+  margin-bottom: 2px;
+}
+.pca-reply-banner .prb-quote {
+  font-size: 12px;
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pca-reply-banner .prb-x {
+  background: none;
+  border: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #94a3b8;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pca-reply-banner .prb-x:hover { background: rgba(255, 255, 255, 0.08); color: var(--text, #f0efec); }
+
+/* ─── Кастомный scrollbar для всех скроллируемых зон social-aug ─── */
+.pca-list,
+.pca-sheet-list,
+.ca-replies {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(168, 85, 247, 0.50) transparent;
+}
+.pca-list::-webkit-scrollbar,
+.pca-sheet-list::-webkit-scrollbar,
+.ca-replies::-webkit-scrollbar { width: 6px; height: 6px; }
+.pca-list::-webkit-scrollbar-track,
+.pca-sheet-list::-webkit-scrollbar-track,
+.ca-replies::-webkit-scrollbar-track { background: transparent; }
+.pca-list::-webkit-scrollbar-thumb,
+.pca-sheet-list::-webkit-scrollbar-thumb,
+.ca-replies::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(168, 85, 247, 0.45), rgba(124, 58, 237, 0.35));
+  border-radius: 999px;
+}
+.pca-list::-webkit-scrollbar-thumb:hover,
+.pca-sheet-list::-webkit-scrollbar-thumb:hover,
+.ca-replies::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(168, 85, 247, 0.75), rgba(124, 58, 237, 0.60));
+}
+
+/* Sort-чипсы в bottom-sheet (mobile) */
+.pca-sort-sheet {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  margin: 0;
+  background: rgba(0, 0, 0, 0.20);
+}
+
+/* ─── Тосты/уведомления ВСЕГДА поверх всех виджетов и модалок ───
+   У GS родной .toast = z-index:300, наши sheet'ы и модалки лезут до 9999.
+   Подымаем до max-int чтобы тост всплывал ПОВЕРХ любого открытого окна
+   (например при ошибке публикации из «Поделиться»). */
+.toast,
+#toast,
+.toast-container,
+.snackbar,
+.notification-toast {
+  z-index: 2147483647 !important;
+}
+
+/* ─── DESKTOP layout ─── */
+@media (min-width: 1024px) {
+  /* У GS родительский <main> ограничен max-width: 620-680px (CSS строки 100/693).
+     На десктопе нам нужна более широкая зона для 2-колоночного layout —
+     перебиваем max-width до 1280px. */
+  main {
+    max-width: 1280px !important;
+    padding: 16px 24px !important;
+  }
+
+  /* Обёртка пост+комменты в один grid-ряд:
+     пост 2fr, таблетка комментов 1fr → визуально ~66% / 33%.
+     align-items: stretch → aside растягивается по высоте поста. */
+  .post-row {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    gap: 14px;
+    margin-bottom: 14px;
+    align-items: stretch;
+  }
+  .post-row > .post-card {
+    margin-bottom: 0 !important;
+    /* НЕ растягиваем под высоту aside-комментов. Иначе короткий пост
+       с длинной aside-лентой комментов раздувается до её высоты —
+       выглядит как «пост растянуло». */
+    align-self: start;
+  }
+
+  .post-comments-aside {
+    position: relative;
+    background: rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 16px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    /* align-self: stretch + min-height гарантируют что aside заполнит
+       строку grid'а (= высоту .post-card). height:100% убираем —
+       он ломал stretch в некоторых браузерах. */
+    align-self: stretch;
+    min-height: 200px;
+    overflow: hidden;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.18),
+      0 4px 18px rgba(0, 0, 0, 0.32);
+  }
+  .pca-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 0 4px 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    margin-bottom: 8px;
+    flex-shrink: 0;
+  }
+  .pca-head i { color: #a855f7; font-size: 11px; }
+  .pca-count {
+    margin-left: auto;
+    background: rgba(124, 58, 237, 0.18);
+    color: #c4b5fd;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .pca-list {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+    padding-right: 4px;
+  }
+  /* Кастомный scrollbar — фиолетовая капля */
+  .pca-list::-webkit-scrollbar { width: 6px; }
+  .pca-list::-webkit-scrollbar-track { background: transparent; }
+  .pca-list::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(168, 85, 247, 0.45), rgba(124, 58, 237, 0.35));
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  .pca-list::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, rgba(168, 85, 247, 0.70), rgba(124, 58, 237, 0.55));
+  }
+  .pca-list { scrollbar-width: thin; scrollbar-color: rgba(168, 85, 247, 0.50) transparent; }
+  .pca-list .comment-item {
+    padding: 8px 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  .pca-list .comment-item:last-child { border-bottom: 0; }
+  .pca-empty {
+    color: #475569;
+    font-size: 12px;
+    text-align: center;
+    padding: 20px 12px;
+  }
+  .pca-loading {
+    color: #64748b;
+    font-size: 11px;
+    text-align: center;
+    padding: 12px;
+  }
+  /* Sort-чипсы (Топ / Новые) */
+  .pca-sort {
+    display: flex;
+    gap: 6px;
+    padding: 0 0 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    margin-bottom: 8px;
+    flex-shrink: 0;
+  }
+  .pca-sort-btn {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    color: #94a3b8;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 5px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: background 0.16s, color 0.16s, border-color 0.16s, transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .pca-sort-btn svg { flex-shrink: 0; vertical-align: middle; }
+  .pca-sort-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--text, #f0efec); }
+  .pca-sort-btn:active { transform: scale(0.95); }
+  .pca-sort-btn.active {
+    background: rgba(168, 85, 247, 0.20);
+    border-color: rgba(168, 85, 247, 0.55);
+    color: var(--primary, #a855f7);
+    box-shadow: 0 0 0 0.5px rgba(168, 85, 247, 0.30) inset;
+  }
+
+  /* убираем border-bottom у последнего коммента */
+  .pca-list .comment-item:last-of-type { border-bottom: 0 !important; }
+}
+
+/* ─── Красивый «Комментариев больше нет» (универсально для desktop+mobile) ─── */
+.pca-end,
+.pca-list .pca-end,
+.pca-sheet-list .pca-end {
+  position: relative;
+  text-align: center;
+  font-size: 11px;
+  color: #64748b;
+  padding: 18px 8px 8px;
+  margin-top: 12px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+}
+/* декоративные линии слева/справа от текста */
+.pca-end::before,
+.pca-end::after {
+  content: '';
+  position: absolute;
+  top: 28px;
+  width: 25%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(168, 85, 247, 0.30), transparent);
+}
+.pca-end::before { left: 10%; }
+.pca-end::after  { right: 10%; transform: scaleX(-1); }
+.pca-end::first-line { display: block; }
+/* добавляем призрака перед текстом через ::marker нельзя, используем span внутри JS,
+   но мы используем textContent — поэтому делаем content через unicode в pseudo */
+.pca-end {
+  background: radial-gradient(60% 80% at center top, rgba(168, 85, 247, 0.06) 0%, transparent 70%);
+  border-radius: 12px;
+}
+
+/* (продолжение — место было перенесено, ничего открытого) */
+  .pca-form {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    flex-shrink: 0;
+  }
+  .pca-input {
+    flex: 1 1 0;
+    min-width: 0; /* без этого input не сжимается ниже своей "intrinsic" ширины и выталкивает send-кнопку */
+    background: rgba(0, 0, 0, 0.30);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 10px;
+    padding: 8px 12px;
+    color: var(--text, #f0efec);
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.18s, background 0.18s;
+    font-family: inherit;
+  }
+  .pca-input:focus {
+    border-color: rgba(168, 85, 247, 0.55);
+    background: rgba(0, 0, 0, 0.40);
+  }
+  .pca-send {
+    background: linear-gradient(135deg, #7c3aed, #a855f7);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 14px;
+    transition: transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1);
+    flex-shrink: 0;
+  }
+  .pca-send:hover { transform: translateY(-1px); }
+  .pca-send:active { transform: scale(0.94); }
+  .pca-send:disabled { opacity: 0.5; cursor: not-allowed; }
+}
+
+/* ─── PERF (DESKTOP): полностью отключаем backdrop-filter и blur-анимации
+   на широких постах. На карточке 850×N px пересчёт blur каждый кадр —
+   гарантированный фриз. Здесь — обычный полупрозрачный фон + рамка,
+   visually это «matte glass», рендерится мгновенно. */
+@media (min-width: 1024px) {
+  /* отключаем тяжёлые liquid-слои на .post-card */
+  .post-card::before,
+  .post-card::after {
+    display: none !important;
+  }
+  .post-card {
+    background: rgba(20, 14, 40, 0.45) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.10) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.32) !important;
+  }
+  /* отключаем rise-blur анимацию: blur(8px) → 0 на огромных карточках
+     тоже жрёт GPU при первой загрузке всех постов сразу */
+  .post-card[data-anim],
+  .post-card {
+    animation: none !important;
+  }
+  /* aside — тоже без backdrop-filter, простой фон */
+  .post-comments-aside {
+    background: rgba(20, 14, 40, 0.30) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+/* ─── Превью медиа: красивая «расплывшаяся» рамка + max-height ─── */
+@media (min-width: 1024px) {
+  /* Контейнер медиа: ограничиваем высоту, прячем overflow */
+  .post-media {
+    position: relative;
+    max-height: 380px;
+    overflow: hidden;
+    border-radius: 14px;
+    background: rgba(0, 0, 0, 0.5); /* fallback пока mirror не загрузился */
+  }
+  /* Размытый «зеркальный» фон — на ::before, ставится social-aug.js
+     через CSS-переменную --bg-image после загрузки src картинки */
+  .post-media[style*="--bg-image"]::before {
+    content: '';
+    position: absolute;
+    inset: -10%;
+    background-image: var(--bg-image);
+    background-size: cover;
+    background-position: center;
+    filter: blur(28px) saturate(140%) brightness(0.65);
+    z-index: 0;
+    pointer-events: none;
+  }
+  /* Сама картинка/видео — центрирована, поверх blurred-фона */
+  .post-media img,
+  .post-media video,
+  .post-media .mg-item img,
+  .post-media .mosaic-img,
+  .post-media .mosaic-video {
+    position: relative !important;
+    z-index: 1 !important;
+    max-height: 380px !important;
+    width: auto !important;
+    max-width: 100% !important;
+    object-fit: contain !important;
+    display: block !important;
+    margin: 0 auto !important;
+  }
+  .post-media .mg-item {
+    position: relative;
+    background: transparent !important;
+  }
+  .post-media .mosaic {
+    /* mosaic 2x2 — оставляем как есть, она использует cover */
+    background: rgba(0, 0, 0, 0.4);
+  }
+
+  /* Если в посте есть опрос — превращаем .nsfw-blurable в 2-колоночный
+     grid. Левая колонка содержит ВСЁ кроме опроса (content+media+
+     link-preview) — они стэкаются вертикально в одном поле и центрируются.
+     Это убирает пустоту когда у поста короткий текст а опрос длинный. */
+  .post-card:has(.poll) .nsfw-blurable {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    grid-template-areas: "left poll";
+    column-gap: 14px;
+    align-items: stretch;
+  }
+  .post-card:has(.poll) .nsfw-blurable > .poll {
+    grid-area: poll;
+    margin-bottom: 0 !important;
+    align-self: start;
+    position: sticky;
+    top: 12px;
+  }
+  /* Все НЕ-poll потомки уезжают в левую колонку и стэкаются вертикально
+     через flex с центром. Высота = высоте опроса (через stretch) —
+     блок-фон рисуется сразу на всей зоне, пустота не видна. */
+  .post-card:has(.poll) .nsfw-blurable > *:not(.poll) {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .post-card:has(.poll) .nsfw-blurable::before {
+    /* Декоративная подложка левой колонки — лёгкий glass с radial-glow,
+       чтобы пустота смотрелась как fone, а не как баг. */
+    content: '';
+    grid-column: 1;
+    grid-row: 1;
+    align-self: stretch;
+    border-radius: 14px;
+    background:
+      radial-gradient(140% 80% at 0% 0%, rgba(168, 85, 247, 0.10) 0%, transparent 55%),
+      rgba(255, 255, 255, 0.025);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    pointer-events: none;
+  }
+  /* Контент внутри левой колонки — flex поверх подложки, центрируется
+     вертикально. Все элементы (content+media+linkprev) друг под другом. */
+  .post-card:has(.poll) .nsfw-blurable > .post-content,
+  .post-card:has(.poll) .nsfw-blurable > .post-media,
+  .post-card:has(.poll) .nsfw-blurable > .link-prev,
+  .post-card:has(.poll) .nsfw-blurable > .gs-prev,
+  .post-card:has(.poll) .nsfw-blurable > .mg-grid,
+  .post-card:has(.poll) .nsfw-blurable > .mosaic {
+    align-self: center;
+    margin: 0;
+    padding: 14px 16px;
+    position: relative;
+    z-index: 1;
+  }
+  /* Между несколькими элементами в левой колонке — небольшой отступ */
+  .post-card:has(.poll) .nsfw-blurable > .post-content + .post-media,
+  .post-card:has(.poll) .nsfw-blurable > .post-content + .link-prev,
+  .post-card:has(.poll) .nsfw-blurable > .post-content + .gs-prev {
+    padding-top: 0;
+    margin-top: 8px;
+  }
+}
+
+/* На ПК таблетка комментариев висит постоянно справа, поэтому кнопка
+   «комментарий» в футере поста становится дублирующей — скрываем. */
+@media (min-width: 1024px) {
+  .post-footer [data-action="comment"] { display: none !important; }
+}
+
+/* На мобиле aside скрыт целиком */
+@media (max-width: 1023px) {
+  .post-comments-aside { display: none !important; }
+}
+
+/* ─── MOBILE bottom-sheet ─── */
+.pca-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  background: rgba(2, 6, 23, 0.92);
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  transform: translateY(100%);
+  transition: transform 0.36s cubic-bezier(0.34, 1.56, 0.64, 1);
+  visibility: hidden;
+}
+.pca-sheet.open {
+  transform: translateY(0);
+  visibility: visible;
+}
+.pca-sheet-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  padding-top: calc(12px + env(safe-area-inset-top));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+.pca-sheet-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text, #f0efec);
+}
+.pca-sheet-close {
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: none;
+  color: #94a3b8;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Пост сверху */
+.pca-sheet-post {
+  padding: 12px;
+  max-height: 45vh;
+  overflow-y: auto;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+.pca-sheet-post .post-card {
+  margin-bottom: 0 !important;
+}
+/* Список комментов снизу */
+.pca-sheet-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  min-height: 0;
+}
+.pca-sheet-list .comment-item {
+  padding: 10px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.pca-sheet-list .pca-empty {
+  color: #475569;
+  text-align: center;
+  padding: 24px 12px;
+  font-size: 13px;
+}
+/* Форма коммента */
+.pca-sheet-form {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.35);
+  flex-shrink: 0;
+}
+.pca-sheet-form .pca-input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 10px 14px;
+  color: var(--text, #f0efec);
+  font-size: 14px;
+  outline: none;
+  font-family: inherit;
+}
+.pca-sheet-form .pca-input:focus {
+  border-color: rgba(168, 85, 247, 0.55);
+}
+.pca-sheet-form .pca-send {
+  background: linear-gradient(135deg, #7c3aed, #a855f7);
+  color: white;
+  border: none;
+  border-radius: 12px;
+  padding: 10px 16px;
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+/* fix: sort-чипсы комментов были заперты в @media min-width:1024px, на мобилке оставались голыми */
+.pca-sort{display:flex;gap:6px;padding:0 0 8px;border-bottom:1px solid rgba(255,255,255,0.05);margin-bottom:8px;flex-shrink:0;}
+.pca-sort-btn{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);color:#94a3b8;font-size:11px;font-weight:700;padding:5px 12px;border-radius:999px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;transition:background 0.16s,color 0.16s,border-color 0.16s,transform 0.16s cubic-bezier(0.34,1.56,0.64,1);}
+.pca-sort-btn svg{flex-shrink:0;vertical-align:middle;}
+.pca-sort-btn:hover{background:rgba(255,255,255,0.08);color:var(--text,#f0efec);}
+.pca-sort-btn:active{transform:scale(0.95);}
+.pca-sort-btn.active{background:rgba(168,85,247,0.20);border-color:rgba(168,85,247,0.55);color:var(--primary,#a855f7);box-shadow:0 0 0 0.5px rgba(168,85,247,0.30) inset;}

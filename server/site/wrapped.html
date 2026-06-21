@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wrapped — GhostEcos</title>
+  <meta name="description" content="Твой год в GhostEcos. Личная статистика, любимые посты, заработок в Gost.">
+  <meta property="og:title" content="Мой год в GhostEcos">
+  <meta property="og:description" content="Статистика, реакции, любимые посты — посмотри свой Wrapped">
+  <meta property="og:type" content="website">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    *,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
+    :root{--bg:#020617;--primary:#a855f7;--primary2:#7c3aed;--text:#f1f5f9;--sub:#94a3b8;--green:#4ade80;--yellow:#fbbf24;--red:#f87171;}
+    html,body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-height:100%;}
+    body{overflow-x:hidden;padding:24px 16px 60px;display:flex;justify-content:center;}
+    body::before{content:"";position:fixed;inset:0;z-index:-1;background:radial-gradient(80% 70% at 20% 0%,rgba(124,58,237,0.30),transparent 60%),radial-gradient(70% 60% at 100% 100%,rgba(168,85,247,0.20),transparent 60%),linear-gradient(180deg,#0a0220,#020617);}
+    .wrap{width:100%;max-width:540px;}
+
+    .nav-back{display:inline-flex;align-items:center;gap:8px;color:var(--sub);text-decoration:none;font-size:14px;font-weight:500;margin-bottom:18px;transition:color 0.2s;}
+    .nav-back:hover{color:var(--text);}
+
+    #card{background:linear-gradient(160deg,rgba(168,85,247,0.18) 0%,rgba(124,58,237,0.10) 50%,rgba(15,23,42,0.6) 100%);backdrop-filter:blur(20px);border:1px solid rgba(168,85,247,0.30);border-radius:24px;padding:32px 24px;position:relative;overflow:hidden;}
+    #card::before{content:"";position:absolute;top:-50px;right:-50px;width:200px;height:200px;background:radial-gradient(circle,rgba(168,85,247,0.3),transparent 70%);pointer-events:none;}
+    .brand-mini{font-size:11px;font-weight:800;letter-spacing:3px;text-transform:uppercase;color:var(--primary);margin-bottom:8px;}
+    .hero-title{font-size:32px;font-weight:900;line-height:1.1;margin-bottom:6px;background:linear-gradient(135deg,#fff,#a855f7);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+    .hero-handle{font-size:14px;color:var(--sub);margin-bottom:20px;}
+    .days-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;background:rgba(74,222,128,0.12);border:1px solid rgba(74,222,128,0.3);color:var(--green);border-radius:99px;font-size:12px;font-weight:700;margin-bottom:24px;}
+
+    .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px;}
+    .stat{background:rgba(15,23,42,0.5);border:1px solid rgba(255,255,255,0.06);border-radius:14px;padding:14px;}
+    .stat .val{font-size:26px;font-weight:900;color:var(--text);line-height:1;margin-bottom:4px;}
+    .stat .lbl{font-size:11px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:0.6px;}
+    .stat.big{grid-column:span 2;background:rgba(168,85,247,0.10);border-color:rgba(168,85,247,0.30);}
+    .stat.big .val{font-size:36px;background:linear-gradient(135deg,#fff,#a855f7);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+
+    .section-title{font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--sub);margin:22px 0 10px;}
+
+    .top-react-row{display:flex;gap:8px;margin-bottom:18px;}
+    .react-box{flex:1;background:rgba(15,23,42,0.5);border:1px solid rgba(255,255,255,0.06);border-radius:14px;padding:14px 10px;text-align:center;}
+    .react-box .em{font-size:28px;line-height:1;margin-bottom:8px;}
+    .react-box .cnt{font-size:14px;font-weight:700;color:var(--text);}
+
+    .top-post{background:rgba(15,23,42,0.6);border:1px solid rgba(168,85,247,0.25);border-radius:14px;padding:14px;margin-bottom:18px;}
+    .top-post .label{font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--primary);margin-bottom:8px;}
+    .top-post .text{font-size:14px;line-height:1.5;color:var(--text);margin-bottom:10px;word-break:break-word;}
+    .top-post .meta{font-size:12px;color:var(--sub);display:flex;align-items:center;gap:6px;}
+
+    .rank-box{background:linear-gradient(135deg,rgba(251,191,36,0.10),rgba(168,85,247,0.10));border:1px solid rgba(251,191,36,0.30);border-radius:14px;padding:16px;margin-bottom:18px;text-align:center;}
+    .rank-box .place{font-size:28px;font-weight:900;color:var(--yellow);margin-bottom:4px;}
+    .rank-box .of{font-size:12px;color:var(--sub);}
+
+    .rep-bar{margin:18px 0;}
+    .rep-bar-track{background:rgba(255,255,255,0.06);border-radius:99px;height:10px;overflow:hidden;}
+    .rep-bar-fill{height:100%;border-radius:99px;transition:width 0.5s;}
+    .rep-bar-label{display:flex;justify-content:space-between;font-size:12px;color:var(--sub);margin-bottom:6px;font-weight:600;}
+
+    .actions{display:flex;flex-direction:column;gap:8px;margin-top:24px;}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:14px;border-radius:14px;font-size:14px;font-weight:700;cursor:pointer;border:none;text-decoration:none;font-family:inherit;transition:transform 0.1s,background 0.2s;}
+    .btn:active{transform:scale(0.98);}
+    .btn-primary{background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;}
+    .btn-ghost{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);color:var(--text);}
+
+    .footer-note{text-align:center;font-size:11px;color:var(--sub);margin-top:24px;opacity:0.7;}
+    .footer-note a{color:var(--primary);text-decoration:none;}
+
+    .loader{text-align:center;padding:80px 20px;color:var(--sub);}
+    .loader i{font-size:28px;animation:spin 1s linear infinite;}
+    @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+
+    .err{text-align:center;padding:60px 20px;color:var(--red);}
+    .err h2{font-size:20px;margin-bottom:8px;color:var(--text);}
+    .err p{color:var(--sub);font-size:14px;}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <a class="nav-back" href="/"><i class="fa-solid fa-arrow-left"></i> На главную</a>
+  <div id="content">
+    <div class="loader"><i class="fa-solid fa-spinner"></i><p style="margin-top:14px;">Готовим Wrapped...</p></div>
+  </div>
+</div>
+
+<script>
+const EMOJI_SVG = {
+  heart: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/2764.svg',
+  fire: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f525.svg',
+  cry: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f622.svg',
+  joy: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f602.svg',
+  surprised: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f632.svg',
+  thumb: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f44d.svg',
+};
+function esc(s){return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function fmt(n){return (n||0).toLocaleString('ru-RU');}
+function emojiName(k){return ({heart:'сердечко',fire:'огонь',cry:'грусть',joy:'смех',surprised:'удивление',thumb:'класс'})[k]||k;}
+function emojiUrl(k){return EMOJI_SVG[k] || '';}
+
+async function load(){
+  const username = (location.pathname.split('/').filter(Boolean).pop() || '').trim();
+  if (!username || username === 'wrapped'){ renderErr('Не указан пользователь', 'Открой /wrapped/<username>'); return; }
+  try {
+    // Опциональная авторизация — токен из localStorage/cookie если есть.
+    // Сервер вернёт финансы и предпочтения только если токен принадлежит запрашиваемому юзеру (is_owner=true).
+    const headers = {};
+    const tok = localStorage.getItem('gs_token') || (document.cookie.match(/(?:^|;\s*)gs_token=([^;]+)/) || [])[1];
+    if (tok) headers['Authorization'] = 'Bearer ' + tok;
+    const r = await fetch('/api/soc/wrapped/' + encodeURIComponent(username), {headers});
+    if (!r.ok){ renderErr('Пользователь не найден', '@' + username + ' не существует или удалён'); return; }
+    const d = await r.json();
+    render(d);
+  } catch(e){ renderErr('Ошибка загрузки', e.message || ''); }
+}
+
+function renderErr(t, sub){
+  document.getElementById('content').innerHTML =
+    `<div class="err"><h2>${esc(t)}</h2><p>${esc(sub)}</p></div>`;
+}
+
+function render(d){
+  const rank = d.activity_rank ? `#${fmt(d.activity_rank)}` : '—';
+  const total = d.activity_rank_total ? `из ${fmt(d.activity_rank_total)} активных` : '';
+  const repBand = d.reputation < 30 ? 'low' : (d.reputation < 70 ? 'mid' : 'good');
+  const repColor = repBand === 'good' ? 'var(--green)' : (repBand === 'low' ? 'var(--red)' : 'var(--primary)');
+  const totalPosts = (d.posts || 0) + (d.miniska || 0);
+  // Приватные секции — только для владельца аккаунта (is_owner=true)
+  const isOwner = !!d.is_owner;
+  const topReactsHTML = isOwner ? ((d.top_reactions || []).slice(0,3).map(r => `
+    <div class="react-box">
+      ${emojiUrl(r.emoji) ? `<img class="em" src="${emojiUrl(r.emoji)}" alt="${esc(r.emoji)}" style="width:32px;height:32px;">` : `<div class="em">·</div>`}
+      <div class="cnt">${fmt(r.count)}×</div>
+      <div class="lbl" style="font-size:10px;color:var(--sub);margin-top:4px;">${esc(emojiName(r.emoji))}</div>
+    </div>`).join('') || '<div class="lbl" style="text-align:center;padding:20px;color:var(--sub);">пока никаких реакций</div>') : '';
+  const topPostHTML = (isOwner && d.top_post) ? `
+    <div class="top-post">
+      <div class="label"><i class="fa-solid fa-trophy" style="margin-right:4px;"></i> Любимый пост подписчиков</div>
+      <div class="text">${esc(d.top_post.preview)}${d.top_post.preview.length >= 140 ? '...' : ''}</div>
+      <div class="meta"><i class="fa-regular fa-heart"></i> ${fmt(d.top_post.reactions)} реакций</div>
+    </div>` : '';
+  // Защита от undefined balance (для не-owner balance отсутствует)
+  const bal = d.balance || {gost:0, soul:0, prem:0};
+
+  document.getElementById('content').innerHTML = `
+    <div id="card">
+      <div class="brand-mini">Wrapped · GhostEcos</div>
+      <div class="hero-title">${esc(d.display_name)}</div>
+      <div class="hero-handle">@${esc(d.username)}</div>
+      <div class="days-pill"><i class="fa-solid fa-bolt"></i> ${fmt(d.days_in)} ${d.days_in % 10 === 1 && d.days_in % 100 !== 11 ? 'день' : (d.days_in % 10 >= 2 && d.days_in % 10 <= 4 && (d.days_in % 100 < 10 || d.days_in % 100 >= 20) ? 'дня' : 'дней')} в экосистеме</div>
+
+      <div class="stat-grid">
+        <div class="stat big">
+          <div class="val">${fmt(totalPosts)}</div>
+          <div class="lbl">Постов и минисок</div>
+        </div>
+        <div class="stat"><div class="val">${fmt(d.comments)}</div><div class="lbl">комментариев</div></div>
+        ${isOwner ? `<div class="stat"><div class="val">${fmt(d.reactions_given)}</div><div class="lbl">реакций поставил</div></div>` : ''}
+        <div class="stat"><div class="val">${fmt(d.reactions_received)}</div><div class="lbl">реакций получил</div></div>
+        <div class="stat"><div class="val">${fmt(d.followers)}</div><div class="lbl">подписчиков</div></div>
+      </div>
+
+      ${isOwner ? `<div class="section-title">Твои топ-3 реакции</div>
+      <div class="top-react-row">${topReactsHTML}</div>` : ''}
+
+      ${topPostHTML}
+
+      <div class="section-title">Активность</div>
+      <div class="rank-box">
+        <div class="place">${rank}</div>
+        <div class="of">${esc(total)} место по числу публикаций</div>
+      </div>
+
+      <div class="section-title">Репутация</div>
+      <div class="rep-bar">
+        <div class="rep-bar-label"><span>${d.reputation}/100</span><span style="color:${repColor};">${repBand === 'good' ? 'отличная' : (repBand === 'low' ? 'низкая' : 'нормальная')}</span></div>
+        <div class="rep-bar-track"><div class="rep-bar-fill" style="width:${d.reputation}%;background:${repColor};"></div></div>
+      </div>
+
+      ${isOwner ? `<div class="section-title">Экономика</div>
+      <div class="stat-grid">
+        <div class="stat"><div class="val">${fmt(d.gost_earned_total)}</div><div class="lbl">Gost заработано</div></div>
+        <div class="stat"><div class="val">${fmt(d.nft_count)}</div><div class="lbl">NFT в коллекции</div></div>
+        <div class="stat"><div class="val">${fmt(bal.soul)}</div><div class="lbl">Soul баланс</div></div>
+        <div class="stat"><div class="val">${fmt(bal.prem)}</div><div class="lbl">Prem баланс</div></div>
+      </div>` : `<div class="footer-note" style="margin-top:20px;color:var(--sub);font-size:11px;">
+        <i class="fa-solid fa-lock"></i> финансовые данные и предпочтения видны только владельцу аккаунта
+      </div>`}
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-primary" onclick="shareLink()"><i class="fa-solid fa-link"></i> Поделиться ссылкой</button>
+      <button class="btn btn-ghost" onclick="downloadPng()"><i class="fa-solid fa-download"></i> Скачать как картинку</button>
+      <a class="btn btn-ghost" href="/social"><i class="fa-solid fa-arrow-right"></i> Посмотреть свой профиль</a>
+    </div>
+
+    <div class="footer-note">ghostecos.duckdns.org · <a href="/">GhostEcos</a> · <a href="/wrapped/ghostecos">/wrapped/ваш_username</a></div>
+  `;
+}
+
+function shareLink(){
+  const url = location.href;
+  const t = document.title;
+  if (navigator.share){
+    navigator.share({title:t, url}).catch(()=>{});
+  } else {
+    navigator.clipboard.writeText(url).then(()=>{
+      alert('Ссылка скопирована: ' + url);
+    });
+  }
+}
+
+async function downloadPng(){
+  if (typeof html2canvas === 'undefined'){
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+    s.onload = () => _doDownload();
+    document.head.appendChild(s);
+  } else {
+    _doDownload();
+  }
+}
+async function _doDownload(){
+  const card = document.getElementById('card');
+  if (!card) return;
+  const canvas = await html2canvas(card, {backgroundColor:'#0a0220',scale:2,useCORS:true});
+  const a = document.createElement('a');
+  a.download = 'wrapped-' + location.pathname.split('/').filter(Boolean).pop() + '.png';
+  a.href = canvas.toDataURL('image/png');
+  a.click();
+}
+
+load();
+</script>
+</body>
+</html>
