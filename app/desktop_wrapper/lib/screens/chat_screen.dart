@@ -1316,7 +1316,10 @@ class _MediaPartState extends State<_MediaPart> {
   @override
   void initState() {
     super.initState();
-    if (_isImage) _load();
+    // Пока сообщение pending (своё изображение грузится на сервер) — НЕ грузим:
+    // blob ещё не на сервере, расшифровка упадёт. Загрузим после промоушена
+    // (баббл пересоздастся с новым sid → initState снова, уже не pending).
+    if (_isImage && !widget.m.pending) _load();
   }
 
   Future<void> _load() async {
@@ -1347,6 +1350,29 @@ class _MediaPartState extends State<_MediaPart> {
   }
 
   Widget _imageView() {
+    if (widget.m.pending) {
+      // Своё изображение ещё ГРУЗИТСЯ — показываем «Отправляется…», не ошибку.
+      return Container(
+        width: 240,
+        height: 180,
+        decoration: BoxDecoration(
+          color: Colors.black26,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(strokeWidth: 2, color: GE.primary),
+            const SizedBox(height: 8),
+            Text(
+              'Отправляется…',
+              style: TextStyle(color: GE.sub, fontSize: 12),
+            ),
+          ],
+        ),
+      );
+    }
     if (_loading) {
       return Container(
         width: 240,
