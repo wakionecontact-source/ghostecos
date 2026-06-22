@@ -160,7 +160,10 @@ class _MeshBackgroundState extends State<MeshBackground>
                 gradient: RadialGradient(
                   center: const Alignment(-0.6, -1.0),
                   radius: 1.1,
-                  colors: [GE.primary2.withValues(alpha: 0.18), Colors.transparent],
+                  colors: [
+                    GE.primary2.withValues(alpha: 0.18),
+                    Colors.transparent,
+                  ],
                   stops: const [0, 0.6],
                 ),
               ),
@@ -170,8 +173,25 @@ class _MeshBackgroundState extends State<MeshBackground>
                 gradient: RadialGradient(
                   center: const Alignment(1.0, 1.0),
                   radius: 1.1,
-                  colors: [GE.primary.withValues(alpha: 0.12), Colors.transparent],
+                  colors: [
+                    GE.primary.withValues(alpha: 0.12),
+                    Colors.transparent,
+                  ],
                   stops: const [0, 0.6],
+                ),
+              ),
+            ),
+            // Нижнее свечение-градиент: стекло снизу (нав-бар, композер) садится
+            // на него и выделяется/объёмится.
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: const Alignment(0, 0.25),
+                  colors: [
+                    GE.primary.withValues(alpha: 0.22),
+                    Colors.transparent,
+                  ],
                 ),
               ),
             ),

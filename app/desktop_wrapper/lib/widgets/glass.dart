@@ -24,6 +24,7 @@ class GlassCard extends StatelessWidget {
   final VoidCallback? onTap;
   final Color? fillOverride;
   final double? blurOverride;
+
   /// lite=true — без BackdropFilter (без blur). На списочных tile это
   /// единственный способ сохранить 60fps на мобиле — blur на каждом item
   /// убивает GPU. Визуально почти не отличить, потому что mesh-фон видно.
@@ -44,29 +45,36 @@ class GlassCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final radiusObj = BorderRadius.circular(radius);
-    final base = fillOverride ??
+    final base =
+        fillOverride ??
         (lite ? GE.glassFill.withValues(alpha: 0.55) : GE.glassFill);
     // Заливка-стекло: диагональный блик (свет сверху-слева) → база → лёгкое
     // затемнение снизу. Светлая кромка сверху даёт specular-объём. Всё — дёшево
     // (никаких лишних GPU-проходов), блюр опционален (lite=без блюра).
+    // Liquid glass: яркий specular-блик сверху → база → затемнение снизу (свет
+    // сверху = объём). Светлая кромка — rim-свет.
     final fillDeco = BoxDecoration(
       borderRadius: radiusObj,
       gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
         colors: [
-          Color.alphaBlend(Colors.white.withValues(alpha: 0.10), base),
+          Color.alphaBlend(Colors.white.withValues(alpha: 0.22), base),
           base,
-          Color.alphaBlend(Colors.black.withValues(alpha: 0.05), base),
+          Color.alphaBlend(Colors.black.withValues(alpha: 0.12), base),
         ],
-        stops: const [0.0, 0.55, 1.0],
+        stops: const [0.0, 0.5, 1.0],
       ),
       border: Border.all(
-        color: Colors.white.withValues(alpha: 0.16),
+        color: Colors.white.withValues(alpha: 0.28),
         width: GE.glassStroke,
       ),
     );
-    Widget fill = Container(decoration: fillDeco, padding: padding, child: child);
+    Widget fill = Container(
+      decoration: fillDeco,
+      padding: padding,
+      child: child,
+    );
     if (!lite) {
       fill = ClipRRect(
         borderRadius: radiusObj,
@@ -92,11 +100,12 @@ class GlassCard extends StatelessWidget {
         borderRadius: radiusObj,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.28),
-            blurRadius: 22,
-            offset: const Offset(0, 9),
+            color: Colors.black.withValues(alpha: 0.34),
+            blurRadius: 26,
+            offset: const Offset(0, 12),
           ),
-          if (glow) BoxShadow(color: GE.glowFill, blurRadius: 30, spreadRadius: 1),
+          if (glow)
+            BoxShadow(color: GE.glowFill, blurRadius: 30, spreadRadius: 1),
         ],
       ),
       child: fill,
@@ -137,24 +146,27 @@ class GlassButton extends StatelessWidget {
             end: Alignment.bottomRight,
           )
         : danger
-            ? const LinearGradient(
-                colors: [Color(0xFFE11D48), Color(0xFFEC4899)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              )
-            : null;
+        ? const LinearGradient(
+            colors: [Color(0xFFE11D48), Color(0xFFEC4899)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          )
+        : null;
     Widget content = AnimatedContainer(
       duration: const Duration(milliseconds: 140),
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
       decoration: BoxDecoration(
         // Не-CTA получает sheen-градиент стекла вместо плоской заливки.
-        gradient: gradient ??
+        gradient:
+            gradient ??
             LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: [
                 Color.alphaBlend(
-                    Colors.white.withValues(alpha: 0.10), GE.glassFill),
+                  Colors.white.withValues(alpha: 0.10),
+                  GE.glassFill,
+                ),
                 GE.glassFill,
               ],
             ),
@@ -184,7 +196,8 @@ class GlassButton extends StatelessWidget {
               width: 14,
               height: 14,
               child: CircularProgressIndicator(
-                strokeWidth: 2, color: Colors.white,
+                strokeWidth: 2,
+                color: Colors.white,
               ),
             )
           else if (icon != null) ...[
@@ -222,7 +235,9 @@ class GlassButton extends StatelessWidget {
         child: content,
       ),
     );
-    return fullWidth ? SizedBox(width: double.infinity, child: tappable) : tappable;
+    return fullWidth
+        ? SizedBox(width: double.infinity, child: tappable)
+        : tappable;
   }
 }
 
@@ -282,12 +297,15 @@ class GlassInput extends StatelessWidget {
             decoration: InputDecoration(
               hintText: hint,
               hintStyle: TextStyle(color: GE.sub, fontSize: 14),
-              prefixIcon:
-                  icon != null ? Icon(icon, size: 18, color: GE.sub) : null,
+              prefixIcon: icon != null
+                  ? Icon(icon, size: 18, color: GE.sub)
+                  : null,
               suffixIcon: suffix,
               border: InputBorder.none,
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 13,
+              ),
             ),
           ),
         ),
@@ -365,7 +383,8 @@ Future<T?> showGlassSheet<T>(
             children: [
               // Grab handle сверху
               Container(
-                width: 40, height: 4,
+                width: 40,
+                height: 4,
                 decoration: BoxDecoration(
                   color: GE.borderStrong,
                   borderRadius: BorderRadius.circular(2),

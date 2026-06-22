@@ -279,12 +279,20 @@ class _GlassBottomNavState extends State<_GlassBottomNav> {
           alignment: Alignment.topCenter,
           child: _collapsed
               ? SizedBox(width: double.infinity, height: bottomInset)
-              : GlassCard(
-                  padding: EdgeInsets.fromLTRB(8, 8, 8, 8 + bottomInset),
-                  radius: 0,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [for (final s in Section.values) _navItem(s)],
+              : Padding(
+                  // Плавающий стеклянный бар: отступы по краям + снизу, он висит
+                  // над нижним свечением mesh → выделяется и объёмится.
+                  padding: EdgeInsets.fromLTRB(12, 2, 12, 8 + bottomInset),
+                  child: GlassCard(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 8,
+                    ),
+                    radius: 26,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [for (final s in Section.values) _navItem(s)],
+                    ),
                   ),
                 ),
         ),
