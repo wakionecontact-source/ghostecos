@@ -1055,7 +1055,11 @@ class _Bubble extends StatelessWidget {
             end: Alignment.bottomRight,
             colors: [Color(0xFF6A4FD0), Color(0xFF3F2E9C)],
           )
-        : null;
+        : const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF1C1726), Color(0xFF131019)],
+          );
     final textColor = mine ? Colors.white : const Color(0xFFD7D2DE);
     final isImg = _isImage(m);
     // Подряд идущие сообщения одного автора — теснее (верх 1), их размытие
@@ -1084,9 +1088,9 @@ class _Bubble extends StatelessWidget {
               ? const EdgeInsets.all(4)
               : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            // Тёмный лакшери: чужие — solid #16131D, свои — фиолет-градиент;
-            // тонкая светлая кромка (у своих ярче = inset-блик), без свечения.
-            color: mine ? null : const Color(0xFF16131D),
+            // Тёмный лакшери: чужие — тёмный градиент, свои — фиолет-градиент;
+            // тонкая светлая кромка (у своих ярче = inset-блик) + одна мягкая
+            // тень для премиум-объёма (лёгкая, без перегруза GPU).
             gradient: bg,
             borderRadius: BorderRadius.only(
               topLeft: const Radius.circular(16),
@@ -1098,7 +1102,15 @@ class _Bubble extends StatelessWidget {
               color: Colors.white.withValues(alpha: mine ? 0.16 : 0.07),
               width: 0.7,
             ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.22),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
+
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -1133,11 +1145,13 @@ class _Bubble extends StatelessWidget {
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: textColor.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(6),
+                    color: textColor.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(7),
                     border: Border(
                       left: BorderSide(
-                        color: textColor.withValues(alpha: 0.5),
+                        color: mine
+                            ? Colors.white.withValues(alpha: 0.65)
+                            : GE.primary,
                         width: 3,
                       ),
                     ),
