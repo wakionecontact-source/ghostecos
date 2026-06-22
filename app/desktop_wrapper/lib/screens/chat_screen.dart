@@ -55,6 +55,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   int _recordStartedAt = 0;
   Timer? _recordTicker;
   Duration _recordDur = Duration.zero;
+  final List<double> _recWave = [];
 
   @override
   void initState() {
@@ -310,17 +311,28 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       setState(() {
         _recording = true;
         _recordDur = Duration.zero;
+        _recWave.clear();
       });
       HapticFeedback.lightImpact();
       _recordTicker?.cancel();
-      _recordTicker = Timer.periodic(const Duration(milliseconds: 200), (_) {
+      // 100мс: тикаем длительность + копим амплитуду для вейвформы.
+      _recordTicker = Timer.periodic(const Duration(milliseconds: 100), (
+        _,
+      ) async {
         if (!mounted) return;
-        setState(
-          () => _recordDur = Duration(
+        double norm = 0.25;
+        try {
+          final amp = await _recorder.getAmplitude();
+          norm = ((amp.current.clamp(-45.0, 0.0)) + 45.0) / 45.0;
+        } catch (_) {}
+        if (!mounted) return;
+        setState(() {
+          _recordDur = Duration(
             milliseconds:
                 DateTime.now().millisecondsSinceEpoch - _recordStartedAt,
-          ),
-        );
+          );
+          _recWave.add(norm);
+        });
       });
     } catch (e) {
       _snack('Запись не стартовала: $e');
@@ -338,6 +350,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (!await file.exists()) return;
       final bytes = await file.readAsBytes();
       final durSec = (_recordDur.inMilliseconds / 1000).round();
+      final waveform = _downsampleWave(_recWave, 40);
       await ChatRepo.instance.sendDmFile(
         toUsername: widget.peer,
         bytes: bytes,
@@ -345,6 +358,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         fileName: 'voice.m4a',
         voice: true,
         duration: durSec,
+        waveform: waveform,
       );
       try {
         await file.delete();
@@ -352,6 +366,26 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     } catch (e) {
       _snack('Голосовое не отправилось: $e');
     }
+  }
+
+  /// Усредняем сырые амплитуды в [target] полосок (компактная вейвформа в payload).
+  List<double> _downsampleWave(List<double> raw, int target) {
+    if (raw.isEmpty) return const [];
+    if (raw.length <= target) {
+      return raw.map((v) => double.parse(v.toStringAsFixed(2))).toList();
+    }
+    final out = <double>[];
+    final bucket = raw.length / target;
+    for (var i = 0; i < target; i++) {
+      final start = (i * bucket).floor();
+      final end = ((i + 1) * bucket).floor().clamp(start + 1, raw.length);
+      double sum = 0;
+      for (var j = start; j < end; j++) {
+        sum += raw[j];
+      }
+      out.add(double.parse((sum / (end - start)).toStringAsFixed(2)));
+    }
+    return out;
   }
 
   Future<void> _openBubbleMenu(StoredMessage m) async {
@@ -967,6 +1001,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Widget _recordingBar() {
     final mm = _recordDur.inMinutes.remainder(60).toString().padLeft(2, '0');
     final ss = _recordDur.inSeconds.remainder(60).toString().padLeft(2, '0');
+    final recent = _recWave.length > 40
+        ? _recWave.sublist(_recWave.length - 40)
+        : _recWave;
     return Row(
       children: [
         IconButton(
@@ -982,10 +1019,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
-        const Spacer(),
-        Text(
-          'Отпусти — отправит',
-          style: TextStyle(color: GE.sub, fontSize: 12),
+        const SizedBox(width: 10),
+        // Живая вейвформа: растёт по мере речи (последние ~40 отсчётов).
+        Expanded(
+          child: SizedBox(
+            height: 24,
+            child: CustomPaint(
+              painter: _WaveformPainter(
+                bars: recent.isEmpty ? const [0.1] : recent,
+                progress: 1.0,
+                bg: GE.primary.withValues(alpha: 0.4),
+                fill: GE.primary,
+              ),
+            ),
+          ),
         ),
         const SizedBox(width: 8),
       ],
@@ -1575,12 +1622,17 @@ class _MediaPartState extends State<_MediaPart> {
 
   Widget _voiceView() {
     final dur = (widget.m.filePayload?['duration'] as int?) ?? 0;
+    final wf = widget.m.filePayload?['waveform'];
+    final waveform = wf is List
+        ? wf.map((e) => (e as num).toDouble()).toList()
+        : const <double>[];
     return _VoiceTile(
       durationSec: dur,
       bytes: _bytes,
       loading: _loading,
       onLoad: _load,
       textColor: widget.textColor,
+      waveform: waveform,
     );
   }
 
@@ -1645,18 +1697,63 @@ class _MediaPartState extends State<_MediaPart> {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+/// Рисует полоски-вейвформу голосового (как в Telegram): закрашены слева по
+/// прогрессу воспроизведения, остальные — приглушённые.
+class _WaveformPainter extends CustomPainter {
+  final List<double> bars;
+  final double progress;
+  final Color bg;
+  final Color fill;
+  _WaveformPainter({
+    required this.bars,
+    required this.progress,
+    required this.bg,
+    required this.fill,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (bars.isEmpty) return;
+    final n = bars.length;
+    const gap = 2.0;
+    final barW = ((size.width - gap * (n - 1)) / n).clamp(1.0, 5.0);
+    final filled = (progress * n).round();
+    final bgPaint = Paint()..color = bg;
+    final fillPaint = Paint()..color = fill;
+    for (var i = 0; i < n; i++) {
+      final h = (bars[i].clamp(0.08, 1.0)) * size.height;
+      final x = i * (barW + gap);
+      final y = (size.height - h) / 2;
+      final r = RRect.fromRectAndRadius(
+        Rect.fromLTWH(x, y, barW, h),
+        Radius.circular(barW / 2),
+      );
+      canvas.drawRRect(r, i < filled ? fillPaint : bgPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_WaveformPainter old) =>
+      old.progress != progress ||
+      old.bars != bars ||
+      old.fill != fill ||
+      old.bg != bg;
+}
+
 class _VoiceTile extends StatefulWidget {
   final int durationSec;
   final Uint8List? bytes;
   final bool loading;
   final VoidCallback onLoad;
   final Color textColor;
+  final List<double> waveform;
   const _VoiceTile({
     required this.durationSec,
     required this.bytes,
     required this.loading,
     required this.onLoad,
     required this.textColor,
+    this.waveform = const [],
   });
 
   @override
@@ -1667,8 +1764,11 @@ class _VoiceTileState extends State<_VoiceTile> {
   final _player = AudioPlayer();
   bool _playing = false;
   Duration _pos = Duration.zero;
+  Duration _audioDur = Duration.zero;
+  double _speed = 1.0;
   StreamSubscription? _posSub;
   StreamSubscription? _stateSub;
+  StreamSubscription? _durSub;
 
   @override
   void initState() {
@@ -1676,12 +1776,16 @@ class _VoiceTileState extends State<_VoiceTile> {
     _posSub = _player.onPositionChanged.listen((p) {
       if (mounted) setState(() => _pos = p);
     });
+    _durSub = _player.onDurationChanged.listen((d) {
+      if (mounted) setState(() => _audioDur = d);
+    });
     _stateSub = _player.onPlayerComplete.listen((_) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _playing = false;
           _pos = Duration.zero;
         });
+      }
     });
   }
 
@@ -1689,6 +1793,7 @@ class _VoiceTileState extends State<_VoiceTile> {
   void dispose() {
     _posSub?.cancel();
     _stateSub?.cancel();
+    _durSub?.cancel();
     _player.dispose();
     super.dispose();
   }
@@ -1703,67 +1808,152 @@ class _VoiceTileState extends State<_VoiceTile> {
       setState(() => _playing = false);
     } else {
       await _player.play(BytesSource(widget.bytes!));
+      if (_speed != 1.0) {
+        try {
+          await _player.setPlaybackRate(_speed);
+        } catch (_) {}
+      }
       setState(() => _playing = true);
     }
   }
 
+  Future<void> _cycleSpeed() async {
+    const speeds = [1.0, 1.5, 2.0];
+    final next = speeds[(speeds.indexOf(_speed) + 1) % speeds.length];
+    setState(() => _speed = next);
+    try {
+      await _player.setPlaybackRate(next);
+    } catch (_) {}
+  }
+
+  Future<void> _seekFraction(double f) async {
+    final total = _audioDur.inMilliseconds > 0
+        ? _audioDur
+        : Duration(seconds: widget.durationSec);
+    if (total.inMilliseconds == 0) return;
+    final target = Duration(
+      milliseconds: (total.inMilliseconds * f.clamp(0.0, 1.0)).round(),
+    );
+    try {
+      await _player.seek(target);
+    } catch (_) {}
+    setState(() => _pos = target);
+  }
+
+  // Реальная вейвформа из payload, иначе мягкий дефолтный паттерн (старые гс).
+  List<double> get _bars => widget.waveform.isNotEmpty
+      ? widget.waveform
+      : List<double>.generate(40, (i) => 0.22 + 0.18 * (((i * 13) % 7) / 6));
+
   @override
   Widget build(BuildContext context) {
-    final total = Duration(seconds: widget.durationSec);
+    final total = _audioDur.inMilliseconds > 0
+        ? _audioDur
+        : Duration(seconds: widget.durationSec);
     final progress = total.inMilliseconds == 0
         ? 0.0
         : (_pos.inMilliseconds / total.inMilliseconds).clamp(0.0, 1.0);
+    final started = _playing || _pos > Duration.zero;
     return SizedBox(
-      width: 220,
+      width: 232,
       child: Row(
         children: [
           InkWell(
             onTap: _toggle,
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(21),
             child: Container(
-              width: 36,
-              height: 36,
+              width: 40,
+              height: 40,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: widget.textColor.withValues(alpha: 0.2),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    widget.textColor.withValues(alpha: 0.30),
+                    widget.textColor.withValues(alpha: 0.16),
+                  ],
+                ),
               ),
               child: widget.loading
                   ? const Padding(
-                      padding: EdgeInsets.all(8),
+                      padding: EdgeInsets.all(11),
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
                         color: Colors.white,
                       ),
                     )
                   : Icon(
-                      _playing ? Icons.pause : Icons.play_arrow,
+                      _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
                       color: widget.textColor,
-                      size: 22,
+                      size: 24,
                     ),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(2),
-                  child: LinearProgressIndicator(
-                    value: progress,
-                    minHeight: 3,
-                    backgroundColor: widget.textColor.withValues(alpha: 0.2),
-                    valueColor: AlwaysStoppedAnimation(widget.textColor),
+                SizedBox(
+                  height: 26,
+                  child: LayoutBuilder(
+                    builder: (ctx, c) => GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (d) =>
+                          _seekFraction(d.localPosition.dx / c.maxWidth),
+                      onHorizontalDragUpdate: (d) =>
+                          _seekFraction(d.localPosition.dx / c.maxWidth),
+                      child: CustomPaint(
+                        size: Size(c.maxWidth, 26),
+                        painter: _WaveformPainter(
+                          bars: _bars,
+                          progress: progress,
+                          bg: widget.textColor.withValues(alpha: 0.30),
+                          fill: widget.textColor,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  _fmt(total),
-                  style: TextStyle(
-                    color: widget.textColor.withValues(alpha: 0.7),
-                    fontSize: 11,
-                  ),
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    Text(
+                      _fmt(started ? _pos : total),
+                      style: TextStyle(
+                        color: widget.textColor.withValues(alpha: 0.7),
+                        fontSize: 11,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    const Spacer(),
+                    if (started)
+                      GestureDetector(
+                        onTap: _cycleSpeed,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: widget.textColor.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(7),
+                          ),
+                          child: Text(
+                            _speed == _speed.roundToDouble()
+                                ? '${_speed.toInt()}x'
+                                : '${_speed}x',
+                            style: TextStyle(
+                              color: widget.textColor,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ],
             ),

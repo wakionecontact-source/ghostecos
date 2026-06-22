@@ -661,6 +661,8 @@ class ChatRepo {
               'iv': env['iv'],
               if (type == 'voice') 'voice': true,
               if (type == 'voice') 'duration': env['duration'] ?? 0,
+              if (type == 'voice' && env['waveform'] != null)
+                'waveform': env['waveform'],
             }
           : null,
     );
@@ -726,6 +728,7 @@ class ChatRepo {
     required String fileName,
     bool voice = false,
     int duration = 0,
+    List<double>? waveform,
   }) async {
     final tempSidId = -DateTime.now().microsecondsSinceEpoch;
     final tmpKey = 'tmp-$tempSidId';
@@ -745,6 +748,7 @@ class ChatRepo {
           'size': bytes.length,
           if (voice) 'voice': true,
           if (voice) 'duration': duration,
+          if (voice && waveform != null) 'waveform': waveform,
         },
       ),
     );
@@ -781,6 +785,7 @@ class ChatRepo {
         'iv': base64Encode(iv),
         if (voice) 'voice': true,
         if (voice) 'duration': duration,
+        if (voice && waveform != null) 'waveform': waveform,
       };
       final ciphertext = await _crypto.encryptFor(
         theirPubRaw: peerPub,
@@ -810,6 +815,7 @@ class ChatRepo {
           'iv': base64Encode(iv),
           if (voice) 'voice': 1,
           if (voice) 'duration': duration,
+          if (voice && waveform != null) 'waveform': waveform,
         }),
         if (recipientOnline) 'delivered': 1,
       });
@@ -1206,6 +1212,8 @@ class ChatRepo {
               'iv': payload['iv'],
               if (type == 'voice') 'voice': true,
               if (type == 'voice') 'duration': payload['duration'] ?? 0,
+              if (type == 'voice' && payload['waveform'] != null)
+                'waveform': payload['waveform'],
             }
           : null,
     );
