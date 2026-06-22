@@ -105,6 +105,22 @@ class ChatRepo {
     // keySyncNotifier, а UI (KeyGate) дозапросит выбор/пароль. Никаких заглушек.
     keySyncNotifier.value = await syncKeys();
     if (kDebugMode) print('[ChatRepo] init keySync → ${keySyncNotifier.value}');
+    // Само-восстановление ключей: если синхронизация не удалась (server-режим
+    // застрял на чужой/битой серверной identity, либо режим не выбран) —
+    // переходим в LOCAL-режим и публикуем СВОЙ pub без заглушек. Иначе это
+    // устройство невидимо для отправителей (его ключа нет на сервере) и не
+    // расшифрует ничего. Local = per-device fanout, который и есть боевой v1.
+    if (keySyncNotifier.value != KeySyncOutcome.ok) {
+      if (kDebugMode) {
+        print(
+          '[ChatRepo] keySync != ok → fallback в local-режим (публикуем свой ключ)',
+        );
+      }
+      keySyncNotifier.value = await syncKeys(chosenMode: 'local');
+      if (kDebugMode) {
+        print('[ChatRepo] после local-fallback → ${keySyncNotifier.value}');
+      }
+    }
 
     // Загрузить локальный список диалогов сразу.
     final dialogs = await _db.getDialogs();
@@ -348,6 +364,29 @@ class ChatRepo {
     }
     await _loadPeerKeys(username);
     return _peerDevicePubsCache[username] ?? [_peerPubCache[username]!];
+  }
+
+  /// Пробует расшифровать конверт ВСЕМИ известными ключами отправителя
+  /// (device_pubkeys + owner). У мульти-девайс отправителя сообщение
+  /// зашифровано приватником ОДНОГО устройства — подходит ровно один pub,
+  /// поэтому одного owner-ключа (getPeerPub) мало. Возвращает plaintext JSON
+  /// или null, если не подошёл ни один ключ.
+  Future<String?> _tryDecryptAnyPub(String peerUsername, String cipher) async {
+    final pubs = <Uint8List>[];
+    try {
+      pubs.addAll(await getPeerDevicePubs(peerUsername));
+    } catch (_) {}
+    try {
+      pubs.add(await getPeerPub(peerUsername));
+    } catch (_) {}
+    for (final pub in pubs) {
+      try {
+        return await _crypto.decryptFrom(theirPubRaw: pub, envelopeB64: cipher);
+      } catch (_) {
+        // не тот ключ — пробуем следующий
+      }
+    }
+    return null;
   }
 
   Future<void> _loadPeerKeys(String username) async {
@@ -1084,39 +1123,29 @@ class ChatRepo {
         : m['from_username'] as String;
     // Pubkey пира одинаков и для исходящего, и для входящего (DM один общий
     // ECDH с peer.static_pub). Раньше тут был баг с бессмысленным тернарником.
-    final senderPub = await getPeerPub(peerUsername);
     final cipher = m['ciphertext'] as String;
-    String plainJson;
-    try {
-      plainJson = await _crypto.decryptFrom(
-        theirPubRaw: senderPub,
-        envelopeB64: cipher,
-      );
-    } catch (e) {
+    // Шаг 1: перебираем ВСЕ ключи отправителя (device_pubkeys + owner) — у
+    // мульти-девайс отправителя сообщение зашифровано приватником одного
+    // устройства, owner/primary часто ≠ device-ключам.
+    String? plain = await _tryDecryptAnyPub(peerUsername, cipher);
+    if (plain == null) {
+      // Шаг 2: ни один известный ключ не подошёл — мог смениться. Перетягиваем
+      // свежие device_pubkeys+owner с сервера (+ DB-pin) и пробуем ещё раз.
       if (kDebugMode) {
         print(
-          '[ChatRepo._ingestIncoming] decrypt fail (peer=$peerUsername): $e',
+          '[ChatRepo._ingestIncoming] decrypt fail (peer=$peerUsername) — refetch keys',
         );
       }
-      // Шаг 2: ключ пира мог смениться — перепиновываем (свежий pub с сервера +
-      // DB-pin) и пробуем расшифровать ЭТО же сообщение заново (не только следующее).
-      try {
-        _peerDevicePubsCache.remove(peerUsername);
-        await _refreshPeerPubAfterDecryptFail(peerUsername);
-        final freshPub = await getPeerPub(peerUsername);
-        plainJson = await _crypto.decryptFrom(
-          theirPubRaw: freshPub,
-          envelopeB64: cipher,
-        );
-      } catch (_) {
-        // Шаг 3: и со свежим ключом не вышло → сообщение зашифровано ключом,
-        // которого уже нет (наш ключ менялся / другое устройство). Флаг
-        // _keyMismatch — UI предложит: пересоздать свой ключ ИЛИ синхронизировать
-        // ключ с других устройств аккаунта.
-        plainJson =
-            '{"type":"msg","text":"[не удалось расшифровать — ключ собеседника мог измениться]","_keyMismatch":true}';
-      }
+      _peerDevicePubsCache.remove(peerUsername);
+      await _refreshPeerPubAfterDecryptFail(peerUsername);
+      plain = await _tryDecryptAnyPub(peerUsername, cipher);
     }
+    // Шаг 3: совсем не вышло → ключ, которого уже нет (наш менялся / чужое
+    // устройство), ЛИБО fanout-копия для ДРУГОГО нашего устройства. _keyMismatch
+    // — UI предложит: пересоздать свой ключ ИЛИ синхронизировать с устройств.
+    final String plainJson =
+        plain ??
+        '{"type":"msg","text":"[не удалось расшифровать — ключ собеседника мог измениться]","_keyMismatch":true}';
     final payload = _parsePayload(plainJson);
     final type = payload['type'] as String? ?? 'msg';
 
