@@ -966,10 +966,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 ),
                               )
                             : GestureDetector(
+                                onTap: () {
+                                  if (!_recording) _startRecording();
+                                },
                                 onLongPressStart: (_) => _startRecording(),
-                                onLongPressEnd: (_) => _stopAndSendRecording(),
-                                onLongPressCancel: () =>
-                                    _stopAndSendRecording(cancel: true),
                                 child: _circleBtn(
                                   const Icon(
                                     Icons.mic,
@@ -1035,6 +1035,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ),
         ),
         const SizedBox(width: 8),
+        // Кнопка отправки голосового (надёжно, не зависит от удержания).
+        GestureDetector(
+          onTap: () => _stopAndSendRecording(),
+          child: Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(colors: [GE.primary2, GE.primary]),
+            ),
+            alignment: Alignment.center,
+            child: const Icon(Icons.send, color: Colors.white, size: 18),
+          ),
+        ),
       ],
     );
   }
