@@ -843,6 +843,23 @@ body:has(#screenProfile.active),
 body:has(#screenFullProfile.active){
   --header-h: 56px !important;
 }
+/* Десктоп: в профиле логотип GhostSocial уже в sidebar — скрываем второй в header
+   и сам header (gap слева от sidebar, обрезание справа). full-profile-header
+   с «← Профиль» остаётся (он sticky внутри screen). */
+@media (min-width:1000px){
+  body.profile-mode header,
+  body:has(#screenProfile.active) header,
+  body:has(#screenFullProfile.active) header{display:none !important;}
+  body.profile-mode,
+  body:has(#screenProfile.active),
+  body:has(#screenFullProfile.active){
+    --header-h: 0px !important;
+    padding-top: env(safe-area-inset-top) !important;
+  }
+  /* full-profile-header вверху экрана — он был sticky top:56px, теперь header нет → top:0. */
+  body.profile-mode .full-profile-header,
+  body:has(#screenFullProfile.active) .full-profile-header{top:0 !important;}
+}
 
 /* шапка уезжает вверх на минисках */
 #appHeader{transition:transform .32s cubic-bezier(.4,0,.2,1),opacity .25s;}
