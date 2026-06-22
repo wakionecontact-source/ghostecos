@@ -8534,7 +8534,7 @@ renderDialogs = function(filter=''){
       list.innerHTML = supportHtml + `<div class="sb-empty"><i class="fa-regular fa-comments"></i>Ничего не найдено</div>`;
     } else if (supportHtml) {
       list.innerHTML = supportHtml + `<div style="padding:24px 14px;color:var(--sub);font-size:13px;text-align:center;line-height:1.55;">
-        У тебя пока нет других чатов. Начни первый <a href="javascript:openNewChat()" style="color:var(--primary);text-decoration:none;font-weight:700;">через ✏️</a> вверху, или создай группу.
+        У тебя пока нет других чатов. Начни первый <a href="javascript:openNewChat()" style="color:var(--primary);text-decoration:none;font-weight:700;">через <i class="fa-solid fa-pen-to-square"></i></a> вверху, или создай группу.
       </div>`;
     } else {
       list.innerHTML = `<div class="sb-empty">
