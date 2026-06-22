@@ -56,6 +56,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Timer? _recordTicker;
   Duration _recordDur = Duration.zero;
   final List<double> _recWave = [];
+  bool _handsFree = false; // true = тап-запись (ждём кнопку), false = удержание
 
   @override
   void initState() {
@@ -288,7 +289,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _startRecording() async {
+  Future<void> _startRecording({bool handsFree = false}) async {
     if (_recording) return;
     try {
       final has = await _recorder.hasPermission();
@@ -299,17 +300,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final dir = await getTemporaryDirectory();
       final path =
           '${dir.path}/ghost_voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      // Сжатие на устройстве: голосу хватает 24кГц/32кбит — файл в разы меньше.
       await _recorder.start(
         const RecordConfig(
           encoder: AudioEncoder.aacLc,
-          sampleRate: 44100,
+          sampleRate: 24000,
           numChannels: 1,
+          bitRate: 32000,
         ),
         path: path,
       );
       _recordStartedAt = DateTime.now().millisecondsSinceEpoch;
       setState(() {
         _recording = true;
+        _handsFree = handsFree;
         _recordDur = Duration.zero;
         _recWave.clear();
       });
@@ -913,17 +917,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-            child: _recording
-                ? _recordingBar()
-                : Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      IconButton(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                // Лево: при записи — отмена (delete), иначе — вложения.
+                _recording
+                    ? IconButton(
+                        icon: Icon(Icons.delete, color: GE.red),
+                        onPressed: () => _stopAndSendRecording(cancel: true),
+                      )
+                    : IconButton(
                         icon: Icon(Icons.attach_file, color: GE.sub),
                         onPressed: _sending ? null : _openAttachSheet,
                       ),
-                      Expanded(
-                        child: TextField(
+                // Середина: при записи — таймер+живая вейвформа, иначе поле ввода.
+                Expanded(
+                  child: _recording
+                      ? _recordingMiddle()
+                      : TextField(
                           controller: _inputCtrl,
                           minLines: 1,
                           maxLines: 6,
@@ -941,46 +952,66 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             ),
                           ),
                         ),
-                      ),
-                      Material(
-                        color: Colors.transparent,
-                        child: hasText
-                            ? InkWell(
-                                customBorder: const CircleBorder(),
-                                onTap: _sending ? null : _send,
-                                child: _circleBtn(
-                                  _sending
-                                      ? const SizedBox(
-                                          width: 16,
-                                          height: 16,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.white,
-                                          ),
-                                        )
-                                      : const Icon(
-                                          Icons.send,
-                                          color: Colors.white,
-                                          size: 18,
-                                        ),
-                                ),
-                              )
-                            : GestureDetector(
-                                onTap: () {
-                                  if (!_recording) _startRecording();
-                                },
-                                onLongPressStart: (_) => _startRecording(),
-                                child: _circleBtn(
-                                  const Icon(
-                                    Icons.mic,
+                ),
+                // Право: текст→отправка; запись-hands-free→отправка голосового;
+                // иначе микрофон (тап=hands-free; удержание→отпуск=отправка).
+                Material(
+                  color: Colors.transparent,
+                  child: hasText
+                      ? InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: _sending ? null : _send,
+                          child: _circleBtn(
+                            _sending
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Icon(
+                                    Icons.send,
                                     color: Colors.white,
-                                    size: 20,
+                                    size: 18,
                                   ),
-                                ),
-                              ),
-                      ),
-                    ],
-                  ),
+                          ),
+                        )
+                      : (_recording && _handsFree)
+                      ? GestureDetector(
+                          onTap: () => _stopAndSendRecording(),
+                          child: _circleBtn(
+                            const Icon(
+                              Icons.send,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                          ),
+                        )
+                      : GestureDetector(
+                          onTap: () {
+                            if (!_recording) _startRecording(handsFree: true);
+                          },
+                          onLongPressStart: (_) {
+                            if (!_recording) _startRecording(handsFree: false);
+                          },
+                          onLongPressEnd: (_) {
+                            if (_recording && !_handsFree) {
+                              _stopAndSendRecording();
+                            }
+                          },
+                          child: _circleBtn(
+                            const Icon(
+                              Icons.mic,
+                              color: Colors.white,
+                              size: 20,
+                            ),
+                          ),
+                        ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -998,58 +1029,44 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     child: child,
   );
 
-  Widget _recordingBar() {
+  // Середина композера при записи: точка + таймер + живая вейвформа.
+  // delete (отмена) — левая кнопка, send — правая (см. _composer).
+  Widget _recordingMiddle() {
     final mm = _recordDur.inMinutes.remainder(60).toString().padLeft(2, '0');
     final ss = _recordDur.inSeconds.remainder(60).toString().padLeft(2, '0');
     final recent = _recWave.length > 40
         ? _recWave.sublist(_recWave.length - 40)
         : _recWave;
-    return Row(
-      children: [
-        IconButton(
-          icon: Icon(Icons.delete, color: GE.red),
-          onPressed: () => _stopAndSendRecording(cancel: true),
-        ),
-        Icon(Icons.fiber_manual_record, color: GE.red, size: 14),
-        const SizedBox(width: 8),
-        Text(
-          '$mm:$ss',
-          style: TextStyle(
-            color: GE.text,
-            fontFeatures: const [FontFeature.tabularFigures()],
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Icon(Icons.fiber_manual_record, color: GE.red, size: 12),
+          const SizedBox(width: 6),
+          Text(
+            '$mm:$ss',
+            style: TextStyle(
+              color: GE.text,
+              fontSize: 13,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
           ),
-        ),
-        const SizedBox(width: 10),
-        // Живая вейвформа: растёт по мере речи (последние ~40 отсчётов).
-        Expanded(
-          child: SizedBox(
-            height: 24,
-            child: CustomPaint(
-              painter: _WaveformPainter(
-                bars: recent.isEmpty ? const [0.1] : recent,
-                progress: 1.0,
-                bg: GE.primary.withValues(alpha: 0.4),
-                fill: GE.primary,
+          const SizedBox(width: 10),
+          Expanded(
+            child: SizedBox(
+              height: 24,
+              child: CustomPaint(
+                painter: _WaveformPainter(
+                  bars: recent.isEmpty ? const [0.1] : recent,
+                  progress: 1.0,
+                  bg: GE.primary.withValues(alpha: 0.4),
+                  fill: GE.primary,
+                ),
               ),
             ),
           ),
-        ),
-        const SizedBox(width: 8),
-        // Кнопка отправки голосового (надёжно, не зависит от удержания).
-        GestureDetector(
-          onTap: () => _stopAndSendRecording(),
-          child: Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(colors: [GE.primary2, GE.primary]),
-            ),
-            alignment: Alignment.center,
-            child: const Icon(Icons.send, color: Colors.white, size: 18),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
