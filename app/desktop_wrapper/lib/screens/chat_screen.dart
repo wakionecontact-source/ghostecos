@@ -85,7 +85,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _scrollToSid(widget.highlightSid!);
         setState(() => _highlightSid = widget.highlightSid);
         _highlightTimer?.cancel();
-        _highlightTimer = Timer(const Duration(seconds: 2), () {
+        _highlightTimer = Timer(const Duration(seconds: 3), () {
           if (mounted) setState(() => _highlightSid = null);
         });
       } else {
@@ -1067,8 +1067,12 @@ class _Bubble extends StatelessWidget {
       alignment: align,
       decoration: highlighted
           ? BoxDecoration(
-              color: GE.primary.withValues(alpha: 0.15),
+              color: GE.primary.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(GE.radiusMd),
+              border: Border.all(
+                color: GE.primary.withValues(alpha: 0.75),
+                width: 1.5,
+              ),
             )
           : null,
       padding: highlighted ? const EdgeInsets.all(4) : EdgeInsets.zero,
@@ -1087,8 +1091,8 @@ class _Bubble extends StatelessWidget {
             borderRadius: BorderRadius.only(
               topLeft: const Radius.circular(16),
               topRight: const Radius.circular(16),
-              bottomLeft: Radius.circular(mine ? 16 : 4),
-              bottomRight: Radius.circular(mine ? 4 : 16),
+              bottomLeft: Radius.circular(mine ? 16 : 6),
+              bottomRight: Radius.circular(mine ? 6 : 16),
             ),
             border: Border.all(
               color: Colors.white.withValues(alpha: mine ? 0.16 : 0.07),
@@ -1189,15 +1193,19 @@ class _Bubble extends StatelessWidget {
                             vertical: 2,
                           ),
                           decoration: BoxDecoration(
-                            color: textColor.withValues(alpha: 0.18),
+                            color: textColor.withValues(alpha: 0.28),
                             borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: textColor.withValues(alpha: 0.35),
+                              width: 0.5,
+                            ),
                           ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               _chatReactionIcon(
                                 e.key,
-                                size: 12,
+                                size: 14,
                                 color: textColor,
                               ),
                               const SizedBox(width: 3),
@@ -1218,14 +1226,14 @@ class _Bubble extends StatelessWidget {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (m.edited)
-                    Text(
-                      'изм. ',
-                      style: TextStyle(
-                        color: textColor.withValues(alpha: 0.55),
-                        fontSize: 10,
-                      ),
+                  if (m.edited) ...[
+                    Icon(
+                      Icons.edit,
+                      size: 10,
+                      color: textColor.withValues(alpha: 0.6),
                     ),
+                    const SizedBox(width: 3),
+                  ],
                   Text(
                     _formatTime(m.createdAt),
                     style: TextStyle(
@@ -1254,10 +1262,10 @@ class _Bubble extends StatelessWidget {
       return const Icon(Icons.access_time, size: 11, color: Colors.white70);
     }
     if (m.read) {
-      return Icon(Icons.done_all, size: 12, color: GE.blue);
+      return Icon(Icons.done_all, size: 14, color: GE.blue);
     }
     if (m.delivered) {
-      return const Icon(Icons.done, size: 12, color: Colors.white70);
+      return const Icon(Icons.done, size: 13, color: Colors.white70);
     }
     return const Icon(Icons.save_outlined, size: 11, color: Colors.white54);
   }
