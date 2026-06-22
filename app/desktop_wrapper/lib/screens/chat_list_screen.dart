@@ -91,9 +91,14 @@ class _ChatListScreenState extends State<ChatListScreen> {
             children: [
               Icon(Icons.shield_outlined, color: GE.primary, size: 22),
               const SizedBox(width: 8),
-              Text('Чаты',
-                  style: TextStyle(
-                      color: GE.text, fontSize: 20, fontWeight: FontWeight.w800)),
+              Text(
+                'Чаты',
+                style: TextStyle(
+                  color: GE.text,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
               const Spacer(),
               // Кнопка «Новый чат» убрана — поиск ниже сам открывает чат по
               // username (если совпадение точное, можно начать переписку).
@@ -155,8 +160,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
-          child: Text('Ничего не найдено',
-              style: TextStyle(color: GE.sub, fontSize: 14)),
+          child: Text(
+            'Ничего не найдено',
+            style: TextStyle(color: GE.sub, fontSize: 14),
+          ),
         ),
       );
     }
@@ -168,7 +175,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
       children: [
         if (dialogsHits.isNotEmpty) ...[
           _sectionHeader('Чаты'),
-          ...dialogsHits.map((h) => _DialogTile(h.dialog!, onTap: _clearSearch)),
+          ...dialogsHits.map(
+            (h) => _DialogTile(h.dialog!, onTap: _clearSearch),
+          ),
         ],
         if (usersHits.isNotEmpty) ...[
           _sectionHeader('Пользователи'),
@@ -176,13 +185,15 @@ class _ChatListScreenState extends State<ChatListScreen> {
         ],
         if (msgHits.isNotEmpty) ...[
           _sectionHeader('Сообщения'),
-          ...msgHits.map((h) => _MessageHitTile(
-                h.message!,
-                onTap: () {
-                  _clearSearch();
-                  _openMessage(h.message!);
-                },
-              )),
+          ...msgHits.map(
+            (h) => _MessageHitTile(
+              h.message!,
+              onTap: () {
+                _clearSearch();
+                _openMessage(h.message!);
+              },
+            ),
+          ),
         ],
         const SizedBox(height: 80),
       ],
@@ -192,20 +203,25 @@ class _ChatListScreenState extends State<ChatListScreen> {
   Widget _sectionHeader(String text) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
-      child: Text(text.toUpperCase(),
-          style: TextStyle(
-              color: GE.sub, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
+      child: Text(
+        text.toUpperCase(),
+        style: TextStyle(
+          color: GE.sub,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.5,
+        ),
+      ),
     );
   }
 
   void _openMessage(StoredMessage m) {
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => ChatScreen(
-        peer: m.peer,
-        displayName: m.peer,
-        highlightSid: m.sid,
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            ChatScreen(peer: m.peer, displayName: m.peer, highlightSid: m.sid),
       ),
-    ));
+    );
   }
 
   Widget _empty() {
@@ -220,12 +236,20 @@ class _ChatListScreenState extends State<ChatListScreen> {
             children: [
               Icon(Icons.chat_bubble_outline, size: 48, color: GE.primary),
               const SizedBox(height: 14),
-              Text('Пока нет чатов',
-                  style: TextStyle(color: GE.text, fontSize: 16, fontWeight: FontWeight.w600)),
+              Text(
+                'Пока нет чатов',
+                style: TextStyle(
+                  color: GE.text,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               const SizedBox(height: 6),
-              Text('Введи @username сверху, чтобы найти',
-                  style: TextStyle(color: GE.sub, fontSize: 13),
-                  textAlign: TextAlign.center),
+              Text(
+                'Введи @username сверху, чтобы найти',
+                style: TextStyle(color: GE.sub, fontSize: 13),
+                textAlign: TextAlign.center,
+              ),
               const SizedBox(height: 16),
               GlassButton(
                 label: 'Новый чат',
@@ -257,7 +281,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
           style: TextStyle(color: GE.text),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Отмена'),
+          ),
           TextButton(
             onPressed: () {
               final u = ctrl.text.trim().replaceFirst('@', '');
@@ -269,9 +296,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
       ),
     );
     if (username == null || !mounted) return;
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => ChatScreen(peer: username, displayName: username),
-    ));
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChatScreen(peer: username, displayName: username),
+      ),
+    );
   }
 }
 
@@ -287,9 +316,12 @@ class _DialogTile extends StatelessWidget {
       borderRadius: BorderRadius.circular(GE.radiusMd),
       onTap: () {
         onTap?.call();
-        Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => ChatScreen(peer: d.username, displayName: d.displayName),
-        ));
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) =>
+                ChatScreen(peer: d.username, displayName: d.displayName),
+          ),
+        );
       },
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -298,9 +330,11 @@ class _DialogTile extends StatelessWidget {
             GestureDetector(
               onTap: d.username.startsWith('g:')
                   ? null
-                  : () => Navigator.of(context).push(MaterialPageRoute(
+                  : () => Navigator.of(context).push(
+                      MaterialPageRoute(
                         builder: (_) => ProfileScreen(username: d.username),
-                      )),
+                      ),
+                    ),
               child: _Avatar(d.displayName, size: 48),
             ),
             const SizedBox(width: 12),
@@ -311,36 +345,53 @@ class _DialogTile extends StatelessWidget {
                   Row(
                     children: [
                       Expanded(
-                        child: Text(d.displayName,
-                            maxLines: 1, overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: GE.text, fontSize: 15, fontWeight: FontWeight.w600,
-                            )),
+                        child: Text(
+                          d.displayName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: GE.text,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
-                      Text(_formatTime(d.lastAt),
-                          style: TextStyle(color: GE.sub, fontSize: 11)),
+                      Text(
+                        _formatTime(d.lastAt),
+                        style: TextStyle(color: GE.sub, fontSize: 11),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 3),
                   Row(
                     children: [
                       Expanded(
-                        child: Text(d.lastText.isEmpty ? '—' : d.lastText,
-                            maxLines: 1, overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: GE.sub, fontSize: 13)),
+                        child: Text(
+                          d.lastText.isEmpty ? '—' : d.lastText,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: GE.sub, fontSize: 13),
+                        ),
                       ),
                       if (d.unread > 0) ...[
                         const SizedBox(width: 6),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: GE.primary,
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          child: Text('${d.unread > 99 ? "99+" : d.unread}',
-                              style: const TextStyle(
-                                color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700,
-                              )),
+                          child: Text(
+                            '${d.unread > 99 ? "99+" : d.unread}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
                         ),
                       ],
                     ],
@@ -361,12 +412,29 @@ class _DialogTile extends StatelessWidget {
       if (at is int) {
         dt = DateTime.fromMillisecondsSinceEpoch(at * 1000);
       } else {
-        dt = DateTime.parse(at.toString());
+        final p = DateTime.parse(at.toString());
+        // created_at — наивная UTC-строка (без 'Z'); помечаем UTC, чтобы toLocal
+        // ниже дал верное местное время (а не уехало на −3ч).
+        dt = p.isUtc
+            ? p
+            : DateTime.utc(
+                p.year,
+                p.month,
+                p.day,
+                p.hour,
+                p.minute,
+                p.second,
+                p.millisecond,
+              );
       }
-    } catch (_) { return ''; }
+    } catch (_) {
+      return '';
+    }
     final now = DateTime.now();
     final local = dt.toLocal();
-    if (now.year == local.year && now.month == local.month && now.day == local.day) {
+    if (now.year == local.year &&
+        now.month == local.month &&
+        now.day == local.day) {
       return DateFormat('HH:mm').format(local);
     }
     final daysAgo = now.difference(local).inDays;
@@ -395,9 +463,12 @@ class _UserTile extends StatelessWidget {
       borderRadius: BorderRadius.circular(GE.radiusMd),
       onTap: () {
         onTap?.call();
-        Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => ChatScreen(peer: u.username, displayName: u.displayName),
-        ));
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) =>
+                ChatScreen(peer: u.username, displayName: u.displayName),
+          ),
+        );
       },
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -409,12 +480,20 @@ class _UserTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(u.displayName,
-                      maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          color: GE.text, fontSize: 14, fontWeight: FontWeight.w600)),
-                  Text('@${u.username}${u.isGuest ? " · гость" : ""}',
-                      style: TextStyle(color: GE.sub, fontSize: 12)),
+                  Text(
+                    u.displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: GE.text,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    '@${u.username}${u.isGuest ? " · гость" : ""}',
+                    style: TextStyle(color: GE.sub, fontSize: 12),
+                  ),
                 ],
               ),
             ),
@@ -447,24 +526,37 @@ class _MessageHitTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(children: [
-                    Expanded(
-                      child: Text(m.peer,
-                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          m.peer,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                              color: GE.text, fontSize: 13, fontWeight: FontWeight.w600)),
-                    ),
-                    if (m.fromMe)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 6),
-                        child: Text('вы',
-                            style: TextStyle(color: GE.sub, fontSize: 10)),
+                            color: GE.text,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
-                  ]),
+                      if (m.fromMe)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 6),
+                          child: Text(
+                            'вы',
+                            style: TextStyle(color: GE.sub, fontSize: 10),
+                          ),
+                        ),
+                    ],
+                  ),
                   const SizedBox(height: 2),
-                  Text(m.text,
-                      maxLines: 2, overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: GE.sub, fontSize: 13)),
+                  Text(
+                    m.text,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: GE.sub, fontSize: 13),
+                  ),
                 ],
               ),
             ),
@@ -483,7 +575,8 @@ class _Avatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: size, height: size,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: LinearGradient(colors: [GE.primary2, GE.primary]),
@@ -492,7 +585,9 @@ class _Avatar extends StatelessWidget {
       child: Text(
         name.isNotEmpty ? name[0].toUpperCase() : '?',
         style: TextStyle(
-          color: Colors.white, fontWeight: FontWeight.w800, fontSize: size * 0.4,
+          color: Colors.white,
+          fontWeight: FontWeight.w800,
+          fontSize: size * 0.4,
         ),
       ),
     );

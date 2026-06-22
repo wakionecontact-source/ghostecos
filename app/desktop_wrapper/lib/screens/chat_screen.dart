@@ -1266,9 +1266,25 @@ class _Bubble extends StatelessWidget {
     if (at == null) return '';
     DateTime dt;
     try {
-      dt = at is int
-          ? DateTime.fromMillisecondsSinceEpoch(at * 1000)
-          : DateTime.parse(at.toString());
+      if (at is int) {
+        dt = DateTime.fromMillisecondsSinceEpoch(at * 1000);
+      } else {
+        final p = DateTime.parse(at.toString());
+        // Сервер шлёт created_at наивной UTC-строкой (без 'Z') → DateTime.parse
+        // трактовал её как локаль и время уезжало на TZ-смещение (−3ч МСК).
+        // Помечаем как UTC, потом toLocal даёт верное местное время.
+        dt = p.isUtc
+            ? p
+            : DateTime.utc(
+                p.year,
+                p.month,
+                p.day,
+                p.hour,
+                p.minute,
+                p.second,
+                p.millisecond,
+              );
+      }
     } catch (_) {
       return '';
     }
