@@ -68,7 +68,7 @@ function onProfAvClick(ev){
   const img = el && el.querySelector('img');
   const url = (img && img.src) || (me && me.avatar_url);
   if (url){
-    openProfAvLightbox(url, (me && (me.display_name || me.username)) || '');
+    openProfAvLightbox(url, (me && (me.display_name || me.username)) || '', true);
   } else {
     document.getElementById('profAvFile').click();
   }
@@ -123,7 +123,7 @@ async function onProfAvRemove(){
     alert('Не удалось убрать: ' + (e.message || e));
   }
 }
-function openProfAvLightbox(url, title){
+function openProfAvLightbox(url, title, editable){
   let lb = document.getElementById('profAvLb');
   if (!lb){
     lb = document.createElement('div');
@@ -131,7 +131,7 @@ function openProfAvLightbox(url, title){
     lb.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.92);backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;cursor:zoom-out;';
     lb.innerHTML = `
       <button style="position:absolute;top:18px;right:18px;width:42px;height:42px;border-radius:50%;border:none;background:rgba(255,255,255,0.15);color:#fff;font-size:18px;cursor:pointer;" onclick="closeProfAvLb()">×</button>
-      <button style="position:absolute;top:18px;right:70px;width:42px;height:42px;border-radius:50%;border:none;background:rgba(255,255,255,0.15);color:#fff;font-size:14px;cursor:pointer;" onclick="event.stopPropagation();document.getElementById('profAvFile').click();closeProfAvLb()" title="Сменить"><i class="fa-solid fa-camera"></i></button>
+      <button id="profAvLbEdit" style="position:absolute;top:18px;right:70px;width:42px;height:42px;border-radius:50%;border:none;background:rgba(255,255,255,0.15);color:#fff;font-size:14px;cursor:pointer;display:none;" onclick="event.stopPropagation();document.getElementById('profAvFile').click();closeProfAvLb()" title="Сменить"><i class="fa-solid fa-camera"></i></button>
       <img id="profAvLbImg" src="" style="max-width:92vw;max-height:85vh;border-radius:12px;cursor:default;" onclick="event.stopPropagation()">
       <div id="profAvLbTitle" style="position:absolute;bottom:24px;left:50%;transform:translateX(-50%);color:#fff;font-size:15px;font-weight:600;"></div>`;
     lb.addEventListener('click', (e) => { if (e.target === lb) closeProfAvLb(); });
@@ -139,6 +139,7 @@ function openProfAvLightbox(url, title){
   }
   document.getElementById('profAvLbImg').src = url;
   document.getElementById('profAvLbTitle').textContent = title || '';
+  document.getElementById('profAvLbEdit').style.display = editable ? '' : 'none';
   lb.style.display = 'flex';
 }
 function closeProfAvLb(){
@@ -4072,7 +4073,7 @@ async function openFullProfile(username) {
       fa.innerHTML = avaInner(d);
       fa.style.background = d.avatar_url ? 'transparent' : '';
       fa.style.cursor = d.avatar_url ? 'pointer' : '';
-      fa.onclick = d.avatar_url ? (() => openProfAvLightbox(d.avatar_url, d.display_name || d.username)) : null;
+      fa.onclick = d.avatar_url ? (() => openProfAvLightbox(d.avatar_url, d.display_name || d.username, !!d.is_me)) : null;
     }
     document.getElementById('fpName').textContent = d.display_name;
     document.getElementById('fpUser').textContent = '@' + d.username;
