@@ -522,8 +522,9 @@ function updateAnim(a,dt){
       chars.foxy.eyeMat.color.setHex(0xffd24a);grp.position.set(a.x,0,a.z);return;
     }
     if(a.foxyState==='rush'){
-      const dx=a.rushTarget.x-a.x,dz=a.rushTarget.z-a.z,d=Math.hypot(dx,dz)||1;
-      moveEnt(a,dx/d,dz/d,FOXY_RUSH*dt);faceMove(a,grp,dx/d,dz/d,dt);grp.position.set(a.x,0,a.z);
+      const d=Math.hypot(a.rushTarget.x-a.x,a.rushTarget.z-a.z);
+      const dir=pathStep(a,a.rushTarget.x,a.rushTarget.z,dt);   // ОГИБАЕТ углы на скорости рывка (а не втыкается по прямой)
+      moveEnt(a,dir.x,dir.z,FOXY_RUSH*dt);faceMove(a,grp,dir.x,dir.z,dt);grp.position.set(a.x,0,a.z);
       chars.foxy.eyeMat.color.setHex(0xff2a2a);
       if(d<CATCH){ if(G.hidden)jumpscare('foxy'); else a.foxyState='retreat'; }
       return;
@@ -569,7 +570,10 @@ function updateAnim(a,dt){
   if(direct){ const d=dToP||1; dir={x:(tx-a.x)/d,z:(tz-a.z)/d}; }
   else dir=pathStep(a,tx,tz,dt);
   const sp=a.speed*(a.state==='wander'?0.6:a.state==='search'?0.85:1)*dt;
+  const ox=a.x,oz=a.z;
   moveEnt(a,dir.x,dir.z,sp); faceMove(a,grp,dir.x,dir.z,dt); grp.position.set(a.x,0,a.z);
+  // анти-стак: почти не сдвинулся к цели -> сбросить путь и цель патруля, чтобы переложить маршрут
+  if(Math.hypot(a.x-ox,a.z-oz)<sp*0.25){ a.stuckT=(a.stuckT||0)+dt; if(a.stuckT>0.4){a.path=null;a.wanderTo=null;a.stuckT=0;} } else a.stuckT=0;
 }
 function faceMove(a,grp,dx,dz,dt){ if(dx||dz){a.heading=angLerp(a.heading,Math.atan2(dx,dz),clamp(dt*8,0,1));} grp.rotation.y=a.heading; }
 function playerNoisy(){return G.flashOn||keys['ShiftLeft']||keys['ShiftRight'];}
