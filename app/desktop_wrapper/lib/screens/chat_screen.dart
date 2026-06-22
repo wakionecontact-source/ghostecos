@@ -600,108 +600,132 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ),
         body: Stack(
           children: [
-            SafeArea(
-              top: false,
-              child: Column(
-                children: [
-                  Expanded(
-                    // Матовая подложка над mesh: mesh просвечивает, но сообщения читаемы.
-                    // Без BackdropFilter на большом скролле — оптимизация (фрост даёт
-                    // композер ниже + бабблы-стекло поверх).
-                    child: ColoredBox(
-                      color: GE.bg.withValues(alpha: 0.0),
-                      child: ValueListenableBuilder<List<StoredMessage>>(
-                        valueListenable: notif,
-                        builder: (_, msgs, __) {
-                          if (msgs.isEmpty) return _empty();
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            if (mounted && _scrollCtrl.hasClients) {
-                              final at = _scrollCtrl.position.pixels;
-                              final max = _scrollCtrl.position.maxScrollExtent;
-                              if (max - at < 200) _scrollToBottom(true);
-                            }
-                          });
-                          return ListView.builder(
-                            controller: _scrollCtrl,
-                            padding: EdgeInsets.fromLTRB(12, headerPad, 12, 12),
-                            itemCount: msgs.length,
-                            itemBuilder: (_, i) {
-                              final m = msgs[i];
-                              final prev = i > 0 ? msgs[i - 1] : null;
-                              // Линия при смене автора + пилюля-дата при смене дня.
-                              final newSender =
-                                  prev != null && prev.fromMe != m.fromMe;
-                              final newDay =
-                                  prev == null ||
-                                  !_msgSameDay(m.createdAt, prev.createdAt);
-                              final bubble = Dismissible(
-                                key: ValueKey(
-                                  'msg_${m.sid}_${m.tempSid ?? ""}',
-                                ),
-                                direction: DismissDirection.startToEnd,
-                                confirmDismiss: (_) async {
-                                  // Не «исчезаем», а только триггерим reply.
-                                  setState(() => _replyTo = m);
-                                  HapticFeedback.selectionClick();
-                                  return false;
-                                },
-                                background: Container(
-                                  alignment: Alignment.centerLeft,
-                                  padding: const EdgeInsets.only(left: 24),
-                                  child: Icon(
-                                    Icons.reply,
-                                    color: GE.primary,
-                                    size: 22,
+            Positioned.fill(
+              child: SafeArea(
+                top: false,
+                child: Column(
+                  children: [
+                    Expanded(
+                      // Матовая подложка над mesh: mesh просвечивает, но сообщения читаемы.
+                      // Без BackdropFilter на большом скролле — оптимизация (фрост даёт
+                      // композер ниже + бабблы-стекло поверх).
+                      child: ColoredBox(
+                        color: GE.bg.withValues(alpha: 0.0),
+                        child: ValueListenableBuilder<List<StoredMessage>>(
+                          valueListenable: notif,
+                          builder: (_, msgs, __) {
+                            if (msgs.isEmpty) return _empty();
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (mounted && _scrollCtrl.hasClients) {
+                                final at = _scrollCtrl.position.pixels;
+                                final max =
+                                    _scrollCtrl.position.maxScrollExtent;
+                                if (max - at < 200) _scrollToBottom(true);
+                              }
+                            });
+                            return ListView.builder(
+                              controller: _scrollCtrl,
+                              padding: EdgeInsets.fromLTRB(
+                                12,
+                                headerPad,
+                                12,
+                                96,
+                              ),
+                              itemCount: msgs.length,
+                              itemBuilder: (_, i) {
+                                final m = msgs[i];
+                                final prev = i > 0 ? msgs[i - 1] : null;
+                                // Линия при смене автора + пилюля-дата при смене дня.
+                                final newSender =
+                                    prev != null && prev.fromMe != m.fromMe;
+                                final newDay =
+                                    prev == null ||
+                                    !_msgSameDay(m.createdAt, prev.createdAt);
+                                final bubble = Dismissible(
+                                  key: ValueKey(
+                                    'msg_${m.sid}_${m.tempSid ?? ""}',
                                   ),
-                                ),
-                                child: GestureDetector(
-                                  onLongPress: () => _openBubbleMenu(m),
-                                  onDoubleTap: () async {
-                                    try {
-                                      await ChatRepo.instance.reactDmMessage(
-                                        toUsername: widget.peer,
-                                        sid: m.sid,
-                                        emoji: '❤',
-                                      );
-                                    } catch (_) {}
+                                  direction: DismissDirection.startToEnd,
+                                  confirmDismiss: (_) async {
+                                    // Не «исчезаем», а только триггерим reply.
+                                    setState(() => _replyTo = m);
+                                    HapticFeedback.selectionClick();
+                                    return false;
                                   },
-                                  child: _Bubble(
-                                    m,
-                                    myUsername: _myUsername,
-                                    highlighted: m.sid == _highlightSid,
-                                    prevSame:
-                                        i > 0 && msgs[i - 1].fromMe == m.fromMe,
-                                  ),
-                                ),
-                              );
-                              if (!newSender && !newDay) return bubble;
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  if (newDay) _dateChip(m.createdAt),
-                                  if (newSender && !newDay)
-                                    Center(
-                                      child: Container(
-                                        width: 44,
-                                        height: 1,
-                                        margin: const EdgeInsets.symmetric(
-                                          vertical: 7,
-                                        ),
-                                        color: GE.borderStrong,
-                                      ),
+                                  background: Container(
+                                    alignment: Alignment.centerLeft,
+                                    padding: const EdgeInsets.only(left: 24),
+                                    child: Icon(
+                                      Icons.reply,
+                                      color: GE.primary,
+                                      size: 22,
                                     ),
-                                  bubble,
-                                ],
-                              );
-                            },
-                          );
-                        },
+                                  ),
+                                  child: GestureDetector(
+                                    onLongPress: () => _openBubbleMenu(m),
+                                    onDoubleTap: () async {
+                                      try {
+                                        await ChatRepo.instance.reactDmMessage(
+                                          toUsername: widget.peer,
+                                          sid: m.sid,
+                                          emoji: '❤',
+                                        );
+                                      } catch (_) {}
+                                    },
+                                    child: _Bubble(
+                                      m,
+                                      myUsername: _myUsername,
+                                      highlighted: m.sid == _highlightSid,
+                                      prevSame:
+                                          i > 0 &&
+                                          msgs[i - 1].fromMe == m.fromMe,
+                                    ),
+                                  ),
+                                );
+                                if (!newSender && !newDay) return bubble;
+                                return Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    if (newDay) _dateChip(m.createdAt),
+                                    if (newSender && !newDay)
+                                      Center(
+                                        child: Container(
+                                          width: 44,
+                                          height: 1,
+                                          margin: const EdgeInsets.symmetric(
+                                            vertical: 7,
+                                          ),
+                                          color: GE.borderStrong,
+                                        ),
+                                      ),
+                                    bubble,
+                                  ],
+                                );
+                              },
+                            );
+                          },
+                        ),
                       ),
                     ),
-                  ),
-                  if (_replyTo != null || _editing != null) _replyEditBar(),
-                  _composer(),
-                ],
+                  ],
+                ),
+              ),
+            ),
+            // Фрост-композер снизу: лента уходит ЗА него → стекло размывает (как шапка).
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: SafeArea(
+                top: false,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_replyTo != null || _editing != null) _replyEditBar(),
+                    _composer(),
+                  ],
+                ),
               ),
             ),
           ],
@@ -837,79 +861,94 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // НЕ добавляем viewInsets.bottom: Scaffold с resizeToAvoidBottomInset=true
     // (default) уже сжимает body над клавиатурой. Если добавить bottomInset
     // тут — composer улетает на высоту клавиатуры дважды.
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-      child: GlassCard(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-        radius: GE.radiusLg,
-        child: _recording
-            ? _recordingBar()
-            : Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  IconButton(
-                    icon: Icon(Icons.attach_file, color: GE.sub),
-                    onPressed: _sending ? null : _openAttachSheet,
-                  ),
-                  Expanded(
-                    child: TextField(
-                      controller: _inputCtrl,
-                      minLines: 1,
-                      maxLines: 6,
-                      style: TextStyle(color: GE.text, fontSize: 15),
-                      cursorColor: GE.primary,
-                      textInputAction: TextInputAction.newline,
-                      onChanged: (_) => setState(() {}),
-                      decoration: InputDecoration(
-                        hintText: 'Сообщение',
-                        hintStyle: TextStyle(color: GE.sub),
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 10,
-                        ),
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: DecoratedBox(
+          decoration: const BoxDecoration(
+            // Стекло как шапка: тёмный тинт тает кверху + золотистая кромка сверху.
+            border: Border(
+              top: BorderSide(color: Color(0x2BD4B88C), width: 0.7),
+            ),
+            gradient: LinearGradient(
+              begin: Alignment.bottomCenter,
+              end: Alignment.topCenter,
+              colors: [Color(0xCC1C1530), Color(0x801C1530), Color(0x141C1530)],
+              stops: [0.0, 0.6, 1.0],
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+            child: _recording
+                ? _recordingBar()
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      IconButton(
+                        icon: Icon(Icons.attach_file, color: GE.sub),
+                        onPressed: _sending ? null : _openAttachSheet,
                       ),
-                    ),
-                  ),
-                  Material(
-                    color: Colors.transparent,
-                    child: hasText
-                        ? InkWell(
-                            customBorder: const CircleBorder(),
-                            onTap: _sending ? null : _send,
-                            child: _circleBtn(
-                              _sending
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white,
-                                      ),
-                                    )
-                                  : const Icon(
-                                      Icons.send,
-                                      color: Colors.white,
-                                      size: 18,
-                                    ),
-                            ),
-                          )
-                        : GestureDetector(
-                            onLongPressStart: (_) => _startRecording(),
-                            onLongPressEnd: (_) => _stopAndSendRecording(),
-                            onLongPressCancel: () =>
-                                _stopAndSendRecording(cancel: true),
-                            child: _circleBtn(
-                              const Icon(
-                                Icons.mic,
-                                color: Colors.white,
-                                size: 20,
-                              ),
+                      Expanded(
+                        child: TextField(
+                          controller: _inputCtrl,
+                          minLines: 1,
+                          maxLines: 6,
+                          style: TextStyle(color: GE.text, fontSize: 15),
+                          cursorColor: GE.primary,
+                          textInputAction: TextInputAction.newline,
+                          onChanged: (_) => setState(() {}),
+                          decoration: InputDecoration(
+                            hintText: 'Сообщение',
+                            hintStyle: TextStyle(color: GE.sub),
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 10,
                             ),
                           ),
+                        ),
+                      ),
+                      Material(
+                        color: Colors.transparent,
+                        child: hasText
+                            ? InkWell(
+                                customBorder: const CircleBorder(),
+                                onTap: _sending ? null : _send,
+                                child: _circleBtn(
+                                  _sending
+                                      ? const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : const Icon(
+                                          Icons.send,
+                                          color: Colors.white,
+                                          size: 18,
+                                        ),
+                                ),
+                              )
+                            : GestureDetector(
+                                onLongPressStart: (_) => _startRecording(),
+                                onLongPressEnd: (_) => _stopAndSendRecording(),
+                                onLongPressCancel: () =>
+                                    _stopAndSendRecording(cancel: true),
+                                child: _circleBtn(
+                                  const Icon(
+                                    Icons.mic,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                ),
+                              ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+          ),
+        ),
       ),
     );
   }
