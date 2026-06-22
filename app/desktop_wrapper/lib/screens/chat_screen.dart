@@ -627,9 +627,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             itemCount: msgs.length,
                             itemBuilder: (_, i) {
                               final m = msgs[i];
-                              // Тонкая линия-разделитель при смене автора (свой↔чужой).
+                              final prev = i > 0 ? msgs[i - 1] : null;
+                              // Линия при смене автора + пилюля-дата при смене дня.
                               final newSender =
-                                  i > 0 && msgs[i - 1].fromMe != m.fromMe;
+                                  prev != null && prev.fromMe != m.fromMe;
+                              final newDay =
+                                  prev == null ||
+                                  !_msgSameDay(m.createdAt, prev.createdAt);
                               final bubble = Dismissible(
                                 key: ValueKey(
                                   'msg_${m.sid}_${m.tempSid ?? ""}',
@@ -670,20 +674,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   ),
                                 ),
                               );
-                              if (!newSender) return bubble;
+                              if (!newSender && !newDay) return bubble;
                               return Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
-                                  Center(
-                                    child: Container(
-                                      width: 44,
-                                      height: 1,
-                                      margin: const EdgeInsets.symmetric(
-                                        vertical: 7,
+                                  if (newDay) _dateChip(m.createdAt),
+                                  if (newSender && !newDay)
+                                    Center(
+                                      child: Container(
+                                        width: 44,
+                                        height: 1,
+                                        margin: const EdgeInsets.symmetric(
+                                          vertical: 7,
+                                        ),
+                                        color: GE.borderStrong,
                                       ),
-                                      color: GE.borderStrong,
                                     ),
-                                  ),
                                   bubble,
                                 ],
                               );
@@ -1030,6 +1036,85 @@ Widget _chatReactionIcon(String key, {double size = 12, required Color color}) {
     );
   }
   return Icon(ic, size: size, color: color);
+}
+
+/// Парсит created_at (наивная UTC-строка / unix int) → локальное DateTime.
+/// Сервер шлёт UTC без 'Z' — помечаем как UTC, иначе время уезжает на TZ.
+DateTime _msgLocal(dynamic at) {
+  if (at is int) {
+    return DateTime.fromMillisecondsSinceEpoch(at * 1000).toLocal();
+  }
+  final p = DateTime.parse(at.toString());
+  final utc = p.isUtc
+      ? p
+      : DateTime.utc(
+          p.year,
+          p.month,
+          p.day,
+          p.hour,
+          p.minute,
+          p.second,
+          p.millisecond,
+        );
+  return utc.toLocal();
+}
+
+bool _msgSameDay(dynamic a, dynamic b) {
+  final la = _msgLocal(a), lb = _msgLocal(b);
+  return la.year == lb.year && la.month == lb.month && la.day == lb.day;
+}
+
+/// «Сегодня» / «Вчера» / «12 июня» / «12 июня 2024».
+String _msgDateLabel(dynamic at) {
+  final d = _msgLocal(at);
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final day = DateTime(d.year, d.month, d.day);
+  final diff = today.difference(day).inDays;
+  if (diff == 0) return 'Сегодня';
+  if (diff == 1) return 'Вчера';
+  const months = [
+    'января',
+    'февраля',
+    'марта',
+    'апреля',
+    'мая',
+    'июня',
+    'июля',
+    'августа',
+    'сентября',
+    'октября',
+    'ноября',
+    'декабря',
+  ];
+  final base = '${d.day} ${months[d.month - 1]}';
+  return d.year == now.year ? base : '$base ${d.year}';
+}
+
+/// Премиум-пилюля даты-разделителя между днями.
+Widget _dateChip(dynamic at) {
+  return Center(
+    child: Container(
+      margin: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.08),
+          width: 0.5,
+        ),
+      ),
+      child: Text(
+        _msgDateLabel(at),
+        style: TextStyle(
+          color: GE.sub,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    ),
+  );
 }
 
 class _Bubble extends StatelessWidget {
