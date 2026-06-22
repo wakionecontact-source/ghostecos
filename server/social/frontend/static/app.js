@@ -61,91 +61,6 @@ function avaInner(u){
   return ini(u && (u.display_name || u.username));
 }
 
-// ── Side comments panel (desktop sidebar справа от поста, hover-expand) ─────
-const _pscCache = {};  // postId → { top: [...], new: [...] }
-const _pscTab = {};    // postId → 'top' | 'new'
-let _pscObserver = null;
-function pscEnsureObserver(){
-  if (_pscObserver || !('IntersectionObserver' in window)) return;
-  _pscObserver = new IntersectionObserver((entries) => {
-    for (const e of entries){
-      if (e.isIntersecting){
-        const pid = +e.target.dataset.postSide;
-        if (pid && !_pscCache[pid]){ pscFetch(pid, _pscTab[pid] || 'top'); }
-        _pscObserver.unobserve(e.target);
-      }
-    }
-  }, { rootMargin: '200px 0px' });
-}
-function pscScan(){
-  pscEnsureObserver();
-  if (!_pscObserver) return;
-  document.querySelectorAll('.psc-side[data-post-side]').forEach(el => {
-    if (el._pscObserved) return;
-    el._pscObserved = true;
-    _pscObserver.observe(el);
-  });
-}
-async function pscFetch(pid, tab){
-  try {
-    const sort = (tab === 'new') ? 'new' : 'top';
-    const r = await api(`/com/get/${pid}?sort=${sort}&limit=20`);
-    const list = Array.isArray(r) ? r : (r.comments || []);
-    _pscCache[pid] = _pscCache[pid] || {};
-    _pscCache[pid][sort] = list;
-    pscRender(pid);
-  } catch(e){
-    const el = document.querySelector(`.psc-list[data-list="${pid}"]`);
-    if (el) el.innerHTML = '<div class="psc-empty">не удалось загрузить</div>';
-  }
-}
-function pscRender(pid){
-  const tab = _pscTab[pid] || 'top';
-  const list = (_pscCache[pid] && _pscCache[pid][tab]) || [];
-  const el = document.querySelector(`.psc-list[data-list="${pid}"]`);
-  if (!el) return;
-  if (!list.length){ el.innerHTML = '<div class="psc-empty">Комментариев пока нет</div>'; return; }
-  el.innerHTML = list.map(c => {
-    const total = c.reactions ? (c.reactions.total || 0) : 0;
-    return `<div class="psc-item">
-      <div class="psc-author">@${esc(c.username)}<span class="psc-name">${esc(c.display_name || '')}</span></div>
-      <div class="psc-text">${esc((c.text||'').slice(0,300))}</div>
-      ${total ? `<div class="psc-react"><i class="fa-regular fa-heart"></i> ${total}</div>` : ''}
-    </div>`;
-  }).join('');
-}
-function pscSwitchTab(pid, tab){
-  _pscTab[pid] = tab;
-  const aside = document.querySelector(`.psc-side[data-post-side="${pid}"]`);
-  if (aside){
-    aside.querySelectorAll('.psc-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-  }
-  if (_pscCache[pid] && _pscCache[pid][tab]) pscRender(pid);
-  else pscFetch(pid, tab);
-}
-async function pscSend(pid){
-  const inp = document.querySelector(`.psc-input[data-input="${pid}"]`);
-  if (!inp) return;
-  const text = (inp.value || '').trim();
-  if (!text) return;
-  inp.disabled = true;
-  try {
-    await api(`/com/${pid}`, 'POST', { text });
-    inp.value = '';
-    // Сбросим кеш и перезагрузим — новый коммент.
-    delete _pscCache[pid];
-    pscFetch(pid, _pscTab[pid] || 'new');
-    // Обновим счётчик.
-    const aside = document.querySelector(`.psc-side[data-post-side="${pid}"]`);
-    if (aside){ const c = aside.querySelector('.psc-count'); if (c) c.textContent = (+c.textContent || 0) + 1; }
-  } catch(e){
-    alert('Не удалось отправить: ' + (e.message || e));
-  } finally {
-    inp.disabled = false;
-    inp.focus();
-  }
-}
-
 // ── Avatar upload (profile screen) ─────────────────────────────────────
 function onProfAvClick(ev){
   // Берём свежее avatar_url из DOM — me.avatar_url мог устареть.
@@ -912,7 +827,7 @@ const RT = (() => {
       p.am_following = feedPosts[idx].am_following;
       feedPosts[idx] = p;
       document.querySelectorAll(`.post-card[data-id="${p.id}"]`).forEach(card => { card.outerHTML = postHTML(p); });
-      attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios(); pscScan();
+      attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
     }
     else if (t === 'post.react') {
       const id = d.post_id;
@@ -1425,7 +1340,7 @@ async function openSinglePost(postId) {
         renderFeed();
       } else {
         list.insertAdjacentHTML('afterbegin', postHTML(p));
-        attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios(); pscScan();
+        attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
       }
       card = document.querySelector(`.post-card[data-id="${postId}"]`);
     }
@@ -1817,7 +1732,7 @@ function renderFeedAppend(newPosts) {
   newPosts.forEach(p => { html += postHTML(p); });
   list.insertAdjacentHTML('beforeend', html);
   // перевешиваем обработчики — guard _b повесит их только на новые элементы
-  attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios(); pscScan();
+  attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
   observeDots();
   observeDwell();
 }
@@ -1837,7 +1752,7 @@ function renderFeed() {
     html += postHTML(p);
   });
   list.innerHTML = html;
-  attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios(); pscScan();
+  attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
   attachDoubleTap();
   observeDots();
   observeUnreadSep();
@@ -2160,21 +2075,6 @@ function postHTML(p, hq) {
         <i class="fa-solid fa-share"></i>
       </button>
     </div>
-    <aside class="psc-side" data-post-side="${p.id}">
-      <div class="psc-head">
-        <div class="psc-title"><i class="fa-regular fa-comment"></i> Комментарии</div>
-        <span class="psc-count">${p.comments_count || 0}</span>
-      </div>
-      <div class="psc-tabs">
-        <button class="psc-tab active" data-tab="top" onclick="pscSwitchTab(${p.id},'top')"><i class="fa-solid fa-star"></i> Топ</button>
-        <button class="psc-tab" data-tab="new" onclick="pscSwitchTab(${p.id},'new')"><i class="fa-regular fa-clock"></i> Новые</button>
-      </div>
-      <div class="psc-list" data-list="${p.id}"><div class="psc-empty">…</div></div>
-      <div class="psc-input-row">
-        <input class="psc-input" placeholder="Написать комментарий..." data-input="${p.id}" onkeydown="if(event.key==='Enter')pscSend(${p.id})">
-        <button class="psc-send" onclick="pscSend(${p.id})"><i class="fa-solid fa-paper-plane"></i></button>
-      </div>
-    </aside>
   </div>`;
 }
 
@@ -2334,7 +2234,7 @@ async function sendReaction(pid, emoji) {
         tog.querySelector('i').className = `fa-${r.your_emoji ? 'solid' : 'regular'} fa-heart`;
       }
     });
-    attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios(); pscScan();
+    attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
     refreshWallet();  // страховка к WS — для случая когда автор поста = ты сам в другой вкладке
   } catch(e) {}
 }
@@ -2565,7 +2465,7 @@ async function submitEditPost() {
     document.querySelectorAll(`.post-card[data-id="${_editPostId}"]`).forEach(card => {
       card.outerHTML = postHTML(p);
     });
-    attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios(); pscScan();
+    attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
     closeModal('editPostModal');
     showToast('Пост обновлён');
   } catch(e) {
@@ -3533,7 +3433,7 @@ async function switchProfTab(scope, tab) {
         return;
       }
       list.innerHTML = renderProfileFeed(items, uname);
-      attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios(); pscScan();
+      attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
     } catch(e) {
       list.innerHTML = '<div class="empty"><i class="fa-solid fa-triangle-exclamation"></i><p>Ошибка загрузки</p></div>';
     }
@@ -3545,7 +3445,7 @@ async function switchProfTab(scope, tab) {
         return;
       }
       list.innerHTML = reposts.map(p => postHTML(p)).join('');
-      attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios(); pscScan();
+      attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
     } catch(e) {
       list.innerHTML = '<div class="empty"><i class="fa-solid fa-triangle-exclamation"></i><p>Ошибка загрузки</p></div>';
     }
@@ -4210,7 +4110,7 @@ async function openFullProfile(username) {
         ? d.posts.map(p => postHTML(p)).join('') + '<div id="fpLoader" style="text-align:center;padding:16px;display:none"><div class="spinner spinner-sm" style="margin:0 auto"></div></div>'
         : '<div class="empty"><i class="fa-regular fa-newspaper"></i><p>Постов пока нет</p></div>';
     }
-    attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios(); pscScan();
+    attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
   } catch(e) {
     document.getElementById('fpList').innerHTML = '<div class="empty"><i class="fa-solid fa-triangle-exclamation"></i><p>Ошибка загрузки</p></div>';
   }
@@ -4229,7 +4129,7 @@ async function loadFpMore() {
     if (more.length) {
       const html = more.map(p => postHTML(p)).join('');
       if (loader) loader.insertAdjacentHTML('beforebegin', html);
-      attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios(); pscScan();
+      attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
     }
   } catch(e) {}
   if (loader) loader.style.display = 'none';
@@ -4360,7 +4260,7 @@ async function loadMyProfile() {
       // fallback на старый /prof
       document.getElementById('profList').innerHTML = d.posts.length ? d.posts.map(p => postHTML(p)).join('') : '<div class="empty"><i class="fa-regular fa-newspaper"></i><p>Постов пока нет</p></div>';
     }
-    attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios(); pscScan();
+    attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
   } catch(e) {}
 }
 
@@ -4482,7 +4382,7 @@ async function doSearch(q) {
     } else {
       if (!d.results.length) { res.innerHTML = '<div class="empty"><i class="fa-regular fa-newspaper"></i><p>Постов не найдено</p></div>'; return; }
       res.innerHTML = d.results.map(p => postHTML(p, hlQuery)).join('');
-      attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios(); pscScan();
+      attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
     }
   } catch(e) {
     if (seq !== searchSeq) return;
@@ -4522,7 +4422,7 @@ async function updateCounts() {
         if (cc) cc.textContent = u.comments_count;
       });
     });
-    attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios(); pscScan();
+    attachEvents(); attachDoubleTap(); loadPreviews(); initAllAudios();
   } catch(e) {}
 }
 
