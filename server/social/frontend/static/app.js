@@ -63,9 +63,12 @@ function avaInner(u){
 
 // ── Avatar upload (profile screen) ─────────────────────────────────────
 function onProfAvClick(ev){
-  // Клик по большой аватарке: если есть — открываем lightbox, иначе file picker.
-  if (me && me.avatar_url){
-    openProfAvLightbox(me.avatar_url, me.display_name || me.username);
+  // Берём свежее avatar_url из DOM — me.avatar_url мог устареть.
+  const el = document.getElementById('profAv');
+  const img = el && el.querySelector('img');
+  const url = (img && img.src) || (me && me.avatar_url);
+  if (url){
+    openProfAvLightbox(url, (me && (me.display_name || me.username)) || '');
   } else {
     document.getElementById('profAvFile').click();
   }
@@ -91,6 +94,7 @@ async function onProfAvFileChosen(input){
     }
     const d = await r.json();
     me.avatar_url = d.avatar_url;
+    try { localStorage.setItem('gs_me', JSON.stringify(me)); } catch(_){}
     // Перерисовать profAv + hAvatar
     if (typeof loadMyProfile === 'function') loadMyProfile();
     const ha = document.getElementById('hAvatar');
@@ -111,6 +115,7 @@ async function onProfAvRemove(){
     });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     me.avatar_url = null;
+    try { localStorage.setItem('gs_me', JSON.stringify(me)); } catch(_){}
     if (typeof loadMyProfile === 'function') loadMyProfile();
     const ha = document.getElementById('hAvatar');
     if (ha) { ha.innerHTML = avaInner(me); ha.style.background = ''; }
@@ -4221,6 +4226,8 @@ async function loadMyProfile() {
   document.getElementById('profList').innerHTML = skeletonPosts(2);
   try {
     const d = await api(`/prof/${me.username}`);
+    // Синхронизируем me.avatar_url — иначе клик по аве не откроет lightbox
+    if (me && d.is_me !== false){ me.avatar_url = d.avatar_url || null; try { localStorage.setItem('gs_me', JSON.stringify(me)); } catch(_){} }
     { const el = document.getElementById('profAv'); if (el) {
         el.innerHTML = (typeof avaInner === 'function') ? avaInner(d) : (d.avatar_url ? `<img src="${esc(d.avatar_url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">` : esc(ini(d.display_name)));
         el.style.background = d.avatar_url ? 'transparent' : '';
