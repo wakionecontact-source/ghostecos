@@ -824,9 +824,19 @@ body:not(.feed-mode):not(.miniska-mode) #feedSwitch{display:none;}
    sticky header'a проступали и тащили фон). */
 body.profile-mode #feedSwitch,
 body.profile-mode #headerFilters,
-body.profile-mode .filters{display:none !important;}
+body.profile-mode .filters,
+body:has(#screenProfile.active) #feedSwitch,
+body:has(#screenProfile.active) #headerFilters,
+body:has(#screenProfile.active) .filters,
+body:has(#screenFullProfile.active) #feedSwitch,
+body:has(#screenFullProfile.active) #headerFilters,
+body:has(#screenFullProfile.active) .filters{display:none !important;}
 body.profile-mode header,
-body.profile-mode #appHeader{border-bottom:0 !important;background:transparent !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;}
+body.profile-mode #appHeader,
+body:has(#screenProfile.active) header,
+body:has(#screenProfile.active) #appHeader,
+body:has(#screenFullProfile.active) header,
+body:has(#screenFullProfile.active) #appHeader{border-bottom:0 !important;background:transparent !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;}
 
 /* шапка уезжает вверх на минисках */
 #appHeader{transition:transform .32s cubic-bezier(.4,0,.2,1),opacity .25s;}
