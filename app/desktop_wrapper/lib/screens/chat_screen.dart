@@ -163,11 +163,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           widget.peer,
           text,
           replyTo: replyTo?.sid,
-          replyPreview: replyTo == null
-              ? null
-              : (replyTo.text.length > 100
-                    ? '${replyTo.text.substring(0, 100)}…'
-                    : replyTo.text),
+          replyPreview: replyTo == null ? null : _msgPreview(replyTo),
         );
       }
       WidgetsBinding.instance.addPostFrameCallback(
@@ -844,7 +840,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     ),
                   ),
                   Text(
-                    m?.text ?? '',
+                    _msgPreview(m),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: GE.sub, fontSize: 12),
@@ -1232,6 +1228,25 @@ Widget _dateChip(dynamic at) {
       ),
     ),
   );
+}
+
+/// Текстовое превью сообщения для reply-бара и reply-превью: текст, либо
+/// «Голосовое сообщение» / «Фото» / «Видео» / «Файл: …» для медиа.
+String _msgPreview(StoredMessage? m, {int max = 100}) {
+  if (m == null) return '';
+  if (m.text.isNotEmpty) {
+    return m.text.length > max ? '${m.text.substring(0, max)}…' : m.text;
+  }
+  final fp = m.filePayload;
+  if (fp != null) {
+    if (fp['voice'] == true || fp['voice'] == 1) return 'Голосовое сообщение';
+    final mime = fp['mime'] as String? ?? '';
+    if (mime.startsWith('image/')) return 'Фото';
+    if (mime.startsWith('video/')) return 'Видео';
+    final name = fp['file_name'] as String?;
+    return name != null && name.isNotEmpty ? 'Файл: $name' : 'Файл';
+  }
+  return '';
 }
 
 class _Bubble extends StatelessWidget {
@@ -1747,7 +1762,7 @@ class _WaveformPainter extends CustomPainter {
     if (bars.isEmpty) return;
     final n = bars.length;
     const gap = 2.0;
-    final barW = ((size.width - gap * (n - 1)) / n).clamp(1.0, 5.0);
+    final barW = ((size.width - gap * (n - 1)) / n).clamp(0.5, double.infinity);
     final filled = (progress * n).round();
     final bgPaint = Paint()..color = bg;
     final fillPaint = Paint()..color = fill;
@@ -1797,6 +1812,7 @@ class _VoiceTileState extends State<_VoiceTile> {
   Duration _pos = Duration.zero;
   Duration _audioDur = Duration.zero;
   double _speed = 1.0;
+  String? _tmpPath;
   StreamSubscription? _posSub;
   StreamSubscription? _stateSub;
   StreamSubscription? _durSub;
@@ -1826,7 +1842,23 @@ class _VoiceTileState extends State<_VoiceTile> {
     _stateSub?.cancel();
     _durSub?.cancel();
     _player.dispose();
+    final p = _tmpPath;
+    if (p != null) {
+      try {
+        File(p).delete();
+      } catch (_) {}
+    }
     super.dispose();
+  }
+
+  Future<void> _ensureFile() async {
+    if (_tmpPath != null) return;
+    // Играем из ВРЕМЕННОГО ФАЙЛА, а не из BytesSource: даёт надёжную позицию
+    // (onPositionChanged → заливка/перемотка работают) и быстрый старт.
+    final dir = await getTemporaryDirectory();
+    final f = File('${dir.path}/gc_play_${widget.hashCode}.m4a');
+    await f.writeAsBytes(widget.bytes!);
+    _tmpPath = f.path;
   }
 
   Future<void> _toggle() async {
@@ -1838,7 +1870,8 @@ class _VoiceTileState extends State<_VoiceTile> {
       await _player.pause();
       setState(() => _playing = false);
     } else {
-      await _player.play(BytesSource(widget.bytes!));
+      await _ensureFile();
+      await _player.play(DeviceFileSource(_tmpPath!));
       if (_speed != 1.0) {
         try {
           await _player.setPlaybackRate(_speed);
@@ -1871,10 +1904,28 @@ class _VoiceTileState extends State<_VoiceTile> {
     setState(() => _pos = target);
   }
 
-  // Реальная вейвформа из payload, иначе мягкий дефолтный паттерн (старые гс).
-  List<double> get _bars => widget.waveform.isNotEmpty
-      ? widget.waveform
-      : List<double>.generate(40, (i) => 0.22 + 0.18 * (((i * 13) % 7) / 6));
+  // Реальная вейвформа из payload (или мягкий дефолт для старых гс),
+  // РАСТЯНУТАЯ интерполяцией до фикс. числа полосок → всегда во всю ширину.
+  List<double> get _bars {
+    final raw = widget.waveform.isNotEmpty
+        ? widget.waveform
+        : List<double>.generate(28, (i) => 0.25 + 0.2 * (((i * 13) % 7) / 6));
+    return _resample(raw, 40);
+  }
+
+  static List<double> _resample(List<double> src, int target) {
+    if (src.length <= 1) return List<double>.filled(target, 0.3);
+    if (src.length == target) return src;
+    final out = <double>[];
+    for (var i = 0; i < target; i++) {
+      final pos = i * (src.length - 1) / (target - 1);
+      final lo = pos.floor();
+      final hi = pos.ceil().clamp(0, src.length - 1);
+      final t = pos - lo;
+      out.add(src[lo] * (1 - t) + src[hi] * t);
+    }
+    return out;
+  }
 
   @override
   Widget build(BuildContext context) {
