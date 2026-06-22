@@ -548,6 +548,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final notif = ChatRepo.instance.messagesNotifier(widget.peer);
     final isGroup = widget.peer.startsWith('g:');
+    // Прозрачная фрост-шапка: контент скроллит ЗА неё (extendBodyBehindAppBar),
+    // верхний отступ ленты = статус-бар + высота шапки.
+    final headerPad = MediaQuery.of(context).padding.top + 64 + 8;
     return DecoratedBox(
       // Тёмный лакшери: глубокий фон + лёгкое фиолетовое свечение сверху (не mesh).
       decoration: const BoxDecoration(
@@ -561,19 +564,37 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       child: Scaffold(
         backgroundColor: Colors.transparent,
         resizeToAvoidBottomInset: true,
+        // Контент скроллит ЗА шапку → фрост размывает его = прозрачное стекло.
+        extendBodyBehindAppBar: true,
         appBar: PreferredSize(
           preferredSize: const Size.fromHeight(64),
-          // Тёмный лакшери: чистая шапка + тонкий тёплый (золотистый) разделитель.
-          child: DecoratedBox(
-            decoration: const BoxDecoration(
-              border: Border(
-                bottom: BorderSide(color: Color(0x2BD4B88C), width: 0.7),
+          // Прозрачная фрост-шапка (лакшери): глубокий тинт, тает книзу + тёплый
+          // золотистый разделитель снизу.
+          child: ClipRect(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 9, sigmaY: 9),
+              child: DecoratedBox(
+                decoration: const BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(color: Color(0x2BD4B88C), width: 0.7),
+                  ),
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Color(0xB31C1530),
+                      Color(0x661C1530),
+                      Color(0x001C1530),
+                    ],
+                    stops: [0.0, 0.6, 1.0],
+                  ),
+                ),
+                child: _ChatHeader(
+                  peer: widget.peer,
+                  displayName: widget.displayName,
+                  isGroup: isGroup,
+                ),
               ),
-            ),
-            child: _ChatHeader(
-              peer: widget.peer,
-              displayName: widget.displayName,
-              isGroup: isGroup,
             ),
           ),
         ),
@@ -602,10 +623,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           });
                           return ListView.builder(
                             controller: _scrollCtrl,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 12,
-                            ),
+                            padding: EdgeInsets.fromLTRB(12, headerPad, 12, 12),
                             itemCount: msgs.length,
                             itemBuilder: (_, i) {
                               final m = msgs[i];
