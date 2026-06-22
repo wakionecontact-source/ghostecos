@@ -1497,6 +1497,7 @@ function switchScreen(screenId) {
   document.querySelectorAll('.screen').forEach(s => s.classList.toggle('active', s.id === screenId));
   document.body.classList.toggle('feed-mode', screenId === 'screenFeed');
   document.body.classList.toggle('miniska-mode', screenId === 'screenMinisky');
+  document.body.classList.toggle('profile-mode', screenId === 'screenProfile' || screenId === 'screenFullProfile');
   if (screenId === 'screenProfile' && !isGuest()) loadMyProfile();
   if (screenId === 'screenSearch') setTimeout(() => searchInput.focus(), 100);
   if (screenId === 'screenNotif') loadNotifications();

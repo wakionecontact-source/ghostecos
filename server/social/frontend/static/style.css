@@ -820,6 +820,13 @@ body.guest-mode .msk-fab{display:none;}  /* гость не может публ�
   box-shadow:0 0 10px rgba(168,85,247,.6);}
 body.miniska-mode #feedSwitch{transform:translateY(10px);}
 body:not(.feed-mode):not(.miniska-mode) #feedSwitch{display:none;}
+/* В профиле — точно убираем табы Миниски/Посты и фильтр-линию (раньше из-за
+   sticky header'a проступали и тащили фон). */
+body.profile-mode #feedSwitch,
+body.profile-mode #headerFilters,
+body.profile-mode .filters{display:none !important;}
+body.profile-mode header,
+body.profile-mode #appHeader{border-bottom:0 !important;background:transparent !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;}
 
 /* шапка уезжает вверх на минисках */
 #appHeader{transition:transform .32s cubic-bezier(.4,0,.2,1),opacity .25s;}
