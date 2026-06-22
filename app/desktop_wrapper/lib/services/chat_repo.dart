@@ -1098,11 +1098,24 @@ class ChatRepo {
           '[ChatRepo._ingestIncoming] decrypt fail (peer=$peerUsername): $e',
         );
       }
-      // Возможно ключ пира сменился — перепиновываем, чтобы СЛЕДУЮЩЕЕ
-      // сообщение могло расшифроваться.
-      unawaited(_refreshPeerPubAfterDecryptFail(peerUsername));
-      plainJson =
-          '{"type":"msg","text":"[не удалось расшифровать — ключ собеседника мог измениться]"}';
+      // Шаг 2: ключ пира мог смениться — перепиновываем (свежий pub с сервера +
+      // DB-pin) и пробуем расшифровать ЭТО же сообщение заново (не только следующее).
+      try {
+        _peerDevicePubsCache.remove(peerUsername);
+        await _refreshPeerPubAfterDecryptFail(peerUsername);
+        final freshPub = await getPeerPub(peerUsername);
+        plainJson = await _crypto.decryptFrom(
+          theirPubRaw: freshPub,
+          envelopeB64: cipher,
+        );
+      } catch (_) {
+        // Шаг 3: и со свежим ключом не вышло → сообщение зашифровано ключом,
+        // которого уже нет (наш ключ менялся / другое устройство). Флаг
+        // _keyMismatch — UI предложит: пересоздать свой ключ ИЛИ синхронизировать
+        // ключ с других устройств аккаунта.
+        plainJson =
+            '{"type":"msg","text":"[не удалось расшифровать — ключ собеседника мог измениться]","_keyMismatch":true}';
+      }
     }
     final payload = _parsePayload(plainJson);
     final type = payload['type'] as String? ?? 'msg';
