@@ -160,12 +160,13 @@
 
   <div class="screen" id="screenProfile">
     <div class="profile-card">
-      <div class="prof-av" id="profAv" style="position:relative;cursor:pointer;" onclick="onProfAvClick(event)">?
-        <button id="profAvEdit" type="button" title="Сменить аватарку" style="position:absolute;right:-2px;bottom:-2px;width:30px;height:30px;border-radius:50%;border:2px solid #0c0a1c;background:linear-gradient(135deg,#a855f7,#ec4899);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:11px;padding:0;" onclick="event.stopPropagation();document.getElementById('profAvFile').click()"><i class="fa-solid fa-camera"></i></button>
-        <a href="#" id="profAvRemove" style="display:none;position:absolute;left:50%;bottom:-26px;transform:translateX(-50%);font-size:11px;color:#94a3b8;text-decoration:none;white-space:nowrap;" onclick="event.preventDefault();event.stopPropagation();onProfAvRemove()">убрать</a>
-      </div>
+      <div class="prof-av" id="profAv" style="cursor:pointer;" onclick="onProfAvClick(event)">?</div>
       <input type="file" id="profAvFile" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="onProfAvFileChosen(this)">
-      <div class="prof-name" id="profName">—</div>
+      <a href="#" id="profAvRemove" style="display:none;font-size:11px;color:#94a3b8;text-decoration:none;margin-top:6px;" onclick="event.preventDefault();onProfAvRemove()">убрать аватарку</a>
+      <div style="display:flex;align-items:center;justify-content:center;gap:8px;">
+        <div class="prof-name" id="profName">—</div>
+        <button id="profAvEditBtn" type="button" title="Сменить аватарку" style="width:28px;height:28px;border-radius:50%;border:1px solid rgba(168,85,247,0.4);background:transparent;color:#a855f7;cursor:pointer;display:none;align-items:center;justify-content:center;padding:0;font-size:12px;" onclick="document.getElementById('profAvFile').click()"><i class="fa-solid fa-pen"></i></button>
+      </div>
       <div class="prof-username" id="profUser">—</div>
       <div id="profStatus" class="daily-status" style="display:none;"></div>
       <div id="profReputation" class="rep-badge" style="display:none;"></div>

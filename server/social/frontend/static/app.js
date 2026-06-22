@@ -4222,12 +4222,12 @@ async function loadMyProfile() {
   try {
     const d = await api(`/prof/${me.username}`);
     { const el = document.getElementById('profAv'); if (el) {
-        const inner = (typeof avaInner === 'function') ? avaInner(d) : (d.avatar_url ? `<img src="${esc(d.avatar_url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">` : esc(ini(d.display_name)));
-        const editBtn = '<button id="profAvEdit" type="button" title="Сменить аватарку" style="position:absolute;right:-2px;bottom:-2px;width:30px;height:30px;border-radius:50%;border:2px solid #0c0a1c;background:linear-gradient(135deg,#a855f7,#ec4899);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:11px;padding:0;" onclick="event.stopPropagation();document.getElementById(\'profAvFile\').click()"><i class="fa-solid fa-camera"></i></button>';
-        const rmLink = d.avatar_url ? '<a href="#" id="profAvRemove" style="position:absolute;left:50%;bottom:-26px;transform:translateX(-50%);font-size:11px;color:#94a3b8;text-decoration:none;white-space:nowrap;" onclick="event.preventDefault();event.stopPropagation();onProfAvRemove()">убрать</a>' : '';
-        el.innerHTML = inner + editBtn + rmLink;
-        if (d.avatar_url) el.style.background = 'transparent';
+        el.innerHTML = (typeof avaInner === 'function') ? avaInner(d) : (d.avatar_url ? `<img src="${esc(d.avatar_url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">` : esc(ini(d.display_name)));
+        el.style.background = d.avatar_url ? 'transparent' : '';
     } }
+    // Кнопки управления — это всегда свой профиль (loadMyProfile зовётся только для me).
+    { const eb = document.getElementById('profAvEditBtn'); if (eb) eb.style.display = 'inline-flex'; }
+    { const rm = document.getElementById('profAvRemove'); if (rm) rm.style.display = d.avatar_url ? 'inline-block' : 'none'; }
     document.getElementById('profName').textContent = d.display_name;
     document.getElementById('profUser').textContent = '@' + d.username;
     renderDailyStatus('profStatus', d.daily_status);
