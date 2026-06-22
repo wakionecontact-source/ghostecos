@@ -15,7 +15,6 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import '../theme.dart';
-import '../mesh_background.dart';
 import '../services/chat_repo.dart';
 import '../services/db_service.dart';
 import '../services/auth_service.dart';
@@ -549,53 +548,32 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final notif = ChatRepo.instance.messagesNotifier(widget.peer);
     final isGroup = widget.peer.startsWith('g:');
-    // Тинт стекла шапки: светлее тёмного фона, чтобы стекло читалось (не серое).
-    final glassTint = Color.alphaBlend(
-      Colors.white.withValues(alpha: 0.16),
-      GE.bgDeep,
-    );
-    // Верхний отступ ленты при extendBodyBehindAppBar: статус-бар + высота шапки
-    // (64), чтобы первое сообщение стартовало под шапкой, но скроллило ЗА неё.
-    final headerPad = MediaQuery.of(context).padding.top + 64 + 8;
-    return MeshBackground(
-      particleCount: 16,
+    return DecoratedBox(
+      // Тёмный лакшери: глубокий фон + лёгкое фиолетовое свечение сверху (не mesh).
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF17122B), Color(0xFF0D0B12)],
+          stops: [0.0, 0.55],
+        ),
+      ),
       child: Scaffold(
         backgroundColor: Colors.transparent,
         resizeToAvoidBottomInset: true,
-        // Сообщения скроллят ЗА шапку → BackdropFilter шапки размывает их =
-        // настоящее матовое стекло. Лента получает верхний отступ (headerPad).
-        extendBodyBehindAppBar: true,
         appBar: PreferredSize(
           preferredSize: const Size.fromHeight(64),
-          // Вариант 1: стекло РАВНОМЕРНОЕ (блюр одинаковый по всей шапке), а тинт
-          // плавно тает в прозрачность к нижнему краю. Фрост везде = это стекло;
-          // вниз стекло «истончается», а не исчезает блюр (то была не-стекло v3).
-          child: ClipRect(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  // Блик света на нижнем крае шапки.
-                  border: const Border(
-                    bottom: BorderSide(color: Color(0x30FFFFFF), width: 0.8),
-                  ),
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      glassTint.withValues(alpha: 0.6),
-                      glassTint.withValues(alpha: 0.32),
-                      glassTint.withValues(alpha: 0.0),
-                    ],
-                    stops: const [0.0, 0.6, 1.0],
-                  ),
-                ),
-                child: _ChatHeader(
-                  peer: widget.peer,
-                  displayName: widget.displayName,
-                  isGroup: isGroup,
-                ),
+          // Тёмный лакшери: чистая шапка + тонкий тёплый (золотистый) разделитель.
+          child: DecoratedBox(
+            decoration: const BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: Color(0x2BD4B88C), width: 0.7),
               ),
+            ),
+            child: _ChatHeader(
+              peer: widget.peer,
+              displayName: widget.displayName,
+              isGroup: isGroup,
             ),
           ),
         ),
@@ -624,7 +602,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           });
                           return ListView.builder(
                             controller: _scrollCtrl,
-                            padding: EdgeInsets.fromLTRB(12, headerPad, 12, 12),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 12,
+                            ),
                             itemCount: msgs.length,
                             itemBuilder: (_, i) {
                               final m = msgs[i];
@@ -1049,12 +1030,15 @@ class _Bubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final mine = m.fromMe;
     final align = mine ? Alignment.centerRight : Alignment.centerLeft;
-    // Градиент на ВСЕХ (полупрозрачный — сквозь бабблы просвечивает подсветка
-    // mesh-фона): свои — ярко-фиолетовый, чужие — тёмно-синий.
+    // Тёмный лакшери: свои — глубокий фиолет-градиент, чужие — solid (фон ниже).
     final bg = mine
-        ? const LinearGradient(colors: [Color(0xCCB14DFF), Color(0xCC9333EA)])
-        : const LinearGradient(colors: [Color(0xCC234494), Color(0xCC13254A)]);
-    final textColor = mine ? Colors.white : GE.text;
+        ? const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF6A4FD0), Color(0xFF3F2E9C)],
+          )
+        : null;
+    final textColor = mine ? Colors.white : const Color(0xFFD7D2DE);
     final isImg = _isImage(m);
     // Подряд идущие сообщения одного автора — теснее (верх 1), их размытие
     // соединяется; на смене автора — отступ больше (верх 5).
@@ -1078,8 +1062,9 @@ class _Bubble extends StatelessWidget {
               ? const EdgeInsets.all(4)
               : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            // Чистый край (по фидбэку — без размывки) + полупрозрачный градиент
-            // (сквозь просвечивает mesh) + лёгкая тень для глубины.
+            // Тёмный лакшери: чужие — solid #16131D, свои — фиолет-градиент;
+            // тонкая светлая кромка (у своих ярче = inset-блик), без свечения.
+            color: mine ? null : const Color(0xFF16131D),
             gradient: bg,
             borderRadius: BorderRadius.only(
               topLeft: const Radius.circular(16),
@@ -1087,17 +1072,10 @@ class _Bubble extends StatelessWidget {
               bottomLeft: Radius.circular(mine ? 16 : 4),
               bottomRight: Radius.circular(mine ? 4 : 16),
             ),
-            boxShadow: [
-              // Малюсенькое свечение по краям в цвет баббла (свои — фиолет,
-              // чужие — синий). Край чёткий, свечение лишь тонким контуром.
-              BoxShadow(
-                color:
-                    (mine ? const Color(0xFFB14DFF) : const Color(0xFF2C5BC0))
-                        .withValues(alpha: 0.4),
-                blurRadius: 7,
-                spreadRadius: 0,
-              ),
-            ],
+            border: Border.all(
+              color: Colors.white.withValues(alpha: mine ? 0.16 : 0.07),
+              width: 0.7,
+            ),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
