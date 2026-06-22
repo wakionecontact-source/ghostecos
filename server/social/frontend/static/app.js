@@ -4068,7 +4068,12 @@ async function openFullProfile(username) {
   document.getElementById('fpList').innerHTML = skeletonPosts(2);
   try {
     const d = await api(`/prof/${username}`);
-    document.getElementById('fpAv').innerHTML = avaInner(d); if (d && d.avatar_url) document.getElementById('fpAv').style.background = 'transparent';
+    { const fa = document.getElementById('fpAv');
+      fa.innerHTML = avaInner(d);
+      fa.style.background = d.avatar_url ? 'transparent' : '';
+      fa.style.cursor = d.avatar_url ? 'pointer' : '';
+      fa.onclick = d.avatar_url ? (() => openProfAvLightbox(d.avatar_url, d.display_name || d.username)) : null;
+    }
     document.getElementById('fpName').textContent = d.display_name;
     document.getElementById('fpUser').textContent = '@' + d.username;
     renderDailyStatus('fpStatus', d.daily_status);
