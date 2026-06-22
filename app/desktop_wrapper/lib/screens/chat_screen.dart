@@ -557,8 +557,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Color(0xFF17122B), Color(0xFF0D0B12)],
-          stops: [0.0, 0.55],
+          colors: [Color(0xFF2A1F4D), Color(0xFF17122B), Color(0xFF0D0B12)],
+          stops: [0.0, 0.30, 0.75],
         ),
       ),
       child: Scaffold(
