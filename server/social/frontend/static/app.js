@@ -386,6 +386,31 @@ function startPolling() {
   maybeShowInstallPrompt();
 }
 
+function stopAllPolling(){
+  try { stopNewCheck(); } catch(_){}
+  try { stopCountsUpdate(); } catch(_){}
+  try { if (typeof notifCheckInterval !== 'undefined' && notifCheckInterval){ clearInterval(notifCheckInterval); notifCheckInterval = null; } } catch(_){}
+}
+function resumeAllPolling(){
+  if (!token) return;
+  startNewCheck();
+  startCountsUpdate();
+  if (!isGuest()) startNotifCheck();
+}
+
+window.addEventListener('offline', () => {
+  console.log('[net] offline — пауза поллингов');
+  stopAllPolling();
+});
+window.addEventListener('online', () => {
+  console.log('[net] online — возобновляем поллинги');
+  resumeAllPolling();
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) stopAllPolling();
+  else if (navigator.onLine !== false) resumeAllPolling();
+});
+
 // ── МИНИСКИ ────────────────────────────────────────────────────────────────
 const MINISKA_TTL_HOURS = 48;
 function miniskaTTL(createdAt) {
