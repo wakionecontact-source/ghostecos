@@ -61,6 +61,86 @@ function avaInner(u){
   return ini(u && (u.display_name || u.username));
 }
 
+// ── Avatar upload (profile screen) ─────────────────────────────────────
+function onProfAvClick(ev){
+  // Клик по большой аватарке: если есть — открываем lightbox, иначе file picker.
+  if (me && me.avatar_url){
+    openProfAvLightbox(me.avatar_url, me.display_name || me.username);
+  } else {
+    document.getElementById('profAvFile').click();
+  }
+}
+async function onProfAvFileChosen(input){
+  const f = input.files && input.files[0];
+  if (!f) return;
+  if (f.size > 5 * 1024 * 1024) { alert('Файл больше 5 МБ'); input.value=''; return; }
+  const el = document.getElementById('profAv');
+  const prev = el ? el.innerHTML : '';
+  if (el) el.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="color:#fff;"></i>';
+  try {
+    const fd = new FormData();
+    fd.append('file', f);
+    const r = await fetch('/api/soc/me/avatar', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token },
+      body: fd,
+    });
+    if (!r.ok) {
+      const t = await r.text(); let m = t; try { m = JSON.parse(t).detail || t; } catch(_){}
+      throw new Error(m);
+    }
+    const d = await r.json();
+    me.avatar_url = d.avatar_url;
+    // Перерисовать profAv + hAvatar
+    if (typeof loadMyProfile === 'function') loadMyProfile();
+    const ha = document.getElementById('hAvatar');
+    if (ha) { ha.innerHTML = avaInner(me); ha.style.background = 'transparent'; }
+  } catch(e) {
+    if (el) el.innerHTML = prev;
+    alert('Не удалось загрузить: ' + (e.message || e));
+  } finally {
+    input.value = '';
+  }
+}
+async function onProfAvRemove(){
+  if (!confirm('Убрать аватарку?')) return;
+  try {
+    const r = await fetch('/api/soc/me/avatar', {
+      method: 'DELETE',
+      headers: { 'Authorization': 'Bearer ' + token },
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    me.avatar_url = null;
+    if (typeof loadMyProfile === 'function') loadMyProfile();
+    const ha = document.getElementById('hAvatar');
+    if (ha) { ha.innerHTML = avaInner(me); ha.style.background = ''; }
+  } catch(e) {
+    alert('Не удалось убрать: ' + (e.message || e));
+  }
+}
+function openProfAvLightbox(url, title){
+  let lb = document.getElementById('profAvLb');
+  if (!lb){
+    lb = document.createElement('div');
+    lb.id = 'profAvLb';
+    lb.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.92);backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;cursor:zoom-out;';
+    lb.innerHTML = `
+      <button style="position:absolute;top:18px;right:18px;width:42px;height:42px;border-radius:50%;border:none;background:rgba(255,255,255,0.15);color:#fff;font-size:18px;cursor:pointer;" onclick="closeProfAvLb()">×</button>
+      <button style="position:absolute;top:18px;right:70px;width:42px;height:42px;border-radius:50%;border:none;background:rgba(255,255,255,0.15);color:#fff;font-size:14px;cursor:pointer;" onclick="event.stopPropagation();document.getElementById('profAvFile').click();closeProfAvLb()" title="Сменить"><i class="fa-solid fa-camera"></i></button>
+      <img id="profAvLbImg" src="" style="max-width:92vw;max-height:85vh;border-radius:12px;cursor:default;" onclick="event.stopPropagation()">
+      <div id="profAvLbTitle" style="position:absolute;bottom:24px;left:50%;transform:translateX(-50%);color:#fff;font-size:15px;font-weight:600;"></div>`;
+    lb.addEventListener('click', (e) => { if (e.target === lb) closeProfAvLb(); });
+    document.body.appendChild(lb);
+  }
+  document.getElementById('profAvLbImg').src = url;
+  document.getElementById('profAvLbTitle').textContent = title || '';
+  lb.style.display = 'flex';
+}
+function closeProfAvLb(){
+  const lb = document.getElementById('profAvLb');
+  if (lb) lb.style.display = 'none';
+}
+
 function ago(ts) {
   const d = new Date(ts.includes('Z') || ts.includes('+') ? ts : ts + 'Z');
   const s = Math.floor((Date.now() - d) / 1000);
@@ -4141,7 +4221,13 @@ async function loadMyProfile() {
   document.getElementById('profList').innerHTML = skeletonPosts(2);
   try {
     const d = await api(`/prof/${me.username}`);
-    { const el = document.getElementById('profAv'); if (el) { el.innerHTML = (typeof avaInner === 'function') ? avaInner(d) : (d.avatar_url ? `<img src="${esc(d.avatar_url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">` : esc(ini(d.display_name))); if (d.avatar_url) el.style.background = 'transparent'; } }
+    { const el = document.getElementById('profAv'); if (el) {
+        const inner = (typeof avaInner === 'function') ? avaInner(d) : (d.avatar_url ? `<img src="${esc(d.avatar_url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">` : esc(ini(d.display_name)));
+        const editBtn = '<button id="profAvEdit" type="button" title="Сменить аватарку" style="position:absolute;right:-2px;bottom:-2px;width:30px;height:30px;border-radius:50%;border:2px solid #0c0a1c;background:linear-gradient(135deg,#a855f7,#ec4899);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:11px;padding:0;" onclick="event.stopPropagation();document.getElementById(\'profAvFile\').click()"><i class="fa-solid fa-camera"></i></button>';
+        const rmLink = d.avatar_url ? '<a href="#" id="profAvRemove" style="position:absolute;left:50%;bottom:-26px;transform:translateX(-50%);font-size:11px;color:#94a3b8;text-decoration:none;white-space:nowrap;" onclick="event.preventDefault();event.stopPropagation();onProfAvRemove()">убрать</a>' : '';
+        el.innerHTML = inner + editBtn + rmLink;
+        if (d.avatar_url) el.style.background = 'transparent';
+    } }
     document.getElementById('profName').textContent = d.display_name;
     document.getElementById('profUser').textContent = '@' + d.username;
     renderDailyStatus('profStatus', d.daily_status);
