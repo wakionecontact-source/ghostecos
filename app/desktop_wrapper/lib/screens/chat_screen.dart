@@ -1243,6 +1243,32 @@ String _msgPreview(StoredMessage? m, {int max = 100}) {
   return '';
 }
 
+/// Световая КРОМКА пузыря: штрих по контуру с градиентом яркий-верх→тёмный-низ.
+/// Реальная дуга-блик по верхнему краю + тень по нижнему (не градиент-залив фона).
+class _RimPainter extends CustomPainter {
+  final BorderRadius radius;
+  _RimPainter(this.radius);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final rrect = radius.toRRect(rect.deflate(0.8));
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4
+      ..shader = const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Color(0x8CFFFFFF), Color(0x00FFFFFF), Color(0x59000000)],
+        stops: [0.0, 0.4, 1.0],
+      ).createShader(rect);
+    canvas.drawRRect(rrect, paint);
+  }
+
+  @override
+  bool shouldRepaint(_RimPainter old) => old.radius != radius;
+}
+
 class _Bubble extends StatelessWidget {
   final StoredMessage m;
   final String? myUsername;
@@ -1276,6 +1302,12 @@ class _Bubble extends StatelessWidget {
     // Подряд идущие сообщения одного автора — теснее (верх 1), их размытие
     // соединяется; на смене автора — отступ больше (верх 5).
     final vPad = EdgeInsets.only(top: prevSame ? 1.0 : 5.0, bottom: 1.0);
+    final radius = BorderRadius.only(
+      topLeft: const Radius.circular(16),
+      topRight: const Radius.circular(16),
+      bottomLeft: Radius.circular(mine ? 16 : 6),
+      bottomRight: Radius.circular(mine ? 6 : 16),
+    );
     return AnimatedContainer(
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOut,
@@ -1293,184 +1325,184 @@ class _Bubble extends StatelessWidget {
       padding: highlighted ? const EdgeInsets.all(4) : EdgeInsets.zero,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 320),
-        child: Container(
-          margin: vPad,
-          padding: m.filePayload != null && isImg
-              ? const EdgeInsets.all(4)
-              : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            // Тёмный лакшери: чужие — тёмный градиент, свои — фиолет-градиент;
-            // тонкая светлая кромка (у своих ярче = inset-блик) + одна мягкая
-            // тень для премиум-объёма (лёгкая, без перегруза GPU).
-            gradient: bg,
-            borderRadius: BorderRadius.only(
-              topLeft: const Radius.circular(16),
-              topRight: const Radius.circular(16),
-              bottomLeft: Radius.circular(mine ? 16 : 6),
-              bottomRight: Radius.circular(mine ? 6 : 16),
-            ),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: mine ? 0.16 : 0.07),
-              width: 0.7,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.22),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (m.forwardedFrom != null) ...[
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.share,
-                      size: 11,
-                      color: textColor.withValues(alpha: 0.65),
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      '@${m.forwardedFrom}',
-                      style: TextStyle(
-                        color: textColor.withValues(alpha: 0.75),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
+        child: Padding(
+          padding: vPad,
+          child: CustomPaint(
+            foregroundPainter: _RimPainter(radius),
+            child: Container(
+              padding: m.filePayload != null && isImg
+                  ? const EdgeInsets.all(4)
+                  : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                // Тёмный лакшери: чужие — тёмный градиент, свои — фиолет-градиент;
+                // тонкая светлая кромка (у своих ярче = inset-блик) + одна мягкая
+                // тень для премиум-объёма (лёгкая, без перегруза GPU).
+                gradient: bg,
+                borderRadius: radius,
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: mine ? 0.10 : 0.05),
+                  width: 0.7,
                 ),
-                const SizedBox(height: 2),
-              ],
-              if (m.replyPreview != null && m.replyPreview!.isNotEmpty) ...[
-                Container(
-                  margin: const EdgeInsets.only(bottom: 4),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.34),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
                   ),
-                  decoration: BoxDecoration(
-                    color: textColor.withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(7),
-                    border: Border(
-                      left: BorderSide(
-                        color: mine
-                            ? Colors.white.withValues(alpha: 0.65)
-                            : GE.primary,
-                        width: 3,
-                      ),
-                    ),
-                  ),
-                  child: Text(
-                    m.replyPreview!,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: textColor.withValues(alpha: 0.85),
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              ],
-              if (m.deleted)
-                Text(
-                  '🗑 удалено',
-                  style: TextStyle(
-                    color: textColor.withValues(alpha: 0.55),
-                    fontStyle: FontStyle.italic,
-                    fontSize: 13,
-                  ),
-                )
-              else ...[
-                if (m.filePayload != null)
-                  _MediaPart(m: m, textColor: textColor),
-                if (m.text.isNotEmpty)
-                  Padding(
-                    padding: EdgeInsets.only(
-                      top: m.filePayload != null ? 4 : 0,
-                    ),
-                    child: Text(
-                      m.text,
-                      style: TextStyle(
-                        color: textColor,
-                        fontSize: 15,
-                        height: 1.35,
-                      ),
-                    ),
-                  ),
-              ],
-              if (m.reactions != null && m.reactions!.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Wrap(
-                    spacing: 4,
-                    children: [
-                      for (final e in m.reactions!.entries)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: textColor.withValues(alpha: 0.28),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                              color: textColor.withValues(alpha: 0.35),
-                              width: 0.5,
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              _chatReactionIcon(
-                                e.key,
-                                size: 14,
-                                color: textColor,
-                              ),
-                              const SizedBox(width: 3),
-                              Text(
-                                '${e.value.length}',
-                                style: TextStyle(
-                                  color: textColor,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              const SizedBox(height: 2),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (m.edited) ...[
-                    Icon(
-                      Icons.edit,
-                      size: 10,
-                      color: textColor.withValues(alpha: 0.6),
-                    ),
-                    const SizedBox(width: 3),
-                  ],
-                  Text(
-                    _formatTime(m.createdAt),
-                    style: TextStyle(
-                      color: textColor.withValues(alpha: 0.65),
-                      fontSize: 10,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                  if (mine) ...[const SizedBox(width: 4), _ticks(m)],
                 ],
               ),
-            ],
+
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (m.forwardedFrom != null) ...[
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.share,
+                          size: 11,
+                          color: textColor.withValues(alpha: 0.65),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '@${m.forwardedFrom}',
+                          style: TextStyle(
+                            color: textColor.withValues(alpha: 0.75),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                  ],
+                  if (m.replyPreview != null && m.replyPreview!.isNotEmpty) ...[
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: textColor.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(7),
+                        border: Border(
+                          left: BorderSide(
+                            color: mine
+                                ? Colors.white.withValues(alpha: 0.65)
+                                : GE.primary,
+                            width: 3,
+                          ),
+                        ),
+                      ),
+                      child: Text(
+                        m.replyPreview!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: textColor.withValues(alpha: 0.85),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (m.deleted)
+                    Text(
+                      '🗑 удалено',
+                      style: TextStyle(
+                        color: textColor.withValues(alpha: 0.55),
+                        fontStyle: FontStyle.italic,
+                        fontSize: 13,
+                      ),
+                    )
+                  else ...[
+                    if (m.filePayload != null)
+                      _MediaPart(m: m, textColor: textColor),
+                    if (m.text.isNotEmpty)
+                      Padding(
+                        padding: EdgeInsets.only(
+                          top: m.filePayload != null ? 4 : 0,
+                        ),
+                        child: Text(
+                          m.text,
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 15,
+                            height: 1.35,
+                          ),
+                        ),
+                      ),
+                  ],
+                  if (m.reactions != null && m.reactions!.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Wrap(
+                        spacing: 4,
+                        children: [
+                          for (final e in m.reactions!.entries)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: textColor.withValues(alpha: 0.28),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: textColor.withValues(alpha: 0.35),
+                                  width: 0.5,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _chatReactionIcon(
+                                    e.key,
+                                    size: 14,
+                                    color: textColor,
+                                  ),
+                                  const SizedBox(width: 3),
+                                  Text(
+                                    '${e.value.length}',
+                                    style: TextStyle(
+                                      color: textColor,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 2),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (m.edited) ...[
+                        Icon(
+                          Icons.edit,
+                          size: 10,
+                          color: textColor.withValues(alpha: 0.6),
+                        ),
+                        const SizedBox(width: 3),
+                      ],
+                      Text(
+                        _formatTime(m.createdAt),
+                        style: TextStyle(
+                          color: textColor.withValues(alpha: 0.65),
+                          fontSize: 10,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                      if (mine) ...[const SizedBox(width: 4), _ticks(m)],
+                    ],
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
