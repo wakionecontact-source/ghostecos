@@ -149,7 +149,16 @@ class ApiClient {
       'to_username': toUsername,
       'blob': MultipartFile.fromBytes(encryptedBytes, filename: name),
     });
-    final r = await _chat.post('/file/upload', data: form);
+    final r = await _chat.post(
+      '/file/upload',
+      data: form,
+      options: Options(
+        // Большие медиа (видео 5-10 МБ) не успевают за дефолтные 30с →
+        // DioException[receive timeout]. Поднимаем до 5 минут на upload.
+        sendTimeout: const Duration(minutes: 5),
+        receiveTimeout: const Duration(minutes: 5),
+      ),
+    );
     return Map<String, dynamic>.from(r.data);
   }
 
@@ -176,7 +185,11 @@ class ApiClient {
     try {
       final r = await _chat.get(
         '/file/$fileId',
-        options: Options(responseType: ResponseType.bytes),
+        options: Options(
+          responseType: ResponseType.bytes,
+          // Чужое видео 5-10 МБ не успевает скачаться за дефолтные 30с.
+          receiveTimeout: const Duration(minutes: 5),
+        ),
       );
       return List<int>.from(r.data);
     } on DioException catch (e) {

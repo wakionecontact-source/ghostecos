@@ -1789,18 +1789,77 @@ class _MediaPartState extends State<_MediaPart> {
     }
     try {
       final fp = widget.m.filePayload!;
-      final name = (fp['file_name'] as String?) ?? 'file';
+      final mime = (fp['mime'] as String?) ?? '';
+      var name = (fp['file_name'] as String?) ?? 'file';
+      // Расширение берём по MIME (а не по имени из запроса) — иначе система не
+      // поймёт, чем открыть (например аудио, присланное «как файл»).
+      final ext = _extFromMime(mime);
+      if (ext != null && !name.toLowerCase().endsWith(ext)) {
+        final dot = name.lastIndexOf('.');
+        if (dot > 0 && name.length - dot <= 5) name = name.substring(0, dot);
+        name = '$name$ext';
+      }
       final safe = name.replaceAll(RegExp(r'[^\w.\-]'), '_');
       final dir = await getTemporaryDirectory();
       final path = '${dir.path}/$safe';
       await File(path).writeAsBytes(b);
-      await OpenFilex.open(path);
+      // type=MIME помогает Android выбрать правильное приложение (плеер и т.п.).
+      await OpenFilex.open(path, type: mime.isNotEmpty ? mime : null);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Не открылось: $e')),
         );
       }
+    }
+  }
+
+  /// Расширение файла по MIME-типу (для корректного открытия системой).
+  String? _extFromMime(String mime) {
+    switch (mime) {
+      case 'video/mp4':
+        return '.mp4';
+      case 'video/quicktime':
+        return '.mov';
+      case 'video/x-matroska':
+        return '.mkv';
+      case 'video/webm':
+        return '.webm';
+      case 'video/3gpp':
+        return '.3gp';
+      case 'audio/mpeg':
+        return '.mp3';
+      case 'audio/mp4':
+      case 'audio/aac':
+        return '.m4a';
+      case 'audio/ogg':
+      case 'audio/opus':
+        return '.ogg';
+      case 'audio/wav':
+      case 'audio/x-wav':
+        return '.wav';
+      case 'audio/flac':
+        return '.flac';
+      case 'image/jpeg':
+        return '.jpg';
+      case 'image/png':
+        return '.png';
+      case 'image/gif':
+        return '.gif';
+      case 'image/webp':
+        return '.webp';
+      case 'application/pdf':
+        return '.pdf';
+      case 'application/zip':
+        return '.zip';
+      default:
+        // Общий случай: подтип после '/' если похож на расширение.
+        final slash = mime.indexOf('/');
+        if (slash > 0 && slash < mime.length - 1) {
+          final sub = mime.substring(slash + 1);
+          if (RegExp(r'^[a-z0-9]{1,5}$').hasMatch(sub)) return '.$sub';
+        }
+        return null;
     }
   }
 
