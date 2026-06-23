@@ -61,6 +61,66 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final List<double> _recWave = [];
   bool _handsFree = false; // true = тап-запись (ждём кнопку), false = удержание
 
+  // ── Выделение сообщений (множественный выбор) ───────────────────────
+  final Set<int> _selSids = {};
+  bool get _selectionMode => _selSids.isNotEmpty;
+  void _toggleSel(StoredMessage m) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      if (!_selSids.remove(m.sid)) _selSids.add(m.sid);
+    });
+  }
+
+  void _clearSel() => setState(() => _selSids.clear());
+
+  List<StoredMessage> get _selectedMsgs => ChatRepo.instance
+      .messagesNotifier(widget.peer)
+      .value
+      .where((m) => _selSids.contains(m.sid))
+      .toList();
+
+  Future<void> _deleteSelected() async {
+    final ids = _selSids.toList();
+    _clearSel();
+    for (final sid in ids) {
+      try {
+        await ChatRepo.instance.deleteDmMessage(
+          toUsername: widget.peer,
+          sid: sid,
+        );
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _copySelected() async {
+    final txt = _selectedMsgs
+        .where((m) => m.text.isNotEmpty)
+        .map((m) => m.text)
+        .join('\n');
+    await Clipboard.setData(ClipboardData(text: txt));
+    _clearSel();
+    _snack('Скопировано');
+  }
+
+  Future<void> _forwardSelected() async {
+    final msgs = _selectedMsgs;
+    if (msgs.isEmpty) return;
+    final target = await _pickForwardTarget();
+    if (target == null || !mounted) return;
+    _clearSel();
+    var ok = 0;
+    for (final m in msgs) {
+      try {
+        await ChatRepo.instance.forwardDmMessage(
+          original: m,
+          toUsername: target,
+        );
+        ok++;
+      } catch (_) {}
+    }
+    if (mounted) _snack('Переслано: $ok из ${msgs.length}');
+  }
+
   @override
   void initState() {
     super.initState();
@@ -436,40 +496,47 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // «Копировать» — только для текста (на телефоне копировать аудио/медиа
     // бессмысленно), «Редактировать» — только свой текст.
     final canCopy = isText && m.text.isNotEmpty;
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox;
-    final res = await showMenu<String>(
-      context: context,
-      color: GE.bgDeep,
-      surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: GE.glassBorder),
-      ),
-      // Меню всплывает У ПАЛЬЦА (от точки нажатия), а не снизу экрана.
-      position: RelativeRect.fromLTRB(
-        pos.dx,
-        pos.dy,
-        overlay.size.width - pos.dx,
-        overlay.size.height - pos.dy,
-      ),
-      items: [
-        PopupMenuItem<String>(
-          enabled: false,
-          height: 42,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: _ReactionsBar(
-            onPick: (e) => Navigator.pop(context, 'react:$e'),
-          ),
+    final actions = <_MenuAction>[
+      const _MenuAction('reply', Icons.reply, 'Ответить'),
+      const _MenuAction('forward', Icons.forward, 'Переслать'),
+      if (canCopy) const _MenuAction('copy', Icons.copy, 'Копировать'),
+      if (canEdit) const _MenuAction('edit', Icons.edit, 'Редактировать'),
+      const _MenuAction('select', Icons.check_circle_outline, 'Выбрать'),
+      if (mine && !m.deleted)
+        const _MenuAction(
+          'delete',
+          Icons.delete_outline,
+          'Удалить',
+          danger: true,
         ),
-        const PopupMenuDivider(),
-        _popupItem('reply', Icons.reply, 'Ответить'),
-        _popupItem('forward', Icons.forward, 'Переслать'),
-        if (canCopy) _popupItem('copy', Icons.copy, 'Копировать'),
-        if (canEdit) _popupItem('edit', Icons.edit, 'Редактировать'),
-        if (mine && !m.deleted)
-          _popupItem('delete', Icons.delete_outline, 'Удалить', danger: true),
-      ],
+    ];
+    // Надёжное меню У ПАЛЬЦА: showDialog + Positioned (showMenu давал зависание).
+    final res = await showDialog<String>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.2),
+      builder: (dctx) {
+        final size = MediaQuery.of(dctx).size;
+        const menuW = 236.0;
+        final menuH = 60.0 + actions.length * 46.0 + 14;
+        final left = (pos.dx - menuW).clamp(8.0, size.width - menuW - 8);
+        final top = (pos.dy - menuH).clamp(
+          MediaQuery.of(dctx).padding.top + 8,
+          size.height - menuH - 8,
+        );
+        return Stack(
+          children: [
+            Positioned(
+              left: left,
+              top: top,
+              width: menuW,
+              child: _BubbleMenuCard(
+                actions: actions,
+                onPick: (v) => Navigator.pop(dctx, v),
+              ),
+            ),
+          ],
+        );
+      },
     );
     if (res == null || !mounted) return;
     if (res.startsWith('react:')) {
@@ -513,6 +580,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       case 'forward':
         await _showForwardPicker(m);
         break;
+      case 'select':
+        _toggleSel(m);
+        break;
     }
   }
 
@@ -539,10 +609,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _showForwardPicker(StoredMessage m) async {
+    final target = await _pickForwardTarget();
+    if (target == null || !mounted) return;
+    try {
+      await ChatRepo.instance.forwardDmMessage(original: m, toUsername: target);
+      _snack('Переслано в @$target');
+    } catch (e) {
+      _snack('Не переслалось: $e');
+    }
+  }
+
+  Future<String?> _pickForwardTarget() async {
     final dialogs = ChatRepo.instance.dialogsNotifier.value
         .where((d) => d.username != widget.peer && !d.username.startsWith('g:'))
         .toList();
-    final target = await showModalBottomSheet<String>(
+    return showModalBottomSheet<String>(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (ctx) => SafeArea(
@@ -614,13 +695,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ),
       ),
     );
-    if (target == null || !mounted) return;
-    try {
-      await ChatRepo.instance.forwardDmMessage(original: m, toUsername: target);
-      _snack('Переслано в @$target');
-    } catch (e) {
-      _snack('Не переслалось: $e');
-    }
   }
 
   @override
@@ -661,11 +735,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     stops: [0.0, 0.6, 1.0],
                   ),
                 ),
-                child: _ChatHeader(
-                  peer: widget.peer,
-                  displayName: widget.displayName,
-                  isGroup: isGroup,
-                ),
+                child: _selectionMode
+                    ? _SelectionHeader(
+                        count: _selSids.length,
+                        onClose: _clearSel,
+                        onCopy: _copySelected,
+                        onForward: _forwardSelected,
+                        onDelete: _deleteSelected,
+                      )
+                    : _ChatHeader(
+                        peer: widget.peer,
+                        displayName: widget.displayName,
+                        isGroup: isGroup,
+                      ),
               ),
             ),
           ),
@@ -713,47 +795,63 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 final newDay =
                                     prev == null ||
                                     !_msgSameDay(m.createdAt, prev.createdAt);
-                                final bubble = Dismissible(
-                                  key: ValueKey(
-                                    'msg_${m.sid}_${m.tempSid ?? ""}',
-                                  ),
-                                  direction: DismissDirection.startToEnd,
-                                  confirmDismiss: (_) async {
-                                    // Не «исчезаем», а только триггерим reply.
-                                    setState(() => _replyTo = m);
-                                    HapticFeedback.selectionClick();
-                                    return false;
-                                  },
-                                  background: Container(
-                                    alignment: Alignment.centerLeft,
-                                    padding: const EdgeInsets.only(left: 24),
-                                    child: Icon(
-                                      Icons.reply,
-                                      color: GE.primary,
-                                      size: 22,
-                                    ),
-                                  ),
-                                  child: GestureDetector(
-                                    onLongPressStart: (d) =>
-                                        _openBubbleMenu(m, d.globalPosition),
-                                    onDoubleTap: () async {
-                                      try {
-                                        await ChatRepo.instance.reactDmMessage(
-                                          toUsername: widget.peer,
-                                          sid: m.sid,
-                                          emoji: '❤',
-                                        );
-                                      } catch (_) {}
-                                    },
-                                    child: _Bubble(
-                                      m,
-                                      myUsername: _myUsername,
-                                      highlighted: m.sid == _highlightSid,
-                                      prevSame:
-                                          i > 0 &&
-                                          msgs[i - 1].fromMe == m.fromMe,
-                                    ),
-                                  ),
+                                final selected = _selSids.contains(m.sid);
+                                final inner = _Bubble(
+                                  m,
+                                  myUsername: _myUsername,
+                                  highlighted: m.sid == _highlightSid,
+                                  prevSame:
+                                      i > 0 && msgs[i - 1].fromMe == m.fromMe,
+                                );
+                                // Тап → меню у пальца; зажатие → выделить.
+                                // В режиме выбора тап/зажатие переключают выбор,
+                                // внутренние тапы (открытие медиа) гасим.
+                                final Widget gestured = _selectionMode
+                                    ? GestureDetector(
+                                        behavior: HitTestBehavior.opaque,
+                                        onTap: () => _toggleSel(m),
+                                        onLongPressStart: (_) => _toggleSel(m),
+                                        child: AbsorbPointer(child: inner),
+                                      )
+                                    : GestureDetector(
+                                        onTapUp: (d) => _openBubbleMenu(
+                                          m,
+                                          d.globalPosition,
+                                        ),
+                                        onLongPressStart: (_) => _toggleSel(m),
+                                        child: inner,
+                                      );
+                                // Свайп-ответ — только вне режима выбора.
+                                final Widget rowChild = _selectionMode
+                                    ? gestured
+                                    : Dismissible(
+                                        key: ValueKey(
+                                          'msg_${m.sid}_${m.tempSid ?? ""}',
+                                        ),
+                                        direction: DismissDirection.startToEnd,
+                                        confirmDismiss: (_) async {
+                                          setState(() => _replyTo = m);
+                                          HapticFeedback.selectionClick();
+                                          return false;
+                                        },
+                                        background: Container(
+                                          alignment: Alignment.centerLeft,
+                                          padding: const EdgeInsets.only(
+                                            left: 24,
+                                          ),
+                                          child: Icon(
+                                            Icons.reply,
+                                            color: GE.primary,
+                                            size: 22,
+                                          ),
+                                        ),
+                                        child: gestured,
+                                      );
+                                final bubble = Container(
+                                  color: selected
+                                      ? GE.primary.withValues(alpha: 0.14)
+                                      : null,
+                                  child: rowChild,
                                 );
                                 if (!newSender && !newDay) return bubble;
                                 return Column(
@@ -2340,6 +2438,145 @@ class _VoiceTileState extends State<_VoiceTile> {
 // ────────────────────────────────────────────────────────────────────────
 /// Шапка чата: avatar + display_name + @username + online-индикатор.
 /// Тап → ProfileScreen (для DM). Презенс через ChatRepo.watchPresence.
+// ── Меню действий над сообщением (всплывает у пальца) ──────────────────
+class _MenuAction {
+  final String value;
+  final IconData icon;
+  final String label;
+  final bool danger;
+  const _MenuAction(this.value, this.icon, this.label, {this.danger = false});
+}
+
+class _BubbleMenuCard extends StatelessWidget {
+  final List<_MenuAction> actions;
+  final ValueChanged<String> onPick;
+  const _BubbleMenuCard({required this.actions, required this.onPick});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Бар реакций — отдельной «пилюлей».
+          Container(
+            decoration: BoxDecoration(
+              color: GE.bgDeep,
+              borderRadius: BorderRadius.circular(26),
+              border: Border.all(color: GE.glassBorder),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            child: _ReactionsBar(onPick: (e) => onPick('react:$e')),
+          ),
+          const SizedBox(height: 6),
+          // Карточка действий.
+          Container(
+            decoration: BoxDecoration(
+              color: GE.bgDeep,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: GE.glassBorder),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final a in actions)
+                  InkWell(
+                    onTap: () => onPick(a.value),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            a.icon,
+                            size: 18,
+                            color: a.danger ? GE.red : GE.primary,
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            a.label,
+                            style: TextStyle(
+                              color: a.danger ? GE.red : GE.text,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Шапка режима выбора (вместо _ChatHeader) ──────────────────────────
+class _SelectionHeader extends StatelessWidget {
+  final int count;
+  final VoidCallback onClose;
+  final VoidCallback onCopy;
+  final VoidCallback onForward;
+  final VoidCallback onDelete;
+  const _SelectionHeader({
+    required this.count,
+    required this.onClose,
+    required this.onCopy,
+    required this.onForward,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(4, 8, 4, 8),
+        child: Row(
+          children: [
+            IconButton(
+              icon: Icon(Icons.close, color: GE.text),
+              onPressed: onClose,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              '$count',
+              style: TextStyle(
+                color: GE.text,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const Spacer(),
+            IconButton(
+              icon: Icon(Icons.copy_outlined, color: GE.text),
+              tooltip: 'Копировать',
+              onPressed: onCopy,
+            ),
+            IconButton(
+              icon: Icon(Icons.forward, color: GE.text),
+              tooltip: 'Переслать',
+              onPressed: onForward,
+            ),
+            IconButton(
+              icon: Icon(Icons.delete_outline, color: GE.red),
+              tooltip: 'Удалить',
+              onPressed: onDelete,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ChatHeader extends StatelessWidget {
   final String peer;
   final String displayName;
