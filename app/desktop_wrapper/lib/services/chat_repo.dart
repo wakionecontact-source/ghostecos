@@ -627,13 +627,24 @@ class ChatRepo {
     if (type == 'react') {
       final sid = env['sid'];
       final emoji = env['emoji'] as String?;
+      final on = env['on'];
       if (sid is int && emoji != null) {
-        await _toggleReactionLocal(
-          fromUsername,
-          _sealedSid(sid),
-          emoji,
-          fromUsername,
-        );
+        if (on is bool) {
+          await _setReactionLocal(
+            fromUsername,
+            _sealedSid(sid),
+            emoji,
+            fromUsername,
+            on: on,
+          );
+        } else {
+          await _toggleReactionLocal(
+            fromUsername,
+            _sealedSid(sid),
+            emoji,
+            fromUsername,
+          );
+        }
         await _refreshMessages(fromUsername);
       }
       return true;
@@ -784,8 +795,8 @@ class ChatRepo {
       // открывается мгновенно, без скачивания и расшифровки.
       await _db.cacheFile(fileId.toString(), encBytes, mime);
       _plainCachePut(fileId, bytes);
-      // 4. Шифруем payload пэйра для отправки
-      final peerPub = await getPeerPub(toUsername);
+      // 4. Шифруем payload пэйра для отправки (device-fanout — надёжнее primary).
+      final peerPub = (await getPeerDevicePubs(toUsername)).first;
       final payload = {
         'type': voice ? 'voice' : 'file',
         'file_id': fileId,
@@ -1227,8 +1238,13 @@ class ChatRepo {
       final targetSid = payload['sid'] as int?;
       final emoji = payload['emoji'] as String?;
       final actor = isMine ? _myUsername : peerUsername;
+      final on = payload['on'];
       if (targetSid != null && emoji != null && actor != null) {
-        await _toggleReactionLocal(peerUsername, targetSid, emoji, actor);
+        if (on is bool) {
+          await _setReactionLocal(peerUsername, targetSid, emoji, actor, on: on);
+        } else {
+          await _toggleReactionLocal(peerUsername, targetSid, emoji, actor);
+        }
         await _refreshMessages(peerUsername);
       }
       return;
@@ -1311,6 +1327,45 @@ class ChatRepo {
     });
   }
 
+  /// Идемпотентно ВЫСТАВИТЬ реакцию actor'а (on=true добавить, false убрать).
+  /// В отличие от toggle — повтор с тем же состоянием = no-op, поэтому эхо
+  /// своей реакции / мультидевайс / повторная доставка не вызывают «мигание».
+  Future<void> _setReactionLocal(
+    String peer,
+    int sid,
+    String emoji,
+    String actor, {
+    required bool on,
+  }) async {
+    final list = await _db.getMessages(peer);
+    final m = list.firstWhere(
+      (x) => x.sid == sid,
+      orElse: () =>
+          StoredMessage(sid: -1, peer: peer, fromMe: false, createdAt: ''),
+    );
+    if (m.sid == -1) return;
+    final reactions = Map<String, List<String>>.from(
+      m.reactions ?? <String, List<String>>{},
+    );
+    final users = List<String>.from(reactions[emoji] ?? const []);
+    final has = users.contains(actor);
+    if (on && !has) {
+      users.add(actor);
+    } else if (!on && has) {
+      users.remove(actor);
+    } else {
+      return; // уже в нужном состоянии — ничего не меняем
+    }
+    if (users.isEmpty) {
+      reactions.remove(emoji);
+    } else {
+      reactions[emoji] = users;
+    }
+    await _db.updateMessageFlags(peer, sid, {
+      'reactions': reactions.isEmpty ? null : jsonEncode(reactions),
+    });
+  }
+
   // ─── Edit / Delete / React / Forward (исходящие) ────────────────────────
   Future<void> editDmMessage({
     required String toUsername,
@@ -1363,14 +1418,31 @@ class ChatRepo {
   }) async {
     final me = _myUsername ?? await AuthService.username();
     if (me == null) return;
-    // Оптимистично: ставим/снимаем реакцию ЛОКАЛЬНО сразу → мгновенный UI.
-    // Затем шлём на сервер; если доставка не удалась — откатываем (toggle
-    // идемпотентен, повторный вызов возвращает прежнее состояние).
-    await _toggleReactionLocal(toUsername, sid, emoji, me);
+    // Целевое состояние ПО ТЕКУЩЕМУ: если моя реакция уже стоит — снимаем.
+    final msgs = await _db.getMessages(toUsername);
+    final cur = msgs.firstWhere(
+      (x) => x.sid == sid,
+      orElse: () =>
+          StoredMessage(sid: -1, peer: toUsername, fromMe: false, createdAt: ''),
+    );
+    final already = (cur.reactions?[emoji] ?? const <String>[]).contains(me);
+    final willAdd = !already;
+    // Оптимистично и ИДЕМПОТЕНТНО ставим/снимаем локально сразу.
+    await _setReactionLocal(toUsername, sid, emoji, me, on: willAdd);
     await _refreshMessages(toUsername);
+    // Доставка пиру — best-effort. НЕ откатываем локально при сбое: иначе
+    // реакция «мигает» и пропадает через секунду. Шлём ЦЕЛЕВОЕ состояние
+    // (поле `on`) → эхо/повтор идемпотентны (не переключают обратно).
     try {
-      final peerPub = await getPeerPub(toUsername);
-      final payload = jsonEncode({'type': 'react', 'sid': sid, 'emoji': emoji});
+      // Device-fanout вместо одиночного primary: не падает, если у пира
+      // пустой x25519_pub (известная проблема primary≠device_pubkeys).
+      final peerPub = (await getPeerDevicePubs(toUsername)).first;
+      final payload = jsonEncode({
+        'type': 'react',
+        'sid': sid,
+        'emoji': emoji,
+        'on': willAdd,
+      });
       final ciphertext = await _crypto.encryptFor(
         theirPubRaw: peerPub,
         plaintext: payload,
@@ -1380,10 +1452,7 @@ class ChatRepo {
         'ciphertext': ciphertext,
       });
     } catch (e) {
-      // Откат оптимистичного изменения.
-      await _toggleReactionLocal(toUsername, sid, emoji, me);
-      await _refreshMessages(toUsername);
-      rethrow;
+      if (kDebugMode) print('[reactDmMessage] доставка реакции не удалась: $e');
     }
   }
 
@@ -1411,7 +1480,9 @@ class ChatRepo {
     final originalAuthor = original.fromMe
         ? (_myUsername ?? await AuthService.username() ?? '')
         : original.peer;
-    final peerPub = await getPeerPub(toUsername);
+    // Device-fanout (как обычные сообщения): надёжнее одиночного primary —
+    // не падает, если у адресата пустой primary x25519_pub.
+    final peerPub = (await getPeerDevicePubs(toUsername)).first;
 
     if (original.filePayload != null) {
       // Перешифровываем blob новым ключом для нового адресата

@@ -6,6 +6,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'api_client.dart';
+import 'auth_service.dart';
 import 'db_service.dart';
 
 class FoundUser {
@@ -56,9 +57,17 @@ class SearchService {
     final users = results[2] as List<FoundUser>;
 
     // Уберём дубли юзеров которые уже есть в диалогах (чтобы не показывать
-    // одного и того же дважды).
+    // одного и того же дважды) И самого себя (нельзя «написать себе же» —
+    // для своих заметок будет отдельное «Избранное/Заметки»).
+    final me = (await AuthService.username())?.toLowerCase();
     final knownUsernames = dialogs.map((d) => d.username.toLowerCase()).toSet();
-    final newUsers = users.where((u) => !knownUsernames.contains(u.username.toLowerCase())).toList();
+    final newUsers = users
+        .where(
+          (u) =>
+              !knownUsernames.contains(u.username.toLowerCase()) &&
+              u.username.toLowerCase() != me,
+        )
+        .toList();
 
     final hits = <SearchHit>[];
     if (hasAt) {
