@@ -678,11 +678,22 @@ class ChatRepo {
     dynamic createdAt,
   ) async {
     final type = payload['type'] as String? ?? 'msg';
+    // Отправитель: либо from_id (identity_pub → whois, формат веба), либо
+    // from_username (имя — так шлёт python-клиент). sid: если нет — генерим
+    // локальный, чтобы plain-сообщение всё равно сохранилось.
     final fromId = payload['from_id'] as String?;
-    final sid = payload['sid'];
-    if (fromId == null || sid is! int) return;
-    final fromUser = await _whoisV2(fromId);
+    final fromUsername = payload['from_username'] as String?;
+    String? fromUser;
+    if (fromId != null) {
+      fromUser = await _whoisV2(fromId);
+    } else if (fromUsername != null) {
+      fromUser = fromUsername;
+    }
     if (fromUser == null) return;
+    final rawSid = payload['sid'];
+    final sid = rawSid is int
+        ? rawSid
+        : DateTime.now().microsecondsSinceEpoch;
     final me = _myUsername ?? await AuthService.username();
     final isMine = fromUser == me;
 
