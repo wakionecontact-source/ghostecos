@@ -134,6 +134,17 @@ async def _delivery_cleanup_loop():
                     (cutoff,)
                 )
                 total += cur.rowcount
+            # v2: per-device envelopes. Здесь нет last_delivery_at — каждый envelope
+            # это конкретное устройство; чистим по created_at старше 24ч (устройство
+            # которое не подключалось — потеряло сообщение, нормально для sealed).
+            try:
+                cur = conn.execute(
+                    "DELETE FROM chat_dm_v2 WHERE created_at < ?",
+                    (cutoff,)
+                )
+                total += cur.rowcount
+            except _sqlite_cleanup.OperationalError:
+                pass  # таблица может не существовать на старом проде
             conn.execute(
                 "DELETE FROM chat_group_acks WHERE msg_id NOT IN (SELECT id FROM chat_group_messages)"
             )
