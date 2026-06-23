@@ -5387,6 +5387,7 @@ async function sendMessage(){
   const text = inp.value.trim();
   if (!text || !activePeer) return;
   inp.value = ''; inp.style.height = '42px';
+  try { localStorage.removeItem('gs_draft_' + activePeer.username); } catch(_){}
   document.getElementById('sendBtn').disabled = true;
   sendTyping(false);
   const currentReply = replyingTo;
@@ -6165,10 +6166,35 @@ function renderChat(){
   updateSendIcon();
   const inp = document.getElementById('sendInput');
   const btn = document.getElementById('sendBtn');
+  // Черновик per-peer: восстанавливаем при открытии чата.
+  const _draftKey = 'gs_draft_' + (p.username || '_');
+  try {
+    const saved = localStorage.getItem(_draftKey);
+    if (saved) {
+      inp.value = saved;
+      inp.style.height = '24px';
+      inp.style.height = Math.min(140, inp.scrollHeight) + 'px';
+      updateSendIcon();
+    }
+  } catch(_){}
+  let _prevH = inp.offsetHeight;
   inp.addEventListener('input', () => {
-    btn.disabled = false; // кнопка теперь всегда активна — пустой = mic, текст = send
+    btn.disabled = false;
     inp.style.height='24px';
     inp.style.height=Math.min(140,inp.scrollHeight)+'px';
+    // Если textarea выросла — догоняем chatBody scroll вниз, иначе последнее
+    // сообщение прячется под composer (фикс: scroll-up при росте поля ввода).
+    const newH = inp.offsetHeight;
+    if (newH !== _prevH) {
+      const body = document.getElementById('chatBody');
+      if (body) body.scrollTop += (newH - _prevH);
+      _prevH = newH;
+    }
+    // Сохраняем черновик (или удаляем при пустоте).
+    try {
+      if (inp.value) localStorage.setItem(_draftKey, inp.value);
+      else localStorage.removeItem(_draftKey);
+    } catch(_){}
     if (inp.value.trim()) sendTyping(true);
     updateSendIcon();
   });
@@ -8244,10 +8270,30 @@ function renderGroupChat(){
   if (canWrite) {
     const inp = document.getElementById('sendInput');
     const btn = document.getElementById('sendBtn');
+    const _draftKey = 'gs_draft_g:' + g.id;
+    try {
+      const saved = localStorage.getItem(_draftKey);
+      if (saved) {
+        inp.value = saved;
+        inp.style.height = '24px';
+        inp.style.height = Math.min(140, inp.scrollHeight) + 'px';
+      }
+    } catch(_){}
+    let _prevH = inp.offsetHeight;
     inp.addEventListener('input', () => {
       btn.disabled = false;
       inp.style.height='24px';
       inp.style.height=Math.min(140,inp.scrollHeight)+'px';
+      const newH = inp.offsetHeight;
+      if (newH !== _prevH) {
+        const body = document.getElementById('chatBody');
+        if (body) body.scrollTop += (newH - _prevH);
+        _prevH = newH;
+      }
+      try {
+        if (inp.value) localStorage.setItem(_draftKey, inp.value);
+        else localStorage.removeItem(_draftKey);
+      } catch(_){}
     });
     inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
     inp.focus();
@@ -8322,6 +8368,7 @@ async function sendGroupMessage(){
   const text = inp.value.trim();
   if (!text || !activeGroup) return;
   inp.value = ''; inp.style.height = '42px';
+  try { localStorage.removeItem('gs_draft_' + 'g:' + activeGroup.id); } catch(_){}
   const sendBtn = document.getElementById('sendBtn');
   if (sendBtn) sendBtn.disabled = true;
   const currentReply = replyingTo;
