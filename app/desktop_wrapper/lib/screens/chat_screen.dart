@@ -1897,18 +1897,26 @@ class _VoiceTileState extends State<_VoiceTile> {
     } catch (_) {}
   }
 
-  Future<void> _seekFraction(double f) async {
+  // Визуал перемотки — МГНОВЕННО (без ожидания аудио-seek): полоски прыгают
+  // сразу, аудио догоняет в фоне. Иначе UI ждал ~600мс пока seek на AAC отработает.
+  void _seekVisual(double f) {
     final total = _audioDur.inMilliseconds > 0
         ? _audioDur
         : Duration(seconds: widget.durationSec);
     if (total.inMilliseconds == 0) return;
-    final target = Duration(
-      milliseconds: (total.inMilliseconds * f.clamp(0.0, 1.0)).round(),
-    );
+    setState(() {
+      _pos = Duration(
+        milliseconds: (total.inMilliseconds * f.clamp(0.0, 1.0)).round(),
+      );
+    });
+  }
+
+  // Реальный аудио-seek на текущую визуальную позицию — на тап / отпуск драга
+  // (не на каждый drag-update, иначе очередь seek'ов = лаг).
+  Future<void> _seekCommit() async {
     try {
-      await _player.seek(target);
+      await _player.seek(_pos);
     } catch (_) {}
-    setState(() => _pos = target);
   }
 
   // Реальная вейвформа из payload (или мягкий дефолт для старых гс),
@@ -1996,10 +2004,13 @@ class _VoiceTileState extends State<_VoiceTile> {
                     child: LayoutBuilder(
                       builder: (ctx, c) => GestureDetector(
                         behavior: HitTestBehavior.opaque,
-                        onTapDown: (d) =>
-                            _seekFraction(d.localPosition.dx / c.maxWidth),
+                        onTapDown: (d) {
+                          _seekVisual(d.localPosition.dx / c.maxWidth);
+                          _seekCommit();
+                        },
                         onHorizontalDragUpdate: (d) =>
-                            _seekFraction(d.localPosition.dx / c.maxWidth),
+                            _seekVisual(d.localPosition.dx / c.maxWidth),
+                        onHorizontalDragEnd: (_) => _seekCommit(),
                         child: CustomPaint(
                           size: Size(c.maxWidth, 26),
                           painter: _WaveformPainter(

@@ -33,7 +33,7 @@ class _MeshBackgroundState extends State<MeshBackground>
   Offset? _touch; // позиция пальца/курсора (mouse в mesh.js)
 
   static const double _touchDist = 150;
-  static const double _maxSpeed = 3.0;
+  static const double _maxSpeed = 1.6;
 
   @override
   void initState() {
@@ -52,7 +52,7 @@ class _MeshBackgroundState extends State<MeshBackground>
   }
 
   _Particle _spawn(Size s) {
-    final speed = 0.25 + _rand.nextDouble() * 0.35;
+    final speed = 0.12 + _rand.nextDouble() * 0.18;
     final angle = _rand.nextDouble() * pi * 2;
     return _Particle(
       _rand.nextDouble() * s.width,
@@ -96,10 +96,10 @@ class _MeshBackgroundState extends State<MeshBackground>
       p.vx *= 0.96;
       p.vy *= 0.96;
       // Лёгкий постоянный дрейф (чтобы не замирали).
-      if (p.vx * p.vx + p.vy * p.vy < 0.05) {
+      if (p.vx * p.vx + p.vy * p.vy < 0.018) {
         final a = _rand.nextDouble() * pi * 2;
-        p.vx += cos(a) * 0.12;
-        p.vy += sin(a) * 0.12;
+        p.vx += cos(a) * 0.06;
+        p.vy += sin(a) * 0.06;
       }
       // Cap скорости (анти-разгон от касания).
       final vSq = p.vx * p.vx + p.vy * p.vy;
