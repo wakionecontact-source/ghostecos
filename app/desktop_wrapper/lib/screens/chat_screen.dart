@@ -1942,102 +1942,101 @@ class _VoiceTileState extends State<_VoiceTile> {
         children: [
           InkWell(
             onTap: _toggle,
-            borderRadius: BorderRadius.circular(23),
-            child: Container(
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: widget.textColor.withValues(alpha: 0.96),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.20),
-                    blurRadius: 7,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
+            borderRadius: BorderRadius.circular(24),
+            child: Padding(
+              padding: const EdgeInsets.all(4),
               child: widget.loading
-                  ? const Padding(
-                      padding: EdgeInsets.all(14),
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Color(0xFF2A1E50),
+                  ? SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: Padding(
+                        padding: const EdgeInsets.all(6),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: widget.textColor,
+                        ),
                       ),
                     )
                   : Icon(
                       _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                      color: const Color(0xFF2A1E50),
-                      size: 28,
+                      color: widget.textColor,
+                      size: 36,
                     ),
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 6),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  height: 30,
-                  child: LayoutBuilder(
-                    builder: (ctx, c) => GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTapDown: (d) =>
-                          _seekFraction(d.localPosition.dx / c.maxWidth),
-                      onHorizontalDragUpdate: (d) =>
-                          _seekFraction(d.localPosition.dx / c.maxWidth),
-                      child: CustomPaint(
-                        size: Size(c.maxWidth, 30),
-                        painter: _WaveformPainter(
-                          bars: _bars,
-                          progress: progress,
-                          bg: widget.textColor.withValues(alpha: 0.30),
-                          fill: widget.textColor,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(13),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    height: 26,
+                    child: LayoutBuilder(
+                      builder: (ctx, c) => GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTapDown: (d) =>
+                            _seekFraction(d.localPosition.dx / c.maxWidth),
+                        onHorizontalDragUpdate: (d) =>
+                            _seekFraction(d.localPosition.dx / c.maxWidth),
+                        child: CustomPaint(
+                          size: Size(c.maxWidth, 26),
+                          painter: _WaveformPainter(
+                            bars: _bars,
+                            progress: progress,
+                            bg: widget.textColor.withValues(alpha: 0.30),
+                            fill: widget.textColor,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 3),
-                Row(
-                  children: [
-                    Text(
-                      _fmt(started ? _pos : total),
-                      style: TextStyle(
-                        color: widget.textColor.withValues(alpha: 0.7),
-                        fontSize: 11,
-                        fontFeatures: const [FontFeature.tabularFigures()],
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      Text(
+                        _fmt(started ? _pos : total),
+                        style: TextStyle(
+                          color: widget.textColor.withValues(alpha: 0.7),
+                          fontSize: 11,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
                       ),
-                    ),
-                    const Spacer(),
-                    if (started)
-                      GestureDetector(
-                        onTap: _cycleSpeed,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 1,
-                          ),
-                          decoration: BoxDecoration(
-                            color: widget.textColor.withValues(alpha: 0.18),
-                            borderRadius: BorderRadius.circular(7),
-                          ),
-                          child: Text(
-                            _speed == _speed.roundToDouble()
-                                ? '${_speed.toInt()}x'
-                                : '${_speed}x',
-                            style: TextStyle(
-                              color: widget.textColor,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
+                      const Spacer(),
+                      if (started)
+                        GestureDetector(
+                          onTap: _cycleSpeed,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 1,
+                            ),
+                            decoration: BoxDecoration(
+                              color: widget.textColor.withValues(alpha: 0.18),
+                              borderRadius: BorderRadius.circular(7),
+                            ),
+                            child: Text(
+                              _speed == _speed.roundToDouble()
+                                  ? '${_speed.toInt()}x'
+                                  : '${_speed}x',
+                              style: TextStyle(
+                                color: widget.textColor,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ],
