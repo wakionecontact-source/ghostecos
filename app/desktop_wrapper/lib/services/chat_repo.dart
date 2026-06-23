@@ -670,9 +670,11 @@ class ChatRepo {
     await _db.upsertMessage(stored);
     await _refreshMessages(fromUsername);
     final preview = isFile
-        ? (type == 'voice'
-              ? '[Голосовое]'
-              : '[Файл: ${env['file_name'] ?? ''}]')
+        ? _filePreview(
+            mime: env['mime'] as String?,
+            fileName: env['file_name'] as String?,
+            voice: type == 'voice',
+          )
         : stored.text;
     await _bumpDialog(
       fromUsername,
@@ -755,15 +757,22 @@ class ChatRepo {
     await _refreshMessages(toUsername);
     await _bumpDialog(
       toUsername,
-      lastText: voice ? '[Голосовое]' : '[Файл: $fileName]',
+      lastText: _filePreview(mime: mime, fileName: fileName, voice: voice),
       fromMe: true,
     );
 
     try {
-      // 1. Шифруем blob свежим AES-256 ключом
+      // 1. Шифруем blob свежим AES-256 ключом. Большие медиа — в ИЗОЛЯТЕ
+      // (иначе UI морозит на 0.5-2с при отправке фото/видео); мелкие (голос) —
+      // на главном потоке (спавн изолята для них дороже самой работы).
       final aesKey = _randomBytes(32);
       final iv = _randomBytes(12);
-      final encBytes = _aesGcmEncryptBytes(aesKey, iv, bytes);
+      final encBytes = bytes.length < 220 * 1024
+          ? _aesGcmEncryptBytes(aesKey, iv, bytes)
+          : await compute(
+              _gcmEncryptIso,
+              <String, dynamic>{'key': aesKey, 'iv': iv, 'plain': bytes},
+            );
       // 2. Аплоадим encrypted blob
       final up = await _api.uploadFile(
         toUsername: toUsername,
@@ -897,6 +906,22 @@ class ChatRepo {
         ),
       );
     return cipher.process(p['ct'] as Uint8List);
+  }
+
+  // Для compute(): GCM-шифрование в фоновом изоляте — не морозит UI на
+  // шифровании многомегабайтного фото/видео при отправке.
+  static Uint8List _gcmEncryptIso(Map<String, dynamic> p) {
+    final cipher = GCMBlockCipher(AESEngine())
+      ..init(
+        true,
+        AEADParameters(
+          KeyParameter(p['key'] as Uint8List),
+          128,
+          p['iv'] as Uint8List,
+          Uint8List(0),
+        ),
+      );
+    return cipher.process(p['plain'] as Uint8List);
   }
 
   Uint8List _randomBytes(int n) {
@@ -1238,9 +1263,11 @@ class ChatRepo {
     await _db.upsertMessage(stored);
     await _refreshMessages(peerUsername);
     final preview = isFile
-        ? (type == 'voice'
-              ? '[Голосовое]'
-              : '[Файл: ${payload['file_name'] ?? ''}]')
+        ? _filePreview(
+            mime: payload['mime'] as String?,
+            fileName: payload['file_name'] as String?,
+            voice: type == 'voice',
+          )
         : stored.text;
     await _bumpDialog(
       peerUsername,
@@ -1336,18 +1363,42 @@ class ChatRepo {
   }) async {
     final me = _myUsername ?? await AuthService.username();
     if (me == null) return;
-    final peerPub = await getPeerPub(toUsername);
-    final payload = jsonEncode({'type': 'react', 'sid': sid, 'emoji': emoji});
-    final ciphertext = await _crypto.encryptFor(
-      theirPubRaw: peerPub,
-      plaintext: payload,
-    );
-    await _api.chatPost('/send', {
-      'to_username': toUsername,
-      'ciphertext': ciphertext,
-    });
+    // Оптимистично: ставим/снимаем реакцию ЛОКАЛЬНО сразу → мгновенный UI.
+    // Затем шлём на сервер; если доставка не удалась — откатываем (toggle
+    // идемпотентен, повторный вызов возвращает прежнее состояние).
     await _toggleReactionLocal(toUsername, sid, emoji, me);
     await _refreshMessages(toUsername);
+    try {
+      final peerPub = await getPeerPub(toUsername);
+      final payload = jsonEncode({'type': 'react', 'sid': sid, 'emoji': emoji});
+      final ciphertext = await _crypto.encryptFor(
+        theirPubRaw: peerPub,
+        plaintext: payload,
+      );
+      await _api.chatPost('/send', {
+        'to_username': toUsername,
+        'ciphertext': ciphertext,
+      });
+    } catch (e) {
+      // Откат оптимистичного изменения.
+      await _toggleReactionLocal(toUsername, sid, emoji, me);
+      await _refreshMessages(toUsername);
+      rethrow;
+    }
+  }
+
+  /// Чистое превью файла для списка чатов (БЕЗ квадратных скобок):
+  /// «Фото» / «Видео» / «Голосовое сообщение» / «Файл: имя».
+  static String _filePreview({
+    String? mime,
+    String? fileName,
+    bool voice = false,
+  }) {
+    if (voice) return 'Голосовое сообщение';
+    final m = mime ?? '';
+    if (m.startsWith('image/')) return 'Фото';
+    if (m.startsWith('video/')) return 'Видео';
+    return (fileName != null && fileName.isNotEmpty) ? 'Файл: $fileName' : 'Файл';
   }
 
   /// Переслать сообщение другому пользователю.
