@@ -2,6 +2,7 @@
 // + светлая). Дальше M8: паник-пароль, экспорт ключей, диктофон фон, био-логин.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../services/chat_repo.dart';
@@ -97,6 +98,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           GlassCard(
             child: Column(
               children: [
+                _tile(
+                  Icons.vpn_key_outlined,
+                  'Seed-фраза v2 (12 слов)',
+                  () => _showSeed(context),
+                  sub: 'Бэкап v2-личности + привязка веба/других устройств',
+                ),
                 _tile(Icons.upload_outlined,
                     'Перезалить мой ключ на сервер', _forcePublishKey,
                     sub: 'Используй если пиры пишут «не удалось расшифровать»'),
@@ -183,6 +190,65 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _snack('Заливаю ключ на сервер...');
     final res = await ChatRepo.instance.forcePublishMyPubKey();
     _snack(res);
+  }
+
+  Future<void> _showSeed(BuildContext ctx) async {
+    final m = await ChatRepo.instance.v2Mnemonic();
+    if (!mounted) return;
+    if (m == null || m.trim().isEmpty) {
+      _snack('Seed ещё не создан (v2 не инициализирован)');
+      return;
+    }
+    await showDialog<void>(
+      context: ctx,
+      builder: (d) => AlertDialog(
+        backgroundColor: const Color(0xFF0F172A),
+        title: Text('Seed-фраза v2', style: TextStyle(color: GE.text)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '12 слов — бэкап твоей v2-личности и привязка других устройств '
+              '(веба). Никому не показывай и не вводи на чужих сайтах.',
+              style: TextStyle(color: GE.sub, fontSize: 12, height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: GE.bgDeep,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: GE.glassBorder),
+              ),
+              child: SelectableText(
+                m,
+                style: TextStyle(
+                  color: GE.text,
+                  fontSize: 15,
+                  height: 1.6,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: m));
+              _snack('Скопировано');
+            },
+            child: const Text('Копировать'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(d),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _confirmRegenerate(BuildContext ctx) async {

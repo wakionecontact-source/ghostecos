@@ -519,6 +519,12 @@ class ChatRepo {
     }
   }
 
+  /// Seed-фраза v2 (12 слов) — бэкап личности + привязка других устройств (веба).
+  Future<String?> v2Mnemonic() async {
+    await CryptoV2.instance.ensureKeys();
+    return CryptoV2.instance.mnemonic;
+  }
+
   /// v2-ключи пира (identity + список device-pub). null если пир не на v2.
   Future<Map<String, dynamic>?> getPeerV2Keys(String username) async {
     if (_v2KeysCache.containsKey(username)) {
@@ -697,16 +703,24 @@ class ChatRepo {
     final me = _myUsername ?? await AuthService.username();
     final isMine = fromUser == me;
 
+    // Управляющие типы (edit/delete/react): веб адресует ЦЕЛЬ через target_sid,
+    // мой формат — через sid. Берём target_sid с fallback на sid.
+    final targetSid = payload['target_sid'] is int
+        ? payload['target_sid'] as int
+        : (payload['sid'] is int ? payload['sid'] as int : null);
+
     if (type == 'edit') {
-      await _db.updateMessageFlags(fromUser, sid, {
-        'text': payload['text'] ?? '',
+      if (targetSid == null) return;
+      await _db.updateMessageFlags(fromUser, targetSid, {
+        'text': payload['new_text'] ?? payload['text'] ?? '',
         'edited': 1,
       });
       await _refreshMessages(fromUser);
       return;
     }
     if (type == 'delete') {
-      await _db.updateMessageFlags(fromUser, sid, {
+      if (targetSid == null) return;
+      await _db.updateMessageFlags(fromUser, targetSid, {
         'deleted': 1,
         'text': '',
         'file_payload': null,
@@ -715,14 +729,15 @@ class ChatRepo {
       return;
     }
     if (type == 'react') {
+      if (targetSid == null) return;
       final emoji = payload['emoji'] as String?;
       final on = payload['on'];
       final actor = isMine ? me : fromUser;
       if (emoji != null && actor != null) {
         if (on is bool) {
-          await _setReactionLocal(fromUser, sid, emoji, actor, on: on);
+          await _setReactionLocal(fromUser, targetSid, emoji, actor, on: on);
         } else {
-          await _toggleReactionLocal(fromUser, sid, emoji, actor);
+          await _toggleReactionLocal(fromUser, targetSid, emoji, actor);
         }
         await _refreshMessages(fromUser);
       }
