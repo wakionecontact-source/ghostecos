@@ -17,6 +17,7 @@ import 'package:pointycastle/export.dart';
 import 'api_client.dart';
 import 'auth_service.dart';
 import 'crypto_service.dart';
+import 'crypto_v2.dart';
 import 'db_service.dart';
 import 'ws_client.dart';
 
@@ -35,6 +36,11 @@ class ChatRepo {
   final _ws = WsClient.instance;
   final _crypto = CryptoService.instance;
   final _db = DbService.instance;
+
+  // ── v2 (Signal-style: Ed25519 identity + X25519 device, per-device sealed) ──
+  bool _v2Published = false;
+  final Map<String, Map<String, dynamic>> _v2KeysCache = {};
+  final Map<String, String> _v2WhoisCache = {};
 
   /// Список диалогов для главного списка.
   final ValueNotifier<List<StoredDialog>> dialogsNotifier = ValueNotifier([]);
@@ -141,11 +147,14 @@ class ChatRepo {
       _ws.on('chat.cleared_by_peer', _onChatClearedByPeer),
       _ws.on('presence', _onPresence),
       _ws.on('peer.devices_changed', _onPeerDevicesChanged),
+      _ws.on('chat.v2.new', _onChatV2New), // ← real-time v2
     ]);
 
     // Догнать накопленное в фоне — оба канала.
     unawaited(fetchPending());
     unawaited(fetchPendingSealed());
+    // v2: опубликовать identity+device, затем догнать v2-входящие.
+    unawaited(ensureV2Published().then((_) => fetchPendingV2()));
     // TDA-4: подгрузить мои other-device pubkey'и (для self-echo).
     unawaited(_refreshMyOtherDevicePubs());
   }
@@ -473,6 +482,261 @@ class ChatRepo {
     } catch (e) {
       if (kDebugMode) print('[fetchPending] $e');
     }
+  }
+
+  // ─── v2 (Signal-style): identity Ed25519 + device X25519, per-device sealed ──
+
+  /// Сгенерировать (при первом запуске) и опубликовать v2 identity + device.
+  Future<void> ensureV2Published() async {
+    try {
+      await CryptoV2.instance.ensureKeys();
+    } catch (e) {
+      if (kDebugMode) print('[v2 ensureKeys] $e');
+      return;
+    }
+    if (_v2Published) return;
+    try {
+      await _api.chatPost('/v2/identity/publish', {
+        'identity_pub': CryptoV2.instance.identityPubB64,
+        'proof_signature': base64.encode(
+          await CryptoV2.instance.proofSignature(),
+        ),
+      });
+    } catch (e) {
+      // 409 = уже опубликован тот же identity → не страшно.
+      if (kDebugMode) print('[v2 identity publish] $e');
+    }
+    try {
+      await _api.chatPost('/v2/device/publish', {
+        'device_pub': CryptoV2.instance.devicePubB64,
+        'signed_prekey_sig': base64.encode(
+          await CryptoV2.instance.signedPrekeySig(),
+        ),
+      });
+      _v2Published = true;
+    } catch (e) {
+      if (kDebugMode) print('[v2 device publish] $e');
+    }
+  }
+
+  /// v2-ключи пира (identity + список device-pub). null если пир не на v2.
+  Future<Map<String, dynamic>?> getPeerV2Keys(String username) async {
+    if (_v2KeysCache.containsKey(username)) {
+      final c = _v2KeysCache[username]!;
+      return c.isEmpty ? null : c; // пустая = «нет v2» (кэш отрицательного)
+    }
+    try {
+      final r = await _api.chatGet('/v2/keys/$username');
+      final m = Map<String, dynamic>.from(r as Map);
+      final devs = (m['devices'] as List?) ?? const [];
+      if (m['identity_pub'] != null && devs.isNotEmpty) {
+        _v2KeysCache[username] = m;
+        return m;
+      }
+      _v2KeysCache[username] = {}; // нет v2 — кэшируем, чтобы не дёргать сеть
+    } catch (e) {
+      if (kDebugMode) print('[getPeerV2Keys] $e');
+    }
+    return null;
+  }
+
+  /// identity_pub (base64) → username. Своё распознаём локально.
+  Future<String?> _whoisV2(String identityPubB64) async {
+    if (CryptoV2.instance.ready &&
+        identityPubB64 == CryptoV2.instance.identityPubB64) {
+      return _myUsername ?? await AuthService.username();
+    }
+    if (_v2WhoisCache.containsKey(identityPubB64)) {
+      return _v2WhoisCache[identityPubB64];
+    }
+    try {
+      final r = await _api.chatGet('/v2/whois', {
+        'identity_pub': identityPubB64,
+      });
+      final u = (r as Map)['username'] as String?;
+      if (u != null) _v2WhoisCache[identityPubB64] = u;
+      return u;
+    } catch (e) {
+      if (kDebugMode) print('[whoisV2] $e');
+      return null;
+    }
+  }
+
+  /// Отправка текста по v2 (per-device sealed). sid генерим сами (серверного нет).
+  Future<void> _sendDmTextV2({
+    required String toUsername,
+    required String text,
+    required Map<String, dynamic> keys,
+    int? replyTo,
+    String? replyPreview,
+  }) async {
+    final sid = DateTime.now().microsecondsSinceEpoch;
+    final optimistic = StoredMessage(
+      sid: sid,
+      peer: toUsername,
+      fromMe: true,
+      text: text,
+      createdAt: DateTime.now().toUtc().toIso8601String(),
+      pending: true,
+      replyTo: replyTo,
+      replyPreview: replyPreview,
+    );
+    await _db.upsertMessage(optimistic);
+    await _refreshMessages(toUsername);
+    await _bumpDialog(toUsername, lastText: text, fromMe: true);
+    try {
+      final payload = jsonEncode({
+        'v': 2,
+        'type': 'msg',
+        'text': text,
+        'from_id': CryptoV2.instance.identityPubB64,
+        'sid': sid,
+        'ts': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        if (replyTo != null) 'reply_to': replyTo,
+        if (replyPreview != null && replyPreview.isNotEmpty)
+          'reply_preview': replyPreview,
+      });
+      final pt = utf8.encode(payload);
+      final devices = (keys['devices'] as List);
+      final envelopes = <Map<String, dynamic>>[];
+      for (final d in devices) {
+        final dm = Map<String, dynamic>.from(d as Map);
+        final devPub = Uint8List.fromList(
+          base64.decode(dm['device_pub'] as String),
+        );
+        final env = await CryptoV2.instance.encryptV2(devPub, pt);
+        envelopes.add({
+          'target_device_id': dm['device_id'],
+          'envelope': env,
+        });
+      }
+      await _api.chatPost('/v2/send', {
+        'to_username': toUsername,
+        'envelopes': envelopes,
+      });
+      await _db.updateMessageFlags(toUsername, sid, {
+        'pending': 0,
+        'delivered': 1,
+      });
+      await _refreshMessages(toUsername);
+    } catch (e) {
+      if (kDebugMode) print('[sendDmTextV2] $e');
+      rethrow;
+    }
+  }
+
+  /// Догон входящих v2: /v2/pending → decryptForMe → ingest → ack.
+  Future<void> fetchPendingV2() async {
+    if (!CryptoV2.instance.ready) return;
+    try {
+      final r = await _api.chatGet('/v2/pending');
+      final msgs = ((r as Map)['messages'] as List?) ?? const [];
+      final ackIds = <int>[];
+      for (final raw in msgs) {
+        final m = Map<String, dynamic>.from(raw as Map);
+        final id = m['id'];
+        try {
+          final plain = await CryptoV2.instance.decryptForMe(
+            m['envelope'] as String,
+          );
+          if (plain != null) {
+            final payload =
+                jsonDecode(utf8.decode(plain)) as Map<String, dynamic>;
+            await _ingestV2(payload, m['created_at']);
+          }
+        } catch (e) {
+          if (kDebugMode) print('[fetchPendingV2] ingest $e');
+        }
+        if (id is int) ackIds.add(id);
+      }
+      if (ackIds.isNotEmpty) {
+        try {
+          await _api.chatPost('/v2/ack', {'ids': ackIds});
+        } catch (_) {}
+      }
+    } catch (e) {
+      if (kDebugMode) print('[fetchPendingV2] $e');
+    }
+  }
+
+  Future<void> _onChatV2New(Map<String, dynamic> d) async {
+    await fetchPendingV2();
+  }
+
+  String _v2CreatedAt(dynamic createdAt) {
+    if (createdAt is int) {
+      return DateTime.fromMillisecondsSinceEpoch(
+        createdAt * 1000,
+        isUtc: true,
+      ).toIso8601String();
+    }
+    return DateTime.now().toUtc().toIso8601String();
+  }
+
+  Future<void> _ingestV2(
+    Map<String, dynamic> payload,
+    dynamic createdAt,
+  ) async {
+    final type = payload['type'] as String? ?? 'msg';
+    final fromId = payload['from_id'] as String?;
+    final sid = payload['sid'];
+    if (fromId == null || sid is! int) return;
+    final fromUser = await _whoisV2(fromId);
+    if (fromUser == null) return;
+    final me = _myUsername ?? await AuthService.username();
+    final isMine = fromUser == me;
+
+    if (type == 'edit') {
+      await _db.updateMessageFlags(fromUser, sid, {
+        'text': payload['text'] ?? '',
+        'edited': 1,
+      });
+      await _refreshMessages(fromUser);
+      return;
+    }
+    if (type == 'delete') {
+      await _db.updateMessageFlags(fromUser, sid, {
+        'deleted': 1,
+        'text': '',
+        'file_payload': null,
+      });
+      await _refreshMessages(fromUser);
+      return;
+    }
+    if (type == 'react') {
+      final emoji = payload['emoji'] as String?;
+      final on = payload['on'];
+      final actor = isMine ? me : fromUser;
+      if (emoji != null && actor != null) {
+        if (on is bool) {
+          await _setReactionLocal(fromUser, sid, emoji, actor, on: on);
+        } else {
+          await _toggleReactionLocal(fromUser, sid, emoji, actor);
+        }
+        await _refreshMessages(fromUser);
+      }
+      return;
+    }
+    // обычное сообщение
+    if (await _db.messageExists(fromUser, sid)) return;
+    final stored = StoredMessage(
+      sid: sid,
+      peer: fromUser,
+      fromMe: isMine,
+      text: payload['text'] as String? ?? '',
+      createdAt: _v2CreatedAt(createdAt),
+      replyTo: payload['reply_to'] as int?,
+      replyPreview: payload['reply_preview'] as String?,
+    );
+    await _db.upsertMessage(stored);
+    await _refreshMessages(fromUser);
+    await _bumpDialog(
+      fromUser,
+      lastText: stored.text,
+      fromMe: isMine,
+      lastAt: stored.createdAt,
+      incUnread: !isMine,
+    );
   }
 
   /// Sealed-сообщения хранятся в отдельной таблице на сервере (chat_dm_sealed),
@@ -962,6 +1226,17 @@ class ChatRepo {
   }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
+    // v2 (Signal-style): если у пира есть identity+device — шлём sealed по v2.
+    final v2keys = await getPeerV2Keys(toUsername);
+    if (v2keys != null && CryptoV2.instance.ready) {
+      return _sendDmTextV2(
+        toUsername: toUsername,
+        text: trimmed,
+        keys: v2keys,
+        replyTo: replyTo,
+        replyPreview: replyPreview,
+      );
+    }
     final tempSid = -DateTime.now().microsecondsSinceEpoch;
     final optimistic = StoredMessage(
       sid: tempSid,
