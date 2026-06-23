@@ -15,6 +15,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import '../theme.dart';
+import '../mesh_background.dart';
 import '../services/chat_repo.dart';
 import '../services/db_service.dart';
 import '../services/auth_service.dart';
@@ -585,16 +586,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // Прозрачная фрост-шапка: контент скроллит ЗА неё (extendBodyBehindAppBar),
     // верхний отступ ленты = статус-бар + высота шапки.
     final headerPad = MediaQuery.of(context).padding.top + 64 + 8;
-    return DecoratedBox(
-      // Тёмный лакшери: глубокий фон + лёгкое фиолетовое свечение сверху (не mesh).
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF2A1F4D), Color(0xFF17122B), Color(0xFF0D0B12)],
-          stops: [0.0, 0.30, 0.75],
-        ),
-      ),
+    return MeshBackground(
+      // Mesh-обои: механика 1-в-1 с web mesh.js (частицы + сеть линий +
+      // 3-слойный градиент). Шапка/композер-стекло размывают его сверху.
       child: Scaffold(
         backgroundColor: Colors.transparent,
         resizeToAvoidBottomInset: true,
@@ -1813,6 +1807,7 @@ class _VoiceTileState extends State<_VoiceTile> {
   Duration _audioDur = Duration.zero;
   double _speed = 1.0;
   String? _tmpPath;
+  bool _pendingPlay = false;
   StreamSubscription? _posSub;
   StreamSubscription? _stateSub;
   StreamSubscription? _durSub;
@@ -1834,6 +1829,17 @@ class _VoiceTileState extends State<_VoiceTile> {
         });
       }
     });
+  }
+
+  @override
+  void didUpdateWidget(_VoiceTile old) {
+    super.didUpdateWidget(old);
+    // Один тап: первый тап только грузит blob (bytes == null → onLoad). Когда
+    // байты приехали — авто-стартуем, не дожидаясь второго тапа.
+    if (_pendingPlay && old.bytes == null && widget.bytes != null) {
+      _pendingPlay = false;
+      _toggle();
+    }
   }
 
   @override
@@ -1863,6 +1869,7 @@ class _VoiceTileState extends State<_VoiceTile> {
 
   Future<void> _toggle() async {
     if (widget.bytes == null) {
+      _pendingPlay = true;
       widget.onLoad();
       return;
     }
@@ -1942,29 +1949,37 @@ class _VoiceTileState extends State<_VoiceTile> {
         children: [
           InkWell(
             onTap: _toggle,
-            borderRadius: BorderRadius.circular(24),
-            child: Padding(
-              padding: const EdgeInsets.all(4),
+            borderRadius: BorderRadius.circular(23),
+            child: Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: widget.textColor.withValues(alpha: 0.96),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.20),
+                    blurRadius: 7,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
               child: widget.loading
-                  ? SizedBox(
-                      width: 32,
-                      height: 32,
-                      child: Padding(
-                        padding: const EdgeInsets.all(6),
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: widget.textColor,
-                        ),
+                  ? const Padding(
+                      padding: EdgeInsets.all(14),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Color(0xFF2A1E50),
                       ),
                     )
                   : Icon(
                       _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                      color: widget.textColor,
-                      size: 36,
+                      color: const Color(0xFF2A1E50),
+                      size: 28,
                     ),
             ),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 11),
           Expanded(
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
