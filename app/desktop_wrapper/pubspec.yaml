@@ -21,6 +21,9 @@ dependencies:
   pointycastle: ^4.0.0
   convert: ^3.1.1                  # hex/base64
   asn1lib: ^1.5.3                  # парсинг PKCS8/SPKI если понадобится миграция
+  # v2-крипта (Signal-style): Ed25519 identity + X25519 device + HKDF/PBKDF2/
+  # AES-GCM. Стандарт-совместимо с web nacl/WebCrypto и python cryptography.
+  cryptography: ^2.7.0
 
   # ─── Локальное хранилище ───
   sqflite: ^2.4.0                  # SQL DB для сообщений / диалогов / кэша
@@ -95,6 +98,7 @@ flutter:
   assets:
     - assets/icon.ico
     - assets/icon.png
+    - assets/bip39_en.txt
 
 # MSIX (Windows installer)
 msix_config:
