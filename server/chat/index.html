@@ -1921,6 +1921,61 @@ async function decryptText(aesKey, b64){
   return new TextDecoder().decode(pt);
 }
 
+// ─── v2 sealed-sender helpers (Ed25519 identity + per-device X25519) ──
+// Кэш v2-keys пиров: username → {identity_pub, devices:[{device_id, device_pub, signed_prekey_sig}], ts, empty?}
+const v2PeerCache = new Map();
+async function v2GetPeerDevices(username){
+  if (!username) return null;
+  const c = v2PeerCache.get(username);
+  if (c && Date.now() - c.ts < 5 * 60 * 1000) return c.empty ? null : c;
+  try {
+    const r = await chat('/v2/keys/' + encodeURIComponent(username));
+    if (!r || !r.identity_pub || !r.devices || !r.devices.length) {
+      v2PeerCache.set(username, { ts: Date.now(), empty: true });
+      return null;
+    }
+    // КРИТИЧНО: верифицируем подписи device_pub identity_pub'ом — иначе MITM
+    // сервера может подменить device_pub своим и читать все сообщения.
+    const idPubRaw = GhostKeysV2._b64d(r.identity_pub);
+    const verified = [];
+    for (const d of r.devices) {
+      try {
+        const ok = nacl.sign.detached.verify(
+          GhostKeysV2._b64d(d.device_pub),
+          GhostKeysV2._b64d(d.signed_prekey_sig),
+          idPubRaw
+        );
+        if (ok) verified.push(d);
+        else console.warn('[v2] плохая подпись device_pub для', username, d.device_id);
+      } catch(_){}
+    }
+    if (!verified.length) { v2PeerCache.set(username, { ts: Date.now(), empty: true }); return null; }
+    const obj = { identity_pub: r.identity_pub, devices: verified, ts: Date.now() };
+    v2PeerCache.set(username, obj);
+    return obj;
+  } catch(_) { return null; }
+}
+
+// Resolve identity_pub → username для входящих v2-сообщений.
+// Стратегия: кэш → dialogs → /v2/whois fallback.
+async function v2ResolveUsername(idPubB64){
+  if (!idPubB64) return null;
+  for (const [u, v] of v2PeerCache) {
+    if (v && v.identity_pub === idPubB64) return u;
+  }
+  for (const d of dialogs) {
+    if (v2PeerCache.has(d.username)) continue;
+    try { await v2GetPeerDevices(d.username); } catch(_){}
+    const v = v2PeerCache.get(d.username);
+    if (v && v.identity_pub === idPubB64) return d.username;
+  }
+  try {
+    const r = await chat('/v2/whois?identity_pub=' + encodeURIComponent(idPubB64));
+    if (r && r.username) return r.username;
+  } catch(_){}
+  return null;
+}
+
 // Зашифровать сообщение для конкретного получателя по username
 // payload: либо строка (legacy plain text), либо объект {type, ...} для нового формата
 async function encryptForPeer(peerUsername, payload){
@@ -4539,6 +4594,53 @@ async function fetchPendingSealed(){
   }catch(e){ /* offline */ }
 }
 
+// v2 sealed-sender pending: WS push 'chat.v2.new' триггерит это.
+// Не ack-аем то, что НЕ удалось расшифровать — пусть лежит, другой
+// девайс юзера сможет получить (multi-device delivery).
+async function fetchPendingV2(){
+  let myV2 = null;
+  try { myV2 = await _v2LoadFromIDB(); } catch(_){}
+  if (!myV2 || !myV2.device_priv) return;
+  try {
+    const d = await chat('/v2/pending');
+    if (!d.messages || !d.messages.length) return;
+    const ackIds = [];
+    for (const m of d.messages) {
+      try {
+        const ptBytes = await GhostKeysV2.decryptV2(GhostKeysV2._b64d(myV2.device_priv), m.envelope);
+        const payload = JSON.parse(new TextDecoder().decode(ptBytes));
+        if (!payload || payload.v !== 2) { ackIds.push(m.id); continue; }
+        const fromUsername = await v2ResolveUsername(payload.from_id);
+        if (!fromUsername) { ackIds.push(m.id); continue; }
+        const fakeMsg = {
+          id: m.id,
+          from_username: fromUsername,
+          from_display_name: fromUsername,
+          to_username: me && me.username,
+          ciphertext: '',
+          created_at: m.created_at,
+          _decrypted: {
+            type: payload.type || 'msg',
+            text: payload.text || '',
+            sid: payload.sid,
+            from_username: fromUsername,
+            reply_to: payload.reply_to,
+            reply_preview: payload.reply_preview,
+            _v2: true,
+          },
+        };
+        const ok = await ingestIncoming(fakeMsg);
+        if (ok) ackIds.push(m.id);
+      } catch(e) {
+        console.warn('[v2 decrypt fail, leaving for other device]', m.id, e && e.message);
+      }
+    }
+    if (ackIds.length) {
+      try { await chat('/v2/ack', 'POST', { ids: ackIds }); } catch(_){}
+    }
+  } catch(e) { /* offline */ }
+}
+
 async function ingestSealed(m){
   let env;
   try { env = await decryptSealed(m.ciphertext); }
@@ -5276,6 +5378,47 @@ async function sendMessage(){
       payload.reply_to = currentReply.sid;
       payload.reply_preview = optimistic.reply_preview;
     }
+    // ─── v2 sealed-sender попытка (web↔web с identity). Fallback на v1 при любой ошибке. ───
+    let sentViaV2 = false;
+    try {
+      const myV2 = await _v2LoadFromIDB().catch(() => null);
+      if (myV2 && myV2.identity_pub && myV2.device_priv) {
+        const peerV2 = await v2GetPeerDevices(activePeer.username);
+        if (peerV2 && peerV2.devices && peerV2.devices.length) {
+          const v2payload = {
+            v: 2, type: 'msg', text,
+            from_id: myV2.identity_pub,
+            sid: optimistic.sid,
+            ts: Math.floor(Date.now() / 1000),
+          };
+          if (currentReply) { v2payload.reply_to = currentReply.sid; v2payload.reply_preview = optimistic.reply_preview; }
+          const ptBytes = new TextEncoder().encode(JSON.stringify(v2payload));
+          const envelopes = [];
+          for (const dev of peerV2.devices) {
+            const env = await GhostKeysV2.encryptV2(GhostKeysV2._b64d(dev.device_pub), ptBytes);
+            envelopes.push({ target_device_id: dev.device_id, envelope: env });
+          }
+          const r = await chat('/v2/send', 'POST', { to_username: activePeer.username, envelopes });
+          optimistic.sid = (r && r.ids && r.ids[0]) || optimistic.sid;
+          optimistic.created_at = new Date().toISOString();
+          optimistic.pending = false;
+          optimistic._v2 = true;
+          await idbAddMessage(optimistic);
+          let d = dialogs.find(x => x.username === activePeer.username);
+          if (!d) { d = { username: activePeer.username, display_name: activePeer.display_name || activePeer.username, unread: 0 }; dialogs.unshift(d); }
+          d.last_text = text; d.last_at = optimistic.created_at; d.last_from_me = true;
+          dialogs = [d, ...dialogs.filter(x => x.username !== activePeer.username)];
+          await idbPutDialog(d);
+          renderDialogs(document.getElementById('sbSearch').value);
+          updateLastBubble(false);
+          sentViaV2 = true;
+        }
+      }
+    } catch (e) {
+      console.warn('[v2 send failed → fallback v1]', e && e.message);
+      v2PeerCache.delete(activePeer.username);  // invalidate, может ключи изменились
+    }
+    if (sentViaV2) { document.getElementById('sendBtn').disabled = false; return; }
     const ct = await encryptForPeer(activePeer.username, payload);
     // Главный путь — отправка через WS RPC (быстрее, не открывает новое TCP).
     // Если WS не подключён или RPC падает — fallback на POST /send (HTTP).
@@ -7420,6 +7563,8 @@ function _fetchPendingWithRetry(){
   // WS chat.delivered если был offline в момент когда receiver сделал /ack).
   // Без этого «дискета» висит вечно даже после refresh.
   try { syncDeliveryStatus(); } catch(_){}
+  // v2 sealed pending — отдельный канал, свой ack.
+  try { fetchPendingV2().catch(()=>{}); } catch(_){}
 }
 
 async function syncDeliveryStatus(){
@@ -7499,6 +7644,7 @@ async function handleWs(m){
     return;
   }
   if (t === 'chat.sealed_new') return;
+  if (t === 'chat.v2.new') { fetchPendingV2().catch(()=>{}); return; }
   if (t === 'chat.new' || t === 'chat.echo') {
     const ok = await ingestIncoming(d);
     if (ok && t === 'chat.new') {

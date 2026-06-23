@@ -213,6 +213,32 @@ def get_user_v2_keys(username: str, authorization: Optional[str] = Header(None))
         c.close()
 
 
+# ── Identity → username reverse lookup ──────────────────────────
+
+@router.get("/whois")
+def whois_by_identity(identity_pub: str, authorization: Optional[str] = Header(None)):
+    """Резолв identity_pub (base64) → username. Нужен для приёма sealed-сообщения:
+    payload содержит identity_pub отправителя; чтобы отобразить чат, надо знать
+    его username. Без этого приходится сканировать локальный список диалогов.
+
+    Privacy-tradeoff: позволяет дешевле найти владельца publicly-known identity_pub.
+    Но identity_pub и так публикуется через /v2/keys/{username}, так что приватность
+    не теряется — обратный lookup — это просто инверсия публичной таблицы."""
+    auth_member(authorization)
+    if not identity_pub or len(identity_pub) > 200:
+        raise HTTPException(400, "identity_pub: некорректный")
+    c = db()
+    try:
+        u = c.execute(
+            "SELECT username, display_name FROM users WHERE v2_identity_pub=?", (identity_pub,)
+        ).fetchone()
+        if not u:
+            raise HTTPException(404, "Не найден")
+        return {"username": u["username"], "display_name": u["display_name"]}
+    finally:
+        c.close()
+
+
 # ── Messaging layer ─────────────────────────────────────────────
 
 class EnvelopeForDevice(BaseModel):
