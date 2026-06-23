@@ -1262,28 +1262,14 @@ class _Bubble extends StatelessWidget {
     // Тёмный лакшери: свои — глубокий фиолет-градиент, чужие — solid (фон ниже).
     final bg = mine
         ? const LinearGradient(
-            // СВЕТОВАЯ КРОМКА (rim): тонкая сплошная светлая линия по верхнему
-            // краю (~1px) → резкий переход → ровный фиолет. Не градиент-залив.
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFFC8BAFF),
-              Color(0xFFC8BAFF),
-              Color(0xFF6A4FD0),
-              Color(0xFF3F2E9C),
-            ],
-            stops: [0.0, 0.03, 0.045, 1.0],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF6A4FD0), Color(0xFF3F2E9C)],
           )
         : const LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFF3E3658),
-              Color(0xFF3E3658),
-              Color(0xFF1C1726),
-              Color(0xFF131019),
-            ],
-            stops: [0.0, 0.03, 0.045, 1.0],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF1C1726), Color(0xFF131019)],
           );
     final textColor = mine ? Colors.white : const Color(0xFFD7D2DE);
     final isImg = _isImage(m);
@@ -1329,9 +1315,9 @@ class _Bubble extends StatelessWidget {
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.32),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
+                color: Colors.black.withValues(alpha: 0.22),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
               ),
             ],
           ),
