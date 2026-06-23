@@ -977,10 +977,17 @@ const Algo = (() => {
     try {
       const p = JSON.parse(localStorage.getItem(KEY) || 'null');
       if (p && p.v >= 1) {
-        // Защита: гарантируем существование всех полей
+        // Защита: гарантируем существование ВСЕХ полей (фикс TypeError на .includes/.filter
+        // при потере полей в localStorage из старой/повреждённой версии).
         p.commented = p.commented || [];
         p.authors = p.authors || {};
         p.tags = p.tags || {};
+        p.seen = p.seen || [];
+        p.hidden = p.hidden || [];
+        p.blockedAuthors = p.blockedAuthors || [];
+        p.dwell = p.dwell || {};
+        p.reacted = p.reacted || [];
+        p.shownCount = p.shownCount || 0;
         // Миграция v1 → v2: clamp накопленные веса под новый cap
         if (p.v < 2) {
           for (const k in p.authors) p.authors[k] = clamp(p.authors[k]);
@@ -1931,7 +1938,8 @@ function linkPreviewPlaceholder(p) {
 }
 
 async function loadPreviews() {
-  document.querySelectorAll('[data-prev-pid]').forEach(async el => {
+  const els = Array.from(document.querySelectorAll('[data-prev-pid]'));
+  await Promise.all(els.map(async el => {
     if (el._loadStarted) return;
     el._loadStarted = true;
     const url = el.dataset.prevUrl;
@@ -1955,7 +1963,7 @@ async function loadPreviews() {
       _previewCache.set(url, null);
       el.remove();
     }
-  });
+  }));
 }
 
 // ── Poll render ────────────────────────────────────────────────────────────────

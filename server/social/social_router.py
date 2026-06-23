@@ -263,8 +263,9 @@ class _WSHub:
                 ct = aesgcm.encrypt(iv, pt, None)
                 payload = {"type": "cs.enc", "data": _b64.b64encode(iv + ct).decode()}
             await ws.send_json(payload)
-        except Exception:
-            pass
+        except Exception as _e:
+            import logging as _lg
+            _lg.getLogger('gc.ws').warning('ws_send failed: %s', _e)
 
     def _schedule(self, coro):
         """Безопасно запустить корутину независимо от того, в каком потоке

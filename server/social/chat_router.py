@@ -733,8 +733,14 @@ def get_user_pub_key(username: str, authorization: Optional[str] = Header(None))
 def send_message(body: SendBody, authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
     _rate_limit(f"chatsend:{user['id']}", limit=120, window=60)
-    if not _is_b64(body.ciphertext) or len(body.ciphertext) > 8000:
+    if not body.ciphertext or not _is_b64(body.ciphertext) or len(body.ciphertext) > 8000:
         raise HTTPException(400, "ciphertext: некорректный формат")
+    try:
+        if len(base64.b64decode(body.ciphertext)) < 13:  # iv(12) + минимум 1 байт ct
+            raise HTTPException(400, "ciphertext: слишком короткий")
+    except HTTPException: raise
+    except Exception:
+        raise HTTPException(400, "ciphertext: невалидный base64")
     c = db()
     to_user = _get_user_by_username(c, body.to_username)
     if not to_user:
@@ -848,8 +854,14 @@ def send_sealed(body: SendSealedBody, authorization: Optional[str] = Header(None
     Сервер не пишет sender_id в БД и не передаёт его в WS."""
     user = auth_member(authorization)
     _rate_limit(f"sealsend:{user['id']}", limit=120, window=60)
-    if not _is_b64(body.ciphertext) or len(body.ciphertext) > 16000:
+    if not body.ciphertext or not _is_b64(body.ciphertext) or len(body.ciphertext) > 16000:
         raise HTTPException(400, "ciphertext: некорректный формат")
+    try:
+        if len(base64.b64decode(body.ciphertext)) < 13:
+            raise HTTPException(400, "ciphertext: слишком короткий")
+    except HTTPException: raise
+    except Exception:
+        raise HTTPException(400, "ciphertext: невалидный base64")
     c = db()
     to_user = _get_user_by_username(c, body.to_username)
     if not to_user:
