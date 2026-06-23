@@ -738,6 +738,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 child: _selectionMode
                     ? _SelectionHeader(
                         count: _selSids.length,
+                        canCopy: _selectedMsgs.any((m) => m.text.isNotEmpty),
                         onClose: _clearSel,
                         onCopy: _copySelected,
                         onForward: _forwardSelected,
@@ -804,54 +805,56 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                       i > 0 && msgs[i - 1].fromMe == m.fromMe,
                                 );
                                 // Тап → меню у пальца; зажатие → выделить.
-                                // В режиме выбора тап/зажатие переключают выбор,
-                                // внутренние тапы (открытие медиа) гасим.
-                                final Widget gestured = _selectionMode
-                                    ? GestureDetector(
-                                        behavior: HitTestBehavior.opaque,
-                                        onTap: () => _toggleSel(m),
-                                        onLongPressStart: (_) => _toggleSel(m),
-                                        child: AbsorbPointer(child: inner),
-                                      )
-                                    : GestureDetector(
-                                        onTapUp: (d) => _openBubbleMenu(
+                                // Структура НЕ меняется при входе в режим выбора
+                                // (Dismissible/AbsorbPointer всегда на месте) —
+                                // иначе _MediaPart пересоздаётся и медиа мигает.
+                                final gestured = GestureDetector(
+                                  behavior: HitTestBehavior.deferToChild,
+                                  onTap: _selectionMode
+                                      ? () => _toggleSel(m)
+                                      : null,
+                                  onTapUp: _selectionMode
+                                      ? null
+                                      : (d) => _openBubbleMenu(
                                           m,
                                           d.globalPosition,
                                         ),
-                                        onLongPressStart: (_) => _toggleSel(m),
-                                        child: inner,
-                                      );
-                                // Свайп-ответ — только вне режима выбора.
-                                final Widget rowChild = _selectionMode
-                                    ? gestured
-                                    : Dismissible(
-                                        key: ValueKey(
-                                          'msg_${m.sid}_${m.tempSid ?? ""}',
-                                        ),
-                                        direction: DismissDirection.startToEnd,
-                                        confirmDismiss: (_) async {
-                                          setState(() => _replyTo = m);
-                                          HapticFeedback.selectionClick();
-                                          return false;
-                                        },
-                                        background: Container(
-                                          alignment: Alignment.centerLeft,
-                                          padding: const EdgeInsets.only(
-                                            left: 24,
-                                          ),
-                                          child: Icon(
-                                            Icons.reply,
-                                            color: GE.primary,
-                                            size: 22,
-                                          ),
-                                        ),
-                                        child: gestured,
-                                      );
+                                  onLongPressStart: (_) => _toggleSel(m),
+                                  // В режиме выбора гасим внутренние тапы медиа.
+                                  child: AbsorbPointer(
+                                    absorbing: _selectionMode,
+                                    child: inner,
+                                  ),
+                                );
                                 final bubble = Container(
                                   color: selected
                                       ? GE.primary.withValues(alpha: 0.14)
                                       : null,
-                                  child: rowChild,
+                                  child: Dismissible(
+                                    key: ValueKey(
+                                      'msg_${m.sid}_${m.tempSid ?? ""}',
+                                    ),
+                                    // Свайп-ответ выключаем в режиме выбора, но
+                                    // сам Dismissible оставляем (стабильность).
+                                    direction: _selectionMode
+                                        ? DismissDirection.none
+                                        : DismissDirection.startToEnd,
+                                    confirmDismiss: (_) async {
+                                      setState(() => _replyTo = m);
+                                      HapticFeedback.selectionClick();
+                                      return false;
+                                    },
+                                    background: Container(
+                                      alignment: Alignment.centerLeft,
+                                      padding: const EdgeInsets.only(left: 24),
+                                      child: Icon(
+                                        Icons.reply,
+                                        color: GE.primary,
+                                        size: 22,
+                                      ),
+                                    ),
+                                    child: gestured,
+                                  ),
                                 );
                                 if (!newSender && !newDay) return bubble;
                                 return Column(
@@ -2521,12 +2524,14 @@ class _BubbleMenuCard extends StatelessWidget {
 // ── Шапка режима выбора (вместо _ChatHeader) ──────────────────────────
 class _SelectionHeader extends StatelessWidget {
   final int count;
+  final bool canCopy;
   final VoidCallback onClose;
   final VoidCallback onCopy;
   final VoidCallback onForward;
   final VoidCallback onDelete;
   const _SelectionHeader({
     required this.count,
+    required this.canCopy,
     required this.onClose,
     required this.onCopy,
     required this.onForward,
@@ -2555,11 +2560,13 @@ class _SelectionHeader extends StatelessWidget {
               ),
             ),
             const Spacer(),
-            IconButton(
-              icon: Icon(Icons.copy_outlined, color: GE.text),
-              tooltip: 'Копировать',
-              onPressed: onCopy,
-            ),
+            // «Копировать» только если в выборе есть текст (файл не копируем).
+            if (canCopy)
+              IconButton(
+                icon: Icon(Icons.copy_outlined, color: GE.text),
+                tooltip: 'Копировать',
+                onPressed: onCopy,
+              ),
             IconButton(
               icon: Icon(Icons.forward, color: GE.text),
               tooltip: 'Переслать',
