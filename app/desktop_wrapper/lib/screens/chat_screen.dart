@@ -10,6 +10,7 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:intl/intl.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:record/record.dart';
@@ -224,6 +225,42 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
+  // Отправка ПРОИЗВОЛЬНОГО файла (любой тип) через системный пикер.
+  Future<void> _pickAndSendFile() async {
+    Navigator.maybePop(context);
+    try {
+      final file = await openFile();
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      final mime = file.mimeType ?? _guessMime(file.name);
+      await ChatRepo.instance.sendDmFile(
+        toUsername: widget.peer,
+        bytes: bytes,
+        mime: mime,
+        fileName: file.name,
+      );
+    } catch (e) {
+      _snack('Файл не отправился: $e');
+    }
+  }
+
+  String _guessMime(String name) {
+    final n = name.toLowerCase();
+    if (n.endsWith('.pdf')) return 'application/pdf';
+    if (n.endsWith('.jpg') || n.endsWith('.jpeg')) return 'image/jpeg';
+    if (n.endsWith('.png')) return 'image/png';
+    if (n.endsWith('.gif')) return 'image/gif';
+    if (n.endsWith('.webp')) return 'image/webp';
+    if (n.endsWith('.mp4')) return 'video/mp4';
+    if (n.endsWith('.mov')) return 'video/quicktime';
+    if (n.endsWith('.mp3')) return 'audio/mpeg';
+    if (n.endsWith('.m4a')) return 'audio/m4a';
+    if (n.endsWith('.zip')) return 'application/zip';
+    if (n.endsWith('.doc') || n.endsWith('.docx')) return 'application/msword';
+    if (n.endsWith('.txt')) return 'text/plain';
+    return 'application/octet-stream';
+  }
+
   Future<void> _openAttachSheet() async {
     HapticFeedback.selectionClick();
     await showModalBottomSheet<void>(
@@ -248,6 +285,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   () => _pickAndSendImage(ImageSource.gallery),
                 ),
                 _attachTile(Icons.videocam, 'Видео', _pickAndSendVideo),
+                _attachTile(Icons.insert_drive_file, 'Файл', _pickAndSendFile),
               ],
             ),
           ),

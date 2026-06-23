@@ -49,8 +49,9 @@ dependencies:
   audioplayers: ^6.1.0             # воспроизведение
   # ─── Attach (картинки/видео) ───
   image_picker: ^1.1.2
-  # file_picker 11 ломает Android-сборку (broken plugin.xml) — оставляем
-  # только image_picker. Произвольные файлы добавим через intent позже.
+  # file_picker 11 ломал Android-сборку (broken plugin.xml) → для произвольных
+  # файлов используем стабильный file_selector (Flutter team, системный пикер).
+  file_selector: ^1.0.3
 
   # ─── Уведомления + системные ───
   flutter_local_notifications: ^18.0.1
