@@ -428,42 +428,48 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return out;
   }
 
-  Future<void> _openBubbleMenu(StoredMessage m) async {
+  Future<void> _openBubbleMenu(StoredMessage m, Offset pos) async {
     HapticFeedback.mediumImpact();
     final mine = m.fromMe;
-    final canEdit = mine && m.filePayload == null && !m.deleted;
-    final res = await showModalBottomSheet<String>(
+    final isText = m.filePayload == null && !m.deleted;
+    final canEdit = mine && isText;
+    // «Копировать» — только для текста (на телефоне копировать аудио/медиа
+    // бессмысленно), «Редактировать» — только свой текст.
+    final canCopy = isText && m.text.isNotEmpty;
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final res = await showMenu<String>(
       context: context,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: GlassCard(
-            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 6),
-            radius: GE.radiusLg,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _ReactionsBar(onPick: (e) => Navigator.pop(ctx, 'react:$e')),
-                Divider(height: 1, color: GE.glassBorder),
-                _menuItem(ctx, Icons.reply, 'Ответить', 'reply'),
-                _menuItem(ctx, Icons.forward, 'Переслать', 'forward'),
-                if (canEdit)
-                  _menuItem(ctx, Icons.edit, 'Редактировать', 'edit'),
-                _menuItem(ctx, Icons.copy, 'Копировать', 'copy'),
-                if (mine && !m.deleted)
-                  _menuItem(
-                    ctx,
-                    Icons.delete_outline,
-                    'Удалить',
-                    'delete',
-                    danger: true,
-                  ),
-              ],
-            ),
+      color: GE.bgDeep,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: GE.glassBorder),
+      ),
+      // Меню всплывает У ПАЛЬЦА (от точки нажатия), а не снизу экрана.
+      position: RelativeRect.fromLTRB(
+        pos.dx,
+        pos.dy,
+        overlay.size.width - pos.dx,
+        overlay.size.height - pos.dy,
+      ),
+      items: [
+        PopupMenuItem<String>(
+          enabled: false,
+          height: 42,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: _ReactionsBar(
+            onPick: (e) => Navigator.pop(context, 'react:$e'),
           ),
         ),
-      ),
+        const PopupMenuDivider(),
+        _popupItem('reply', Icons.reply, 'Ответить'),
+        _popupItem('forward', Icons.forward, 'Переслать'),
+        if (canCopy) _popupItem('copy', Icons.copy, 'Копировать'),
+        if (canEdit) _popupItem('edit', Icons.edit, 'Редактировать'),
+        if (mine && !m.deleted)
+          _popupItem('delete', Icons.delete_outline, 'Удалить', danger: true),
+      ],
     );
     if (res == null || !mounted) return;
     if (res.startsWith('react:')) {
@@ -510,25 +516,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  Widget _menuItem(
-    BuildContext ctx,
+  PopupMenuItem<String> _popupItem(
+    String value,
     IconData icon,
-    String label,
-    String value, {
+    String label, {
     bool danger = false,
   }) {
-    return InkWell(
-      onTap: () => Navigator.pop(ctx, value),
-      borderRadius: BorderRadius.circular(GE.radiusSm),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        child: Row(
-          children: [
-            Icon(icon, size: 18, color: danger ? GE.red : GE.text),
-            const SizedBox(width: 12),
-            Text(label, style: TextStyle(color: danger ? GE.red : GE.text)),
-          ],
-        ),
+    return PopupMenuItem<String>(
+      value: value,
+      height: 44,
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: danger ? GE.red : GE.primary),
+          const SizedBox(width: 12),
+          Text(
+            label,
+            style: TextStyle(color: danger ? GE.red : GE.text, fontSize: 14),
+          ),
+        ],
       ),
     );
   }
@@ -729,7 +734,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     ),
                                   ),
                                   child: GestureDetector(
-                                    onLongPress: () => _openBubbleMenu(m),
+                                    onLongPressStart: (d) =>
+                                        _openBubbleMenu(m, d.globalPosition),
                                     onDoubleTap: () async {
                                       try {
                                         await ChatRepo.instance.reactDmMessage(
