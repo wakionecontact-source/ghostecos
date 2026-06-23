@@ -7236,7 +7236,7 @@ async function _wsBeginHandshake(){
     _wsEphPriv = pair.privateKey;
     const pubBytes = await crypto.subtle.exportKey('raw', pair.publicKey);
     _wsEphPub = b64e(pubBytes);
-    ws.send(JSON.stringify({ type: 'cs.hello', data: { client_pub: _wsEphPub } }));
+    ws.send(JSON.stringify({ type: 'cs.hello', data: { client_pub: _wsEphPub, v: 2 } }));
   } catch(e){
     console.warn('[ws-crypto] handshake start failed:', e);
   }

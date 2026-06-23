@@ -430,15 +430,17 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     if len(client_pub_raw) != 65:
                         await websocket.send_json({"type":"cs.hello.err","data":{"error":"client_pub: 65 байт"}})
                         continue
-                    # Per-handshake random salt — заменяет статический ноль (был
-                    # cryptographic smell: одинаковая соль HKDF → коррелированные
-                    # AES-ключи между сессиями). v2: соль шлём клиенту в hello.ok.
-                    hs_salt = _os.urandom(32)
+                    # Backward compat: если клиент шлёт `v: 2` в cs.hello — random salt + v2 info.
+                    # Иначе legacy zero salt + v1 info (старые клиенты с PWA-кешом).
+                    client_v = data.get("v") or 1
+                    is_v2 = client_v >= 2
+                    hs_salt = _os.urandom(32) if is_v2 else (b'\x00' * 32)
+                    hkdf_info = b'ghostchat-cs-v2' if is_v2 else b'ghostchat-cs-v1'
                     def _do_ecdh():
                         client_key = _ec.EllipticCurvePublicKey.from_encoded_point(_ec.SECP256R1(), client_pub_raw)
                         server_priv = _ec.generate_private_key(_ec.SECP256R1())
                         shared = server_priv.exchange(_ec.ECDH(), client_key)
-                        master = HKDF(algorithm=hashes.SHA256(), length=32, salt=hs_salt, info=b'ghostchat-cs-v2').derive(shared)
+                        master = HKDF(algorithm=hashes.SHA256(), length=32, salt=hs_salt, info=hkdf_info).derive(shared)
                         aes = AESGCM(master)
                         spub = server_priv.public_key().public_bytes(_ENC.X962, _PF.UncompressedPoint)
                         return aes, spub
@@ -454,12 +456,12 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     except Exception:
                         pass  # старт без identity — для backward compat (TOFU старый клиент)
                     ws_hub.set_crypto(websocket, _aesgcm)
-                    await websocket.send_json({"type":"cs.hello.ok","data":{
-                        "server_pub": _b64.b64encode(server_pub_raw).decode(),
-                        "server_salt": _b64.b64encode(hs_salt).decode(),
-                        "server_sig": sig_b64,
-                        "hkdf_info": "ghostchat-cs-v2",
-                    }})
+                    hello_ok = {"server_pub": _b64.b64encode(server_pub_raw).decode()}
+                    if is_v2:
+                        hello_ok["server_salt"] = _b64.b64encode(hs_salt).decode()
+                        hello_ok["server_sig"] = sig_b64
+                        hello_ok["hkdf_info"] = "ghostchat-cs-v2"
+                    await websocket.send_json({"type":"cs.hello.ok","data": hello_ok})
                 except Exception as _e:
                     try:
                         await websocket.send_json({"type":"cs.hello.err","data":{"error":"handshake failed"}})
