@@ -2229,6 +2229,34 @@ def init():
     try: c.execute("ALTER TABLE users ADD COLUMN avatar_url TEXT NULL")
     except sqlite3.OperationalError: pass
 
+    # ─── v2 (Ed25519 identity + X25519 device + per-device envelopes) ───
+    for col in (
+        "v2_identity_pub TEXT NULL",
+        "v2_encrypted_identity_priv TEXT NULL",
+        "v2_identity_salt TEXT NULL",
+    ):
+        try: c.execute(f"ALTER TABLE users ADD COLUMN {col}")
+        except sqlite3.OperationalError: pass
+    for col in (
+        "v2_device_pub TEXT NULL",
+        "v2_signed_prekey_sig TEXT NULL",
+    ):
+        try: c.execute(f"ALTER TABLE user_devices ADD COLUMN {col}")
+        except sqlite3.OperationalError: pass
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS chat_dm_v2 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                receiver_user_id INTEGER NOT NULL,
+                receiver_device_id INTEGER NOT NULL,
+                envelope TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+        """)
+    except sqlite3.OperationalError: pass
+    try: c.execute("CREATE INDEX IF NOT EXISTS idx_dm_v2_recv ON chat_dm_v2(receiver_user_id, receiver_device_id, id)")
+    except sqlite3.OperationalError: pass
+
     # Multi-device delivery: сообщения живут 24ч после первой доставки.
     # delivered_to — JSON-массив device_id'ов которые уже подтвердили получение.
     # last_delivery_at — для TTL-cleanup'a фоновой задачей.

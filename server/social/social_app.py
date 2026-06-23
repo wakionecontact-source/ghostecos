@@ -103,6 +103,12 @@ app.mount("/media", StaticFiles(directory="/opt/ghostchat/media"), name="media")
 
 app.include_router(social_router)
 app.include_router(chat_router)
+try:
+    from chat_router_v2 import router as chat_router_v2
+    app.include_router(chat_router_v2)
+except Exception as _e:
+    import logging as _lg
+    _lg.getLogger('gc').warning('chat_router_v2 not registered: %s', _e)
 
 
 # ── TTL cleanup: удаляет доставленные сообщения старше 24ч ──
