@@ -162,3 +162,18 @@ async def _start_cleanup():
 @app.get("/api/soc/health")
 def health_check():
     return {"status": "working", "service": "GhostSocial Standalone"}
+
+
+@app.get("/api/chat/server-identity")
+def server_identity():
+    """Долгоживущий Ed25519 pub-ключ сервера. Клиент кэширует при первом
+    подключении (TOFU) и сверяет подпись эфемерных server_pub в cs.hello.ok
+    при каждом WS handshake — защита от MITM."""
+    import base64 as _b64
+    try:
+        from server_identity import server_identity_pub_bytes
+        return {"server_identity_pub": _b64.b64encode(server_identity_pub_bytes()).decode()}
+    except Exception as e:
+        import logging as _lg
+        _lg.getLogger("gc").error("server_identity error: %s", e)
+        return {"server_identity_pub": None}

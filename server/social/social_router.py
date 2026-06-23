@@ -430,18 +430,35 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
                     if len(client_pub_raw) != 65:
                         await websocket.send_json({"type":"cs.hello.err","data":{"error":"client_pub: 65 байт"}})
                         continue
+                    # Per-handshake random salt — заменяет статический ноль (был
+                    # cryptographic smell: одинаковая соль HKDF → коррелированные
+                    # AES-ключи между сессиями). v2: соль шлём клиенту в hello.ok.
+                    hs_salt = _os.urandom(32)
                     def _do_ecdh():
                         client_key = _ec.EllipticCurvePublicKey.from_encoded_point(_ec.SECP256R1(), client_pub_raw)
                         server_priv = _ec.generate_private_key(_ec.SECP256R1())
                         shared = server_priv.exchange(_ec.ECDH(), client_key)
-                        master = HKDF(algorithm=hashes.SHA256(), length=32, salt=b'\x00'*32, info=b'ghostchat-cs-v1').derive(shared)
+                        master = HKDF(algorithm=hashes.SHA256(), length=32, salt=hs_salt, info=b'ghostchat-cs-v2').derive(shared)
                         aes = AESGCM(master)
                         spub = server_priv.public_key().public_bytes(_ENC.X962, _PF.UncompressedPoint)
                         return aes, spub
                     _aesgcm, server_pub_raw = await _aio.to_thread(_do_ecdh)
+                    # Подпись server_pub долгоживущим Ed25519-ключом сервера → MITM-защита.
+                    # Клиент кэширует server_identity_pub при первом подключении (TOFU) и
+                    # сверяет подпись на каждом handshake. Без подписи атакующий мог
+                    # подменить эфемерный server_pub своим и читать весь трафик после handshake.
+                    sig_b64 = ""
+                    try:
+                        from server_identity import sign_handshake as _sign_hs
+                        sig_b64 = _b64.b64encode(_sign_hs(server_pub_raw + hs_salt)).decode()
+                    except Exception:
+                        pass  # старт без identity — для backward compat (TOFU старый клиент)
                     ws_hub.set_crypto(websocket, _aesgcm)
                     await websocket.send_json({"type":"cs.hello.ok","data":{
                         "server_pub": _b64.b64encode(server_pub_raw).decode(),
+                        "server_salt": _b64.b64encode(hs_salt).decode(),
+                        "server_sig": sig_b64,
+                        "hkdf_info": "ghostchat-cs-v2",
                     }})
                 except Exception as _e:
                     try:

@@ -7242,20 +7242,67 @@ async function _wsBeginHandshake(){
   }
 }
 
-async function _wsCompleteHandshake(serverPubB64){
+// Долгоживущий identity-pub сервера (Ed25519). TOFU — запоминаем при первом
+// успешном handshake, потом сверяем подпись server_pub. Защита от MITM.
+async function _verifyServerIdentity(serverPubBytes, hsSaltBytes, serverSigB64){
+  if (!serverSigB64) return true;  // legacy сервер без подписи — пропускаем
+  if (!window.nacl || !nacl.sign || !nacl.sign.detached) return true;  // tweetnacl не загрузился
+  let pinnedB64 = null;
+  try { pinnedB64 = localStorage.getItem('gs_server_identity_pub'); } catch(_){}
+  if (!pinnedB64) {
+    // Первый раз — тянем с сервера + пинимаем (TOFU). Сервер publish'ает через
+    // /api/chat/server-identity (не подписан, доверяем как initial fetch).
+    try {
+      const r = await fetch('/api/chat/server-identity').then(x => x.json());
+      pinnedB64 = r && r.server_identity_pub;
+      if (pinnedB64) localStorage.setItem('gs_server_identity_pub', pinnedB64);
+    } catch(_){}
+  }
+  if (!pinnedB64) return true;  // не смогли получить — не блокируем
+  try {
+    const idPub = b64d(pinnedB64);
+    const sig = b64d(serverSigB64);
+    const data = new Uint8Array(serverPubBytes.length + hsSaltBytes.length);
+    data.set(serverPubBytes, 0); data.set(hsSaltBytes, serverPubBytes.length);
+    const ok = nacl.sign.detached.verify(data, sig, idPub);
+    if (!ok) {
+      console.error('[ws-crypto] SERVER IDENTITY MISMATCH — возможен MITM. Связь не доверена.');
+      return false;
+    }
+    return true;
+  } catch(e){
+    console.warn('[ws-crypto] identity verify error:', e);
+    return false;
+  }
+}
+
+async function _wsCompleteHandshake(serverPubB64, helloData){
   try {
     const spub = b64d(serverPubB64);
+    // v2: используем server_salt (per-handshake random) и info=ghostchat-cs-v2.
+    // v1 fallback: zero salt + info=ghostchat-cs-v1.
+    const serverSaltB64 = (helloData && helloData.server_salt) || '';
+    const hkdfInfo = (helloData && helloData.hkdf_info) || 'ghostchat-cs-v1';
+    const hsSalt = serverSaltB64 ? b64d(serverSaltB64) : new Uint8Array(32);
+    // Verify подпись server_pub + salt долгоживущим Ed25519 identity сервера.
+    const serverSig = (helloData && helloData.server_sig) || '';
+    const trusted = await _verifyServerIdentity(spub, hsSalt, serverSig);
+    if (!trusted) {
+      // НЕ устанавливаем _wsAesKey → wsRpc упадёт fallback на REST.
+      // Юзер увидит более медленный путь но не leak'нет MITM'у.
+      return;
+    }
     const serverPubKey = await crypto.subtle.importKey('raw', spub, {name:'ECDH', namedCurve:'P-256'}, false, []);
     const shared = await crypto.subtle.deriveBits({name:'ECDH', public: serverPubKey}, _wsEphPriv, 256);
     const hkdfKey = await crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveBits']);
     const derived = await crypto.subtle.deriveBits({
       name:'HKDF', hash:'SHA-256',
-      salt: new Uint8Array(32),
-      info: new TextEncoder().encode('ghostchat-cs-v1'),
+      salt: hsSalt,
+      info: new TextEncoder().encode(hkdfInfo),
     }, hkdfKey, 256);
     _wsAesKey = await crypto.subtle.importKey('raw', derived, {name:'AES-GCM'}, false, ['encrypt','decrypt']);
     if (_wsHandshakeReadyResolve) { _wsHandshakeReadyResolve(true); _wsHandshakeReadyResolve = null; }
-    console.log('[ws-crypto] handshake OK');
+    console.log('[ws-crypto] handshake OK', hkdfInfo);
   } catch(e){
     console.warn('[ws-crypto] handshake completion failed:', e);
   }
@@ -7453,7 +7500,7 @@ function connectWS(){
     try { m = JSON.parse(e.data); } catch(_){ return; }
     if (!m || !m.type) return;
     if (m.type === 'cs.hello.ok'){
-      await _wsCompleteHandshake((m.data || {}).server_pub || '');
+      await _wsCompleteHandshake((m.data || {}).server_pub || '', m.data || {});
       return;
     }
     if (m.type === 'cs.hello.err'){
