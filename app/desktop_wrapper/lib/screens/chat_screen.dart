@@ -1937,49 +1937,49 @@ class _VoiceTileState extends State<_VoiceTile> {
         : (_pos.inMilliseconds / total.inMilliseconds).clamp(0.0, 1.0);
     final started = _playing || _pos > Duration.zero;
     return SizedBox(
-      width: 232,
+      width: 246,
       child: Row(
         children: [
           InkWell(
             onTap: _toggle,
-            borderRadius: BorderRadius.circular(21),
+            borderRadius: BorderRadius.circular(23),
             child: Container(
-              width: 40,
-              height: 40,
+              width: 46,
+              height: 46,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    widget.textColor.withValues(alpha: 0.30),
-                    widget.textColor.withValues(alpha: 0.16),
-                  ],
-                ),
+                color: widget.textColor.withValues(alpha: 0.96),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.20),
+                    blurRadius: 7,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
               ),
               child: widget.loading
                   ? const Padding(
-                      padding: EdgeInsets.all(11),
+                      padding: EdgeInsets.all(14),
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Colors.white,
+                        color: Color(0xFF2A1E50),
                       ),
                     )
                   : Icon(
                       _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                      color: widget.textColor,
-                      size: 24,
+                      color: const Color(0xFF2A1E50),
+                      size: 28,
                     ),
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
                 SizedBox(
-                  height: 26,
+                  height: 30,
                   child: LayoutBuilder(
                     builder: (ctx, c) => GestureDetector(
                       behavior: HitTestBehavior.opaque,
@@ -1988,7 +1988,7 @@ class _VoiceTileState extends State<_VoiceTile> {
                       onHorizontalDragUpdate: (d) =>
                           _seekFraction(d.localPosition.dx / c.maxWidth),
                       child: CustomPaint(
-                        size: Size(c.maxWidth, 26),
+                        size: Size(c.maxWidth, 30),
                         painter: _WaveformPainter(
                           bars: _bars,
                           progress: progress,
