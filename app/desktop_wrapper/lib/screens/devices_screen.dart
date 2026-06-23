@@ -7,6 +7,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../theme.dart';
+import '../mesh_background.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../widgets/glass.dart';
@@ -103,6 +104,10 @@ class _DevicesScreenState extends State<DevicesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return MeshBackground(child: _scaffold(context));
+  }
+
+  Widget _scaffold(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: GlassAppBar(showBack: true, titleText: 'Устройства'),

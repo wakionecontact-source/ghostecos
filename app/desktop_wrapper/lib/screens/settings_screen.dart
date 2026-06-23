@@ -3,9 +3,11 @@
 
 import 'package:flutter/material.dart';
 import '../theme.dart';
+import '../mesh_background.dart';
 import '../services/chat_repo.dart';
 import '../services/theme_service.dart';
 import '../widgets/glass.dart';
+import 'devices_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -16,6 +18,10 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
+    return MeshBackground(child: _scaffold(context));
+  }
+
+  Widget _scaffold(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: GlassAppBar(
@@ -78,7 +84,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _tile(Icons.fingerprint, 'Био-логин (готовится)', () {}),
                 _tile(Icons.password, 'Паник-пароль (готовится)', () {}),
                 _tile(Icons.devices_other,
-                    'Сессии и устройства (готовится)', () {}),
+                    'Устройства аккаунта',
+                    () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => const DevicesScreen(),
+                        )),
+                    sub: 'Список всех устройств, через которые входили'),
               ],
             ),
           ),

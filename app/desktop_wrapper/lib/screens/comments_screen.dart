@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../theme.dart';
+import '../mesh_background.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../widgets/glass.dart';
@@ -233,6 +234,10 @@ class _CommentsScreenState extends State<CommentsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return MeshBackground(child: _scaffold(context));
+  }
+
+  Widget _scaffold(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
       resizeToAvoidBottomInset: true,
@@ -583,10 +588,31 @@ class _CommentRow extends StatelessWidget {
     this.quoteText,
   });
 
-  static const _emoji = {
-    'heart': '❤', 'fire': '🔥', 'laugh': '😂',
-    'sad': '😢', 'clap': '👏', 'eyes': '👀',
+  // Кастомные иконки реакций — Material с фирменным цветом каждой.
+  // Берём заменяемо: на любой платформе одинаково (системные эмодзи на MIUI/iOS отличаются).
+  static const _icon = {
+    'heart': Icons.favorite,
+    'fire': Icons.local_fire_department,
+    'laugh': Icons.sentiment_very_satisfied,
+    'sad': Icons.sentiment_dissatisfied,
+    'clap': Icons.front_hand,
+    'eyes': Icons.visibility,
   };
+  static const _iconColor = {
+    'heart': Color(0xFFef4444),   // red
+    'fire': Color(0xFFf97316),    // orange
+    'laugh': Color(0xFFfacc15),   // yellow
+    'sad': Color(0xFF60a5fa),     // blue
+    'clap': Color(0xFFfb923c),    // amber
+    'eyes': Color(0xFFa855f7),    // purple
+  };
+  Widget _emojiIcon(String key, {double size = 16, Color? overrideColor}) {
+    return Icon(
+      _icon[key] ?? Icons.favorite,
+      size: size,
+      color: overrideColor ?? _iconColor[key] ?? GE.primary,
+    );
+  }
 
   String _ago(dynamic at) {
     if (at == null) return '';
@@ -620,19 +646,19 @@ class _CommentRow extends StatelessWidget {
             radius: 999,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: _emoji.entries.map((e) => InkWell(
+              children: _icon.keys.map((k) => InkWell(
                 customBorder: const CircleBorder(),
-                onTap: () => Navigator.pop(ctx, e.key),
+                onTap: () => Navigator.pop(ctx, k),
                 child: Container(
                   width: 44, height: 44,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: c.yourEmoji == e.key
+                    color: c.yourEmoji == k
                         ? GE.primary.withValues(alpha: 0.30)
                         : Colors.transparent,
                   ),
                   alignment: Alignment.center,
-                  child: Text(e.value, style: const TextStyle(fontSize: 24)),
+                  child: _emojiIcon(k, size: 24),
                 ),
               )).toList(),
             ),
@@ -765,8 +791,7 @@ class _CommentRow extends StatelessWidget {
                             padding: const EdgeInsets.all(4),
                             child: Row(mainAxisSize: MainAxisSize.min, children: [
                               if (hasYour)
-                                Text(_emoji[emo] ?? '❤',
-                                    style: const TextStyle(fontSize: 14))
+                                _emojiIcon(emo, size: 16)
                               else
                                 Icon(Icons.favorite_border, color: GE.sub, size: 14),
                               if (total > 0) Padding(

@@ -250,49 +250,54 @@ class _GlassBottomNavState extends State<_GlassBottomNav> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Стрелка-хэндл: сворачивает/разворачивает панель.
+        // Стрелка-хэндл: сидит ПРЯМО на верхней границе панели, без чипа-фона.
+        // Кликабельная зона широкая (64×22), сам значок — маленький.
         GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: () => setState(() => _collapsed = !_collapsed),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            alignment: Alignment.center,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
-              decoration: BoxDecoration(
-                color: GE.glassFill,
-                borderRadius: BorderRadius.circular(99),
-                border: Border.all(color: GE.glassBorder),
-              ),
+          child: SizedBox(
+            width: 72,
+            height: 22,
+            child: Center(
               child: AnimatedRotation(
                 turns: _collapsed ? 0.5 : 0,
                 duration: const Duration(milliseconds: 220),
-                child: Icon(Icons.keyboard_arrow_down, size: 18, color: GE.sub),
+                child: Icon(
+                  Icons.keyboard_arrow_down,
+                  size: 20,
+                  color: GE.sub.withValues(alpha: 0.65),
+                ),
               ),
             ),
           ),
         ),
-        // Панель — сворачивается анимацией вниз, остаётся только стрелка.
+        // Панель — плоский бар как в TG: во всю ширину, прижат к низу, тонкая
+        // верхняя граница + лёгкое стекло. Сворачивается анимацией вниз.
         AnimatedSize(
           duration: const Duration(milliseconds: 220),
           curve: Curves.easeInOut,
           alignment: Alignment.topCenter,
           child: _collapsed
               ? SizedBox(width: double.infinity, height: bottomInset)
-              : Padding(
-                  // Плавающий стеклянный бар: отступы по краям + снизу, он висит
-                  // над нижним свечением mesh → выделяется и объёмится.
-                  padding: EdgeInsets.fromLTRB(12, 2, 12, 8 + bottomInset),
-                  child: GlassCard(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 8,
+              : Container(
+                  // Чистый лакшери-бар: на всю ширину, тонкий разделитель
+                  // сверху, без плавающего стекла (перф: без BackdropFilter
+                  // над mesh).
+                  padding: EdgeInsets.only(
+                    left: 6,
+                    right: 6,
+                    top: 6,
+                    bottom: 6 + bottomInset,
+                  ),
+                  decoration: const BoxDecoration(
+                    color: Color(0xF21A1623),
+                    border: Border(
+                      top: BorderSide(color: Color(0x14FFFFFF), width: 0.6),
                     ),
-                    radius: 26,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceAround,
-                      children: [for (final s in Section.values) _navItem(s)],
-                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [for (final s in Section.values) _navItem(s)],
                   ),
                 ),
         ),
@@ -302,21 +307,23 @@ class _GlassBottomNavState extends State<_GlassBottomNav> {
 
   Widget _navItem(Section s) {
     final active = s == widget.current;
+    // Без визуального фона у пункта — только иконка+подпись. Подсветка = акцент.
     return Expanded(
       child: InkWell(
-        borderRadius: BorderRadius.circular(GE.radiusSm),
         onTap: () => widget.onTap(s),
-        child: Container(
+        splashColor: GE.primary.withValues(alpha: 0.10),
+        highlightColor: Colors.transparent,
+        child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 8),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
                 active ? s.iconFilled : s.iconOutline,
-                size: 22,
+                size: 24,
                 color: active ? GE.primary : GE.sub,
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 3),
               Text(
                 s.label,
                 style: TextStyle(
@@ -619,22 +626,28 @@ class _ProfilePane extends StatelessWidget {
                       ),
                     ),
                   ),
-                  // Настройки / темы / безопасность временно отключены —
-                  // экран SettingsScreen сохранён в коде, см. settings_screen.dart.
+                  // Настройки (темы, звук, приватность, чат, безопасность,
+                  // E2E-ключи) — единый экран SettingsScreen.
                   _profileRow(
                     Icons.settings_outlined,
                     'Настройки',
-                    onTap: () => _todo(context, 'Настройки в разработке'),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                    ),
                   ),
                   _profileRow(
                     Icons.palette_outlined,
                     'Темы интерфейса',
-                    onTap: () => _todo(context, 'Темы в разработке'),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                    ),
                   ),
                   _profileRow(
                     Icons.shield_outlined,
                     'Безопасность',
-                    onTap: () => _todo(context, 'Безопасность в разработке'),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                    ),
                   ),
                   _profileRow(
                     Icons.terminal_outlined,

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
+import '../mesh_background.dart';
 import '../services/api_client.dart';
 import '../widgets/glass.dart';
 
@@ -76,6 +77,10 @@ class _WrappedScreenState extends State<WrappedScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return MeshBackground(child: _scaffold(context));
+  }
+
+  Widget _scaffold(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: GlassAppBar(
@@ -356,7 +361,7 @@ class _WrappedScreenState extends State<WrappedScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Любимые эмодзи',
+          Text('Любимые реакции',
               style: TextStyle(
                   color: GE.sub, fontSize: 11, fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),
@@ -364,10 +369,14 @@ class _WrappedScreenState extends State<WrappedScreen> {
               children: items.take(3).map<Widget>((raw) {
             if (raw is! Map) return const SizedBox.shrink();
             final r = Map<String, dynamic>.from(raw);
-            final em = (r['emoji'] as String?) ?? '?';
+            final em = (r['emoji'] as String?) ?? 'heart';
             final cnt = _intOf(r['count']);
             return Column(children: [
-              Text(_glyph(em), style: const TextStyle(fontSize: 28)),
+              Icon(
+                _glyphIcon[em] ?? Icons.favorite,
+                size: 28,
+                color: _glyphColor[em] ?? GE.primary,
+              ),
               const SizedBox(height: 4),
               Text('$cnt',
                   style: TextStyle(
@@ -471,9 +480,21 @@ class _WrappedScreenState extends State<WrappedScreen> {
         ]),
       );
 
-  static const _glyphMap = {
-    'heart': '❤', 'fire': '🔥', 'laugh': '😂',
-    'sad': '😢', 'clap': '👏', 'eyes': '👀',
+  // Кастомные иконки для эмодзи реакций.
+  static const _glyphIcon = {
+    'heart': Icons.favorite,
+    'fire': Icons.local_fire_department,
+    'laugh': Icons.sentiment_very_satisfied,
+    'sad': Icons.sentiment_dissatisfied,
+    'clap': Icons.front_hand,
+    'eyes': Icons.visibility,
   };
-  String _glyph(String key) => _glyphMap[key] ?? key;
+  static const _glyphColor = {
+    'heart': Color(0xFFef4444),
+    'fire': Color(0xFFf97316),
+    'laugh': Color(0xFFfacc15),
+    'sad': Color(0xFF60a5fa),
+    'clap': Color(0xFFfb923c),
+    'eyes': Color(0xFFa855f7),
+  };
 }
