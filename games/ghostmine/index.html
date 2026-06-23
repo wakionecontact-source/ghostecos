@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GhostMine</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+  :root{ --pix:'Press Start 2P', ui-monospace, monospace; }
+  *{box-sizing:border-box; margin:0; padding:0}
+  html,body{height:100%; overflow:hidden; background:#1a1d22}
+  body{font-family:var(--pix); color:#fff; -webkit-font-smoothing:none}
+  #game{display:block; image-rendering:pixelated; cursor:crosshair; touch-action:none}
+
+  /* ---- HUD overlay ---- */
+  .hud{position:fixed; pointer-events:none; text-shadow:1px 1px 0 #000; z-index:5}
+  .panel{background:rgba(8,10,14,.72); border:2px solid #000; box-shadow:0 0 0 2px rgba(255,255,255,.06) inset}
+
+  /* leaderboard top-left */
+  #lb{top:8px; left:8px; padding:7px 10px; min-width:210px; font-size:9px; line-height:1.9}
+  #lb h3{font-size:9px; color:#cdd3da; margin-bottom:6px; text-align:center; letter-spacing:1px}
+  #lb .row{display:flex; justify-content:space-between; gap:10px}
+  #lb .row.me{color:#5dd05d}
+  #lb .nm{white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:130px}
+  #lb .mn{color:#e9c46a}
+
+  /* top-center buttons + env bar */
+  #topc{top:8px; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; gap:6px; pointer-events:auto}
+  #btns{display:flex; gap:8px}
+  .ibtn{width:46px; height:40px; display:flex; align-items:center; justify-content:center; cursor:pointer}
+  .ibtn:hover{background:rgba(255,255,255,.08)}
+  .ibtn svg{width:24px; height:24px}
+  #env{display:flex; gap:14px; padding:5px 12px; font-size:9px; align-items:center}
+  #env span{display:flex; align-items:center; gap:5px}
+  #env svg{width:13px; height:13px}
+
+  /* coords top-right */
+  #coords{top:8px; right:8px; padding:6px 9px; font-size:9px; line-height:1.8; color:#aeb6c2}
+
+  /* resources bottom-right */
+  #res{bottom:8px; right:8px; padding:8px 10px; font-size:10px; line-height:1; display:flex; flex-direction:column; gap:8px}
+  #res .r{display:grid; grid-template-columns:16px 64px 46px; align-items:center; gap:8px}
+  #res .r .ic{width:16px; height:16px}
+  #res .r .am{text-align:right; font-variant-numeric:tabular-nums}
+  #res .r .rt{text-align:right; font-size:8px; color:#7e8794}
+  #res .r .rt.pos{color:#5dd05d} #res .r .rt.neg{color:#ef5d6b}
+
+  /* health + hotbar bottom-center */
+  #bot{bottom:8px; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; gap:6px}
+  #hearts{display:flex; gap:2px}
+  #hearts svg{width:16px; height:16px}
+  #hotbar{display:flex; gap:4px}
+  .slot{width:46px; height:46px; background:rgba(8,10,14,.72); border:2px solid #000; box-shadow:0 0 0 2px rgba(255,255,255,.06) inset; position:relative; display:flex; align-items:center; justify-content:center; cursor:pointer; pointer-events:auto}
+  .slot.sel{border-color:#fff; box-shadow:0 0 0 2px #fff inset}
+  .slot .num{position:absolute; top:1px; left:2px; font-size:7px; color:#9aa3af}
+  .slot canvas{image-rendering:pixelated}
+  #mine-prog{position:absolute; left:50%; transform:translateX(-50%); bottom:64px; font-size:9px; color:#fff; display:none}
+
+  /* chat bottom-left */
+  #chatwrap{bottom:8px; left:8px; width:280px; pointer-events:auto}
+  #chatlog{font-size:9px; line-height:1.7; max-height:120px; overflow:hidden; margin-bottom:5px; text-shadow:1px 1px 0 #000}
+  #chatlog .c .who{color:#7cc6ff}
+  #chatinput{width:100%; background:rgba(8,10,14,.8); border:2px solid #000; color:#fff; font-family:var(--pix); font-size:9px; padding:7px; display:none}
+  #chathint{font-size:8px; color:#8a929e; text-shadow:1px 1px 0 #000}
+
+  /* shop modal */
+  #shop{position:fixed; inset:0; z-index:20; display:none; align-items:stretch; justify-content:center}
+  #shop .sbg{position:absolute; inset:0; background:rgba(0,0,0,.45)}
+  #shop .swin{position:relative; margin:24px auto; width:min(1180px,94vw); background:rgba(14,16,20,.97); border:2px solid #000; box-shadow:0 0 0 2px rgba(255,255,255,.08) inset; display:flex; flex-direction:column}
+  #shop .shead{display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:2px solid #000}
+  #shop .shead h2{font-size:14px; letter-spacing:1px}
+  #shop .sx{cursor:pointer; color:#e9c46a; font-size:16px; padding:4px 8px}
+  #shop .sbody{display:flex; min-height:0; flex:1}
+  #shop .stabs{display:flex; flex-direction:column; gap:6px; padding:14px; border-right:2px solid #000}
+  #shop .stab{width:54px; height:54px; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.3); border:2px solid #000; cursor:pointer}
+  #shop .stab.sel{border-color:#fff}
+  #shop .stab svg{width:28px; height:28px}
+  #shop .scards{display:grid; grid-template-columns:repeat(4,1fr); gap:12px; padding:16px; overflow-y:auto; flex:1; align-content:start}
+  #shop .card{background:rgba(0,0,0,.28); border:2px solid #000; padding:12px; display:flex; flex-direction:column; gap:8px}
+  #shop .card .pic{height:84px; display:flex; align-items:center; justify-content:center}
+  #shop .card .pic canvas{image-rendering:pixelated}
+  #shop .card .nm{font-size:10px; line-height:1.5}
+  #shop .card .ds{font-size:8px; line-height:1.8; color:#9aa3af; flex:1}
+  #shop .card .st{font-size:8px; line-height:1.9}
+  #shop .card .st .lab{color:#8a929e}
+  #shop .card .up{color:#5dd05d} #shop .card .dn{color:#ef5d6b}
+  #shop .card .buy{margin-top:2px; padding:9px; text-align:center; font-family:var(--pix); font-size:9px; background:#1f6f34; border:2px solid #000; color:#fff; cursor:pointer}
+  #shop .card .buy.no{background:#3a2326; color:#b98; cursor:not-allowed}
+  #shop .card .buy:hover{filter:brightness(1.15)}
+
+  #toast{position:fixed; left:50%; bottom:120px; transform:translateX(-50%); background:rgba(8,10,14,.9); border:2px solid #000; padding:8px 14px; font-size:9px; z-index:30; opacity:0; transition:.2s; pointer-events:none; text-shadow:1px 1px 0 #000}
+  #toast.on{opacity:1}
+  #hint{position:fixed; left:50%; top:108px; transform:translateX(-50%); font-size:8px; color:#aeb6c2; text-shadow:1px 1px 0 #000; z-index:5; text-align:center; line-height:2; transition:opacity .5s}
+  @media (max-width:1100px){ #lb{min-width:150px; font-size:8px; line-height:1.7} #env{gap:8px; font-size:8px; padding:4px 8px} #res{font-size:9px} #hint{font-size:7px} }
+  @media (max-width:780px){ #lb,#coords{display:none} }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div class="hud panel" id="lb"><h3>ТОП ИГРОКОВ</h3><div id="lb-rows"></div></div>
+
+<div class="hud" id="topc">
+  <div id="btns">
+    <div class="ibtn panel" id="btn-shop" title="Магазин (B)">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M4 8h16l-1 3H5L4 8z" stroke="#e9c46a" stroke-width="1.5"/><path d="M5 11v8h14v-8" stroke="#e9c46a" stroke-width="1.5"/><path d="M4 8l1-3h14l1 3" stroke="#e9c46a" stroke-width="1.5"/><path d="M10 19v-5h4v5" stroke="#e9c46a" stroke-width="1.5"/></svg>
+    </div>
+    <div class="ibtn panel" id="btn-inv" title="Инвентарь">
+      <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="5" width="16" height="14" stroke="#9aa3af" stroke-width="1.5"/><path d="M4 9h16M9 5v4" stroke="#9aa3af" stroke-width="1.5"/></svg>
+    </div>
+    <div class="ibtn panel" id="btn-top" title="Лидеры">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M5 4h14v3a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4V4z" stroke="#e9c46a" stroke-width="1.5"/><path d="M12 11v4M8 19h8M10 19v-2h4v2" stroke="#e9c46a" stroke-width="1.5"/></svg>
+    </div>
+  </div>
+  <div id="env" class="panel">
+    <span id="e-clock"><svg viewBox="0 0 24 24" id="e-sun"></svg><b>06:00</b></span>
+    <span id="e-wind"><svg viewBox="0 0 24 24" fill="none"><path d="M3 9h11a3 3 0 1 0-3-3M3 14h15a3 3 0 1 1-3 3" stroke="#bcd3ff" stroke-width="1.6" stroke-linecap="round"/></svg><b>8 м/с</b></span>
+    <span id="e-temp"><svg viewBox="0 0 24 24" fill="none"><path d="M12 4a2 2 0 0 1 2 2v8a4 4 0 1 1-4 0V6a2 2 0 0 1 2-2z" stroke="#ff9b6b" stroke-width="1.6"/></svg><b>14°</b></span>
+  </div>
+</div>
+
+<div class="hud panel" id="coords">X: <span id="cx">0</span><br>Y: <span id="cy">0</span><br>Z: <span id="cz">0</span></div>
+
+<div class="hud panel" id="res"></div>
+
+<div class="hud" id="bot">
+  <div id="hearts"></div>
+  <div id="hotbar"></div>
+</div>
+<div class="hud" id="mine-prog">0%</div>
+
+<div class="hud" id="chatwrap">
+  <div id="chatlog"></div>
+  <input id="chatinput" maxlength="120" placeholder="Сообщение...">
+  <div id="chathint">Enter — чат · WASD — ходить · ЛКМ — копать/ставить · B — магазин</div>
+</div>
+
+<div id="hint">WASD — ходить · ЛКМ по руде — копать · открой Магазин (B), купи генератор → добытчик → продавца</div>
+
+<div id="shop">
+  <div class="sbg"></div>
+  <div class="swin">
+    <div class="shead"><h2>МАГАЗИН</h2><div class="sx" id="shop-x">✕</div></div>
+    <div class="sbody">
+      <div class="stabs" id="stabs"></div>
+      <div class="scards" id="scards"></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(()=>{
+"use strict";
+//==================================================================== constants
+const TILE=32, WORLD=96;                       // world is WORLD x WORLD tiles
+const cv=document.getElementById('game'), ctx=cv.getContext('2d');
+let VW=0,VH=0;                                  // viewport px
+function resize(){ VW=cv.width=innerWidth; VH=cv.height=innerHeight; }
+addEventListener('resize',resize); resize();
+ctx.imageSmoothingEnabled=false;
+const $=id=>document.getElementById(id);
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const rnd=(a,b)=>a+Math.random()*(b-a);
+
+//==================================================================== resources
+// id : {name,color,hud(order)}  — money & energy first, then ores
+const RES=[
+  {k:'money',  nm:'Деньги', c:'#5dd05d'},
+  {k:'energy', nm:'Энергия',c:'#ffd23f'},
+  {k:'coal',   nm:'Уголь',  c:'#2f3338'},
+  {k:'iron',   nm:'Железо', c:'#c2c8d2'},
+  {k:'gold',   nm:'Золото', c:'#e9c46a'},
+  {k:'diamond',nm:'Алмаз',  c:'#4fd6e0'},
+  {k:'uranium',nm:'Уран',   c:'#8be04e'},
+  {k:'iridium',nm:'Иридий', c:'#dfeaf0'},
+  {k:'stone',  nm:'Камень', c:'#8a8f98'},
+];
+const RC={}; RES.forEach(r=>RC[r.k]=r.c);
+const ORES=['coal','iron','gold','diamond','uranium','iridium'];
+const ORE_RARITY={coal:.060,iron:.040,gold:.020,diamond:.011,uranium:.006,iridium:.003};
+const ORE_AMT   ={coal:[8,14],iron:[6,11],gold:[5,8],diamond:[3,6],uranium:[2,4],iridium:[2,3]};
+const SELL      ={coal:2,iron:6,gold:20,diamond:60,uranium:150,iridium:400,stone:1};
+
+//==================================================================== pickaxes
+// tier -> {name, mines:{ore:perHit}, dmg, costText}
+const PICKS=[
+  {nm:'Деревянная кирка', mines:{coal:1,iron:1},                              dmg:1},
+  {nm:'Железная кирка',   mines:{coal:2,iron:2,gold:1},                       dmg:1},
+  {nm:'Золотая кирка',    mines:{coal:3,iron:3,gold:2,diamond:1},             dmg:1},
+  {nm:'Алмазная кирка',   mines:{coal:4,iron:4,gold:3,diamond:2,uranium:1},   dmg:2},
+];
+
+//==================================================================== buildings
+// grp: gen|extract|sell|wall|tesla ; cost {money,coal,...}
+// every tick(): see sim. placeReq: 'oreAdj'|'lava'|'water'|null
+const B={
+  // ---- generators
+  solar:    {grp:'gen', nm:'Солнечная панель', ds:'Энергия из солнца. Не работает ночью. В пустыне +1.', hp:10, out:1, env:'sun_desert', cost:{coal:100}},
+  asolar:   {grp:'gen', nm:'Продвинутая солнечная', ds:'Больше энергии днём. Ночью меньше. Пустыня +2.', hp:15, out:5, env:'sun2_desert', cost:{money:5000}},
+  wind:     {grp:'gen', nm:'Ветрогенератор', ds:'Энергия зависит от ветра (макс при 24 м/с, ночью меньше).', hp:10, out:5, env:'wind', cost:{iron:200}},
+  coalgen:  {grp:'gen', nm:'Угольный генератор', ds:'Сжигает уголь, даёт энергию.', hp:10, out:3, burn:{coal:1}, cost:{coal:200,iron:50}},
+  geo:      {grp:'gen', nm:'Геотермальный', ds:'Энергия от лавы по сторонам блока.', hp:15, out:3, env:'lava', placeReq:'lava', cost:{iron:150,gold:30}},
+  water:    {grp:'gen', nm:'Водяная турбина', ds:'Энергия от воды по сторонам блока.', hp:15, out:3, env:'water', placeReq:'water', cost:{iron:150,diamond:10}},
+  nuclear:  {grp:'gen', nm:'Ядерный реактор', ds:'Распад урана: +20. Перегрев выше 21°. Лучше на севере.', hp:20, out:20, burn:{uranium:1}, env:'nuclear', cost:{iron:400,diamond:80}},
+  // ---- extractors (auto-miners)
+  ex_coal:  {grp:'extract', nm:'Добытчик угля', ore:'coal',    hp:10, use:{energy:1}, cost:{coal:100}},
+  ex_iron:  {grp:'extract', nm:'Добытчик железа', ore:'iron',  hp:10, use:{energy:2}, cost:{money:400}},
+  ex_gold:  {grp:'extract', nm:'Добытчик золота', ore:'gold',  hp:10, use:{energy:2}, cost:{money:1000}},
+  ex_dia:   {grp:'extract', nm:'Добытчик алмазов', ore:'diamond', hp:10, use:{energy:3}, cost:{money:2000}},
+  ex_ura:   {grp:'extract', nm:'Добытчик урана', ore:'uranium', hp:10, use:{energy:3}, cost:{money:5000}},
+  ex_iri:   {grp:'extract', nm:'Добытчик иридия', ore:'iridium', hp:10, use:{energy:3}, cost:{money:10000}},
+  // ---- sellers
+  sell_s:   {grp:'sell', nm:'Маленький продавец', ds:'Продаёт энергию за деньги.', hp:10, use:{energy:2}, money:4, cost:{coal:100,gold:50}},
+  sell_b:   {grp:'sell', nm:'Большой продавец', ds:'Больше энергии — больше денег.', hp:20, use:{energy:10}, money:30, cost:{money:1500}},
+  sell_coal:{grp:'sell', nm:'Угольный продавец', ds:'Продаёт лишний уголь.', hp:20, use:{energy:10,coal:2}, money:33, cost:{coal:500,money:3000}},
+  sell_iron:{grp:'sell', nm:'Железный продавец', ds:'Продаёт лишнее железо.', hp:20, use:{energy:10,iron:2}, money:35, cost:{iron:500,money:5000}},
+  // ---- walls + tesla
+  wall_iron:{grp:'wall', nm:'Железная стена', ds:'Защита от мобов и слабых игроков.', hp:100,  cost:{iron:30}},
+  wall_obs: {grp:'wall', nm:'Обсидиановая стена', ds:'Прочнее. От средних игроков.', hp:500,  cost:{coal:50,diamond:5}},
+  wall_rein:{grp:'wall', nm:'Укреплённая стена', ds:'Очень крепкая. От сильных игроков.', hp:1000, cost:{diamond:20,iron:100}},
+  wall_iri: {grp:'wall', nm:'Электро-иридиевая стена', ds:'Полная безопасность! Бьёт током (−2♥, −10⚡/удар).', hp:2000, shock:2, cost:{iridium:20,diamond:30}},
+  tesla:    {grp:'tesla', nm:'Катушка Теслы 3000', ds:'Авто-турель: радиус 6, урон 8♥, −100⚡/удар.', hp:10, range:6, dmg:8, use:{energy:100}, cost:{money:20000}},
+};
+
+//==================================================================== world gen
+// tiles[r][c] = {t, ore, amt, b}
+//   t: 0 grass,1 sand(desert),2 snow(north),3 water,4 lava,5 dirt
+let world=[];
+function biomeAt(c){ if(c < WORLD*0.30) return 1; if(c > WORLD*0.72) return 2; return 0; }
+function genWorld(){
+  world=[];
+  for(let r=0;r<WORLD;r++){ world[r]=[]; for(let c=0;c<WORLD;c++){
+    world[r][c]={t:biomeAt(c), ore:null, amt:0, b:null};
+  }}
+  // water ponds + lava pools (blobs)
+  blobs(3, ()=>{}, 'pond'); blobs(20,(r,c)=>{ world[r][c].t=3; },'water',2,4);
+  blobs(16,(r,c)=>{ world[r][c].t=4; },'lava',2,3);
+  // ore veins clustered
+  for(const ore of ORES){
+    let target=Math.floor(WORLD*WORLD*ORE_RARITY[ore]); let g=0;
+    while(target>0 && g++<5000){
+      let c=2+(Math.random()*(WORLD-4)|0), r=2+(Math.random()*(WORLD-4)|0);
+      if(nearSpawn(c,r,6)) continue;
+      const n=1+(Math.random()*4|0);
+      for(let i=0;i<n&&target>0;i++){
+        const cc=clamp(c+((Math.random()*3-1.5)|0),1,WORLD-2), rr=clamp(r+((Math.random()*3-1.5)|0),1,WORLD-2);
+        const t=world[rr][cc]; if(t.ore||t.t===3||t.t===4||nearSpawn(cc,rr,6)) continue;
+        t.ore=ore; const a=ORE_AMT[ore]; t.amt=a[0]+(Math.random()*(a[1]-a[0])|0); target--;
+      }
+    }
+  }
+}
+function blobs(n,fn,tag,minR,maxR){ for(let i=0;i<n;i++){
+  let c=4+(Math.random()*(WORLD-8)|0), r=4+(Math.random()*(WORLD-8)|0);
+  if(nearSpawn(c,r,8)) continue;
+  const rad=(minR||2)+(Math.random()*((maxR||3)-(minR||2))|0);
+  for(let dr=-rad;dr<=rad;dr++)for(let dc=-rad;dc<=rad;dc++){
+    const rr=r+dr,cc=c+dc; if(rr<1||cc<1||rr>=WORLD-1||cc>=WORLD-1) continue;
+    if(dr*dr+dc*dc<=rad*rad) fn(rr,cc);
+  }
+}}
+const SPAWN={c:WORLD>>1, r:WORLD>>1};
+function nearSpawn(c,r,d){ return Math.abs(c-SPAWN.c)<=d && Math.abs(r-SPAWN.r)<=d; }
+const inW=(c,r)=>c>=0&&c<WORLD&&r>=0&&r<WORLD;
+function solid(c,r){ if(!inW(c,r))return true; const t=world[r][c]; return (t.ore&&t.amt>0)||(t.b&&(t.b.grp==='wall'||t.b.grp==='tesla'||t.b.grp==='gen'||t.b.grp==='extract'||t.b.grp==='sell')); }
+
+//==================================================================== state
+let S;
+function fresh(){
+  genWorld();
+  S={
+    cam:{x:0,y:0},
+    me:{ id:'me', name:'waki', x:(SPAWN.c+.5)*TILE, y:(SPAWN.r+.5)*TILE, hp:9, maxhp:9, dir:1, pick:0, sword:0, armor:0, swing:0, shield:6 },
+    players:{},                 // remote players (id->{...}) ; populated by net later
+    bots:[],                    // AI raiders/zombies (act like players/mobs)
+    inv:{money:1000,energy:0,coal:0,iron:0,gold:0,diamond:0,uranium:0,iridium:0,stone:0},
+    rate:{},                    // per-tick deltas for HUD
+    time:0.27,                  // 0..1 day phase (start morning)
+    wind:8, temp:14,
+    hotbar:[null,null,null,null,null],   // build keys
+    sel:0,                      // selected hotbar slot
+    place:null,                 // current build key to place (from shop buy / hotbar)
+    mining:null,                // {c,r,prog}
+    drops:[],                   // {x,y,k,n}
+    leaders:[],                 // leaderboard rows
+    tickAcc:0, t:0, mobTimer:18, raidTimer:75, dead:false,
+  };
+  RES.forEach(r=>S.rate[r.k]=0);
+  S.hotbar[0]=null;             // pickaxe is implicit slot 0 look; keep builds in 1..4
+  seedLeaders();
+}
+
+//==================================================================== leaderboard (placeholder until MP)
+function seedLeaders(){
+  S.leaders=[
+    {name:'[team]kill me = u', money:19720000, me:false},
+    {name:'[dog]KING KONG', money:1310000, me:false},
+    {name:'ga', money:1000, me:false},
+    {name:S.me.name, money:S.inv.money, me:true},
+  ];
+}
+function refreshLeaders(){
+  const meRow=S.leaders.find(l=>l.me); if(meRow) meRow.money=Math.floor(S.inv.money);
+  S.leaders.sort((a,b)=>b.money-a.money);
+}
+
+//==================================================================== input
+const keys={};
+addEventListener('keydown',e=>{
+  if(e.target===$('chatinput')){ if(e.key==='Enter'){ sendChat(); } if(e.key==='Escape'){ closeChat(); } return; }
+  if(e.key==='Enter'){ openChat(); e.preventDefault(); return; }
+  if(e.key==='b'||e.key==='B'||e.key==='и'||e.key==='И'){ toggleShop(); return; }
+  if(e.key==='Escape'){ if($('shop').style.display==='flex') toggleShop(); return; }
+  if(e.key>='1'&&e.key<='5'){ selectSlot(+e.key-1); }
+  keys[e.key.toLowerCase()]=true;
+});
+addEventListener('keyup',e=>{ keys[e.key.toLowerCase()]=false; });
+
+let mouse={x:0,y:0,down:false};
+cv.addEventListener('mousemove',e=>{ mouse.x=e.clientX; mouse.y=e.clientY; });
+cv.addEventListener('mousedown',e=>{ if(e.button===0){ mouse.down=true; onPrimary(); } });
+cv.addEventListener('mouseup',e=>{ if(e.button===0){ mouse.down=false; S.mining=null; $('mine-prog').style.display='none'; } });
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+
+function mouseTile(){ const wx=S.cam.x+mouse.x, wy=S.cam.y+mouse.y; return {c:Math.floor(wx/TILE), r:Math.floor(wy/TILE), wx, wy}; }
+function onPrimary(){
+  if(S.dead) return;
+  const m=mouseTile(); if(!inW(m.c,m.r)) return;
+  const t=world[m.r][m.c];
+  const pc=S.me.x/TILE, pr=S.me.y/TILE;
+  const near=Math.abs(m.c+.5-pc)<=2.2 && Math.abs(m.r+.5-pr)<=2.2;
+  // place mode
+  if(S.place){ tryPlace(m.c,m.r); return; }
+  if(!near) return;
+  // attack a bot in that tile?
+  const bot=S.bots.find(b=>!b.dead && Math.floor(b.x/TILE)===m.c && Math.floor(b.y/TILE)===m.r);
+  if(bot){ hitBot(bot); return; }
+  // attack a building (raid your own? only enemy walls — skip) ; mine ore
+  if(t.ore&&t.amt>0){ S.mining={c:m.c,r:m.r,prog:0}; return; }
+  // damage own building to remove? click building with empty hand -> pick up (refund none) : skip
+}
+function selectSlot(i){ S.sel=i; S.place=S.hotbar[i]; renderHotbar(); }
+
+//==================================================================== placing
+function canAfford(cost){ for(const k in cost){ if((S.inv[k]||0) < cost[k]) return false; } return true; }
+function pay(cost){ for(const k in cost){ S.inv[k]-=cost[k]; } }
+function tryPlace(c,r){
+  const key=S.place, def=B[key]; if(!def) return;
+  const t=world[r][c];
+  if(t.ore&&t.amt>0) return toast('Тут руда — сначала выкопай');
+  if(t.t===3||t.t===4) return toast('Нельзя ставить на воду/лаву');
+  if(t.b) return toast('Тут уже постройка');
+  if(Math.floor(S.me.x/TILE)===c && Math.floor(S.me.y/TILE)===r) return toast('Ты стоишь на этой клетке');
+  if(def.placeReq==='lava' && adjCount(c,r,4)===0) return toast('Геотермальный нужно ставить у лавы');
+  if(def.placeReq==='water'&& adjCount(c,r,3)===0) return toast('Турбину нужно ставить у воды');
+  if(def.grp==='extract' && oreAdj(c,r,def.ore)===0) return toast('Добытчик ставится рядом с нужной рудой');
+  if(!canAfford(def.cost)) return toast('Не хватает ресурсов');
+  pay(def.cost);
+  t.b={key, grp:def.grp, hp:def.hp, maxhp:def.hp, cool:0, owner:'me'};
+  // keep placing same item if still affordable, else clear
+  if(!canAfford(def.cost)){ /* keep selection but will show no-buy */ }
+}
+function adjCount(c,r,terr){ let n=0; for(const[dc,dr]of[[1,0],[-1,0],[0,1],[0,-1]]){ const cc=c+dc,rr=r+dr; if(inW(cc,rr)&&world[rr][cc].t===terr) n++; } return n; }
+function oreAdj(c,r,ore){ let n=0; for(const[dc,dr]of[[1,0],[-1,0],[0,1],[0,-1],[0,0]]){ const cc=c+dc,rr=r+dr; if(inW(cc,rr)){const t=world[rr][cc]; if(t.ore===ore&&t.amt>0)n++;} } return n; }
+
+//==================================================================== mining
+function updateMining(dt){
+  if(!S.mining||!mouse.down){ S.mining=null; $('mine-prog').style.display='none'; return; }
+  const {c,r}=S.mining, t=world[r][c];
+  if(!t.ore||t.amt<=0){ S.mining=null; $('mine-prog').style.display='none'; return; }
+  const pk=PICKS[S.me.pick];
+  if(!pk.mines[t.ore]){ $('mine-prog').style.display='block'; $('mine-prog').textContent='нужна лучше кирка'; return; }
+  S.me.swing=0.18;
+  S.mining.prog += dt* (1.4 + S.me.pick*0.5);     // ~ seconds per block
+  $('mine-prog').style.display='block';
+  $('mine-prog').textContent=Math.min(99,Math.floor(S.mining.prog*100))+'%';
+  if(S.mining.prog>=1){
+    const got=Math.min(t.amt, pk.mines[t.ore]);
+    t.amt-=got; add(t.ore,got);
+    if(Math.random()<0.5) add('stone',1);
+    S.mining.prog=0;
+    if(t.amt<=0){ t.ore=null; t.t=5; }   // becomes dirt
+  }
+}
+function add(k,n){ S.inv[k]=(S.inv[k]||0)+n; }
+
+//==================================================================== economy tick (1s)
+function economyTick(){
+  const newRate={}; RES.forEach(r=>newRate[r.k]=0);
+  const isDay = S.time>0.25 && S.time<0.75;
+  const dayStrength = Math.max(0, Math.sin((S.time-0.25)/0.5*Math.PI)); // 0..1 across day
+  // iterate buildings
+  for(let r=0;r<WORLD;r++)for(let c=0;c<WORLD;c++){
+    const b=world[r][c].b; if(!b) continue; const def=B[b.key];
+    if(b.grp==='gen'){
+      let out=0;
+      if(def.env==='sun_desert')  out = isDay ? (1 + (world[r][c].t===1?1:0)) * (0.4+0.6*dayStrength) : 0;
+      else if(def.env==='sun2_desert') out = (isDay?dayStrength:0.15) * (5 + (world[r][c].t===1?2:0));
+      else if(def.env==='wind')   out = def.out * (S.wind/24);
+      else if(def.env==='lava')   out = 3 * adjCount(c,r,4);
+      else if(def.env==='water')  out = 3 * adjCount(c,r,3);
+      else if(def.env==='nuclear'){
+        if((S.inv.uranium||0) >= 1){ const cold = S.temp<=21; out = cold?20:8; S.inv.uranium-=1; newRate.uranium-=1; if(!cold){ b.hp=Math.max(1,b.hp-1);} }
+      } else out=def.out;
+      if(def.burn && !def.env){ /* coal gen */ }
+      if(def.burn && def.env!=='nuclear'){
+        let ok=true; for(const k in def.burn){ if((S.inv[k]||0)<def.burn[k]) ok=false; }
+        if(ok){ for(const k in def.burn){ S.inv[k]-=def.burn[k]; newRate[k]-=def.burn[k]; } out=def.out; } else out=0;
+      }
+      out=Math.round(out);
+      if(out>0){ S.inv.energy+=out; newRate.energy+=out; b.busy=true; } else b.busy=false;
+    }
+    else if(b.grp==='extract'){
+      const need=def.use.energy, ore=def.ore;
+      if(S.inv.energy>=need && oreAdj(c,r,ore)>0){
+        // find an adjacent ore tile with amt and decrement
+        let mined=false;
+        for(const[dc,dr]of[[0,0],[1,0],[-1,0],[0,1],[0,-1]]){ const cc=c+dc,rr=r+dr;
+          if(inW(cc,rr)){const ot=world[rr][cc]; if(ot.ore===ore&&ot.amt>0){ ot.amt--; if(ot.amt<=0){ot.ore=null;ot.t=5;} mined=true; break; }}}
+        if(mined){ S.inv.energy-=need; newRate.energy-=need; add(ore,1); newRate[ore]++; b.busy=true; } else b.busy=false;
+      } else b.busy=false;
+    }
+    else if(b.grp==='sell'){
+      let ok=true; for(const k in def.use){ if((S.inv[k]||0)<def.use[k]) ok=false; }
+      if(ok){ for(const k in def.use){ S.inv[k]-=def.use[k]; newRate[k]-=def.use[k]; } S.inv.money+=def.money; newRate.money+=def.money; b.busy=true; }
+      else b.busy=false;
+    }
+  }
+  S.rate=newRate;
+  refreshLeaders();
+}
+
+//==================================================================== mobs & raiders (AI stand-ins for real players)
+function spawnZombie(){
+  const edge=Math.random()*4|0; const pc=S.me.x, pr=S.me.y;
+  let x=pc,y=pr,R=420;
+  const a=Math.random()*6.28; x=pc+Math.cos(a)*R; y=pr+Math.sin(a)*R;
+  S.bots.push({kind:'zombie', name:'', x,y, hp:30, maxhp:30, spd:34, dmg:1, dead:false, atk:0});
+}
+function spawnRaider(){
+  const a=Math.random()*6.28, R=520; const names=['xR1d3r','noob_killer','[dog]ga','Jedidiah','steve123'];
+  S.bots.push({kind:'raider', name:names[Math.random()*names.length|0], x:S.me.x+Math.cos(a)*R, y:S.me.y+Math.sin(a)*R, hp:60, maxhp:60, spd:42, dmg:1, dead:false, atk:0});
+  toast(S.bots[S.bots.length-1].name+' идёт тебя рейдить!');
+}
+function updateBots(dt){
+  for(const bo of S.bots){ if(bo.dead) continue;
+    bo.atk-=dt;
+    const dx=S.me.x-bo.x, dy=S.me.y-bo.y, dist=Math.hypot(dx,dy);
+    if(dist>26){
+      const ang=Math.atan2(dy,dx); let nx=bo.x+Math.cos(ang)*bo.spd*dt, ny=bo.y+Math.sin(ang)*bo.spd*dt;
+      const tc=Math.floor(nx/TILE), tr=Math.floor(ny/TILE);
+      if(inW(tc,tr) && world[tr][tc].b && (world[tr][tc].b.grp==='wall')){
+        if(bo.atk<=0){ const wb=world[tr][tc].b; wb.hp-=8; bo.atk=0.7; if(wb.shock){ bo.hp-=wb.shock; if(S.inv.energy>=10)S.inv.energy-=10; } if(wb.hp<=0) world[tr][tc].b=null; }
+      } else { bo.x=nx; bo.y=ny; }
+    } else if(bo.atk<=0){ damageMe(bo.dmg); bo.atk=1; }
+  }
+  // tesla turrets zap bots
+  for(let r=0;r<WORLD;r++)for(let c=0;c<WORLD;c++){ const b=world[r][c].b; if(!b||b.grp!=='tesla')continue;
+    b.cool-=dt; if(b.cool>0) continue;
+    const tx=(c+.5)*TILE, ty=(r+.5)*TILE;
+    let best=null,bd=B.tesla.range*TILE;
+    for(const bo of S.bots){ if(bo.dead)continue; const d=Math.hypot(bo.x-tx,bo.y-ty); if(d<bd){bd=d;best=bo;} }
+    if(best && S.inv.energy>=100){ S.inv.energy-=100; best.hp-=B.tesla.dmg; b.cool=0.5; b.zap={x:best.x,y:best.y,t:0.12};
+      if(best.hp<=0) best.dead=true; }
+  }
+  S.bots=S.bots.filter(b=>{ if(b.dead && b.kind==='raider') S.inv.money+=200; return !b.dead; });
+}
+function hitBot(bo){ if(S.me.shield>0){ S.me.shield=0; toast('Защита снята — ты атаковал'); }
+  const dmg=PICKS[S.me.pick].dmg + (S.me.sword? S.me.sword*2:0); bo.hp-=dmg; S.me.swing=0.18;
+  if(bo.hp<=0){ bo.dead=true; if(bo.kind==='raider'){ toast('Рейдер повержен (+200$)'); } } }
+function damageMe(d){ if(S.me.shield>0||S.dead) return; const red=[0,.1,.2,.3,.5][S.me.armor]||0; S.me.hp-=d*(1-red); if(S.me.hp<=0){ S.me.hp=0; die(); } }
+function die(){ S.dead=true; toast('Вы погибли. Респавн...');
+  // при смерти теряешь предметы/ресурсы (как в оригинале); деньги остаются
+  for(const k of ['energy','coal','iron','gold','diamond','uranium','iridium','stone']) S.inv[k]=0;
+  S.me.pick=0; S.hotbar=[null,null,null,null,null]; S.place=null; S.sel=0;
+  setTimeout(()=>{ S.me.x=(SPAWN.c+.5)*TILE; S.me.y=(SPAWN.r+.5)*TILE; S.me.hp=S.me.maxhp; S.dead=false;
+    S.me.shield=60; renderHotbar(); toast('Бессмертие: 60с или до первой атаки'); },1500); }
+
+//==================================================================== player update
+function updatePlayer(dt){
+  if(S.dead) return;
+  let vx=0,vy=0; const sp=130;
+  if(keys['w']||keys['ц']||keys['arrowup'])vy-=1; if(keys['s']||keys['ы']||keys['arrowdown'])vy+=1;
+  if(keys['a']||keys['ф']||keys['arrowleft'])vx-=1; if(keys['d']||keys['в']||keys['arrowright'])vx+=1;
+  if(vx||vy){ const l=Math.hypot(vx,vy); vx/=l; vy/=l; if(vx)S.me.dir=vx<0?-1:1; }
+  const nx=S.me.x+vx*sp*dt, ny=S.me.y+vy*sp*dt, rad=10;
+  if(!solidPx(nx+Math.sign(vx)*rad, S.me.y)) S.me.x=nx;
+  if(!solidPx(S.me.x, ny+Math.sign(vy)*rad)) S.me.y=ny;
+  S.me.x=clamp(S.me.x,TILE,(WORLD-1)*TILE); S.me.y=clamp(S.me.y,TILE,(WORLD-1)*TILE);
+  // lava damage
+  const ct=world[Math.floor(S.me.y/TILE)][Math.floor(S.me.x/TILE)]; if(ct&&ct.t===4){ S.me.lava=(S.me.lava||0)+dt; if(S.me.lava>0.6){ damageMe(1); S.me.lava=0; } }
+  if(S.me.swing>0)S.me.swing-=dt;
+  if(S.me.shield>0)S.me.shield-=dt;
+}
+function solidPx(x,y){ return solid(Math.floor(x/TILE),Math.floor(y/TILE)); }
+
+//==================================================================== environment update
+function updateEnv(dt){
+  S.time=(S.time + dt/150)%1;                 // 150s full day
+  S.wind = clamp(8 + Math.sin(S.t*0.3)*7 + Math.sin(S.t*1.7)*3, 0, 24) * (S.time>0.25&&S.time<0.75?1:0.5);
+  const pc=Math.floor(S.me.x/TILE); const biome=world[Math.floor(S.me.y/TILE)]?.[pc]?.t;
+  const base=10 + 10*Math.sin((S.time-0.3)*6.28);
+  const off = biome===1?14 : biome===2?-14 : 0;     // desert hot, snow cold
+  S.temp=Math.round(base+off);
+}
+
+//==================================================================== render
+const SUN=`<circle cx="12" cy="12" r="5" stroke="#ffd23f" stroke-width="1.6"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19" stroke="#ffd23f" stroke-width="1.4"/>`;
+const MOON=`<path d="M15 4a8 8 0 1 0 5 13A7 7 0 0 1 15 4z" stroke="#cdd6ff" stroke-width="1.6"/>`;
+function draw(){
+  // camera
+  S.cam.x=clamp(S.me.x-VW/2,0,WORLD*TILE-VW); S.cam.y=clamp(S.me.y-VH/2,0,WORLD*TILE-VH);
+  if(WORLD*TILE<VW)S.cam.x=(WORLD*TILE-VW)/2; if(WORLD*TILE<VH)S.cam.y=(WORLD*TILE-VH)/2;
+  const c0=Math.max(0,Math.floor(S.cam.x/TILE)), r0=Math.max(0,Math.floor(S.cam.y/TILE));
+  const c1=Math.min(WORLD,Math.ceil((S.cam.x+VW)/TILE)), r1=Math.min(WORLD,Math.ceil((S.cam.y+VH)/TILE));
+  // ocean beyond the world edge
+  ctx.fillStyle='#27518f'; ctx.fillRect(0,0,VW,VH);
+  // night tint factor
+  const night = 1 - (S.time>0.25&&S.time<0.75 ? Math.max(0.15,Math.sin((S.time-0.25)/0.5*Math.PI)) : 0.15);
+  for(let r=r0;r<r1;r++)for(let c=c0;c<c1;c++){
+    const x=Math.floor(c*TILE-S.cam.x), y=Math.floor(r*TILE-S.cam.y), t=world[r][c];
+    drawTile(x,y,t,c,r);
+  }
+  // drops
+  for(const d of S.drops){ ctx.fillStyle=RC[d.k]||'#fff'; ctx.fillRect(d.x-S.cam.x-3,d.y-S.cam.y-3,6,6); }
+  // bots
+  for(const bo of S.bots){ if(bo.dead)continue; drawBot(bo.x-S.cam.x, bo.y-S.cam.y, bo); }
+  // tesla zaps
+  for(let r=r0;r<r1;r++)for(let c=c0;c<c1;c++){ const b=world[r][c].b; if(b&&b.grp==='tesla'&&b.zap&&b.zap.t>0){
+    ctx.strokeStyle='#9be7ff'; ctx.lineWidth=2; ctx.beginPath();
+    ctx.moveTo(c*TILE+16-S.cam.x, r*TILE+10-S.cam.y); ctx.lineTo(b.zap.x-S.cam.x,b.zap.y-S.cam.y); ctx.stroke(); b.zap.t-=0.016; }}
+  // player
+  drawPlayer(S.me.x-S.cam.x, S.me.y-S.cam.y, S.me);
+  // night overlay
+  if(night>0.02){ ctx.fillStyle=`rgba(6,10,30,${night*0.55})`; ctx.fillRect(0,0,VW,VH); }
+  // placement ghost
+  if(S.place){ const m=mouseTile(); if(inW(m.c,m.r)){ const x=m.c*TILE-S.cam.x,y=m.r*TILE-S.cam.y;
+    ctx.globalAlpha=.5; drawBuildIcon(ctx,x,y,TILE,S.place); ctx.globalAlpha=1;
+    ctx.strokeStyle='#fff'; ctx.lineWidth=1; ctx.strokeRect(x+1,y+1,TILE-2,TILE-2); } }
+  // hover mine outline
+  else { const m=mouseTile(); if(inW(m.c,m.r)&&world[m.r][m.c].ore){ const x=m.c*TILE-S.cam.x,y=m.r*TILE-S.cam.y;
+    ctx.strokeStyle='rgba(255,255,255,.7)'; ctx.lineWidth=2; ctx.strokeRect(x+1,y+1,TILE-2,TILE-2);
+    if(S.mining){ ctx.fillStyle='rgba(255,255,255,.18)'; ctx.fillRect(x+2,y+2,(TILE-4)*S.mining.prog,TILE-4); } } }
+}
+function shade(hex,f){ const n=parseInt(hex.slice(1),16); let r=n>>16&255,g=n>>8&255,b=n&255; r=clamp(r*f|0,0,255);g=clamp(g*f|0,0,255);b=clamp(b*f|0,0,255); return `rgb(${r},${g},${b})`; }
+const TC={0:'#4f7a3a',1:'#cdbb86',2:'#d6e3ea',3:'#2f5fbf',5:'#6b5236'};
+function drawTile(x,y,t,c,r){
+  // base terrain (checker for texture)
+  let col = t.t===4 ? '#e0531c' : (TC[t.t]||'#4f7a3a');
+  const ck=((c+r)&1)?1:0.93;
+  ctx.fillStyle=shade(col,ck); ctx.fillRect(x,y,TILE,TILE);
+  if(t.t===0||t.t===5){ // grass/dirt speckles
+    ctx.fillStyle=shade(col,0.86); ctx.fillRect(x+5,y+7,3,3); ctx.fillRect(x+20,y+18,3,3);
+  }
+  if(t.t===4){ ctx.fillStyle='#ffb24d'; const f=(Math.sin((c*3+r*2)+S.t*4)*0.5+0.5); ctx.globalAlpha=.4+.4*f; ctx.fillRect(x+6,y+6,TILE-12,TILE-12); ctx.globalAlpha=1; }
+  if(t.t===3){ ctx.fillStyle='rgba(255,255,255,.10)'; ctx.fillRect(x+4,y+6,10,2); }
+  // ore block (2.5D)
+  if(t.ore&&t.amt>0){
+    ctx.fillStyle='#6f7682'; ctx.fillRect(x+1,y+1,TILE-2,TILE-2);
+    ctx.fillStyle='#565c66'; ctx.fillRect(x+1,y+TILE-5,TILE-2,4);      // bottom shade
+    ctx.fillStyle='#828a96'; ctx.fillRect(x+1,y+1,TILE-2,3);          // top hi
+    const oc=RC[t.ore]; ctx.fillStyle=oc;
+    const sp=[[7,9],[18,7],[12,16],[22,18],[8,20]];
+    for(let i=0;i<Math.min(5,Math.ceil(t.amt/2));i++){ ctx.fillRect(x+sp[i][0],y+sp[i][1],4,4); }
+  }
+  // building
+  if(t.b){ drawBuildIcon(ctx,x,y,TILE,t.b.key,t.b); }
+}
+function drawBuildIcon(g,x,y,s,key,inst){
+  const def=B[key]; const grp=def.grp;
+  // base plate
+  let plate = grp==='wall'? '#3a4150' : grp==='tesla'? '#2b2f37' : '#c7cdd6';
+  if(key==='wall_obs')plate='#3a2f4a'; if(key==='wall_rein')plate='#7c7f6a'; if(key==='wall_iri')plate='#5a8f9a';
+  g.fillStyle=plate; g.fillRect(x+2,y+2,s-4,s-4);
+  g.fillStyle='rgba(0,0,0,.35)'; g.fillRect(x+2,y+s-6,s-4,4);
+  g.fillStyle='rgba(255,255,255,.12)'; g.fillRect(x+2,y+2,s-4,3);
+  const cx=x+s/2, cy=y+s/2;
+  if(grp==='gen'){
+    const ec='#8fd0ff';
+    if(key==='solar'||key==='asolar'){ g.fillStyle='#16305a'; g.fillRect(x+6,y+6,s-12,s-12); g.strokeStyle='#3a5f9a'; g.lineWidth=1; for(let i=1;i<3;i++){g.beginPath();g.moveTo(x+6,y+6+i*(s-12)/3);g.lineTo(x+s-6,y+6+i*(s-12)/3);g.stroke();} }
+    else if(key==='wind'){ g.strokeStyle='#333'; g.lineWidth=2; g.save(); g.translate(cx,cy); g.rotate(S.t*3); for(let a=0;a<3;a++){g.rotate(2.09);g.beginPath();g.moveTo(0,0);g.lineTo(0,-9);g.stroke();} g.restore(); g.fillStyle='#222'; g.fillRect(cx-1,cy-1,3,3); }
+    else if(key==='coalgen'){ g.fillStyle='#2b2b2b'; g.fillRect(x+8,y+10,s-16,s-16); g.fillStyle=inst&&inst.busy?'#ff7a2d':'#553'; g.fillRect(cx-3,cy-1,6,5); }
+    else if(key==='nuclear'){ g.strokeStyle='#1c7d3a'; g.lineWidth=2; g.beginPath(); g.arc(cx,cy,7,0,6.3); g.stroke(); g.fillStyle='#1c7d3a'; g.fillRect(cx-1.5,cy-1.5,3,3); }
+    else { g.fillStyle='#2f6e8f'; g.fillRect(x+8,y+8,s-16,s-16); }
+    if(inst){ g.fillStyle=inst.busy?ec:'#445'; g.fillRect(x+s-9,y+5,4,4); }
+  } else if(grp==='extract'){
+    g.fillStyle=RC[def.ore]; g.fillRect(x+8,y+8,5,s-16); g.fillRect(x+s-13,y+8,5,s-16);
+    g.fillStyle='#888f99'; g.fillRect(x+6,y+6,s-12,4);
+  } else if(grp==='sell'){
+    g.fillStyle='#5dd05d'; g.font='12px '+("'Press Start 2P'"); g.textAlign='center'; g.textBaseline='middle'; g.fillText('$',cx,cy+1); g.textAlign='left'; g.textBaseline='alphabetic';
+  } else if(grp==='tesla'){
+    g.strokeStyle='#9be7ff'; g.lineWidth=1.5; g.beginPath(); g.moveTo(cx,y+6); g.lineTo(cx,cy); g.stroke();
+    g.fillStyle='#6fb8d6'; g.beginPath(); g.arc(cx,cy+3,5,0,6.3); g.fill();
+    g.fillStyle='#ffe45e'; g.fillRect(cx-1,y+5,2,5);
+  } else if(grp==='wall'){
+    g.strokeStyle='rgba(0,0,0,.4)'; g.lineWidth=1; g.beginPath(); g.moveTo(x+2,cy);g.lineTo(x+s-2,cy); g.moveTo(cx,y+2);g.lineTo(cx,y+s-2); g.stroke();
+  }
+  // hp bar if damaged
+  if(inst && inst.hp<inst.maxhp){ g.fillStyle='#000'; g.fillRect(x+3,y+s-4,s-6,3); g.fillStyle='#5dd05d'; g.fillRect(x+3,y+s-4,(s-6)*inst.hp/inst.maxhp,3); }
+}
+function drawPlayer(x,y,p){
+  if(S.dead){ ctx.globalAlpha=.4; }
+  // shadow
+  ctx.fillStyle='rgba(0,0,0,.3)'; ctx.beginPath(); ctx.ellipse(x,y+13,11,4,0,0,6.3); ctx.fill();
+  // spawn-protection shimmer
+  if(p.shield>0){ ctx.strokeStyle=`rgba(140,220,255,${.4+.3*Math.sin(S.t*6)})`; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(x,y-3,17,0,6.3); ctx.stroke(); }
+  // arms (skin)
+  ctx.fillStyle='#c79a6c'; ctx.fillRect(x-10,y,3,9); ctx.fillRect(x+7,y,3,9);
+  // body (gray shirt)
+  ctx.fillStyle='#b9c0c9'; ctx.fillRect(x-8,y-2,16,13);
+  ctx.fillStyle='#9aa2ad'; ctx.fillRect(x-8,y+8,16,3);
+  ctx.fillStyle='#e9edf2'; ctx.fillRect(x-3,y-7,6,4);                 // white legs/feet hint
+  // head (tan, minecraft-ish)
+  ctx.fillStyle='#caa074'; ctx.fillRect(x-9,y-16,18,15);
+  ctx.fillStyle='#3a2e22'; ctx.fillRect(x-9,y-16,18,4);              // hair
+  ctx.fillStyle='#2e7d32'; ctx.fillRect(x-6,y-10,5,4); ctx.fillRect(x+1,y-10,5,4); // green eyes
+  ctx.fillStyle='#9be37f'; ctx.fillRect(x-5,y-9,2,2); ctx.fillRect(x+2,y-9,2,2);
+  // held pickaxe (swing)
+  const sw=S.me.swing>0? -0.6:0.1;
+  ctx.save(); ctx.translate(x+(p.dir>0?9:-9), y-1); ctx.scale(p.dir,1); ctx.rotate(sw);
+  ctx.strokeStyle='#8a5a2b'; ctx.lineWidth=2.5; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(9,10); ctx.stroke();
+  ctx.strokeStyle=['#9a6b3a','#c2c8d2','#e9c46a','#4fd6e0'][p.pick]; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(3,-4); ctx.quadraticCurveTo(13,-3,15,5); ctx.stroke();
+  ctx.restore();
+  // name
+  ctx.fillStyle='#fff'; ctx.font="8px 'Press Start 2P'"; ctx.textAlign='center'; ctx.fillText(p.name,x,y-21); ctx.textAlign='left';
+  ctx.globalAlpha=1;
+}
+function drawBot(x,y,bo){
+  ctx.fillStyle='rgba(0,0,0,.3)'; ctx.beginPath(); ctx.ellipse(x,y+11,9,4,0,0,6.3); ctx.fill();
+  if(bo.kind==='zombie'){ ctx.fillStyle='#4f8f4f'; ctx.fillRect(x-8,y-11,16,20); ctx.fillStyle='#2a4'; ctx.fillRect(x-8,y-11,16,4); ctx.fillStyle='#061'; ctx.fillRect(x-5,y-4,3,3); ctx.fillRect(x+2,y-4,3,3); }
+  else { ctx.fillStyle='#b85c5c'; ctx.fillRect(x-8,y-11,16,20); ctx.fillStyle='#7a2d2d'; ctx.fillRect(x-8,y-11,16,4); ctx.fillStyle='#300'; ctx.fillRect(x-5,y-4,3,3); ctx.fillRect(x+2,y-4,3,3);
+    ctx.fillStyle='#fff'; ctx.font="7px 'Press Start 2P'"; ctx.textAlign='center'; ctx.fillText(bo.name,x,y-16); ctx.textAlign='left'; }
+  // hp
+  ctx.fillStyle='#000'; ctx.fillRect(x-9,y-15,18,2); ctx.fillStyle='#ef5d6b'; ctx.fillRect(x-9,y-15,18*clamp(bo.hp/bo.maxhp,0,1),2);
+}
+
+//==================================================================== HUD dom
+function fmt(n){ n=Math.floor(n); if(n>=1e6)return (n/1e6).toFixed(2)+'M'; if(n>=1e3)return (n/1e3).toFixed(n>=1e4?0:1)+'K'; return ''+n; }
+function resIcon(k,sz){ const cn=document.createElement('canvas'); cn.width=cn.height=sz; const g=cn.getContext('2d'); g.imageSmoothingEnabled=false;
+  const c=RC[k];
+  if(k==='money'){ g.fillStyle='#5dd05d'; g.font=`${sz}px 'Press Start 2P'`; g.textBaseline='top'; g.fillText('$',sz*0.18,0); }
+  else if(k==='energy'){ g.fillStyle='#ffd23f'; g.beginPath(); g.moveTo(sz*.6,0); g.lineTo(sz*.2,sz*.55); g.lineTo(sz*.5,sz*.55); g.lineTo(sz*.4,sz); g.lineTo(sz*.85,sz*.4); g.lineTo(sz*.55,sz*.4); g.closePath(); g.fill(); }
+  else { // ore lump
+    g.fillStyle=c; g.fillRect(sz*.2,sz*.25,sz*.6,sz*.55); g.fillStyle=shade(c,1.3); g.fillRect(sz*.2,sz*.25,sz*.6,sz*.12); g.fillStyle=shade(c,.7); g.fillRect(sz*.2,sz*.68,sz*.6,sz*.12); }
+  return cn;
+}
+function buildResHud(){ const el=$('res'); el.innerHTML='';
+  for(const r of RES){ if(r.k==='stone')continue; const row=document.createElement('div'); row.className='r'; row.dataset.k=r.k;
+    const ic=resIcon(r.k,16); ic.className='ic';
+    const am=document.createElement('div'); am.className='am'; am.id='am-'+r.k;
+    const rt=document.createElement('div'); rt.className='rt'; rt.id='rt-'+r.k;
+    row.appendChild(ic); row.appendChild(am); row.appendChild(rt); el.appendChild(row);
+  }
+}
+function updateHud(){
+  for(const r of RES){ if(r.k==='stone')continue;
+    const am=$('am-'+r.k); if(am) am.textContent = r.k==='money'? Math.floor(S.inv.money).toLocaleString('ru') : Math.floor(S.inv[r.k]||0);
+    const rt=$('rt-'+r.k); if(rt){ const v=S.rate[r.k]||0; rt.textContent=(v>0?'+':'')+v+'/т'; rt.className='rt '+(v>0?'pos':v<0?'neg':''); }
+  }
+  // hearts
+  const hw=$('hearts'); const full=Math.floor(S.me.hp); if(hw.children.length!==S.me.maxhp){ hw.innerHTML=''; for(let i=0;i<S.me.maxhp;i++){ hw.insertAdjacentHTML('beforeend','<svg viewBox="0 0 24 24"><path d="M12 21C5 16 3 11 3 8a4 4 0 0 1 7-2 4 4 0 0 1 7 2c0 3-2 8-9 13z"/></svg>'); } }
+  [...hw.children].forEach((s,i)=>{ s.querySelector('path').setAttribute('fill', i<full?'#ef3d4e':'#3a2326'); });
+  // clock
+  const hh=Math.floor(S.time*24), mm=Math.floor((S.time*24%1)*60);
+  $('e-clock').querySelector('b').textContent=String(hh).padStart(2,'0')+':'+String(mm).padStart(2,'0');
+  const sun=$('e-sun'); const isDay=S.time>0.25&&S.time<0.75; sun.innerHTML=isDay?SUN:MOON;
+  $('e-wind').querySelector('b').textContent=Math.round(S.wind)+' м/с';
+  $('e-temp').querySelector('b').textContent=S.temp+'°';
+  // coords
+  $('cx').textContent=Math.floor(S.me.x/TILE-SPAWN.c); $('cy').textContent=1; $('cz').textContent=Math.floor(S.me.y/TILE-SPAWN.r);
+  // leaderboard
+  const lr=$('lb-rows'); lr.innerHTML='';
+  S.leaders.slice(0,5).forEach((l,i)=>{ const d=document.createElement('div'); d.className='row'+(l.me?' me':'');
+    d.innerHTML=`<span class="nm">${i+1}. ${esc(l.name)}</span><span class="mn">$${fmt(l.money)||l.money}</span>`; lr.appendChild(d); });
+}
+function esc(s){ return (s+'').replace(/[<>&]/g,m=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[m])); }
+
+//==================================================================== hotbar
+function renderHotbar(){ const hb=$('hotbar'); hb.innerHTML='';
+  for(let i=0;i<5;i++){ const slot=document.createElement('div'); slot.className='slot'+(S.sel===i?' sel':'');
+    slot.innerHTML=`<span class="num">${i+1}</span>`;
+    const key=S.hotbar[i];
+    const cn=document.createElement('canvas'); cn.width=cn.height=36;
+    const g=cn.getContext('2d'); g.imageSmoothingEnabled=false;
+    if(i===0 && !key){ drawPickIcon(g,36,S.me.pick); }
+    else if(key){ drawBuildIcon(g,2,2,32,key); }
+    slot.appendChild(cn);
+    slot.onclick=()=>selectSlot(i);
+    hb.appendChild(slot);
+  }
+}
+function drawPickIcon(g,s,tier){ g.strokeStyle='#9a6b3a'; g.lineWidth=3; g.beginPath(); g.moveTo(s*.3,s*.75); g.lineTo(s*.6,s*.4); g.stroke();
+  g.strokeStyle=['#9a6b3a','#c2c8d2','#e9c46a','#4fd6e0'][tier]; g.lineWidth=3; g.beginPath(); g.moveTo(s*.45,s*.2); g.quadraticCurveTo(s*.7,s*.25,s*.8,s*.45); g.stroke(); }
+
+//==================================================================== shop ui
+const TABS=[
+  {k:'pick', t:'Кирки',    ic:'<path d="M5 19l8-8" stroke="#e9c46a" stroke-width="2"/><path d="M4 8c4-3 9-3 15 1" stroke="#e9c46a" stroke-width="2"/>'},
+  {k:'sword',t:'Мечи',     ic:'<path d="M6 18l10-10 3 3-10 10z" stroke="#c2c8d2" stroke-width="2"/><path d="M4 20l3-1" stroke="#c2c8d2" stroke-width="2"/>'},
+  {k:'armor',t:'Броня',    ic:'<path d="M12 4l7 2v5c0 4-3 7-7 9-4-2-7-5-7-9V6z" stroke="#9aa3af" stroke-width="2"/>'},
+  {k:'extract',t:'Добытчики',ic:'<rect x="6" y="6" width="12" height="12" stroke="#5dd0c0" stroke-width="2"/><path d="M9 6v12M15 6v12" stroke="#5dd0c0" stroke-width="2"/>'},
+  {k:'gen', t:'Генераторы',ic:'<circle cx="12" cy="12" r="8" stroke="#ffd23f" stroke-width="2"/><path d="M12 12l-3-5M12 12l6 1" stroke="#ffd23f" stroke-width="2"/>'},
+  {k:'sell',t:'Продавцы',  ic:'<text x="6" y="18" font-size="16" fill="#5dd05d">$$</text>'},
+  {k:'def', t:'Оборона',   ic:'<rect x="5" y="5" width="14" height="14" stroke="#ff8a3d" stroke-width="2"/><path d="M9 9h6v6H9z" stroke="#ff8a3d" stroke-width="2"/>'},
+];
+const SHOP_ITEMS={
+  pick:'__pick__', sword:'__sword__', armor:'__armor__',
+  extract:['ex_coal','ex_iron','ex_gold','ex_dia','ex_ura','ex_iri'],
+  gen:['solar','asolar','wind','coalgen','geo','water','nuclear'],
+  sell:['sell_s','sell_b','sell_coal','sell_iron'],
+  def:['wall_iron','wall_obs','wall_rein','wall_iri','tesla'],
+};
+let shopTab='gen';
+function buildTabs(){ const el=$('stabs'); el.innerHTML='';
+  TABS.forEach(tb=>{ const d=document.createElement('div'); d.className='stab'+(shopTab===tb.k?' sel':''); d.title=tb.t;
+    d.innerHTML=`<svg viewBox="0 0 24 24" fill="none">${tb.ic}</svg>`; d.onclick=()=>{ shopTab=tb.k; buildTabs(); buildCards(); }; el.appendChild(d); });
+}
+function costText(cost){ return Object.entries(cost).map(([k,v])=>`${v} ${shortRes(k)}`).join(' + '); }
+function shortRes(k){ return ({money:'$',coal:'угля',iron:'жел',gold:'зол',diamond:'алм',uranium:'уран',iridium:'ирид',stone:'кам'})[k]||k; }
+function buildCards(){ const el=$('scards'); el.innerHTML='';
+  if(shopTab==='pick') return buildPickCards(el);
+  if(shopTab==='sword') return buildSimpleCards(el,'sword');
+  if(shopTab==='armor') return buildSimpleCards(el,'armor');
+  for(const key of SHOP_ITEMS[shopTab]){ el.appendChild(makeCard(key)); }
+}
+function makeCard(key){ const def=B[key]; const card=document.createElement('div'); card.className='card';
+  const pic=document.createElement('div'); pic.className='pic'; const cn=document.createElement('canvas'); cn.width=cn.height=64; const g=cn.getContext('2d'); g.imageSmoothingEnabled=false; drawBuildIcon(g,8,8,48,key); pic.appendChild(cn);
+  let stats='';
+  if(def.grp==='gen'){ stats+=row('Энергия','+'+def.out+'/т','up'); }
+  if(def.grp==='extract'){ stats+=row('Добыча','+1 '+shortRes(def.ore)+'/т','up')+row('Энергия','-'+def.use.energy+'/т','dn'); }
+  if(def.grp==='sell'){ stats+=row('Деньги','+$'+def.money+'/т','up'); for(const k in def.use) stats+=row(k==='energy'?'Энергия':shortRes(k),'-'+def.use[k]+'/т','dn'); }
+  if(def.grp==='wall'){ stats+=row('Прочность','♥'+def.hp,''); if(def.shock)stats+=row('Ток','-'+def.shock+'♥','dn'); }
+  if(def.grp==='tesla'){ stats+=row('Урон',def.dmg+'♥','dn')+row('Радиус',def.range+' бл','')+row('Энергия','-'+def.use.energy+'/удар','dn'); }
+  card.innerHTML=`<div class="nm">${def.nm}</div><div class="ds">${def.ds||''}</div><div class="st">${stats}</div>`;
+  card.insertBefore(pic,card.firstChild);
+  const ok=canAfford(def.cost);
+  const buy=document.createElement('div'); buy.className='buy'+(ok?'':' no'); buy.textContent='Купить · '+costText(def.cost);
+  buy.onclick=()=>{ if(!canAfford(def.cost)) return toast('Не хватает ресурсов');
+    // generators/extractors/sellers/walls/tesla -> place mode (pay on placement); add to hotbar
+    addToHotbar(key); toggleShop(); toast('Выбери место и кликни, чтобы поставить'); };
+  card.appendChild(buy);
+  return card;
+}
+function row(lab,val,cls){ return `<div><span class="lab">${lab}:</span> <span class="${cls}">${val}</span></div>`; }
+function buildPickCards(el){ PICKS.forEach((p,i)=>{ const card=document.createElement('div'); card.className='card';
+  const pic=document.createElement('div'); pic.className='pic'; const cn=document.createElement('canvas');cn.width=cn.height=64;const g=cn.getContext('2d');g.imageSmoothingEnabled=false;drawPickIcon(g,64,i);pic.appendChild(cn);
+  let mines=Object.entries(p.mines).map(([k,v])=>`+${v} ${shortRes(k)}`).join(', ');
+  card.appendChild(pic);
+  card.insertAdjacentHTML('beforeend',`<div class="nm">${p.nm}</div><div class="ds">Добыча: ${mines}. Урон ${p.dmg}♥.</div>`);
+  const owned=i<=S.me.pick;
+  const cost = i===0?{}:[{},{coal:100},{gold:200,money:1000},{diamond:300,money:2000}][i];
+  const buy=document.createElement('div'); buy.className='buy'+(owned?' no':canAfford(cost)?'':' no');
+  buy.textContent= owned?'Куплено': i===0?'Базовая':'Купить · '+costText(cost);
+  buy.onclick=()=>{ if(owned||i<=S.me.pick)return; if(!canAfford(cost))return toast('Не хватает'); pay(cost); S.me.pick=i; toast('Кирка улучшена: '+p.nm); buildCards(); renderHotbar(); };
+  card.appendChild(buy); el.appendChild(card);
+}); }
+function buildSimpleCards(el,kind){
+  const data = kind==='sword'
+    ? [['Деревянный меч',2,{coal:200}],['Железный меч',3,{money:10000}],['Золотой меч',5,{money:50000}],['Алмазный меч',7,{money:100000}],['Нано-сабля',10,{money:500000}]]
+    : [['Кожаная броня','10%',{money:1000}],['Железная броня','20%',{money:5000}],['Золотая броня','30%',{money:15000}],['Алмазная броня','50%',{money:25000}]];
+  data.forEach((d,i)=>{ const card=document.createElement('div'); card.className='card';
+    card.innerHTML=`<div class="pic"></div><div class="nm">${d[0]}</div><div class="ds">${kind==='sword'?('Урон '+d[1]+'♥'):('Поглощает '+d[1]+' урона')}</div>`;
+    const owned = kind==='sword'? i<S.me.sword : i<S.me.armor;
+    const buy=document.createElement('div'); buy.className='buy'+(owned?' no':canAfford(d[2])?'':' no');
+    buy.textContent=owned?'Куплено':'Купить · '+costText(d[2]);
+    buy.onclick=()=>{ if(owned)return; if(!canAfford(d[2]))return toast('Не хватает'); pay(d[2]); if(kind==='sword')S.me.sword=i+1; else S.me.armor=i+1; toast(d[0]+' — куплено'); buildCards(); };
+    card.appendChild(buy); el.appendChild(card);
+  });
+}
+function addToHotbar(key){ // put build into first free slot 1..4 (slot 0 reserved feel) ; reuse if exists
+  for(let i=1;i<5;i++){ if(S.hotbar[i]===key){ selectSlot(i); return; } }
+  for(let i=1;i<5;i++){ if(!S.hotbar[i]){ S.hotbar[i]=key; selectSlot(i); renderHotbar(); return; } }
+  S.hotbar[4]=key; selectSlot(4); renderHotbar();
+}
+function toggleShop(){ const s=$('shop'); const open=s.style.display!=='flex'; s.style.display=open?'flex':'none'; if(open){ buildTabs(); buildCards(); } }
+$('btn-shop').onclick=toggleShop; $('shop-x').onclick=toggleShop; $('shop .sbg')&&($('shop').querySelector('.sbg').onclick=toggleShop);
+$('btn-top').onclick=()=>toast('Лидерборд слева сверху');
+$('btn-inv').onclick=()=>toast('Инвентарь — ресурсы справа снизу');
+
+//==================================================================== chat
+function openChat(){ $('chatinput').style.display='block'; $('chatinput').focus(); }
+function closeChat(){ $('chatinput').style.display='none'; $('chatinput').blur(); }
+function sendChat(){ const v=$('chatinput').value.trim(); if(v){ addChat(S.me.name,v); } $('chatinput').value=''; closeChat(); }
+function addChat(who,txt){ const log=$('chatlog'); const d=document.createElement('div'); d.className='c'; d.innerHTML=`<span class="who">${esc(who)}:</span> ${esc(txt)}`; log.appendChild(d); while(log.children.length>8)log.removeChild(log.firstChild); }
+
+//==================================================================== toast
+let toastT; function toast(m){ const el=$('toast'); el.textContent=m; el.classList.add('on'); clearTimeout(toastT); toastT=setTimeout(()=>el.classList.remove('on'),1600); }
+
+//==================================================================== loop
+let last;
+function loop(ts){
+  if(!last)last=ts; let dt=(ts-last)/1000; last=ts; if(dt>0.05)dt=0.05; S.t+=dt;
+  updateEnv(dt); updatePlayer(dt); updateMining(dt); updateBots(dt);
+  // economy tick each 1s
+  S.tickAcc+=dt; if(S.tickAcc>=1){ S.tickAcc-=1; economyTick(); }
+  // spawns
+  const night=!(S.time>0.25&&S.time<0.75);
+  S.mobTimer-=dt; if(S.mobTimer<=0 && night && S.bots.filter(b=>b.kind==='zombie').length<6){ spawnZombie(); S.mobTimer=rnd(6,12); } else if(S.mobTimer<=0){ S.mobTimer=rnd(8,16); }
+  S.raidTimer-=dt; if(S.raidTimer<=0){ spawnRaider(); S.raidTimer=rnd(80,140); }
+  draw(); updateHud();
+  requestAnimationFrame(loop);
+}
+
+//==================================================================== net stub (Phase 2 hook)
+const Net={
+  connected:false,
+  // later: connect(url) opens WebSocket, server sends {players, world diffs, leaders, chat}
+  // remote players go into S.players and are drawn via drawPlayer; raiders become real people.
+  connect(){ /* TODO Phase 2: const ws=new WebSocket(url); ... */ }
+};
+window.GhostMineNet=Net;
+
+//==================================================================== go
+fresh(); buildResHud(); renderHotbar(); updateHud();
+addChat('система','Добро пожаловать в GhostMine. Копай, строй, защищай базу.');
+setTimeout(()=>{ const h=$('hint'); if(h){ h.style.opacity='0'; setTimeout(()=>h.style.display='none',600); } },10000);
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
