@@ -44,6 +44,8 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final _inputCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
+  // Память позиции скролла по чату: первый заход → низ, далее → где остановился.
+  static final Map<String, double> _scrollMemory = {};
   final _imagePicker = ImagePicker();
   final _recorder = AudioRecorder();
 
@@ -155,7 +157,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           if (mounted) setState(() => _highlightSid = null);
         });
       } else {
-        _scrollToBottom(false);
+        final saved = _scrollMemory[widget.peer];
+        if (saved != null && _scrollCtrl.hasClients) {
+          // Уже заходили — возвращаемся туда, где остановились.
+          _scrollCtrl.jumpTo(
+            saved.clamp(0.0, _scrollCtrl.position.maxScrollExtent),
+          );
+        } else {
+          // Первый заход в этот чат — в самый низ.
+          _scrollToBottom(false);
+        }
       }
     });
   }
@@ -181,6 +192,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _highlightTimer?.cancel();
     _recordTicker?.cancel();
     _inputCtrl.dispose();
+    // Запоминаем позицию скролла перед закрытием чата.
+    if (_scrollCtrl.hasClients) {
+      _scrollMemory[widget.peer] = _scrollCtrl.offset;
+    }
     _scrollCtrl.dispose();
     try {
       _recorder.dispose();
