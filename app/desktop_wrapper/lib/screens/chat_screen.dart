@@ -1262,17 +1262,28 @@ class _Bubble extends StatelessWidget {
     // Тёмный лакшери: свои — глубокий фиолет-градиент, чужие — solid (фон ниже).
     final bg = mine
         ? const LinearGradient(
-            // Объём: блик-свет по верхней кромке → тень снизу (выпуклая «таблетка»).
+            // СВЕТОВАЯ КРОМКА (rim): тонкая сплошная светлая линия по верхнему
+            // краю (~1px) → резкий переход → ровный фиолет. Не градиент-залив.
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0xFFB4A2FF), Color(0xFF6A4FD0), Color(0xFF34237F)],
-            stops: [0.0, 0.18, 1.0],
+            colors: [
+              Color(0xFFC8BAFF),
+              Color(0xFFC8BAFF),
+              Color(0xFF6A4FD0),
+              Color(0xFF3F2E9C),
+            ],
+            stops: [0.0, 0.03, 0.045, 1.0],
           )
         : const LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0xFF2C2540), Color(0xFF1A1626), Color(0xFF110D17)],
-            stops: [0.0, 0.20, 1.0],
+            colors: [
+              Color(0xFF3E3658),
+              Color(0xFF3E3658),
+              Color(0xFF1C1726),
+              Color(0xFF131019),
+            ],
+            stops: [0.0, 0.03, 0.045, 1.0],
           );
     final textColor = mine ? Colors.white : const Color(0xFFD7D2DE);
     final isImg = _isImage(m);
@@ -1313,14 +1324,14 @@ class _Bubble extends StatelessWidget {
               bottomRight: Radius.circular(mine ? 6 : 16),
             ),
             border: Border.all(
-              color: Colors.white.withValues(alpha: mine ? 0.24 : 0.09),
+              color: Colors.white.withValues(alpha: mine ? 0.16 : 0.07),
               width: 0.7,
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.42),
-                blurRadius: 15,
-                offset: const Offset(0, 6),
+                color: Colors.black.withValues(alpha: 0.32),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
               ),
             ],
           ),
