@@ -52,6 +52,8 @@ dependencies:
   # file_picker 11 ломал Android-сборку (broken plugin.xml) → для произвольных
   # файлов используем стабильный file_selector (Flutter team, системный пикер).
   file_selector: ^1.0.3
+  # открыть файл/видео системным приложением (Android FileProvider встроен)
+  open_filex: ^4.5.0
 
   # ─── Уведомления + системные ───
   flutter_local_notifications: ^18.0.1

@@ -15,6 +15,7 @@ import 'package:intl/intl.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../services/chat_repo.dart';
@@ -1583,6 +1584,8 @@ class _MediaPartState extends State<_MediaPart> {
   bool get _isVoice =>
       widget.m.filePayload?['voice'] == true ||
       widget.m.filePayload?['voice'] == 1;
+  bool get _isVideo =>
+      (widget.m.filePayload?['mime'] as String?)?.startsWith('video/') ?? false;
 
   @override
   void initState() {
@@ -1617,6 +1620,7 @@ class _MediaPartState extends State<_MediaPart> {
   Widget build(BuildContext context) {
     if (_isImage) return _imageView();
     if (_isVoice) return _voiceView();
+    if (_isVideo) return _videoView();
     return _fileView();
   }
 
@@ -1676,12 +1680,11 @@ class _MediaPartState extends State<_MediaPart> {
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: GestureDetector(
-        onTap: () => showDialog<void>(
-          context: context,
-          builder: (_) => Dialog(
-            backgroundColor: Colors.black,
-            insetPadding: const EdgeInsets.all(8),
-            child: InteractiveViewer(child: Image.memory(_bytes!)),
+        onTap: () => Navigator.of(context).push(
+          PageRouteBuilder<void>(
+            opaque: false,
+            barrierColor: Colors.black,
+            pageBuilder: (_, _, _) => _PhotoViewer(bytes: _bytes!),
           ),
         ),
         // cacheWidth: декодим фото в ~2x от ширины показа (240), а не в полном
@@ -1714,12 +1717,99 @@ class _MediaPartState extends State<_MediaPart> {
     );
   }
 
+  Widget _videoView() {
+    final fp = widget.m.filePayload!;
+    final name = fp['file_name'] as String? ?? 'видео';
+    final size = (fp['size'] as int?) ?? 0;
+    // Превью видео пока без кадра-миниатюры: тёмная плашка + play. Тап —
+    // открыть в системном видеоплеере (in-app плеер добавим позже).
+    return GestureDetector(
+      onTap: _openExternally,
+      child: Container(
+        width: 240,
+        height: 150,
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 52,
+              height: 52,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white24,
+              ),
+              child: Icon(
+                _loading ? Icons.hourglass_top : Icons.play_arrow,
+                color: Colors.white,
+                size: 30,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white, fontSize: 12),
+              ),
+            ),
+            Text(
+              _humanSize(size),
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.7),
+                fontSize: 10,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Расшифровать (если ещё нет) и открыть медиа/файл системным приложением.
+  Future<void> _openExternally() async {
+    var b = _bytes;
+    if (b == null) {
+      await _load();
+      b = _bytes;
+    }
+    if (b == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не удалось открыть файл')),
+        );
+      }
+      return;
+    }
+    try {
+      final fp = widget.m.filePayload!;
+      final name = (fp['file_name'] as String?) ?? 'file';
+      final safe = name.replaceAll(RegExp(r'[^\w.\-]'), '_');
+      final dir = await getTemporaryDirectory();
+      final path = '${dir.path}/$safe';
+      await File(path).writeAsBytes(b);
+      await OpenFilex.open(path);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не открылось: $e')),
+        );
+      }
+    }
+  }
+
   Widget _fileView() {
     final fp = widget.m.filePayload!;
     final name = fp['file_name'] as String? ?? 'файл';
     final size = (fp['size'] as int?) ?? 0;
     return InkWell(
-      onTap: _load,
+      onTap: _openExternally,
       child: Container(
         constraints: const BoxConstraints(minWidth: 200),
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
@@ -1771,6 +1861,73 @@ class _MediaPartState extends State<_MediaPart> {
     if (b < 1024) return '$b Б';
     if (b < 1024 * 1024) return '${(b / 1024).toStringAsFixed(1)} КБ';
     return '${(b / 1024 / 1024).toStringAsFixed(2)} МБ';
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+/// Полноэкранный просмотр фото (как в Telegram): чёрный фон, пинч-зум,
+/// свайп вниз закрывает с затуханием, крестик — закрыть.
+class _PhotoViewer extends StatefulWidget {
+  final Uint8List bytes;
+  const _PhotoViewer({required this.bytes});
+  @override
+  State<_PhotoViewer> createState() => _PhotoViewerState();
+}
+
+class _PhotoViewerState extends State<_PhotoViewer> {
+  final _tc = TransformationController();
+  double _dragY = 0;
+
+  bool get _zoomed => _tc.value.getMaxScaleOnAxis() > 1.01;
+
+  @override
+  void dispose() {
+    _tc.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final op = (1 - (_dragY.abs() / 400)).clamp(0.0, 1.0);
+    return Scaffold(
+      backgroundColor: Colors.black.withValues(alpha: op),
+      body: Stack(
+        children: [
+          GestureDetector(
+            // Свайп вниз закрывает — только пока не увеличено (иначе это пан).
+            onVerticalDragUpdate: (d) {
+              if (!_zoomed) setState(() => _dragY += d.delta.dy);
+            },
+            onVerticalDragEnd: (_) {
+              if (!_zoomed && _dragY.abs() > 110) {
+                Navigator.of(context).pop();
+              } else {
+                setState(() => _dragY = 0);
+              }
+            },
+            child: Transform.translate(
+              offset: Offset(0, _dragY),
+              child: InteractiveViewer(
+                transformationController: _tc,
+                minScale: 1,
+                maxScale: 5,
+                onInteractionUpdate: (_) => setState(() {}),
+                child: Center(child: Image.memory(widget.bytes)),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Align(
+              alignment: Alignment.topLeft,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
