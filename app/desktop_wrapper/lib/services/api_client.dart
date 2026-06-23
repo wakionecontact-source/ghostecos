@@ -144,6 +144,7 @@ class ApiClient {
     required String toUsername,
     required List<int> encryptedBytes,
     String name = 'enc',
+    void Function(int sent, int total)? onSendProgress,
   }) async {
     final form = FormData.fromMap({
       'to_username': toUsername,
@@ -152,6 +153,8 @@ class ApiClient {
     final r = await _chat.post(
       '/file/upload',
       data: form,
+      // Прогресс отдачи тела (для спиннера-% на медиа, как в TG).
+      onSendProgress: onSendProgress,
       options: Options(
         // Большие медиа (видео 5-10 МБ) не успевают за дефолтные 30с →
         // DioException[receive timeout]. Поднимаем до 5 минут на upload.

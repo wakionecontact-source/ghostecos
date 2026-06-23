@@ -64,6 +64,11 @@ class ChatRepo {
   /// Сообщения по peer. Каждый ChatScreen подписывается на свой.
   final Map<String, ValueNotifier<List<StoredMessage>>> _msgsByPeer = {};
 
+  // Прогресс отправки медиа (0..1) по tempSid — для спиннера-% на пузыре.
+  final Map<String, ValueNotifier<double>> _uploadProgress = {};
+  ValueNotifier<double> uploadProgress(String tempSid) =>
+      _uploadProgress.putIfAbsent(tempSid, () => ValueNotifier<double>(0));
+
   /// Какие peer-ы уже подгружены из БД — чтобы не дёргать SQL на каждый getter.
   final Set<String> _msgsLoadedFromDb = {};
 
@@ -789,6 +794,9 @@ class ChatRepo {
         toUsername: toUsername,
         encryptedBytes: encBytes,
         name: voice ? 'voice' : fileName,
+        onSendProgress: (sent, total) {
+          if (total > 0) uploadProgress(tmpKey).value = sent / total;
+        },
       );
       final fileId = up['file_id'] as int;
       // 3. Кэшируем у себя (parity с веб) + ПЛЕЙНТЕКСТ в RAM-кэш → своё медиа
@@ -845,6 +853,8 @@ class ChatRepo {
     } catch (e) {
       if (kDebugMode) print('[sendDmFile] $e');
       rethrow;
+    } finally {
+      _uploadProgress.remove(tmpKey);
     }
   }
 

@@ -21,6 +21,7 @@ import '../mesh_background.dart';
 import '../services/chat_repo.dart';
 import '../services/db_service.dart';
 import '../services/auth_service.dart';
+import '../services/ws_client.dart';
 import '../widgets/glass.dart';
 import 'profile_screen.dart';
 
@@ -1733,7 +1734,7 @@ class _MediaPartState extends State<_MediaPart> {
 
   Widget _imageView() {
     if (widget.m.pending) {
-      // Своё изображение ещё ГРУЗИТСЯ — показываем «Отправляется…», не ошибку.
+      // Своё изображение ещё ГРУЗИТСЯ — спиннер с процентами (как в TG).
       return Container(
         width: 240,
         height: 180,
@@ -1742,17 +1743,7 @@ class _MediaPartState extends State<_MediaPart> {
           borderRadius: BorderRadius.circular(12),
         ),
         alignment: Alignment.center,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(strokeWidth: 2, color: GE.primary),
-            const SizedBox(height: 8),
-            Text(
-              'Отправляется…',
-              style: TextStyle(color: GE.sub, fontSize: 12),
-            ),
-          ],
-        ),
+        child: _uploadProgressIndicator(),
       );
     }
     if (_loading) {
@@ -1824,10 +1815,64 @@ class _MediaPartState extends State<_MediaPart> {
     );
   }
 
+  // Спиннер с процентами загрузки медиа (как в TG) — прогресс по tempSid.
+  Widget _uploadProgressIndicator() {
+    return ValueListenableBuilder<double>(
+      valueListenable: ChatRepo.instance.uploadProgress(
+        widget.m.tempSid ?? '',
+      ),
+      builder: (_, p, __) {
+        final pct = (p * 100).clamp(0, 100).round();
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 42,
+              height: 42,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  CircularProgressIndicator(
+                    value: p > 0 ? p : null,
+                    strokeWidth: 3,
+                    color: GE.primary,
+                    backgroundColor: Colors.white24,
+                  ),
+                  Text(
+                    '$pct',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text('Отправка $pct%', style: TextStyle(color: GE.sub, fontSize: 11)),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _videoView() {
     final fp = widget.m.filePayload!;
     final name = fp['file_name'] as String? ?? 'видео';
     final size = (fp['size'] as int?) ?? 0;
+    if (widget.m.pending) {
+      return Container(
+        width: 240,
+        height: 150,
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        alignment: Alignment.center,
+        child: _uploadProgressIndicator(),
+      );
+    }
     // Превью видео пока без кадра-миниатюры: тёмная плашка + play. Тап —
     // открыть в системном видеоплеере (in-app плеер добавим позже).
     return GestureDetector(
@@ -2680,38 +2725,91 @@ class _ChatHeader extends StatelessWidget {
                         ),
                       ),
                       if (!isGroup)
-                        ValueListenableBuilder<bool>(
-                          valueListenable: ChatRepo.instance.watchPresence(
-                            peer,
-                          ),
-                          builder: (_, online, __) => Row(
-                            children: [
-                              Text(
-                                '@$peer',
-                                style: TextStyle(color: GE.sub, fontSize: 11),
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                '·',
-                                style: TextStyle(color: GE.sub, fontSize: 11),
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                online ? 'в сети' : 'не в сети',
-                                style: TextStyle(
-                                  color: online ? GE.green : GE.muted,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  shadows: const [
-                                    Shadow(
-                                      color: Color(0xCC000000),
-                                      blurRadius: 5,
+                        StreamBuilder<bool>(
+                          stream: WsClient.instance.onConnectionChange,
+                          initialData: WsClient.instance.isConnected,
+                          builder: (_, wsSnap) {
+                            // Сначала МОЁ соединение (WS+heartbeat): если лежит —
+                            // «соединение…», иначе статус собеседника.
+                            if (wsSnap.data != true) {
+                              return Row(
+                                children: [
+                                  Text(
+                                    '@$peer',
+                                    style: TextStyle(
+                                      color: GE.sub,
+                                      fontSize: 11,
                                     ),
-                                  ],
-                                ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    '·',
+                                    style: TextStyle(
+                                      color: GE.sub,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  const SizedBox(
+                                    width: 9,
+                                    height: 9,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 1.4,
+                                      color: Color(0xFFE5B567),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 5),
+                                  const Text(
+                                    'соединение…',
+                                    style: TextStyle(
+                                      color: Color(0xFFE5B567),
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              );
+                            }
+                            return ValueListenableBuilder<bool>(
+                              valueListenable: ChatRepo.instance.watchPresence(
+                                peer,
                               ),
-                            ],
-                          ),
+                              builder: (_, online, __) => Row(
+                                children: [
+                                  Text(
+                                    '@$peer',
+                                    style: TextStyle(
+                                      color: GE.sub,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    '·',
+                                    style: TextStyle(
+                                      color: GE.sub,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    online ? 'в сети' : 'не в сети',
+                                    style: TextStyle(
+                                      color: online ? GE.green : GE.muted,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      shadows: const [
+                                        Shadow(
+                                          color: Color(0xCC000000),
+                                          blurRadius: 5,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
                         ),
                       if (isGroup)
                         Text(
