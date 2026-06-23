@@ -771,8 +771,10 @@ class ChatRepo {
         name: voice ? 'voice' : fileName,
       );
       final fileId = up['file_id'] as int;
-      // 3. Кэшируем у себя (parity с веб)
+      // 3. Кэшируем у себя (parity с веб) + ПЛЕЙНТЕКСТ в RAM-кэш → своё медиа
+      // открывается мгновенно, без скачивания и расшифровки.
       await _db.cacheFile(fileId.toString(), encBytes, mime);
+      _plainCachePut(fileId, bytes);
       // 4. Шифруем payload пэйра для отправки
       final peerPub = await getPeerPub(toUsername);
       final payload = {
@@ -827,6 +829,18 @@ class ChatRepo {
   }
 
   /// Расшифровать encrypted blob медиа-сообщения. Возвращает plaintext bytes.
+  // RAM-кэш расшифрованных медиа (по file_id): повторный просмотр и СВОЁ медиа
+  // открываются мгновенно — без скачивания и повторной расшифровки. Ограничен.
+  static final Map<int, Uint8List> _plainCache = {};
+  static const int _plainCacheMax = 16;
+  static void _plainCachePut(int fileId, Uint8List bytes) {
+    _plainCache.remove(fileId);
+    _plainCache[fileId] = bytes;
+    while (_plainCache.length > _plainCacheMax) {
+      _plainCache.remove(_plainCache.keys.first);
+    }
+  }
+
   Future<Uint8List?> decryptMediaBlob(StoredMessage m) async {
     final fp = m.filePayload;
     if (fp == null) return null;
@@ -834,18 +848,22 @@ class ChatRepo {
     final keyB64 = fp['key'] as String?;
     final ivB64 = fp['iv'] as String?;
     if (fileId == null || keyB64 == null || ivB64 == null) return null;
+    // RAM-кэш расшифрованного → мгновенно при повторном/своём просмотре.
+    final cachedPlain = _plainCache[fileId];
+    if (cachedPlain != null) return cachedPlain;
     final encBytes = await fetchEncryptedFile(fileId);
     if (encBytes == null) return null;
     final aesKey = Uint8List.fromList(base64Decode(keyB64));
     final iv = Uint8List.fromList(base64Decode(ivB64));
     try {
-      // Расшифровка в ИЗОЛЯТЕ (compute): pointycastle GCM — чистый Dart, и на
-      // главном потоке он морозил UI на секунды при открытии чата с фото.
-      return await compute(_gcmDecryptIso, <String, dynamic>{
-        'key': aesKey,
-        'iv': iv,
-        'ct': encBytes,
-      });
+      final args = <String, dynamic>{'key': aesKey, 'iv': iv, 'ct': encBytes};
+      // Мелкие файлы (голос/небольшие) — на главном потоке: изолят сам по себе
+      // дороже их расшифровки. Большие фото — в ИЗОЛЯТЕ (иначе морозит UI).
+      final plain = encBytes.length < 220 * 1024
+          ? _gcmDecryptIso(args)
+          : await compute(_gcmDecryptIso, args);
+      _plainCachePut(fileId, plain);
+      return plain;
     } catch (e) {
       if (kDebugMode) print('[decryptMediaBlob] $e');
       return null;
