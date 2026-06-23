@@ -2770,24 +2770,22 @@ async function _ensureV2Identity(){
 }
 
 async function _v2SaveToIDB(obj){
+  // identity_priv / device_priv — секретные ключи Ed25519/X25519. localStorage
+  // доступен любому XSS-скрипту → НЕ сохраняем сюда plaintext. Только IDB
+  // (всё ещё readable через XSS, но требует async API и труднее в exfiltration
+  // payload'е). Если IDB недоступен (incognito strict / упал) — identity
+  // volatile: пропадёт при reload. Пользователь re-publish'нет identity заново.
   const db = await openIDB();
   if (!db.objectStoreNames.contains('v2_keys')){
-    // Стор будет создан при следующем upgrade — пока fallback на localStorage.
-    // Безопасность тут хуже (localStorage доступен через XSS), но это
-    // временно пока миграция схемы IDB.
-    try { localStorage.setItem('gs_v2keys_' + (me && me.username || 'anon'),
-        JSON.stringify({
-          identity_priv: GhostKeysV2._b64e(obj.identity_priv),
-          identity_pub:  GhostKeysV2._b64e(obj.identity_pub),
-          device_priv:   GhostKeysV2._b64e(obj.device_priv),
-          device_pub:    GhostKeysV2._b64e(obj.device_pub),
-          seed_hash:     obj.seed_hash,
-          created_at:    obj.created_at,
-        })); } catch(_){}
+    console.warn('[v2-keys] IDB store отсутствует, identity volatile до следующего upgrade');
+    // Мигрируем — удалим legacy plaintext если был.
+    try { localStorage.removeItem('gs_v2keys_' + (me && me.username || 'anon')); } catch(_){}
     return;
   }
   const tx = db.transaction('v2_keys', 'readwrite');
   tx.objectStore('v2_keys').put({key: 'main', ...obj});
+  // Очистка legacy plaintext если был от старой версии.
+  try { localStorage.removeItem('gs_v2keys_' + (me && me.username || 'anon')); } catch(_){}
 }
 async function _v2LoadFromIDB(){
   try {
@@ -2801,20 +2799,11 @@ async function _v2LoadFromIDB(){
       });
     }
   } catch(_){}
-  // Fallback localStorage
-  try {
-    const raw = localStorage.getItem('gs_v2keys_' + (me && me.username || 'anon'));
-    if (!raw) return null;
-    const o = JSON.parse(raw);
-    return {
-      identity_priv: GhostKeysV2._b64d(o.identity_priv),
-      identity_pub:  GhostKeysV2._b64d(o.identity_pub),
-      device_priv:   GhostKeysV2._b64d(o.device_priv),
-      device_pub:    GhostKeysV2._b64d(o.device_pub),
-      seed_hash:     o.seed_hash,
-      created_at:    o.created_at,
-    };
-  } catch(_){ return null; }
+  // localStorage fallback УБРАН (security): identity_priv там был plaintext.
+  // Если IDB не работает — identity volatile, re-publish при следующем входе.
+  // Подчищаем старое legacy-значение если осталось от предыдущей версии.
+  try { localStorage.removeItem('gs_v2keys_' + (me && me.username || 'anon')); } catch(_){}
+  return null;
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -3875,16 +3864,30 @@ function idbReq(tx, fn){
   });
 }
 async function idbAddMessage(m){
+  // Весь IDB-flow внутри одного TX-коллбэка без await между запросами —
+  // иначе TX автозакрывается с TransactionInactiveError и сообщение теряется.
   const db = await openIDB();
-  const tx = db.transaction('messages', 'readwrite');
-  const store = tx.objectStore('messages');
-  if (m.sid) {
-    const idx = store.index('sid');
-    const exists = await new Promise(r => { const q = idx.get(m.sid); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
-    if (exists) return false;
-  }
-  await idbReq(tx, t => t.objectStore('messages').add(m));
-  return true;
+  return new Promise((res, rej) => {
+    const tx = db.transaction('messages', 'readwrite');
+    const store = tx.objectStore('messages');
+    const finish = (val) => res(val);
+    const fail = (e) => rej(e || new Error('idb add failed'));
+    if (m.sid) {
+      const idx = store.index('sid');
+      const check = idx.get(m.sid);
+      check.onsuccess = () => {
+        if (check.result) { finish(false); return; }
+        const addReq = store.add(m);
+        addReq.onsuccess = () => finish(true);
+        addReq.onerror = () => fail(addReq.error);
+      };
+      check.onerror = () => fail(check.error);
+    } else {
+      const addReq = store.add(m);
+      addReq.onsuccess = () => finish(true);
+      addReq.onerror = () => fail(addReq.error);
+    }
+  });
 }
 async function idbFindMessageBySid(sid){
   const db = await openIDB();
@@ -3893,15 +3896,23 @@ async function idbFindMessageBySid(sid){
   return new Promise(r => { const q = idx.get(sid); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
 }
 async function idbUpdateMessage(sid, patch){
+  // Без await между get→put: иначе TX автозакрывается между ними.
   const db = await openIDB();
-  const tx = db.transaction('messages', 'readwrite');
-  const store = tx.objectStore('messages');
-  const idx = store.index('sid');
-  const found = await new Promise(r => { const q = idx.get(sid); q.onsuccess = () => r(q.result); q.onerror = () => r(null); });
-  if (!found) return false;
-  Object.assign(found, patch);
-  await idbReq(tx, t => t.objectStore('messages').put(found));
-  return true;
+  return new Promise((res, rej) => {
+    const tx = db.transaction('messages', 'readwrite');
+    const store = tx.objectStore('messages');
+    const idx = store.index('sid');
+    const get = idx.get(sid);
+    get.onsuccess = () => {
+      const found = get.result;
+      if (!found) { res(false); return; }
+      Object.assign(found, patch);
+      const put = store.put(found);
+      put.onsuccess = () => res(true);
+      put.onerror = () => rej(put.error);
+    };
+    get.onerror = () => rej(get.error);
+  });
 }
 async function idbGetMessages(peer){
   const db = await openIDB();
@@ -4938,6 +4949,25 @@ async function pickAndSendFile(input){
       showToast(`«${f.name}» слишком большой (${fmtSize(f.size)}, макс ${fmtSize(MAX_FILE_SIZE)})`, true);
       continue;
     }
+    // Image dims защита: PNG 100×100000 = ~50KB файла, но рушит память при рендере.
+    if (f.type && f.type.startsWith('image/') && f.type !== 'image/svg+xml') {
+      try {
+        const dims = await new Promise((res, rej) => {
+          const url = URL.createObjectURL(f);
+          const img = new Image();
+          img.onload = () => { URL.revokeObjectURL(url); res({w: img.naturalWidth, h: img.naturalHeight}); };
+          img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('decode_failed')); };
+          img.src = url;
+        });
+        if (dims.w > 8192 || dims.h > 8192) {
+          showToast(`«${f.name}» ${dims.w}×${dims.h} превышает 8192×8192`, true);
+          continue;
+        }
+      } catch(_) {
+        showToast(`«${f.name}» повреждено или невалидный image`, true);
+        continue;
+      }
+    }
     await _sendSingleFile(f);
   }
 }
@@ -5085,7 +5115,7 @@ async function loadImgPreview(sid){
     if (isVideo) {
       el.outerHTML = `<video class="msg-video" src="${url}" controls preload="metadata"></video>`;
     } else {
-      el.outerHTML = `<img class="msg-img" src="${url}" alt="${esc(p.file_name)}" onclick="openMediaViewer('${safeSid}')">`;
+      el.outerHTML = `<img class="msg-img" src="${url}" alt="${esc(p.file_name)}" onclick="openMediaViewer('${safeSid}')" loading="lazy" decoding="async">`;
     }
   } catch(e){ console.error('[media preview]', e); }
 }
@@ -5447,9 +5477,25 @@ async function sendMessage(){
     updateLastBubble(false);
   } catch(e) {
     optimistic.failed = true;
-    updateLastBubble(true);
+    optimistic.pending = false;
+    optimistic._pendingRetry = { text, replySid: currentReply ? currentReply.sid : null };
+    renderMessages();
     showToast(e.message || 'Не отправлено', true);
+    try { await idbAddMessage(optimistic); } catch(_){}
   }
+}
+
+// Переотправка failed-сообщения по клику на ⟳ в баббле.
+async function retryMessage(sid){
+  const m = activeMessages.find(x => String(x.sid) === String(sid));
+  if (!m || !m.failed || !m._pendingRetry) return;
+  const text = m._pendingRetry.text;
+  // Удалим failed-баббл и попробуем отправить заново как новое сообщение.
+  activeMessages = activeMessages.filter(x => x !== m);
+  try { await idbUpdateMessage(String(m.sid), { _deleted_local: true }); } catch(_){}
+  renderMessages();
+  const ta = document.getElementById('msgInput');
+  if (ta) { ta.value = text; sendMessage(); }
 }
 
 async function editMessage(sid){
@@ -6154,8 +6200,10 @@ function renderMessages(){
     if (m.deleted) cls += ' deleted';
     const meta = m.pending
       ? '<i class="fa-regular fa-clock"></i>'
-      : (m.edited ? '<span style="opacity:0.7;font-size:10px;">изм.</span>' : '')
-        + (m.from_me ? ' ' + renderTicks(m) : '');
+      : m.failed
+        ? `<button onclick="retryMessage(${JSON.stringify(String(m.sid))})" title="Переотправить" style="background:none;border:none;color:var(--red,#ef4444);cursor:pointer;font-size:11px;padding:0;margin-left:2px;display:inline-flex;align-items:center;gap:3px;"><i class="fa-solid fa-rotate-right"></i>Не отправлено</button>`
+        : (m.edited ? '<span style="opacity:0.7;font-size:10px;">изм.</span>' : '')
+          + (m.from_me ? ' ' + renderTicks(m) : '');
     let quoteHtml = '';
     if (m.reply_to != null && !m.deleted) {
       const target = activeMessages.find(x => String(x.sid) === String(m.reply_to));
@@ -6198,7 +6246,7 @@ function renderMessages(){
           </div>
         </div>`;
       } else if (isImg && m._imgUrl) {
-        bubbleBody = `<img class="msg-img" src="${m._imgUrl}" alt="${esc(fp.file_name||fp.name||'')}" onclick="openMediaViewer(${sidArg})" ${mediaCtx}>`;
+        bubbleBody = `<img class="msg-img" src="${m._imgUrl}" alt="${esc(fp.file_name||fp.name||'')}" onclick="openMediaViewer(${sidArg})" loading="lazy" decoding="async" ${mediaCtx}>`;
       } else if (isVideo && m._imgUrl) {
         bubbleBody = `<video class="msg-video" src="${m._imgUrl}" controls preload="metadata" ${mediaCtx}></video>`;
       } else if ((isImg || isVideo) && m.file_payload) {
@@ -7211,11 +7259,17 @@ let _wsAuthFail = false;
 let _lastWsRecvAt = 0;        // время последнего любого сообщения от сервера
 let _pingSentAt = 0;          // время последнего ping (для timeout pong)
 let _pongTimeoutTimer = null; // таймер ожидания pong
+let _wsConnecting = false;    // single-flight: уже идёт connectWS, игнорируем повторные вызовы
+let _closingByUs = false;     // мы сами закрывали сокет → onclose должен это знать
 
 function _killStaleWs(reason) {
   console.warn('[ws] stale, reconnecting:', reason);
+  if (!ws) return;
   clearInterval(pingTimer); clearTimeout(_pongTimeoutTimer);
-  try { ws && ws.close(); } catch(_){}
+  _closingByUs = true;
+  try { ws.close(); } catch(_){}
+  try { ws.onopen = null; ws.onmessage = null; ws.onclose = null; ws.onerror = null; } catch(_){}
+  ws = null;
 }
 
 let _wsEphPriv = null;   // CryptoKey ECDH P-256 private
@@ -7467,15 +7521,21 @@ function _wsRpcResolve(m){
 function connectWS(){
   if (_wsAuthFail) return;
   if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+  if (_wsConnecting) return;  // single-flight
+  _wsConnecting = true;
+  if (ws) _killStaleWs('new connect attempt');  // убиваем зомби перед новым
+  _closingByUs = false;
   const base = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/soc/ws';
   const u = token ? `${base}?token=${encodeURIComponent(token)}` : base;
   _newHelloPromise();
   try { ws = new WebSocket(u); } catch(e) {
+    _wsConnecting = false;
     if (_helloReject) { try { _helloReject(e); } catch(_){} _helloReject = null; }
     setTimeout(connectWS, wsReconnect); wsReconnect = Math.min(wsReconnect*2, 30000); return;
   }
   _resetWsCrypto();
   ws.onopen = async () => {
+    _wsConnecting = false;
     wsReconnect = 1000;
     _lastWsRecvAt = Date.now();
     await _wsBeginHandshake();
@@ -7518,8 +7578,11 @@ function connectWS(){
     try { await handleWs(m); } catch(_){}
   };
   ws.onclose = (ev) => {
+    // Если мы сами убили сокет через _killStaleWs — игнорируем onclose
+    if (_closingByUs) { _closingByUs = false; return; }
     clearInterval(pingTimer); clearTimeout(_pongTimeoutTimer);
     _resetWsCrypto();
+    _wsConnecting = false;
     if (ev && (ev.code === 1008 || ev.code === 4401 || ev.code === 4403)) {
       _wsAuthFail = true; return;
     }
