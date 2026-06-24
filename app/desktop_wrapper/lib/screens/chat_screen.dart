@@ -8,6 +8,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_selector/file_selector.dart';
@@ -60,10 +61,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _didInitialScroll = false;
   // Линия «Новое» + бейдж непрочитанных В ОТКРЫТОМ чате (live).
   int? _newLineSid; // sid соо, НАД которым рисуется ОДНА линия «Новое»
+  final GlobalKey _newLineKey = GlobalKey(); // для точного центрирования стрелкой
+  double _newLineOpacity = 1.0; // fade-out при любом действии юзера
   int _unreadInChat = 0; // живой счётчик непрочитанных пока чат открыт (badge)
   int _lastMsgCount = 0; // для детекта новых соо в билдере
   int _arrowStage = 0; // 2-stage тап стрелки: 0=центр на линию, 1=в самый низ
   bool _pinnedBottom = true; // юзер у дна → держим прилеплено к низу
+
+  // Линия «Новое» плавно исчезает при ЛЮБОМ действии юзера (тап/скролл/отправка).
+  void _clearNewLine() {
+    if (_newLineSid != null && _newLineOpacity != 0.0) {
+      setState(() => _newLineOpacity = 0.0);
+    }
+  }
   final _imagePicker = ImagePicker();
   final _recorder = AudioRecorder();
 
@@ -86,6 +96,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final Set<int> _selSids = {};
   bool get _selectionMode => _selSids.isNotEmpty;
   void _toggleSel(StoredMessage m) {
+    _clearNewLine(); // выбор — действие → линия «Новое» уходит
     HapticFeedback.selectionClick();
     setState(() {
       if (!_selSids.remove(m.sid)) _selSids.add(m.sid);
@@ -158,18 +169,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // «Прилеплен к низу» — пока юзер у дна, билдер держит его внизу при
     // дозагрузке/новых соо; стоит пролистать вверх — отлипаем.
     _pinnedBottom = fromBottom < 100;
+    // ЖИВОЙ (пользовательский) скролл → линия «Новое» гаснет (любое действие).
+    // Программный авто-скролл userScrollDirection не меняет → линию не трогает.
+    if (_scrollCtrl.position.userScrollDirection != ScrollDirection.idle) {
+      _clearNewLine();
+    }
     // «Вниз» показываем, когда пролистано >~10 сообщений вверх от низа.
     final show = fromBottom > 600;
     if (show != _showScrollDown) setState(() => _showScrollDown = show);
     // Дошёл до низа → «прочитал»: гасим бейдж, стрелка обычная, линия «Новое»
-    // убирается (следующая партия входящих создаст свежую ОДНУ линию).
+    // уходит fade-ом (следующая партия входящих создаст свежую ОДНУ линию).
     if (fromBottom < 80 &&
         (_unreadInChat != 0 || _arrowStage != 0 || _newLineSid != null)) {
       setState(() {
         _unreadInChat = 0;
         _arrowStage = 0;
-        _newLineSid = null;
       });
+      _clearNewLine();
       ChatRepo.instance.markChatRead(widget.peer); // подчистить и БД
     }
   }
@@ -290,55 +306,71 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  // 2-stage тап стрелки: при наличии бейджа 1-й тап центрирует линию «Новое»,
-  // 2-й — в самый низ. Без бейджа — сразу вниз.
+  // 2-stage тап стрелки: 1-й тап центрирует линию «Новое» (по РЕАЛЬНОМУ контексту
+  // через ensureVisible — точно, без оценки idx*высота), 2-й — в самый низ. Если
+  // линия не на виду / нет бейджа — сразу в самый низ.
   void _onArrowTap() {
-    if (_unreadInChat > 0 && _newLineSid != null && _arrowStage == 0) {
+    final ctx = _newLineKey.currentContext;
+    if (_unreadInChat > 0 &&
+        _newLineSid != null &&
+        _arrowStage == 0 &&
+        ctx != null) {
       _arrowStage = 1;
-      _centerOnSid(_newLineSid!);
+      Scrollable.ensureVisible(
+        ctx,
+        alignment: 0.5, // 0.5 = по центру экрана
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOut,
+      );
     } else {
       _arrowStage = 0;
       _scrollToBottom(true);
     }
   }
 
-  // Скролл так, чтобы соо с данным sid оказалось по центру экрана (anchor —
-  // линия «Новое»). Высота элемента приблизительная (точную не знаем заранее).
-  void _centerOnSid(int sid) {
-    final msgs = ChatRepo.instance.messagesNotifier(widget.peer).value;
-    final idx = msgs.indexWhere((m) => m.sid == sid);
-    if (idx < 0 || !_scrollCtrl.hasClients) return;
-    final target =
-        (idx * 72.0) - (_scrollCtrl.position.viewportDimension / 2);
-    _scrollCtrl.animateTo(
-      target.clamp(0.0, _scrollCtrl.position.maxScrollExtent),
-      duration: const Duration(milliseconds: 320),
-      curve: Curves.easeOut,
-    );
-  }
-
   // Горизонтальный разделитель «Новое» (unread separator) — ОДНА линия над
-  // первым непрочитанным. Убирается при достижении низа (прочитано).
+  // первым новым входящим. Появляется на любое входящее (даже у дна), плавно
+  // исчезает (fade) при любом действии юзера; по завершении fade — снимается.
   Widget _newMessagesLine() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Row(
-        children: [
-          Expanded(child: Container(height: 1, color: GE.primary.withValues(alpha: 0.5))),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Text(
-              'Новое',
-              style: TextStyle(
-                color: GE.primary,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.5,
+    return AnimatedOpacity(
+      key: _newLineKey,
+      opacity: _newLineOpacity,
+      duration: const Duration(milliseconds: 280),
+      onEnd: () {
+        if (_newLineOpacity == 0.0 && _newLineSid != null && mounted) {
+          setState(() => _newLineSid = null);
+        }
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
+          children: [
+            Expanded(
+              child: Container(
+                height: 1,
+                color: GE.primary.withValues(alpha: 0.5),
               ),
             ),
-          ),
-          Expanded(child: Container(height: 1, color: GE.primary.withValues(alpha: 0.5))),
-        ],
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Text(
+                'Новое',
+                style: TextStyle(
+                  color: GE.primary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Container(
+                height: 1,
+                color: GE.primary.withValues(alpha: 0.5),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -346,6 +378,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<void> _send() async {
     final text = _inputCtrl.text.trim();
     if (text.isEmpty || _sending) return;
+    _clearNewLine(); // отправка — действие → линия «Новое» уходит
     final replyTo = _replyTo;
     final editing = _editing;
     // Чистим поле СРАЗУ: текст уходит в pending-бабл, бар свободен (не висит с
@@ -634,6 +667,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _openBubbleMenu(StoredMessage m, Offset pos) async {
+    _clearNewLine(); // тап по сообщению — действие → линия «Новое» уходит
     HapticFeedback.mediumImpact();
     final mine = m.fromMe;
     final isText = m.filePayload == null && !m.deleted;
@@ -941,34 +975,36 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 return;
                               }
                               final grew = msgs.length > _lastMsgCount;
+                              final incoming = grew
+                                  ? msgs
+                                        .sublist(_lastMsgCount)
+                                        .where((m) => !m.fromMe)
+                                        .toList()
+                                  : const <StoredMessage>[];
                               if (_pinnedBottom) {
                                 // Держим у дна: дозагрузка контента доводит до
                                 // САМОГО низа (jump), новые соо — следуем
                                 // (animate). Свою отправку держит _send+замочек.
                                 _scrollToBottom(grew);
-                                // Входящие пришли пока юзер У ДНА (видит их) →
-                                // сразу помечаем прочитанными, чтобы бейдж в
-                                // списке не копился из «уже увиденных».
-                                if (grew &&
-                                    msgs
-                                        .sublist(_lastMsgCount)
-                                        .any((m) => !m.fromMe)) {
-                                  ChatRepo.instance.markPeerSeen(widget.peer);
-                                }
-                              } else if (grew) {
-                                // Пролистан вверх + входящие → бейдж + ОДНА линия
-                                // «Новое» (ставим только если её ещё нет —
-                                // накапливается, не множится при каждом приходе).
-                                final incoming = msgs
-                                    .sublist(_lastMsgCount)
-                                    .where((m) => !m.fromMe)
-                                    .toList();
                                 if (incoming.isNotEmpty) {
+                                  // Входящие пришли пока юзер У ДНА (видит их) →
+                                  // в список бейдж НЕ копим (markPeerSeen), но
+                                  // линию «Новое» над новым ВСЁ РАВНО показываем
+                                  // (уйдёт fade-ом при любом действии).
+                                  ChatRepo.instance.markPeerSeen(widget.peer);
                                   setState(() {
                                     _newLineSid ??= incoming.first.sid;
-                                    _unreadInChat += incoming.length;
+                                    _newLineOpacity = 1.0;
                                   });
                                 }
+                              } else if (incoming.isNotEmpty) {
+                                // Пролистан вверх → бейдж + ОДНА линия «Новое»
+                                // (ставим только если её ещё нет — накапливается).
+                                setState(() {
+                                  _newLineSid ??= incoming.first.sid;
+                                  _newLineOpacity = 1.0;
+                                  _unreadInChat += incoming.length;
+                                });
                               }
                               _lastMsgCount = msgs.length;
                             });
