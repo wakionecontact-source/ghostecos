@@ -107,6 +107,71 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   void _clearSel() => setState(() => _selSids.clear());
 
+  // ── Drag-select: зажал и ведёшь палец вверх/вниз → выделяется ВСЁ на пути ──
+  int? _dragAnchorSid;
+  Set<int> _dragBaseSel = {};
+  final Map<int, GlobalKey> _bubbleKeys = {};
+
+  void _startDragSelect(StoredMessage m) {
+    _clearNewLine();
+    HapticFeedback.selectionClick();
+    _dragAnchorSid = m.sid;
+    _dragBaseSel = Set<int>.from(_selSids);
+    setState(() => _selSids.add(m.sid));
+  }
+
+  void _updateDragSelect(Offset globalPos) {
+    final anchor = _dragAnchorSid;
+    if (anchor == null) return;
+    final curSid = _sidAtGlobalY(globalPos.dy);
+    if (curSid != null) {
+      final msgs = ChatRepo.instance.messagesNotifier(widget.peer).value;
+      final ai = msgs.indexWhere((m) => m.sid == anchor);
+      final ci = msgs.indexWhere((m) => m.sid == curSid);
+      if (ai >= 0 && ci >= 0) {
+        final lo = ai < ci ? ai : ci;
+        final hi = ai < ci ? ci : ai;
+        final next = Set<int>.from(_dragBaseSel);
+        for (var i = lo; i <= hi; i++) {
+          next.add(msgs[i].sid);
+        }
+        setState(() => _selSids
+          ..clear()
+          ..addAll(next));
+      }
+    }
+    _dragEdgeAutoscroll(globalPos.dy); // у краёв — подкручиваем ленту
+  }
+
+  void _endDragSelect() => _dragAnchorSid = null;
+
+  // Какое сообщение под пальцем (по глобальной Y) — перебор видимых пузырей.
+  int? _sidAtGlobalY(double gy) {
+    for (final e in _bubbleKeys.entries) {
+      final ctx = e.value.currentContext;
+      if (ctx == null) continue;
+      final box = ctx.findRenderObject() as RenderBox?;
+      if (box == null || !box.attached) continue;
+      final top = box.localToGlobal(Offset.zero).dy;
+      if (gy >= top && gy <= top + box.size.height) return e.key;
+    }
+    return null;
+  }
+
+  void _dragEdgeAutoscroll(double gy) {
+    if (!_scrollCtrl.hasClients) return;
+    final media = MediaQuery.of(context);
+    final topEdge = media.padding.top + 100;
+    final bottomEdge = media.size.height - _composerH - 100;
+    const step = 24.0;
+    final max = _scrollCtrl.position.maxScrollExtent;
+    if (gy < topEdge) {
+      _scrollCtrl.jumpTo((_scrollCtrl.offset - step).clamp(0.0, max));
+    } else if (gy > bottomEdge) {
+      _scrollCtrl.jumpTo((_scrollCtrl.offset + step).clamp(0.0, max));
+    }
+  }
+
   List<StoredMessage> get _selectedMsgs => ChatRepo.instance
       .messagesNotifier(widget.peer)
       .value
@@ -1102,7 +1167,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                           m,
                                           d.globalPosition,
                                         ),
-                                  onLongPressStart: (_) => _toggleSel(m),
+                                  // Зажатие → начать выбор + drag-select:
+                                  // ведёшь палец вверх/вниз → выделяется ВСЁ на пути.
+                                  onLongPressStart: (_) => _startDragSelect(m),
+                                  onLongPressMoveUpdate: (d) =>
+                                      _updateDragSelect(d.globalPosition),
+                                  onLongPressEnd: (_) => _endDragSelect(),
                                   // В режиме выбора гасим внутренние тапы медиа.
                                   child: AbsorbPointer(
                                     absorbing: _selectionMode,
@@ -1110,6 +1180,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   ),
                                 );
                                 final bubble = Container(
+                                  key: _bubbleKeys.putIfAbsent(
+                                    m.sid,
+                                    () => GlobalKey(),
+                                  ),
                                   color: selected
                                       ? GE.primary.withValues(alpha: 0.14)
                                       : null,
