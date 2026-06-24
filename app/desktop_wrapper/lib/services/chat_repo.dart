@@ -1084,6 +1084,7 @@ class ChatRepo {
     List<double>? waveform,
     String? sourcePath, // путь к видео для сжатия (video_compress)
     Uint8List? thumbnail, // первый кадр (png) — показываем ДО загрузки
+    String? localPath, // локальный файл — превью/проигрывание ПОКА грузится
   }) async {
     final tempSidId = -DateTime.now().microsecondsSinceEpoch;
     final tmpKey = 'tmp-$tempSidId';
@@ -1103,6 +1104,7 @@ class ChatRepo {
           'mime': mime,
           'size': bytes.length,
           if (thumbB64 != null) 'thumb': thumbB64,
+          if (localPath != null) '_local': localPath,
           if (voice) 'voice': true,
           if (voice) 'duration': duration,
           if (voice && waveform != null) 'waveform': waveform,

@@ -641,6 +641,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         bytes: bytes,
         mime: 'image/jpeg',
         fileName: x.name,
+        localPath: x.path, // показываем фото СРАЗУ (превью) пока грузится
       );
     } catch (e) {
       _snack('Картинка не отправилась: $e');
@@ -1945,7 +1946,11 @@ class _ReactionsBar extends StatelessWidget {
           borderRadius: BorderRadius.circular(20),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: Icon(_picks[i].icon, color: _picks[i].color, size: 26),
+            // Twemoji-картинка вместо Material-иконки (тот же набор эмодзи).
+            child: EmojiText(
+              _picks[i].emoji,
+              style: const TextStyle(fontSize: 26),
+            ),
           ),
         ),
         separatorBuilder: (_, _) => const SizedBox(width: 2),
@@ -1966,40 +1971,9 @@ class _Pick {
 /// Маппинг raw-emoji → Material иконка для отображения реакции на сообщении.
 /// Сохраняет совместимость с сервером (он хранит raw-symbol), но рендерит
 /// стилистически единый Material набор поверх любой ОС.
+// Реакция рендерится тем же Twemoji-набором, что и эмодзи (а не Material-иконкой).
 Widget _chatReactionIcon(String key, {double size = 12, required Color color}) {
-  IconData? ic;
-  switch (key) {
-    case '❤':
-    case '❤️':
-    case '♥':
-      ic = Icons.favorite;
-      break;
-    case '👍':
-      ic = Icons.thumb_up;
-      break;
-    case '😂':
-    case '🤣':
-      ic = Icons.sentiment_very_satisfied;
-      break;
-    case '😮':
-    case '😲':
-      ic = Icons.sentiment_neutral;
-      break;
-    case '😢':
-    case '😭':
-      ic = Icons.sentiment_dissatisfied;
-      break;
-    case '🔥':
-      ic = Icons.local_fire_department;
-      break;
-  }
-  if (ic == null) {
-    return Text(
-      key,
-      style: TextStyle(color: color, fontSize: size + 1),
-    );
-  }
-  return Icon(ic, size: size, color: color);
+  return EmojiText(key, style: TextStyle(color: color, fontSize: size));
 }
 
 /// Парсит created_at (наивная UTC-строка / unix int) → локальное DateTime.
@@ -2347,9 +2321,10 @@ class _Bubble extends StatelessWidget {
       return Icon(Icons.done_all, size: 14, color: GE.blue);
     }
     if (m.delivered) {
-      return const Icon(Icons.done, size: 13, color: Colors.white70);
+      return const Icon(Icons.done_all, size: 14, color: Colors.white70);
     }
-    return const Icon(Icons.save_outlined, size: 11, color: Colors.white54);
+    // Отправлено (на сервере, ещё не доставлено) — одна галочка (не «дискета»).
+    return const Icon(Icons.check, size: 13, color: Colors.white54);
   }
 
   String _formatTime(dynamic at) {
@@ -2453,16 +2428,31 @@ class _MediaPartState extends State<_MediaPart> {
 
   Widget _imageView() {
     if (widget.m.pending) {
-      // Своё изображение ещё ГРУЗИТСЯ — спиннер с процентами (как в TG).
-      return Container(
-        width: 240,
-        height: 180,
-        decoration: BoxDecoration(
-          color: Colors.black26,
-          borderRadius: BorderRadius.circular(12),
+      // Превью: само фото СРАЗУ (из локального файла) под оверлеем с прогрессом.
+      final localPath = widget.m.filePayload?['_local'] as String?;
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: SizedBox(
+          width: 240,
+          height: 180,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (localPath != null)
+                Image.file(
+                  File(localPath),
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                  errorBuilder: (_, __, ___) =>
+                      const ColoredBox(color: Colors.black26),
+                )
+              else
+                const ColoredBox(color: Colors.black26),
+              const ColoredBox(color: Color(0x55000000)),
+              Center(child: _uploadProgressIndicator()),
+            ],
+          ),
         ),
-        alignment: Alignment.center,
-        child: _uploadProgressIndicator(),
       );
     }
     if (_loading) {
