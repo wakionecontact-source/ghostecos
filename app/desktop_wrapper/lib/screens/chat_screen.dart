@@ -29,6 +29,7 @@ import '../services/chat_repo.dart';
 import '../services/db_service.dart';
 import '../services/auth_service.dart';
 import '../services/ws_client.dart';
+import '../services/notification_service.dart';
 import '../widgets/glass.dart';
 import 'profile_screen.dart';
 
@@ -300,6 +301,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _scrollCtrl.addListener(_onScroll);
     // В чате блокируем переворот экрана (только портрет).
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    // Этот чат открыт → не слать о нём уведомления.
+    NotificationService.activePeer = widget.peer;
     _init();
   }
 
@@ -444,6 +447,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    // Этот чат закрыт → снова можно слать о нём уведомления.
+    if (NotificationService.activePeer == widget.peer) {
+      NotificationService.activePeer = null;
+    }
     // Возвращаем все ориентации при выходе из чата.
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     _highlightTimer?.cancel();

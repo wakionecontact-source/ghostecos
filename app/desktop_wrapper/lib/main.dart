@@ -14,6 +14,7 @@ import 'theme.dart';
 import 'mesh_background.dart';
 import 'services/auth_service.dart';
 import 'services/theme_service.dart';
+import 'services/notification_service.dart';
 import 'screens/welcome_screen.dart';
 import 'screens/auth_screen.dart';
 import 'screens/main_shell.dart';
@@ -30,6 +31,9 @@ void main() async {
   // Загружаем сохранённую тему — должно произойти ДО первого runApp,
   // чтобы статические поля GE сразу имели правильные цвета.
   await ThemeService.instance.load();
+  // Уведомления о новых сообщениях (пока приложение живо). Defensive — не
+  // блокирует старт, если плагин недоступен.
+  await NotificationService.instance.init();
   // Прозрачные status/nav bar — mesh должен просвечивать через них (Android 15+
   // и так включает edge-to-edge, но без этого system bars будут с дефолтным
   // тёмным фоном поверх mesh).
@@ -70,6 +74,7 @@ class GhostApp extends StatelessWidget {
       builder: (_, _, _) => MaterialApp(
         title: GE.appName,
         debugShowCheckedModeBanner: false,
+        navigatorKey: NotificationService.navigatorKey,
         theme: GE.theme(),
         home: const _Root(),
       ),

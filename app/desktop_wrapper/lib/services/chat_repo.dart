@@ -18,6 +18,7 @@ import 'package:video_compress/video_compress.dart';
 import 'api_client.dart';
 import 'auth_service.dart';
 import 'crypto_service.dart';
+import 'notification_service.dart';
 import 'crypto_v2.dart';
 import 'db_service.dart';
 import 'ws_client.dart';
@@ -1687,6 +1688,14 @@ class ChatRepo {
       lastAt: m['created_at'],
       incUnread: !isMine && fromPending,
     );
+    // Уведомление о входящем (не своём). Сервис сам не дёрнет, если открыт
+    // именно этот чат. Работает пока приложение живо (WS-листенер активен).
+    if (!isMine) {
+      NotificationService.instance.onIncoming(
+        peer: peerUsername,
+        preview: preview,
+      );
+    }
   }
 
   /// Локально применить toggle реакции к сообщению.

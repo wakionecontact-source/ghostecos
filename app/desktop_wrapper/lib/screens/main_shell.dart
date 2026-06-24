@@ -13,6 +13,7 @@ import '../services/auth_service.dart';
 import '../services/db_service.dart';
 import '../services/crypto_service.dart';
 import '../services/ws_client.dart';
+import '../services/notification_service.dart';
 import '../widgets/glass.dart';
 import 'settings_screen.dart';
 import 'chat_list_screen.dart';
@@ -93,6 +94,8 @@ class _MainShellState extends State<MainShell> {
       WsClient.instance.connect();
 
       if (mounted) setState(() => _bootstrapped = true);
+      // После логина — спросить разрешение на уведомления (если ещё не выдано).
+      NotificationService.instance.ensurePermission();
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     }
