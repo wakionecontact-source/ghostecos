@@ -15,6 +15,7 @@ import 'package:intl/intl.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:open_filex/open_filex.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
@@ -46,6 +47,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final _scrollCtrl = ScrollController();
   // Память позиции скролла по чату: первый заход → низ, далее → где остановился.
   static final Map<String, double> _scrollMemory = {};
+  // Черновик per-чат + динамическая высота композера (scroll-up при росте поля).
+  SharedPreferences? _prefs;
+  final _composerKey = GlobalKey();
+  double _composerH = 96;
+  String get _draftKey => 'chat_draft_${widget.peer}';
   final _imagePicker = ImagePicker();
   final _recorder = AudioRecorder();
 
@@ -128,7 +134,41 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _inputCtrl.addListener(_onInputChanged);
     _init();
+  }
+
+  void _onInputChanged() {
+    // Черновик per-чат: сохраняем/чистим на каждый ввод (очистка на send —
+    // _inputCtrl.clear() тоже сюда попадёт).
+    final t = _inputCtrl.text;
+    if (t.isEmpty) {
+      _prefs?.remove(_draftKey);
+    } else {
+      _prefs?.setString(_draftKey, t);
+    }
+    // Scroll-up при росте поля: меряем композер, на рост двигаем ленту вверх,
+    // чтобы последнее сообщение не пряталось под выросшим композером.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final box =
+          _composerKey.currentContext?.findRenderObject() as RenderBox?;
+      if (box == null) return;
+      final h = box.size.height;
+      if (h != _composerH) {
+        final grew = h > _composerH;
+        final delta = h - _composerH;
+        setState(() => _composerH = h);
+        if (grew && _scrollCtrl.hasClients) {
+          _scrollCtrl.jumpTo(
+            (_scrollCtrl.offset + delta).clamp(
+              0.0,
+              _scrollCtrl.position.maxScrollExtent,
+            ),
+          );
+        }
+      }
+    });
   }
 
   @override
@@ -142,6 +182,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Future<void> _init() async {
     _myUsername = await AuthService.username();
+    _prefs = await SharedPreferences.getInstance();
+    final draft = _prefs?.getString(_draftKey);
+    if (draft != null && draft.isNotEmpty && _inputCtrl.text.isEmpty) {
+      _inputCtrl.text = draft;
+      _inputCtrl.selection = TextSelection.collapsed(offset: draft.length);
+    }
     await ChatRepo.instance.markChatRead(widget.peer);
     // Сразу проверяем свежие сообщения от веба (Sealed Sender 2.0) и legacy.
     ChatRepo.instance.fetchPending();
@@ -800,7 +846,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 12,
                                 headerPad,
                                 12,
-                                96,
+                                _composerH + 12,
                               ),
                               itemCount: msgs.length,
                               itemBuilder: (_, i) {
@@ -910,6 +956,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               child: SafeArea(
                 top: false,
                 child: Column(
+                  key: _composerKey,
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (_replyTo != null || _editing != null) _replyEditBar(),
