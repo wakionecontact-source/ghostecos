@@ -59,11 +59,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   // (когда сообщения реально загружены), а не в _init (там список ещё пуст).
   bool _didInitialScroll = false;
   // Линия «Новое» + бейдж непрочитанных В ОТКРЫТОМ чате (live).
-  int? _newLineSid; // sid соо, НАД которым рисуется разделитель «Новое»
-  bool _newLineConsumed = false; // прочитал → линия без лейбла (обычный divider)
+  int? _newLineSid; // sid соо, НАД которым рисуется ОДНА линия «Новое»
   int _unreadInChat = 0; // живой счётчик непрочитанных пока чат открыт (badge)
   int _lastMsgCount = 0; // для детекта новых соо в билдере
   int _arrowStage = 0; // 2-stage тап стрелки: 0=центр на линию, 1=в самый низ
+  bool _pinnedBottom = true; // юзер у дна → держим прилеплено к низу
   final _imagePicker = ImagePicker();
   final _recorder = AudioRecorder();
 
@@ -153,19 +153,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   void _onScroll() {
     if (!_scrollCtrl.hasClients) return;
-    // «Вниз» показываем, когда пролистано >~10 сообщений вверх от низа.
     final fromBottom =
         _scrollCtrl.position.maxScrollExtent - _scrollCtrl.position.pixels;
+    // «Прилеплен к низу» — пока юзер у дна, билдер держит его внизу при
+    // дозагрузке/новых соо; стоит пролистать вверх — отлипаем.
+    _pinnedBottom = fromBottom < 100;
+    // «Вниз» показываем, когда пролистано >~10 сообщений вверх от низа.
     final show = fromBottom > 600;
     if (show != _showScrollDown) setState(() => _showScrollDown = show);
     // Дошёл до низа → «прочитал»: гасим бейдж, стрелка обычная, линия «Новое»
-    // демотируется в обычный divider (готова для следующей партии новых).
+    // убирается (следующая партия входящих создаст свежую ОДНУ линию).
     if (fromBottom < 80 &&
-        (_unreadInChat != 0 || _arrowStage != 0 || !_newLineConsumed)) {
+        (_unreadInChat != 0 || _arrowStage != 0 || _newLineSid != null)) {
       setState(() {
         _unreadInChat = 0;
         _arrowStage = 0;
-        _newLineConsumed = true;
+        _newLineSid = null;
       });
       ChatRepo.instance.markChatRead(widget.peer); // подчистить и БД
     }
@@ -223,7 +226,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
     // Граница «Новое» — ДО markChatRead (тот пометит всё прочитанным).
     _newLineSid = await ChatRepo.instance.firstUnreadSid(widget.peer);
-    _newLineConsumed = false;
     await ChatRepo.instance.markChatRead(widget.peer);
     // Сразу проверяем свежие сообщения от веба (Sealed Sender 2.0) и legacy.
     ChatRepo.instance.fetchPending();
@@ -291,10 +293,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   // 2-stage тап стрелки: при наличии бейджа 1-й тап центрирует линию «Новое»,
   // 2-й — в самый низ. Без бейджа — сразу вниз.
   void _onArrowTap() {
-    if (_unreadInChat > 0 &&
-        _newLineSid != null &&
-        !_newLineConsumed &&
-        _arrowStage == 0) {
+    if (_unreadInChat > 0 && _newLineSid != null && _arrowStage == 0) {
       _arrowStage = 1;
       _centerOnSid(_newLineSid!);
     } else {
@@ -318,16 +317,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
-  // Горизонтальный разделитель «Новое» (unread separator). После прочтения
-  // (_newLineConsumed) — обычная тонкая линия без лейбла.
+  // Горизонтальный разделитель «Новое» (unread separator) — ОДНА линия над
+  // первым непрочитанным. Убирается при достижении низа (прочитано).
   Widget _newMessagesLine() {
-    if (_newLineConsumed) {
-      return Container(
-        height: 1,
-        margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 40),
-        color: GE.glassBorder,
-      );
-    }
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
       child: Row(
@@ -929,8 +921,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 // Первая непустая отрисовка: контент есть,
                                 // maxScrollExtent валиден — ставим старт.
                                 _didInitialScroll = true;
+                                _lastMsgCount = msgs.length;
                                 if (widget.highlightSid != null) {
                                   _scrollToSid(widget.highlightSid!);
+                                  _pinnedBottom = false;
                                 } else {
                                   final saved = _scrollMemory[widget.peer];
                                   if (saved != null) {
@@ -938,39 +932,33 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                       0.0,
                                       _scrollCtrl.position.maxScrollExtent,
                                     ));
+                                    _pinnedBottom = false;
                                   } else {
-                                    // Первый заход в чат → в самый низ.
-                                    _scrollToBottom(false);
+                                    _scrollToBottom(false); // первый заход → низ
+                                    _pinnedBottom = true;
                                   }
                                 }
-                                _lastMsgCount = msgs.length;
                                 return;
                               }
-                              // Пришли новые соо? (свои — скроллит _send с учётом
-                              // замочка; тут обрабатываем только ВХОДЯЩИЕ).
-                              if (msgs.length > _lastMsgCount) {
-                                final added = msgs.sublist(_lastMsgCount);
-                                final incoming =
-                                    added.where((m) => !m.fromMe).toList();
+                              final grew = msgs.length > _lastMsgCount;
+                              if (_pinnedBottom) {
+                                // Держим у дна: дозагрузка контента доводит до
+                                // САМОГО низа (jump), новые соо — следуем
+                                // (animate). Свою отправку держит _send+замочек.
+                                _scrollToBottom(grew);
+                              } else if (grew) {
+                                // Пролистан вверх + входящие → бейдж + ОДНА линия
+                                // «Новое» (ставим только если её ещё нет —
+                                // накапливается, не множится при каждом приходе).
+                                final incoming = msgs
+                                    .sublist(_lastMsgCount)
+                                    .where((m) => !m.fromMe)
+                                    .toList();
                                 if (incoming.isNotEmpty) {
-                                  final at = _scrollCtrl.position.pixels;
-                                  final max =
-                                      _scrollCtrl.position.maxScrollExtent;
-                                  final atBottom = (max - at) < 340; // ~5 соо
-                                  if (atBottom) {
-                                    // У дна → следуем за новым (task 1).
-                                    _scrollToBottom(true);
-                                  } else {
-                                    // Пролистан вверх → бейдж + линия «Новое».
-                                    setState(() {
-                                      if (_newLineSid == null ||
-                                          _newLineConsumed) {
-                                        _newLineSid = incoming.first.sid;
-                                        _newLineConsumed = false;
-                                      }
-                                      _unreadInChat += incoming.length;
-                                    });
-                                  }
+                                  setState(() {
+                                    _newLineSid ??= incoming.first.sid;
+                                    _unreadInChat += incoming.length;
+                                  });
                                 }
                               }
                               _lastMsgCount = msgs.length;

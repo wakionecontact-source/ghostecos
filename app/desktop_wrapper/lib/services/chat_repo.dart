@@ -707,6 +707,17 @@ class ChatRepo {
     return DateTime.now().toUtc().toIso8601String();
   }
 
+  // Детерминированный 31-битный sid из строки (FNV-1a) — для v2-сообщений без
+  // sid (python-мост), чтобы повторная доставка не плодила дубли.
+  int _stableSid(String s) {
+    var h = 0x811c9dc5;
+    for (final c in s.codeUnits) {
+      h = (h ^ c) & 0xFFFFFFFF;
+      h = (h * 0x01000193) & 0xFFFFFFFF;
+    }
+    return h & 0x7FFFFFFF;
+  }
+
   Future<void> _ingestV2(
     Map<String, dynamic> payload,
     dynamic createdAt,
@@ -725,9 +736,14 @@ class ChatRepo {
     }
     if (fromUser == null) return;
     final rawSid = payload['sid'];
+    // sid: если прислан (веб/мой клиент) — берём. Если нет (python-мост шлёт без
+    // sid) — генерим ДЕТЕРМИНИРОВАННЫЙ из (отправитель|время|текст|file_id).
+    // Иначе при повторной доставке (ack не дошёл) каждый ингест давал НОВЫЙ sid
+    // → дубли сообщений и раздутый счётчик непрочитанных.
     final sid = rawSid is int
         ? rawSid
-        : DateTime.now().microsecondsSinceEpoch;
+        : _stableSid('$fromUser|${_v2CreatedAt(createdAt)}|'
+              '${payload['text'] ?? ''}|${payload['file_id'] ?? ''}');
     final me = _myUsername ?? await AuthService.username();
     final isMine = fromUser == me;
 
