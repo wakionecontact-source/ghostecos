@@ -64,6 +64,12 @@ class _AttachSheetState extends State<AttachSheet> {
       final albums = await PhotoManager.getAssetPathList(
         type: RequestType.common, // фото + видео
         onlyAll: true,
+        // Новые СВЕРХУ (по дате создания, убывание).
+        filterOption: FilterOptionGroup(
+          orders: [
+            const OrderOption(type: OrderOptionType.createDate, asc: false),
+          ],
+        ),
       );
       if (albums.isEmpty) {
         if (mounted) setState(() { _assets = []; _loading = false; });
@@ -85,6 +91,37 @@ class _AttachSheetState extends State<AttachSheet> {
         _selected.add(a.id);
       }
     });
+  }
+
+  // Полноэкранный просмотр (крупное превью 1080 — работает и для фото, и для
+  // кадра видео). Тап по фону — закрыть. Выбор делается кружком в гриде.
+  Future<void> _openPreview(AssetEntity a) async {
+    final data = await a.thumbnailDataWithSize(const ThumbnailSize(1080, 1080));
+    if (data == null || !mounted) return;
+    Navigator.of(context).push(
+      PageRouteBuilder<void>(
+        opaque: false,
+        barrierColor: Colors.black,
+        pageBuilder: (ctx, _, _) => GestureDetector(
+          onTap: () => Navigator.of(ctx).maybePop(),
+          child: Container(
+            color: Colors.black,
+            alignment: Alignment.center,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                InteractiveViewer(
+                  child: Image.memory(data, fit: BoxFit.contain),
+                ),
+                if (a.type == AssetType.video)
+                  const Icon(Icons.play_circle_fill,
+                      color: Colors.white70, size: 64),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _send() async {
@@ -193,7 +230,7 @@ class _AttachSheetState extends State<AttachSheet> {
     final sel = _selected.contains(a.id);
     final isVideo = a.type == AssetType.video;
     return GestureDetector(
-      onTap: () => _toggle(a),
+      onTap: () => _openPreview(a), // тап по фото → полноэкранный просмотр
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -224,21 +261,28 @@ class _AttachSheetState extends State<AttachSheet> {
             const Center(
               child: Icon(Icons.play_circle_fill, color: Colors.white70, size: 28),
             ),
-          // Кружок-выбор.
+          // Кружок-выбор — ТОЛЬКО он переключает выбор (тап по фото = превью).
           Positioned(
-            right: 5,
-            top: 5,
-            child: Container(
-              width: 22,
-              height: 22,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: sel ? GE.primary : Colors.black26,
-                border: Border.all(color: Colors.white, width: 1.5),
+            right: 0,
+            top: 0,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _toggle(a),
+              child: Padding(
+                padding: const EdgeInsets.all(5), // увеличить зону тапа
+                child: Container(
+                  width: 22,
+                  height: 22,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: sel ? GE.primary : Colors.black26,
+                    border: Border.all(color: Colors.white, width: 1.5),
+                  ),
+                  child: sel
+                      ? const Icon(Icons.check, color: Colors.white, size: 14)
+                      : null,
+                ),
               ),
-              child: sel
-                  ? const Icon(Icons.check, color: Colors.white, size: 14)
-                  : null,
             ),
           ),
         ],
