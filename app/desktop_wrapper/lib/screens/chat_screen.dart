@@ -2533,6 +2533,11 @@ class _MediaPartState extends State<_MediaPart> {
     final fp = widget.m.filePayload!;
     final name = fp['file_name'] as String? ?? 'аудио';
     final size = (fp['size'] as int?) ?? 0;
+    // Расширение для проигрывателя — из имени файла (mp3/flac/ogg…), иначе mp3.
+    final dot = name.lastIndexOf('.');
+    final ext = (dot > 0 && name.length - dot <= 6)
+        ? name.substring(dot + 1).toLowerCase()
+        : 'mp3';
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 270),
       child: Column(
@@ -2580,6 +2585,7 @@ class _MediaPartState extends State<_MediaPart> {
             onLoad: _load,
             textColor: widget.textColor,
             waveform: const <double>[],
+            ext: ext,
           ),
         ],
       ),
@@ -3156,6 +3162,7 @@ class _VoiceTile extends StatefulWidget {
   final Future<Uint8List?> Function() onLoad; // возвращает байты после загрузки
   final Color textColor;
   final List<double> waveform;
+  final String ext; // расширение temp-файла для проигрывателя (m4a/mp3/…)
   const _VoiceTile({
     required this.durationSec,
     required this.bytes,
@@ -3163,6 +3170,7 @@ class _VoiceTile extends StatefulWidget {
     required this.onLoad,
     required this.textColor,
     this.waveform = const [],
+    this.ext = 'm4a',
   });
 
   @override
@@ -3219,10 +3227,10 @@ class _VoiceTileState extends State<_VoiceTile> {
     if (_tmpPath != null) return;
     final data = widget.bytes ?? _loaded;
     if (data == null) return;
-    // Играем из ВРЕМЕННОГО ФАЙЛА, а не из BytesSource: даёт надёжную позицию
-    // (onPositionChanged → заливка/перемотка работают) и быстрый старт.
+    // Играем из ВРЕМЕННОГО ФАЙЛА с ПРАВИЛЬНЫМ расширением (mp3/m4a/…) — иначе
+    // нативный плеер не декодит (mp3, записанный в .m4a, не играл).
     final dir = await getTemporaryDirectory();
-    final f = File('${dir.path}/gc_play_${widget.hashCode}.m4a');
+    final f = File('${dir.path}/gc_play_${widget.hashCode}.${widget.ext}');
     await f.writeAsBytes(data);
     _tmpPath = f.path;
   }
