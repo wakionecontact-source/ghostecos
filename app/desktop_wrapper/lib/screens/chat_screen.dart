@@ -545,45 +545,50 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _clearNewLine(); // отправка — действие → линия «Новое» уходит
     final replyTo = _replyTo;
     final editing = _editing;
-    // Чистим поле СРАЗУ: текст уходит в pending-бабл, бар свободен (не висит с
-    // текстом, пока грузится отправка). При ошибке — вернём текст и контекст.
+    // Чистим поле СРАЗУ: текст уходит в pending-бабл, бар свободен.
     _inputCtrl.clear();
     setState(() {
-      _sending = true;
       _replyTo = null;
       _editing = null;
     });
-    try {
-      if (editing != null) {
+
+    // Правка — ждём (модифицирует уже существующее сообщение).
+    if (editing != null) {
+      setState(() => _sending = true);
+      try {
         await ChatRepo.instance.editDmMessage(
           toUsername: widget.peer,
           sid: editing.sid,
           newText: text,
         );
-      } else {
-        await ChatRepo.instance.sendDmText(
+      } catch (e) {
+        _inputCtrl.text = text;
+        setState(() => _editing = editing);
+        _snack('Не сохранилось: $e');
+      } finally {
+        if (mounted) setState(() => _sending = false);
+      }
+      return;
+    }
+
+    // Отправка: оптимистичный пузырь появляется СРАЗУ внутри sendDmText, доставка
+    // идёт В ФОНЕ → кнопка и поле свободны мгновенно (не ждём ~5с round-trip,
+    // можно слать следующее сразу). Ошибка — пузырь остаётся pending + снэк.
+    ChatRepo.instance
+        .sendDmText(
           widget.peer,
           text,
           replyTo: replyTo?.sid,
           replyPreview: replyTo == null ? null : _msgPreview(replyTo),
-        );
-      }
-      // Замочек ЗАКРЫТ → не дёргаем скролл при отправке своего сообщения.
-      if (!_scrollLock) {
-        WidgetsBinding.instance.addPostFrameCallback(
-          (_) => _scrollToBottom(true),
-        );
-      }
-    } catch (e) {
-      // Вернуть текст/ответ/правку, чтобы можно было переотправить.
-      _inputCtrl.text = text;
-      setState(() {
-        _replyTo = replyTo;
-        _editing = editing;
-      });
-      _snack('Не отправилось: $e');
-    } finally {
-      if (mounted) setState(() => _sending = false);
+        )
+        .catchError((Object e) {
+          if (mounted) _snack('Не отправилось: $e');
+        });
+    // Замочек ЗАКРЫТ → не дёргаем скролл при отправке своего сообщения.
+    if (!_scrollLock) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _scrollToBottom(true),
+      );
     }
   }
 
@@ -643,9 +648,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<void> _pickAndSendVideo() async {
     Navigator.maybePop(context);
     try {
-      final x = await _imagePicker.pickVideo(source: ImageSource.gallery);
+      final x = await _imagePicker.pickVideo(
+        source: ImageSource.gallery,
+        maxDuration: const Duration(minutes: 5),
+      );
       if (x == null) return;
       final bytes = await x.readAsBytes();
+      // Гард: огромное несжатое видео ВЕШАЛО шифрование (изолят жрёт память) и
+      // аплоад не доходил до сервера. Пока без транскода — ограничиваем размер
+      // с понятным сообщением (полноценное сжатие — следующим шагом).
+      const maxMb = 25;
+      if (bytes.length > maxMb * 1024 * 1024) {
+        final mb = (bytes.length / 1024 / 1024).toStringAsFixed(0);
+        _snack('Видео слишком большое ($mb МБ). Максимум $maxMb МБ — '
+            'выбери покороче или меньшего качества.');
+        return;
+      }
       await ChatRepo.instance.sendDmFile(
         toUsername: widget.peer,
         bytes: bytes,
