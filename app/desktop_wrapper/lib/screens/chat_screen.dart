@@ -178,15 +178,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // «Вниз» показываем, когда пролистано >~10 сообщений вверх от низа.
     final show = fromBottom > 600;
     if (show != _showScrollDown) setState(() => _showScrollDown = show);
-    // Дошёл до низа → «прочитал»: гасим бейдж, стрелка обычная, линия «Новое»
-    // уходит fade-ом (следующая партия входящих создаст свежую ОДНУ линию).
-    if (fromBottom < 80 &&
-        (_unreadInChat != 0 || _arrowStage != 0 || _newLineSid != null)) {
+    // Дошёл до низа → «прочитал»: гасим бейдж и сбрасываем стадию стрелки.
+    // Линию «Новое» тут НЕ трогаем — иначе авто-доскролл к новому соо (когда
+    // юзер у дна) гасил бы её мгновенно. Линия уходит только по ДЕЙСТВИЮ юзера
+    // (живой скролл выше — userScrollDirection, тап, отправка).
+    if (fromBottom < 80 && (_unreadInChat != 0 || _arrowStage != 0)) {
       setState(() {
         _unreadInChat = 0;
         _arrowStage = 0;
       });
-      _clearNewLine();
       ChatRepo.instance.markChatRead(widget.peer); // подчистить и БД
     }
   }
@@ -312,10 +312,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   // линия не на виду / нет бейджа — сразу в самый низ.
   void _onArrowTap() {
     final ctx = _newLineKey.currentContext;
+    // Во время ЖИВОГО скролла не центрируем по контексту (ensureVisible на
+    // лету мог дёргать вьюпорт в пустоту) — просто едем вниз.
+    final idle = !_scrollCtrl.hasClients ||
+        _scrollCtrl.position.userScrollDirection == ScrollDirection.idle;
     if (_unreadInChat > 0 &&
         _newLineSid != null &&
         _arrowStage == 0 &&
-        ctx != null) {
+        ctx != null &&
+        idle) {
       _arrowStage = 1;
       Scrollable.ensureVisible(
         ctx,
@@ -989,13 +994,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   _scrollCtrl.position.userScrollDirection !=
                                   ScrollDirection.idle;
                               final reflowed = max > _lastMaxExtent + 1;
+                              final lastMine =
+                                  msgs.isNotEmpty && msgs.last.fromMe;
                               // Держим у дна ТОЛЬКО когда прилеплен, юзер НЕ тянет
                               // сам, и есть реальная причина (новые соо / reflow).
                               // Иначе jumpTo на каждую перерисовку клинил скролл
-                              // ВВЕРХ (юзер не мог листать историю).
+                              // ВВЕРХ. Замочек закрыт + последнее соо МОЁ → не
+                              // пиннить (иначе reflow доскраллит к своему соо даже
+                              // при закрытом замке / при его выключении).
                               if (_pinnedBottom &&
                                   !dragging &&
-                                  (grew || reflowed)) {
+                                  (grew || reflowed) &&
+                                  !(_scrollLock && lastMine)) {
                                 _scrollToBottom(grew);
                               }
                               if (incoming.isNotEmpty) {
