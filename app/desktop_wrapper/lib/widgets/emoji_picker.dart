@@ -3,6 +3,7 @@
 // здесь — удобная сетка с вкладками-категориями и поиском по ключевым словам.
 import 'package:flutter/material.dart';
 import '../theme.dart';
+import 'emoji_text.dart';
 
 class _EmojiCat {
   final IconData icon;
@@ -176,9 +177,9 @@ class _EmojiPickerState extends State<EmojiPicker> {
                       borderRadius: BorderRadius.circular(8),
                       onTap: () => widget.onPick(shown[i]),
                       child: Center(
-                        child: Text(
+                        child: EmojiText(
                           shown[i],
-                          style: const TextStyle(fontSize: 26),
+                          style: const TextStyle(fontSize: 22),
                         ),
                       ),
                     ),

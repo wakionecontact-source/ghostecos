@@ -141,6 +141,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(
               children: [
                 _tile(Icons.info_outline, 'Ghost · v0.2.0', () {}),
+                _tile(Icons.emoji_emotions_outlined,
+                    'Эмодзи — Twemoji (CC BY 4.0)', () {},
+                    sub: 'Графика эмодзи © Twitter/jdecked, лицензия CC BY 4.0'),
                 _tile(Icons.code, 'Открытый исходник на GitHub', () {}),
                 _tile(
                   Icons.help_outline,

@@ -99,6 +99,7 @@ flutter:
     - assets/icon.ico
     - assets/icon.png
     - assets/bip39_en.txt
+    - assets/twemoji/
 
 # MSIX (Windows installer)
 msix_config:

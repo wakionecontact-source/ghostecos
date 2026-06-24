@@ -20,6 +20,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:open_filex/open_filex.dart';
 import '../theme.dart';
 import '../widgets/emoji_picker.dart';
+import '../widgets/emoji_text.dart';
 import '../mesh_background.dart';
 import '../services/chat_repo.dart';
 import '../services/db_service.dart';
@@ -2131,7 +2132,7 @@ class _Bubble extends StatelessWidget {
                     padding: EdgeInsets.only(
                       top: m.filePayload != null ? 4 : 0,
                     ),
-                    child: Text(
+                    child: EmojiText(
                       m.text,
                       style: TextStyle(
                         color: textColor,
