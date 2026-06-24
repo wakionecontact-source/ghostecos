@@ -111,7 +111,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   // Long-press взводит флаг, а сами move ловит Listener списка (сырые pointer-
   // события, не конкурируют в арене жестов); на время выделения скролл выключен.
   int? _dragAnchorSid;
-  Set<int> _dragBaseSel = {};
   bool _dragSelecting = false;
   final Map<int, GlobalKey> _bubbleKeys = {};
 
@@ -119,13 +118,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _clearNewLine();
     HapticFeedback.selectionClick();
     _dragAnchorSid = m.sid;
-    _dragBaseSel = Set<int>.from(_selSids);
     setState(() {
       _selSids.add(m.sid);
       _dragSelecting = true;
     });
   }
 
+  // Чисто ДОБАВЛЯЮЩЕЕ: диапазон якорь..палец только доселектится к текущему
+  // _selSids (никогда не снимает) — поэтому стейл-стейт/повторное ведение по
+  // уже выбранным не затирает старый выбор.
   void _updateDragSelect(Offset globalPos) {
     final anchor = _dragAnchorSid;
     if (anchor == null) return;
@@ -137,13 +138,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (ai >= 0 && ci >= 0) {
         final lo = ai < ci ? ai : ci;
         final hi = ai < ci ? ci : ai;
-        final next = Set<int>.from(_dragBaseSel);
+        var changed = false;
         for (var i = lo; i <= hi; i++) {
-          next.add(msgs[i].sid);
+          if (_selSids.add(msgs[i].sid)) changed = true;
         }
-        setState(() => _selSids
-          ..clear()
-          ..addAll(next));
+        if (changed) setState(() {});
       }
     }
     _dragEdgeAutoscroll(globalPos.dy); // у краёв — подкручиваем ленту
