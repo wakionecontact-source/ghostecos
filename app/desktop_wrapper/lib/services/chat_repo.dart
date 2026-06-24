@@ -1129,9 +1129,11 @@ class ChatRepo {
           uploadProgress(tmpKey).value = (p / 100) * 0.5;
         });
         try {
+          // LowQuality = самый быстрый энкод (video_compress не даёт FFmpeg-
+          // пресетов; Low ≈ 3-5x быстрее Medium). Для чат-видео качество ок.
           final info = await VideoCompress.compressVideo(
             sourcePath,
-            quality: VideoQuality.MediumQuality,
+            quality: VideoQuality.LowQuality,
             deleteOrigin: false,
           ).timeout(const Duration(minutes: 4));
           if (info?.file != null) data = await info!.file!.readAsBytes();
@@ -1203,9 +1205,11 @@ class ChatRepo {
           'file_id': fileId,
           'file_name': fileName,
           'mime': mime,
-          'size': bytes.length,
+          'size': data.length,
           'key': base64Encode(aesKey),
           'iv': base64Encode(iv),
+          // thumb СОХРАНЯЕМ — иначе у отправителя пропадает первый кадр видео.
+          if (thumbB64 != null) 'thumb': thumbB64,
           if (voice) 'voice': 1,
           if (voice) 'duration': duration,
           if (voice && waveform != null) 'waveform': waveform,

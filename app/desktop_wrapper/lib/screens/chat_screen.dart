@@ -695,6 +695,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         bytes: bytes,
         mime: mime,
         fileName: file.name,
+        localPath: file.path, // аудио можно слушать пока грузится
       );
     } catch (e) {
       _snack('Файл не отправился: $e');
@@ -907,6 +908,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         voice: true,
         duration: durSec,
         waveform: waveform,
+        localPath: path, // слушать пока грузится (файл жив весь pending-период)
       );
       try {
         await file.delete();
@@ -1313,7 +1315,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               },
                               onPointerUp: (_) => _endDragSelect(),
                               onPointerCancel: (_) => _endDragSelect(),
-                              child: ListView.builder(
+                              child: TweenAnimationBuilder<double>(
+                              // #b: нижний паддинг ленты гонится за высотой
+                              // композера ПЛАВНО → отмена reply не прыгает, чат
+                              // синхронно занимает освободившееся место.
+                              tween: Tween<double>(
+                                end:
+                                    _composerH +
+                                    (_emojiOpen ? _emojiPanelH : 0) +
+                                    12,
+                              ),
+                              duration: const Duration(milliseconds: 220),
+                              curve: Curves.easeOutCubic,
+                              builder: (_, padBottom, __) => ListView.builder(
                               // physics НЕ переключаем на лету: пересборка
                               // Scrollable посреди long-press сбрасывала жест.
                               // Скролл и так заблокирован (long-press выиграл арену).
@@ -1322,7 +1336,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 12,
                                 headerPad,
                                 12,
-                                _composerH + (_emojiOpen ? _emojiPanelH : 0) + 12,
+                                padBottom,
                               ),
                               itemCount: msgs.length,
                               itemBuilder: (_, i) {
@@ -1434,6 +1448,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   ],
                                 );
                               },
+                            ),
                             ),
                             );
                           },
@@ -2153,7 +2168,8 @@ class _Bubble extends StatelessWidget {
             ],
           ),
 
-          child: Column(
+          child: IntrinsicWidth(
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -2279,7 +2295,11 @@ class _Bubble extends StatelessWidget {
                   ),
                 ),
               const SizedBox(height: 2),
-              Row(
+              // #7: время+галочки к краю — у своих справа, у чужих слева.
+              Align(
+                alignment:
+                    mine ? Alignment.centerRight : Alignment.centerLeft,
+                child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (m.edited) ...[
@@ -2300,9 +2320,10 @@ class _Bubble extends StatelessWidget {
                   ),
                   if (mine) ...[const SizedBox(width: 4), _ticks(m)],
                 ],
+                ),
               ),
             ],
-          ),
+          )),
         ),
       ),
     );
@@ -2420,10 +2441,57 @@ class _MediaPartState extends State<_MediaPart> {
   @override
   Widget build(BuildContext context) {
     if (_isImage) return _imageView();
-    if (_isVoice) return _voiceView();
-    if (_isAudioFile) return _audioFileView();
-    if (_isVideo) return _videoView();
-    return _fileView();
+    if (_isVideo) return _videoView(); // видео само рисует прогресс/превью
+    final Widget media = _isVoice
+        ? _voiceView()
+        : _isAudioFile
+        ? _audioFileView()
+        : _fileView();
+    // #2/#3: пока файл/аудио ГРУЗИТСЯ — тонкий бар прогресса снизу.
+    if (widget.m.pending) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [media, const SizedBox(height: 5), _pendingUploadBar()],
+      );
+    }
+    return media;
+  }
+
+  // Тонкая полоса загрузки + % для file/audio во время отправки (как в TG).
+  Widget _pendingUploadBar() {
+    return ValueListenableBuilder<double>(
+      valueListenable: ChatRepo.instance.uploadProgress(widget.m.tempSid ?? ''),
+      builder: (_, p, __) {
+        final done = p >= 1.0;
+        final pct = (p * 100).clamp(0, 100).round();
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 120,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: LinearProgressIndicator(
+                  value: done ? null : (p > 0 ? p : null),
+                  minHeight: 4,
+                  backgroundColor: widget.textColor.withValues(alpha: 0.2),
+                  color: GE.primary,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              done ? 'Обработка…' : 'Отправка $pct%',
+              style: TextStyle(
+                color: widget.textColor.withValues(alpha: 0.7),
+                fontSize: 10,
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Widget _imageView() {
@@ -2521,6 +2589,7 @@ class _MediaPartState extends State<_MediaPart> {
       onLoad: _load,
       textColor: widget.textColor,
       waveform: waveform,
+      localPath: widget.m.filePayload?['_local'] as String?,
     );
   }
 
@@ -2582,6 +2651,7 @@ class _MediaPartState extends State<_MediaPart> {
             textColor: widget.textColor,
             waveform: const <double>[],
             ext: ext,
+            localPath: widget.m.filePayload?['_local'] as String?,
           ),
         ],
       ),
@@ -3039,6 +3109,13 @@ class _VideoViewerState extends State<_VideoViewer> {
       if (!mounted) return;
       setState(() => _ready = true);
       c.play();
+    }).catchError((Object e) {
+      // Без этого при сбое декодера экран висит чёрным («не играет»).
+      if (!mounted) return;
+      Navigator.of(context).maybePop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Видео не воспроизводится: $e')),
+      );
     });
     c.addListener(_onTick);
   }
@@ -3174,6 +3251,7 @@ class _VoiceTile extends StatefulWidget {
   final Color textColor;
   final List<double> waveform;
   final String ext; // расширение temp-файла для проигрывателя (m4a/mp3/…)
+  final String? localPath; // локальный файл — играть ПОКА грузится (без decrypt)
   const _VoiceTile({
     required this.durationSec,
     required this.bytes,
@@ -3182,6 +3260,7 @@ class _VoiceTile extends StatefulWidget {
     required this.textColor,
     this.waveform = const [],
     this.ext = 'm4a',
+    this.localPath,
   });
 
   @override
@@ -3195,6 +3274,7 @@ class _VoiceTileState extends State<_VoiceTile> {
   Duration _audioDur = Duration.zero;
   double _speed = 1.0;
   String? _tmpPath;
+  bool _fromLocal = false; // _tmpPath указывает на локальный файл — не удалять
   Uint8List? _loaded; // байты, полученные через onLoad (если widget.bytes ещё null)
   StreamSubscription? _posSub;
   StreamSubscription? _stateSub;
@@ -3226,7 +3306,7 @@ class _VoiceTileState extends State<_VoiceTile> {
     _durSub?.cancel();
     _player.dispose();
     final p = _tmpPath;
-    if (p != null) {
+    if (p != null && !_fromLocal) {
       try {
         File(p).delete();
       } catch (_) {}
@@ -3236,6 +3316,13 @@ class _VoiceTileState extends State<_VoiceTile> {
 
   Future<void> _ensureFile() async {
     if (_tmpPath != null) return;
+    // Пока сообщение ГРУЗИТСЯ (нет своих/расшифрованных байт) — играем напрямую
+    // из локального файла, без скачивания/decrypt. Его НЕ удаляем в dispose.
+    if (widget.bytes == null && _loaded == null && widget.localPath != null) {
+      _tmpPath = widget.localPath;
+      _fromLocal = true;
+      return;
+    }
     final data = widget.bytes ?? _loaded;
     if (data == null) return;
     // Играем из ВРЕМЕННОГО ФАЙЛА с ПРАВИЛЬНЫМ расширением (mp3/m4a/…) — иначе
@@ -3247,7 +3334,8 @@ class _VoiceTileState extends State<_VoiceTile> {
   }
 
   Future<void> _toggle() async {
-    if (widget.bytes == null && _loaded == null) {
+    // localPath != null → играем из локального файла (отправка), onLoad не нужен.
+    if (widget.bytes == null && _loaded == null && widget.localPath == null) {
       // Первый тап: грузим blob и СРАЗУ играем (без второго тапа).
       final b = await widget.onLoad();
       if (!mounted || b == null) return;
