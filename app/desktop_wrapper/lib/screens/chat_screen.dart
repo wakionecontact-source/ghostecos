@@ -134,38 +134,45 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     });
   }
 
+  double? _lastDragGlobalY;
+  Timer? _edgeTimer;
+  double _edgeVelocity = 0;
+
+  void _updateDragSelect(Offset globalPos) {
+    _applyDragRange(globalPos.dy);
+    _dragEdgeAutoscroll(globalPos.dy);
+  }
+
   // Range-поведение (как в TG): выбор = снимок-до-жеста, к диапазону якорь..палец
   // применён режим. Ведёшь дальше — диапазон растёт; ведёшь НАЗАД — сжимается
   // (отменяя промежуточные). Свежий снимок + сброс на новом касании = старый
   // выбор за пределами диапазона не затирается.
-  void _updateDragSelect(Offset globalPos) {
+  void _applyDragRange(double gy) {
     final anchor = _dragAnchorSid;
     if (anchor == null) return;
-    final curSid = _sidAtGlobalY(globalPos.dy);
-    if (curSid != null) {
-      final msgs = ChatRepo.instance.messagesNotifier(widget.peer).value;
-      final ai = msgs.indexWhere((m) => m.sid == anchor);
-      final ci = msgs.indexWhere((m) => m.sid == curSid);
-      if (ai >= 0 && ci >= 0) {
-        final lo = ai < ci ? ai : ci;
-        final hi = ai < ci ? ci : ai;
-        final next = Set<int>.from(_dragBaseSel);
-        for (var i = lo; i <= hi; i++) {
-          if (_dragRemoving) {
-            next.remove(msgs[i].sid);
-          } else {
-            next.add(msgs[i].sid);
-          }
-        }
-        setState(() => _selSids
-          ..clear()
-          ..addAll(next));
+    final curSid = _sidAtGlobalY(gy);
+    if (curSid == null) return;
+    final msgs = ChatRepo.instance.messagesNotifier(widget.peer).value;
+    final ai = msgs.indexWhere((m) => m.sid == anchor);
+    final ci = msgs.indexWhere((m) => m.sid == curSid);
+    if (ai < 0 || ci < 0) return;
+    final lo = ai < ci ? ai : ci;
+    final hi = ai < ci ? ci : ai;
+    final next = Set<int>.from(_dragBaseSel);
+    for (var i = lo; i <= hi; i++) {
+      if (_dragRemoving) {
+        next.remove(msgs[i].sid);
+      } else {
+        next.add(msgs[i].sid);
       }
     }
-    _dragEdgeAutoscroll(globalPos.dy); // у краёв — подкручиваем ленту
+    setState(() => _selSids
+      ..clear()
+      ..addAll(next));
   }
 
   void _endDragSelect() {
+    _stopEdgeTimer();
     _dragAnchorSid = null;
     if (_dragSelecting && mounted) setState(() => _dragSelecting = false);
   }
@@ -183,18 +190,52 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return null;
   }
 
+  // Плавный авто-скролл у краёв через ТАЙМЕР (не jumpTo на каждый move — иначе
+  // улетало рывком). Скорость ramp-ится от близости пальца к краю.
   void _dragEdgeAutoscroll(double gy) {
-    if (!_scrollCtrl.hasClients) return;
-    final media = MediaQuery.of(context);
-    final topEdge = media.padding.top + 100;
-    final bottomEdge = media.size.height - _composerH - 100;
-    const step = 24.0;
-    final max = _scrollCtrl.position.maxScrollExtent;
-    if (gy < topEdge) {
-      _scrollCtrl.jumpTo((_scrollCtrl.offset - step).clamp(0.0, max));
-    } else if (gy > bottomEdge) {
-      _scrollCtrl.jumpTo((_scrollCtrl.offset + step).clamp(0.0, max));
+    _lastDragGlobalY = gy;
+    if (!_scrollCtrl.hasClients) {
+      _stopEdgeTimer();
+      return;
     }
+    final media = MediaQuery.of(context);
+    const zone = 90.0; // ширина «горячей» полосы у края
+    final topEdge = media.padding.top + 70 + zone;
+    final bottomEdge = media.size.height - _composerH - 70 - zone;
+    double v = 0;
+    if (gy < topEdge) {
+      v = -((topEdge - gy) / zone).clamp(0.0, 1.0) * 7.0; // вверх
+    } else if (gy > bottomEdge) {
+      v = ((gy - bottomEdge) / zone).clamp(0.0, 1.0) * 7.0; // вниз
+    }
+    _edgeVelocity = v;
+    if (v == 0) {
+      _stopEdgeTimer();
+    } else {
+      _edgeTimer ??= Timer.periodic(
+        const Duration(milliseconds: 16),
+        (_) => _edgeTick(),
+      );
+    }
+  }
+
+  void _edgeTick() {
+    if (!_dragSelecting || _edgeVelocity == 0 || !_scrollCtrl.hasClients) {
+      _stopEdgeTimer();
+      return;
+    }
+    final max = _scrollCtrl.position.maxScrollExtent;
+    final target = (_scrollCtrl.offset + _edgeVelocity).clamp(0.0, max);
+    if (target == _scrollCtrl.offset) return; // у самого края — больше некуда
+    _scrollCtrl.jumpTo(target);
+    final y = _lastDragGlobalY;
+    if (y != null) _applyDragRange(y); // после прокрутки — расширить выбор
+  }
+
+  void _stopEdgeTimer() {
+    _edgeTimer?.cancel();
+    _edgeTimer = null;
+    _edgeVelocity = 0;
   }
 
   List<StoredMessage> get _selectedMsgs => ChatRepo.instance
@@ -372,6 +413,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _highlightTimer?.cancel();
     _recordTicker?.cancel();
+    _edgeTimer?.cancel();
     _inputCtrl.dispose();
     // Запоминаем позицию скролла перед закрытием чата.
     if (_scrollCtrl.hasClients) {
