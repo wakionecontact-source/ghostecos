@@ -7,6 +7,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../theme.dart';
 import '../services/chat_repo.dart';
 import '../services/db_service.dart';
@@ -23,6 +24,7 @@ class ChatListScreen extends StatefulWidget {
 
 class _ChatListScreenState extends State<ChatListScreen> {
   bool _initialized = false;
+  SharedPreferences? _prefs;
   final _searchCtrl = TextEditingController();
   final _searchFocus = FocusNode();
   Timer? _debounce;
@@ -37,7 +39,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   Future<void> _init() async {
     await ChatRepo.instance.init();
+    _prefs = await SharedPreferences.getInstance();
     if (mounted) setState(() => _initialized = true);
+  }
+
+  // Перечитать черновики/список при возврате из чата (черновик мог измениться).
+  void _refresh() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -141,7 +149,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             itemCount: dialogs.length,
             separatorBuilder: (_, _) => const SizedBox(height: 4),
-            itemBuilder: (_, i) => _DialogTile(dialogs[i]),
+            itemBuilder: (_, i) =>
+                _DialogTile(dialogs[i], prefs: _prefs, onReturn: _refresh),
           ),
         );
       },
@@ -308,20 +317,56 @@ class _ChatListScreenState extends State<ChatListScreen> {
 class _DialogTile extends StatelessWidget {
   final StoredDialog d;
   final VoidCallback? onTap;
-  const _DialogTile(this.d, {this.onTap});
+  final SharedPreferences? prefs;
+  final VoidCallback? onReturn;
+  const _DialogTile(this.d, {this.onTap, this.prefs, this.onReturn});
+
+  // Превью последнего сообщения ИЛИ черновика (как в TG: «Черновик: …» красным).
+  Widget _preview() {
+    final draft = (prefs?.getString('chat_draft_${d.username}') ?? '').trim();
+    if (draft.isNotEmpty) {
+      return Text.rich(
+        TextSpan(
+          children: [
+            const TextSpan(
+              text: 'Черновик: ',
+              style: TextStyle(
+                color: Colors.red,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            TextSpan(
+              text: draft,
+              style: TextStyle(color: GE.text, fontSize: 13),
+            ),
+          ],
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+    return Text(
+      d.lastText.isEmpty ? '—' : d.lastText,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(color: GE.sub, fontSize: 13),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       borderRadius: BorderRadius.circular(GE.radiusMd),
-      onTap: () {
+      onTap: () async {
         onTap?.call();
-        Navigator.of(context).push(
+        await Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) =>
                 ChatScreen(peer: d.username, displayName: d.displayName),
           ),
         );
+        onReturn?.call(); // черновик мог измениться — обновим список
       },
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -365,14 +410,7 @@ class _DialogTile extends StatelessWidget {
                   const SizedBox(height: 3),
                   Row(
                     children: [
-                      Expanded(
-                        child: Text(
-                          d.lastText.isEmpty ? '—' : d.lastText,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: GE.sub, fontSize: 13),
-                        ),
-                      ),
+                      Expanded(child: _preview()),
                       if (d.unread > 0) ...[
                         const SizedBox(width: 6),
                         Container(

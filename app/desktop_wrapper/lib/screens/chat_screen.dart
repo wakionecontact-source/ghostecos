@@ -52,6 +52,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final _composerKey = GlobalKey();
   double _composerH = 96;
   String get _draftKey => 'chat_draft_${widget.peer}';
+  // Кнопка «вниз» (видна при прокрутке вверх) + замочек авто-скролла на отправке.
+  bool _showScrollDown = false;
+  bool _scrollLock = false;
   final _imagePicker = ImagePicker();
   final _recorder = AudioRecorder();
 
@@ -135,7 +138,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _inputCtrl.addListener(_onInputChanged);
+    _scrollCtrl.addListener(_onScroll);
     _init();
+  }
+
+  void _onScroll() {
+    if (!_scrollCtrl.hasClients) return;
+    // «Вниз» показываем, когда пролистано >~10 сообщений вверх от низа.
+    final fromBottom =
+        _scrollCtrl.position.maxScrollExtent - _scrollCtrl.position.pixels;
+    final show = fromBottom > 600;
+    if (show != _showScrollDown) setState(() => _showScrollDown = show);
   }
 
   void _onInputChanged() {
@@ -291,9 +304,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           replyPreview: replyTo == null ? null : _msgPreview(replyTo),
         );
       }
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _scrollToBottom(true),
-      );
+      // Замочек ЗАКРЫТ → не дёргаем скролл при отправке своего сообщения.
+      if (!_scrollLock) {
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _scrollToBottom(true),
+        );
+      }
     } catch (e) {
       // Вернуть текст/ответ/правку, чтобы можно было переотправить.
       _inputCtrl.text = text;
@@ -965,9 +981,65 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 ),
               ),
             ),
+            // Кнопка «вниз» + замочек (TG-style): видна при прокрутке вверх.
+            if (_showScrollDown)
+              Positioned(
+                right: 14,
+                bottom:
+                    MediaQuery.of(context).padding.bottom + _composerH + 14,
+                child: _scrollDownButton(),
+              ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _scrollDownButton() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Замочек: закрыт = не дёргать скролл при отправке своего сообщения.
+        GestureDetector(
+          onTap: () => setState(() => _scrollLock = !_scrollLock),
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(7),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _scrollLock
+                  ? GE.primary
+                  : GE.bgDeep.withValues(alpha: 0.92),
+              border: Border.all(color: GE.glassBorder),
+            ),
+            child: Icon(
+              _scrollLock ? Icons.lock : Icons.lock_open,
+              size: 15,
+              color: _scrollLock ? Colors.white : GE.sub,
+            ),
+          ),
+        ),
+        // Стрелка вниз → плавный скролл к низу.
+        GestureDetector(
+          onTap: () => _scrollToBottom(true),
+          child: Container(
+            padding: const EdgeInsets.all(9),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: GE.bgDeep.withValues(alpha: 0.95),
+              border: Border.all(color: GE.glassBorder),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.3),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Icon(Icons.keyboard_arrow_down, size: 26, color: GE.text),
+          ),
+        ),
+      ],
     );
   }
 
