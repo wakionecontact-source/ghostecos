@@ -4,6 +4,7 @@
 // Все медиа шифруются на клиенте AES-256, blob аплоадится зашифрованным.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' show ImageFilter;
@@ -19,6 +20,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:video_player/video_player.dart';
+import 'package:video_compress/video_compress.dart';
 import '../theme.dart';
 import '../widgets/emoji_picker.dart';
 import '../widgets/emoji_text.dart';
@@ -654,14 +656,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       );
       if (x == null) return;
       final bytes = await x.readAsBytes();
-      // Гард: огромное несжатое видео ВЕШАЛО шифрование (изолят жрёт память) и
-      // аплоад не доходил до сервера. Пока без транскода — ограничиваем размер
-      // с понятным сообщением (полноценное сжатие — следующим шагом).
-      const maxMb = 25;
-      if (bytes.length > maxMb * 1024 * 1024) {
+      // Первый кадр (превью) — показываем в чате ДО окончания загрузки.
+      Uint8List? thumb;
+      try {
+        thumb = await VideoCompress.getByteThumbnail(x.path, quality: 60);
+      } catch (_) {}
+      // Крупное видео сожмётся ВНУТРИ sendDmFile (прогресс 0-50%); путь нужен
+      // компрессору. Гард 80МБ — на совсем гигантские.
+      if (bytes.length > 80 * 1024 * 1024) {
         final mb = (bytes.length / 1024 / 1024).toStringAsFixed(0);
-        _snack('Видео слишком большое ($mb МБ). Максимум $maxMb МБ — '
-            'выбери покороче или меньшего качества.');
+        _snack('Видео очень большое ($mb МБ) — выбери покороче.');
         return;
       }
       await ChatRepo.instance.sendDmFile(
@@ -669,6 +673,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         bytes: bytes,
         mime: 'video/mp4',
         fileName: x.name,
+        sourcePath: x.path,
+        thumbnail: thumb,
       );
     } catch (e) {
       _snack('Видео не отправилось: $e');
@@ -2645,30 +2651,45 @@ class _MediaPartState extends State<_MediaPart> {
     final fp = widget.m.filePayload!;
     final name = fp['file_name'] as String? ?? 'видео';
     final size = (fp['size'] as int?) ?? 0;
-    if (widget.m.pending) {
-      return Container(
+    final thumbB64 = fp['thumb'] as String?;
+    Uint8List? thumb;
+    if (thumbB64 != null) {
+      try {
+        thumb = base64Decode(thumbB64);
+      } catch (_) {}
+    }
+    // Плашка видео с превью-кадром (первый кадр) под оверлеем.
+    Widget shell(Widget overlay) => ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: SizedBox(
         width: 240,
         height: 150,
-        decoration: BoxDecoration(
-          color: Colors.black54,
-          borderRadius: BorderRadius.circular(12),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (thumb != null)
+              Image.memory(
+                thumb,
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+                filterQuality: FilterQuality.low,
+              )
+            else
+              const ColoredBox(color: Colors.black54),
+            const ColoredBox(color: Color(0x55000000)),
+            Center(child: overlay),
+          ],
         ),
-        alignment: Alignment.center,
-        child: _uploadProgressIndicator(),
-      );
+      ),
+    );
+    if (widget.m.pending) {
+      return shell(_uploadProgressIndicator());
     }
-    // Превью видео: тёмная плашка + play. Тап — ВСТРОЕННЫЙ плеер (приватность).
+    // Тап — ВСТРОЕННЫЙ плеер (приватность).
     return GestureDetector(
       onTap: _openVideoInternal,
-      child: Container(
-        width: 240,
-        height: 150,
-        decoration: BoxDecoration(
-          color: Colors.black54,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        alignment: Alignment.center,
-        child: Column(
+      child: shell(
+        Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(

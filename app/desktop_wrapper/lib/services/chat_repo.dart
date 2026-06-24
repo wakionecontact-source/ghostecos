@@ -14,6 +14,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:pointycastle/export.dart';
+import 'package:video_compress/video_compress.dart';
 import 'api_client.dart';
 import 'auth_service.dart';
 import 'crypto_service.dart';
@@ -1081,10 +1082,13 @@ class ChatRepo {
     bool voice = false,
     int duration = 0,
     List<double>? waveform,
+    String? sourcePath, // путь к видео для сжатия (video_compress)
+    Uint8List? thumbnail, // первый кадр (png) — показываем ДО загрузки
   }) async {
     final tempSidId = -DateTime.now().microsecondsSinceEpoch;
     final tmpKey = 'tmp-$tempSidId';
-    // Оптимистично показываем в чате (без file_id ещё)
+    final thumbB64 = thumbnail != null ? base64Encode(thumbnail) : null;
+    // Оптимистично показываем в чате СРАЗУ (с превью-кадром, ещё без file_id).
     await _db.upsertMessage(
       StoredMessage(
         sid: tempSidId,
@@ -1098,6 +1102,7 @@ class ChatRepo {
           'file_name': fileName,
           'mime': mime,
           'size': bytes.length,
+          if (thumbB64 != null) 'thumb': thumbB64,
           if (voice) 'voice': true,
           if (voice) 'duration': duration,
           if (voice && waveform != null) 'waveform': waveform,
@@ -1112,31 +1117,52 @@ class ChatRepo {
     );
 
     try {
-      // 1. Шифруем blob свежим AES-256 ключом. Большие медиа — в ИЗОЛЯТЕ
-      // (иначе UI морозит на 0.5-2с при отправке фото/видео); мелкие (голос) —
-      // на главном потоке (спавн изолята для них дороже самой работы).
+      // 0. Сжатие видео на устройстве (если дан путь и файл крупный) — единый
+      // прогресс: сжатие = 0..0.5, аплоад = base..1.0.
+      var data = bytes;
+      var base = 0.0;
+      if (sourcePath != null && bytes.length > 6 * 1024 * 1024) {
+        base = 0.5;
+        final sub = VideoCompress.compressProgress$.subscribe((p) {
+          uploadProgress(tmpKey).value = (p / 100) * 0.5;
+        });
+        try {
+          final info = await VideoCompress.compressVideo(
+            sourcePath,
+            quality: VideoQuality.MediumQuality,
+            deleteOrigin: false,
+          ).timeout(const Duration(minutes: 4));
+          if (info?.file != null) data = await info!.file!.readAsBytes();
+        } finally {
+          sub.unsubscribe();
+        }
+        uploadProgress(tmpKey).value = 0.5;
+      }
+      // 1. Шифруем (уже сжатый) blob AES-256. Крупные — в ИЗОЛЯТЕ.
       final aesKey = _randomBytes(32);
       final iv = _randomBytes(12);
-      final encBytes = bytes.length < 220 * 1024
-          ? _aesGcmEncryptBytes(aesKey, iv, bytes)
+      final encBytes = data.length < 220 * 1024
+          ? _aesGcmEncryptBytes(aesKey, iv, data)
           : await compute(
               _gcmEncryptIso,
-              <String, dynamic>{'key': aesKey, 'iv': iv, 'plain': bytes},
+              <String, dynamic>{'key': aesKey, 'iv': iv, 'plain': data},
             );
-      // 2. Аплоадим encrypted blob
+      // 2. Аплоадим encrypted blob — прогресс base..1.0.
       final up = await _api.uploadFile(
         toUsername: toUsername,
         encryptedBytes: encBytes,
         name: voice ? 'voice' : fileName,
         onSendProgress: (sent, total) {
-          if (total > 0) uploadProgress(tmpKey).value = sent / total;
+          if (total > 0) {
+            uploadProgress(tmpKey).value = base + (sent / total) * (1 - base);
+          }
         },
       );
       final fileId = up['file_id'] as int;
       // 3. Кэшируем у себя (parity с веб) + ПЛЕЙНТЕКСТ в RAM-кэш → своё медиа
       // открывается мгновенно, без скачивания и расшифровки.
       await _db.cacheFile(fileId.toString(), encBytes, mime);
-      _plainCachePut(fileId, bytes);
+      _plainCachePut(fileId, data);
       // 4. Шифруем payload пэйра для отправки (device-fanout — надёжнее primary).
       final peerPub = (await getPeerDevicePubs(toUsername)).first;
       final payload = {
@@ -1144,9 +1170,10 @@ class ChatRepo {
         'file_id': fileId,
         'file_name': fileName,
         'mime': mime,
-        'size': bytes.length,
+        'size': data.length,
         'key': base64Encode(aesKey),
         'iv': base64Encode(iv),
+        if (thumbB64 != null) 'thumb': thumbB64,
         if (voice) 'voice': true,
         if (voice) 'duration': duration,
         if (voice && waveform != null) 'waveform': waveform,
