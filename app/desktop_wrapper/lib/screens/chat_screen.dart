@@ -112,21 +112,28 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   // события, не конкурируют в арене жестов); на время выделения скролл выключен.
   int? _dragAnchorSid;
   bool _dragSelecting = false;
+  bool _dragRemoving = false; // режим по якорю: true = снимаем, false = добавляем
   final Map<int, GlobalKey> _bubbleKeys = {};
 
   void _startDragSelect(StoredMessage m) {
     _clearNewLine();
     HapticFeedback.selectionClick();
     _dragAnchorSid = m.sid;
+    // Telegram-«рисование»: зажал на УЖЕ выбранном → ведение СНИМАЕТ; на
+    // невыбранном → добавляет. Режим фиксируем по якорю на старте.
+    _dragRemoving = _selSids.contains(m.sid);
     setState(() {
-      _selSids.add(m.sid);
       _dragSelecting = true;
+      if (_dragRemoving) {
+        _selSids.remove(m.sid);
+      } else {
+        _selSids.add(m.sid);
+      }
     });
   }
 
-  // Чисто ДОБАВЛЯЮЩЕЕ: диапазон якорь..палец только доселектится к текущему
-  // _selSids (никогда не снимает) — поэтому стейл-стейт/повторное ведение по
-  // уже выбранным не затирает старый выбор.
+  // Применяем режим (_dragRemoving) к диапазону якорь..палец: добавляем ИЛИ
+  // снимаем все сообщения на пути.
   void _updateDragSelect(Offset globalPos) {
     final anchor = _dragAnchorSid;
     if (anchor == null) return;
@@ -140,7 +147,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         final hi = ai < ci ? ci : ai;
         var changed = false;
         for (var i = lo; i <= hi; i++) {
-          if (_selSids.add(msgs[i].sid)) changed = true;
+          final sid = msgs[i].sid;
+          if (_dragRemoving) {
+            if (_selSids.remove(sid)) changed = true;
+          } else {
+            if (_selSids.add(sid)) changed = true;
+          }
         }
         if (changed) setState(() {});
       }
