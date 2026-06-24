@@ -1956,6 +1956,14 @@ class ChatRepo {
     dialogsNotifier.value = await _db.getDialogs();
   }
 
+  /// Очистить чат ЛОКАЛЬНО: удалить все сообщения + убрать диалог из списка.
+  Future<void> clearChat(String peer) async {
+    await _db.deleteMessagesByPeer(peer);
+    await _db.deleteDialog(peer);
+    _msgsByPeer[peer]?.value = [];
+    dialogsNotifier.value = await _db.getDialogs();
+  }
+
   Future<void> markChatRead(String peer) async {
     // Гарантированно подгружаем историю из БД при открытии чата.
     _msgsLoadedFromDb.add(peer);

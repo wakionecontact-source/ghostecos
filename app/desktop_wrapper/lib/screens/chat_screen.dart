@@ -464,7 +464,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<void> _pickAndSendImage(ImageSource src) async {
     Navigator.maybePop(context);
     try {
-      final x = await _imagePicker.pickImage(source: src, imageQuality: 85);
+      // W5b: ограничиваем разрешение (до 1920px) + качество 85 — фото меньше,
+      // аплоад быстрее и надёжнее (особенно на слабой сети), визуально без потерь.
+      final x = await _imagePicker.pickImage(
+        source: src,
+        imageQuality: 85,
+        maxWidth: 1920,
+        maxHeight: 1920,
+      );
       if (x == null) return;
       final bytes = await x.readAsBytes();
       await ChatRepo.instance.sendDmFile(

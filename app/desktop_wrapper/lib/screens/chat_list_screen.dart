@@ -354,10 +354,128 @@ class _DialogTile extends StatelessWidget {
     );
   }
 
+  // Долгое нажатие на диалог → меню действий (как в TG).
+  void _showMenu(BuildContext context) {
+    final isGroup = d.username.startsWith('g:');
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: GE.bgDeep,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+              child: Row(
+                children: [
+                  _Avatar(d.displayName, size: 36),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      d.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: GE.text,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Divider(height: 1, color: GE.glassBorder),
+            _menuRow(Icons.done_all, 'Отметить прочитанным', GE.primary, () async {
+              Navigator.pop(sheetCtx);
+              await ChatRepo.instance.markChatRead(d.username);
+              onReturn?.call();
+            }),
+            if (!isGroup)
+              _menuRow(Icons.person_outline, 'Профиль', GE.primary, () {
+                final nav = Navigator.of(context);
+                Navigator.pop(sheetCtx);
+                nav.push(MaterialPageRoute(
+                  builder: (_) => ProfileScreen(username: d.username),
+                ));
+              }),
+            _menuRow(Icons.delete_outline, 'Очистить историю', GE.red, () async {
+              Navigator.pop(sheetCtx);
+              final ok = await _confirmClear(context);
+              if (ok) {
+                await ChatRepo.instance.clearChat(d.username);
+                onReturn?.call();
+              }
+            }),
+            const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _menuRow(
+    IconData icon,
+    String label,
+    Color iconColor,
+    VoidCallback onTap,
+  ) {
+    final danger = iconColor == GE.red;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: iconColor),
+            const SizedBox(width: 14),
+            Text(
+              label,
+              style: TextStyle(
+                color: danger ? GE.red : GE.text,
+                fontSize: 15,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<bool> _confirmClear(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0F172A),
+        title: Text('Очистить историю?', style: TextStyle(color: GE.text)),
+        content: Text(
+          'Сообщения чата с ${d.displayName} удалятся с этого устройства. '
+          'Отменить нельзя.',
+          style: TextStyle(color: GE.sub),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dctx, false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dctx, true),
+            child: Text('Очистить', style: TextStyle(color: GE.red)),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   @override
   Widget build(BuildContext context) {
     return InkWell(
       borderRadius: BorderRadius.circular(GE.radiusMd),
+      onLongPress: () => _showMenu(context),
       onTap: () async {
         onTap?.call();
         await Navigator.of(context).push(
