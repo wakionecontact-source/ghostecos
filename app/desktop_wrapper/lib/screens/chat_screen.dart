@@ -396,6 +396,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // Сразу проверяем свежие сообщения от веба (Sealed Sender 2.0) и legacy.
     ChatRepo.instance.fetchPending();
     ChatRepo.instance.fetchPendingSealed();
+    // Прогреваем v2-ключи пира заранее — чтобы ПЕРВАЯ отправка не ждала whois
+    // по сети (это и была «медленная отправка»). Группы — мимо.
+    if (!widget.peer.startsWith('g:')) {
+      ChatRepo.instance.getPeerV2Keys(widget.peer);
+    }
     if (!mounted) return;
     setState(() {});
     // Подсветка цели forward/reply — визуальный таймер. Сам СКРОЛЛ к стартовой
