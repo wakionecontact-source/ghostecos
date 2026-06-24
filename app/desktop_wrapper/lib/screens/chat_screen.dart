@@ -1158,15 +1158,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 // иначе _MediaPart пересоздаётся и медиа мигает.
                                 final gestured = GestureDetector(
                                   behavior: HitTestBehavior.deferToChild,
-                                  onTap: _selectionMode
-                                      ? () => _toggleSel(m)
-                                      : null,
-                                  onTapUp: _selectionMode
-                                      ? null
-                                      : (d) => _openBubbleMenu(
-                                          m,
-                                          d.globalPosition,
-                                        ),
+                                  // Callbacks ВСЕГДА присутствуют (режим проверяем
+                                  // внутри) — иначе смена _selectionMode прямо в
+                                  // onLongPressStart переконфигурировала бы
+                                  // GestureDetector посреди жеста и теряла бы
+                                  // move-апдейты (drag-select не работал).
+                                  onTap: () {
+                                    if (_selectionMode) _toggleSel(m);
+                                  },
+                                  onTapUp: (d) {
+                                    if (!_selectionMode) {
+                                      _openBubbleMenu(m, d.globalPosition);
+                                    }
+                                  },
                                   // Зажатие → начать выбор + drag-select:
                                   // ведёшь палец вверх/вниз → выделяется ВСЁ на пути.
                                   onLongPressStart: (_) => _startDragSelect(m),
