@@ -248,25 +248,32 @@ class DbService {
     );
   }
 
-  /// Загрузить все сообщения для peer (сортировка по sid ASC — старые сначала).
-  Future<List<StoredMessage>> getMessages(String peer, {int limit = 500}) async {
+  /// Загрузить последние `limit` сообщений для peer (показ: старые → новые).
+  Future<List<StoredMessage>> getMessages(String peer, {int limit = 1000}) async {
     // ORDER BY: chat_dm и chat_dm_sealed имеют независимые auto-increment id —
     // сортировка по sid смешивает порядок. Сортируем по unified TIMESTAMP:
     //   - legacy: created_at = ISO-строка "2026-..."  → strftime('%s', s)
     //   - sealed: created_at = unix-int "1700000000" → CAST(s AS INTEGER)
     // Эвристика: если строка начинается с цифры и без '-' в первых 4 символах —
     // unix-int, иначе ISO.
-    final rows = await _safeDb.rawQuery('''
-      SELECT * FROM messages WHERE peer = ?
-      ORDER BY
+    //
+    // ВАЖНО: LIMIT берёт ПОСЛЕДНИЕ N (подзапрос DESC+LIMIT), иначе при >N
+    // сообщений в чате обрезались бы НОВЫЕ (баг «вижу историю только до …»).
+    // Внешний запрос пересортировывает обратно ASC для показа снизу-вверх.
+    const tsExpr = '''
         CASE
           WHEN created_at IS NULL THEN 4102444800           -- pending → конец (2100)
           WHEN created_at GLOB '[0-9]*' AND length(created_at) <= 11
             THEN CAST(created_at AS INTEGER)                -- unix-int (10 цифр)
           ELSE strftime('%s', created_at)                   -- ISO
-        END ASC,
-        sid ASC
-      LIMIT ?
+        END''';
+    final rows = await _safeDb.rawQuery('''
+      SELECT * FROM (
+        SELECT * FROM messages WHERE peer = ?
+        ORDER BY $tsExpr DESC, sid DESC
+        LIMIT ?
+      )
+      ORDER BY $tsExpr ASC, sid ASC
     ''', [peer, limit]);
     return rows.map(StoredMessage.fromMap).toList();
   }
