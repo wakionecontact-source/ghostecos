@@ -18,6 +18,7 @@ import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:video_player/video_player.dart';
 import '../theme.dart';
 import '../widgets/emoji_picker.dart';
 import '../widgets/emoji_text.dart';
@@ -2629,10 +2630,9 @@ class _MediaPartState extends State<_MediaPart> {
         child: _uploadProgressIndicator(),
       );
     }
-    // Превью видео пока без кадра-миниатюры: тёмная плашка + play. Тап —
-    // открыть в системном видеоплеере (in-app плеер добавим позже).
+    // Превью видео: тёмная плашка + play. Тап — ВСТРОЕННЫЙ плеер (приватность).
     return GestureDetector(
-      onTap: _openExternally,
+      onTap: _openVideoInternal,
       child: Container(
         width: 240,
         height: 150,
@@ -2717,6 +2717,41 @@ class _MediaPartState extends State<_MediaPart> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Не открылось: $e')),
+        );
+      }
+    }
+  }
+
+  /// Расшифровать видео в temp-файл и открыть ВСТРОЕННЫЙ плеер (приватность:
+  /// видео НЕ уходит во внешнее приложение, которое могло бы его логировать).
+  Future<void> _openVideoInternal() async {
+    var b = _bytes;
+    if (b == null) {
+      setState(() => _loading = true);
+      await _load();
+      b = _bytes;
+      if (mounted) setState(() => _loading = false);
+    }
+    if (b == null || !mounted) return;
+    try {
+      final fp = widget.m.filePayload!;
+      final mime = (fp['mime'] as String?) ?? 'video/mp4';
+      final ext = _extFromMime(mime) ?? '.mp4';
+      final dir = await getTemporaryDirectory();
+      final path = '${dir.path}/ghost_vid_${widget.m.sid}$ext';
+      await File(path).writeAsBytes(b);
+      if (!mounted) return;
+      Navigator.of(context).push(
+        PageRouteBuilder<void>(
+          opaque: false,
+          barrierColor: Colors.black,
+          pageBuilder: (_, _, _) => _VideoViewer(path: path),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не открылось видео: $e')),
         );
       }
     }
@@ -2940,6 +2975,157 @@ class _WaveformPainter extends CustomPainter {
       old.bars != bars ||
       old.fill != fill ||
       old.bg != bg;
+}
+
+// Полноэкранный ВСТРОЕННЫЙ видео-плеер: play/pause, перемотка, свайп-вниз для
+// закрытия, тап — показать/скрыть управление. Видео уже расшифровано в temp-файл.
+class _VideoViewer extends StatefulWidget {
+  final String path;
+  const _VideoViewer({required this.path});
+  @override
+  State<_VideoViewer> createState() => _VideoViewerState();
+}
+
+class _VideoViewerState extends State<_VideoViewer> {
+  VideoPlayerController? _ctrl;
+  bool _ready = false;
+  bool _showControls = true;
+  double _dragY = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    final c = VideoPlayerController.file(File(widget.path));
+    _ctrl = c;
+    c.initialize().then((_) {
+      if (!mounted) return;
+      setState(() => _ready = true);
+      c.play();
+    });
+    c.addListener(_onTick);
+  }
+
+  void _onTick() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _ctrl?.removeListener(_onTick);
+    _ctrl?.dispose();
+    super.dispose();
+  }
+
+  String _fmt(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = _ctrl;
+    final bgAlpha = (1 - (_dragY.abs() / 400)).clamp(0.0, 1.0);
+    return Scaffold(
+      backgroundColor: Colors.black.withValues(alpha: bgAlpha),
+      body: GestureDetector(
+        onTap: () => setState(() => _showControls = !_showControls),
+        onVerticalDragUpdate: (d) => setState(() => _dragY += d.delta.dy),
+        onVerticalDragEnd: (_) {
+          if (_dragY.abs() > 120) {
+            Navigator.of(context).pop();
+          } else {
+            setState(() => _dragY = 0);
+          }
+        },
+        child: Stack(
+          children: [
+            Center(
+              child: Transform.translate(
+                offset: Offset(0, _dragY),
+                child: (c != null && _ready)
+                    ? AspectRatio(
+                        aspectRatio: c.value.aspectRatio == 0
+                            ? 16 / 9
+                            : c.value.aspectRatio,
+                        child: VideoPlayer(c),
+                      )
+                    : const CircularProgressIndicator(color: Colors.white),
+              ),
+            ),
+            if (_showControls)
+              Positioned(
+                top: MediaQuery.of(context).padding.top + 6,
+                left: 6,
+                child: IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ),
+            if (_showControls && c != null && _ready) _controls(c),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _controls(VideoPlayerController c) {
+    final pos = c.value.position;
+    final dur = c.value.duration;
+    final maxMs = dur.inMilliseconds <= 0 ? 1.0 : dur.inMilliseconds.toDouble();
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: Container(
+        padding: EdgeInsets.fromLTRB(
+          8,
+          14,
+          12,
+          MediaQuery.of(context).padding.bottom + 14,
+        ),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Colors.transparent, Colors.black87],
+          ),
+        ),
+        child: Row(
+          children: [
+            IconButton(
+              icon: Icon(
+                c.value.isPlaying ? Icons.pause : Icons.play_arrow,
+                color: Colors.white,
+                size: 30,
+              ),
+              onPressed: () => setState(
+                () => c.value.isPlaying ? c.pause() : c.play(),
+              ),
+            ),
+            Text(
+              _fmt(pos),
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+            ),
+            Expanded(
+              child: Slider(
+                value: pos.inMilliseconds.clamp(0, maxMs.toInt()).toDouble(),
+                max: maxMs,
+                activeColor: GE.primary,
+                inactiveColor: Colors.white24,
+                onChanged: (v) =>
+                    c.seekTo(Duration(milliseconds: v.round())),
+              ),
+            ),
+            Text(
+              _fmt(dur),
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _VoiceTile extends StatefulWidget {
