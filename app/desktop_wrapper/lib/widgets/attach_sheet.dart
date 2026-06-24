@@ -64,8 +64,14 @@ class _AttachSheetState extends State<AttachSheet> {
       final albums = await PhotoManager.getAssetPathList(
         type: RequestType.common, // фото + видео
         onlyAll: true,
-        // Новые СВЕРХУ (по дате создания, убывание).
+        // Новые СВЕРХУ + ВИДЕО тоже (дефолтный videoOption отбрасывает видео с
+        // null-длительностью — allowNullable их возвращает). RequestType.common
+        // = фото+видео.
         filterOption: FilterOptionGroup(
+          imageOption: const FilterOption(),
+          videoOption: const FilterOption(
+            durationConstraint: DurationConstraint(allowNullable: true),
+          ),
           orders: [
             const OrderOption(type: OrderOptionType.createDate, asc: false),
           ],

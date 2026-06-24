@@ -1788,6 +1788,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     : Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          // #3: скрепка теперь СЛЕВА, эмодзи справа (своп по waki).
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            icon: Icon(Icons.attach_file, color: GE.sub),
+                            onPressed: _sending ? null : _openAttachSheet,
+                          ),
                           IconButton(
                             visualDensity: VisualDensity.compact,
                             icon: Icon(
@@ -1797,11 +1803,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               color: _emojiOpen ? GE.primary : GE.sub,
                             ),
                             onPressed: _toggleEmoji,
-                          ),
-                          IconButton(
-                            visualDensity: VisualDensity.compact,
-                            icon: Icon(Icons.attach_file, color: GE.sub),
-                            onPressed: _sending ? null : _openAttachSheet,
                           ),
                         ],
                       ),
