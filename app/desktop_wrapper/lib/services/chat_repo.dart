@@ -789,8 +789,11 @@ class ChatRepo {
       }
       return;
     }
-    // обычное сообщение
+    // обычное сообщение (text / file / voice)
     if (await _db.messageExists(fromUser, sid)) return;
+    // БАГ-ФИКС: v2-ингест раньше НЕ строил filePayload → файл/голос приходил
+    // «огрызком» (пустой текст, без file-UI). Зеркалим v1 sealed/incoming.
+    final isFile = type == 'file' || type == 'voice';
     final stored = StoredMessage(
       sid: sid,
       peer: fromUser,
@@ -799,16 +802,43 @@ class ChatRepo {
       createdAt: _v2CreatedAt(createdAt),
       replyTo: payload['reply_to'] as int?,
       replyPreview: payload['reply_preview'] as String?,
+      forwardedFrom: payload['forwarded_from'] as String?,
+      filePayload: isFile
+          ? {
+              'file_id': payload['file_id'],
+              'file_name': payload['file_name'] ?? '',
+              'mime': payload['mime'] ?? 'application/octet-stream',
+              'size': payload['size'] ?? 0,
+              'key': payload['key'],
+              'iv': payload['iv'],
+              if (payload['thumb'] != null) 'thumb': payload['thumb'],
+              if (type == 'voice') 'voice': true,
+              if (type == 'voice') 'duration': payload['duration'] ?? 0,
+              if (type == 'voice' && payload['waveform'] != null)
+                'waveform': payload['waveform'],
+            }
+          : null,
     );
     await _db.upsertMessage(stored);
     await _refreshMessages(fromUser);
+    final preview = isFile
+        ? _filePreview(
+            mime: payload['mime'] as String?,
+            fileName: payload['file_name'] as String?,
+            voice: type == 'voice',
+          )
+        : stored.text;
     await _bumpDialog(
       fromUser,
-      lastText: stored.text,
+      lastText: preview,
       fromMe: isMine,
       lastAt: stored.createdAt,
       incUnread: !isMine,
     );
+    // Уведомление о входящем v2-файле/сообщении (если этот чат не открыт).
+    if (!isMine) {
+      NotificationService.instance.onIncoming(peer: fromUser, preview: preview);
+    }
   }
 
   /// Sealed-сообщения хранятся в отдельной таблице на сервере (chat_dm_sealed),
