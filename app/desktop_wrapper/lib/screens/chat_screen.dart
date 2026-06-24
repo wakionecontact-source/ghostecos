@@ -30,6 +30,7 @@ import '../services/db_service.dart';
 import '../services/auth_service.dart';
 import '../services/ws_client.dart';
 import '../services/notification_service.dart';
+import '../widgets/attach_sheet.dart';
 import '../widgets/glass.dart';
 import 'profile_screen.dart';
 
@@ -639,7 +640,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _pickAndSendImage(ImageSource src) async {
-    Navigator.maybePop(context);
+    // Лист закрывает AttachSheet — здесь НЕ popаем (иначе закроется чат).
     try {
       // W5b: ограничиваем разрешение (до 1920px) + качество 85 — фото меньше,
       // аплоад быстрее и надёжнее (особенно на слабой сети), визуально без потерь.
@@ -664,7 +665,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _pickAndSendVideo() async {
-    Navigator.maybePop(context);
     try {
       final x = await _imagePicker.pickVideo(
         source: ImageSource.gallery,
@@ -699,7 +699,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   // Отправка ПРОИЗВОЛЬНОГО файла (любой тип) через системный пикер.
   Future<void> _pickAndSendFile() async {
-    Navigator.maybePop(context);
     try {
       final file = await openFile();
       if (file == null) return;
@@ -738,64 +737,68 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     HapticFeedback.selectionClick();
     await showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true, // высокий лист — грид галереи занимает ~80%
       backgroundColor: Colors.transparent,
-      builder: (_) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: GlassCard(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
-            radius: GE.radiusLg,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(left: 6, bottom: 8),
-                  child: Text(
-                    'Прикрепить',
-                    style: TextStyle(
-                      color: GE.sub,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    _attachTile(
-                      Icons.photo_library_rounded,
-                      'Галерея',
-                      const Color(0xFF7C6FF0),
-                      () => _pickAndSendImage(ImageSource.gallery),
-                    ),
-                    _attachTile(
-                      Icons.camera_alt_rounded,
-                      'Камера',
-                      const Color(0xFFEF5DA8),
-                      () => _pickAndSendImage(ImageSource.camera),
-                    ),
-                    _attachTile(
-                      Icons.videocam_rounded,
-                      'Видео',
-                      const Color(0xFFF2994A),
-                      _pickAndSendVideo,
-                    ),
-                    _attachTile(
-                      Icons.insert_drive_file_rounded,
-                      'Файл',
-                      const Color(0xFF4A90E2),
-                      _pickAndSendFile,
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
+      builder: (_) => AttachSheet(
+        onPickedSend: _sendPickedItems,
+        onGallery: () => _pickAndSendImage(ImageSource.gallery),
+        onFile: _pickAndSendFile,
+        onCamera: () => _pickAndSendImage(ImageSource.camera),
+        onGeo: () => _snack('Геопозиция — скоро'),
+        onWallet: () => _snack('Кошелёк — после интеграции GhostBank'),
       ),
     );
+  }
+
+  // Отправить выбранные в гриде элементы по очереди (фото/видео).
+  Future<void> _sendPickedItems(List<AttachItem> items) async {
+    for (final it in items) {
+      if (it.isVideo) {
+        await _sendVideoFile(it.file);
+      } else {
+        await _sendImageFile(it.file);
+      }
+    }
+  }
+
+  Future<void> _sendImageFile(File f) async {
+    try {
+      final bytes = await f.readAsBytes();
+      await ChatRepo.instance.sendDmFile(
+        toUsername: widget.peer,
+        bytes: bytes,
+        mime: 'image/jpeg',
+        fileName: f.path.split('/').last,
+        localPath: f.path,
+      );
+    } catch (e) {
+      _snack('Фото не отправилось: $e');
+    }
+  }
+
+  Future<void> _sendVideoFile(File f) async {
+    try {
+      final bytes = await f.readAsBytes();
+      if (bytes.length > 80 * 1024 * 1024) {
+        _snack('Видео очень большое — выбери покороче.');
+        return;
+      }
+      Uint8List? thumb;
+      try {
+        thumb = await VideoCompress.getByteThumbnail(f.path, quality: 60);
+      } catch (_) {}
+      await ChatRepo.instance.sendDmFile(
+        toUsername: widget.peer,
+        bytes: bytes,
+        mime: 'video/mp4',
+        fileName: f.path.split('/').last,
+        sourcePath: f.path,
+        thumbnail: thumb,
+        localPath: f.path,
+      );
+    } catch (e) {
+      _snack('Видео не отправилось: $e');
+    }
   }
 
   Widget _attachTile(
