@@ -2395,23 +2395,26 @@ class _MediaPartState extends State<_MediaPart> {
     if (_isImage && !widget.m.pending) _load();
   }
 
-  Future<void> _load() async {
-    if (_loading || _bytes != null) return;
+  Future<Uint8List?> _load() async {
+    if (_loading) return _bytes;
+    if (_bytes != null) return _bytes;
     setState(() => _loading = true);
     try {
       final b = await ChatRepo.instance.decryptMediaBlob(widget.m);
-      if (!mounted) return;
+      if (!mounted) return b;
       setState(() {
         _bytes = b;
         _failed = b == null;
         _loading = false;
       });
+      return b;
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted) return null;
       setState(() {
         _failed = true;
         _loading = false;
       });
+      return null;
     }
   }
 
@@ -3132,7 +3135,7 @@ class _VoiceTile extends StatefulWidget {
   final int durationSec;
   final Uint8List? bytes;
   final bool loading;
-  final VoidCallback onLoad;
+  final Future<Uint8List?> Function() onLoad; // возвращает байты после загрузки
   final Color textColor;
   final List<double> waveform;
   const _VoiceTile({
@@ -3155,7 +3158,7 @@ class _VoiceTileState extends State<_VoiceTile> {
   Duration _audioDur = Duration.zero;
   double _speed = 1.0;
   String? _tmpPath;
-  bool _pendingPlay = false;
+  Uint8List? _loaded; // байты, полученные через onLoad (если widget.bytes ещё null)
   StreamSubscription? _posSub;
   StreamSubscription? _stateSub;
   StreamSubscription? _durSub;
@@ -3180,17 +3183,6 @@ class _VoiceTileState extends State<_VoiceTile> {
   }
 
   @override
-  void didUpdateWidget(_VoiceTile old) {
-    super.didUpdateWidget(old);
-    // Один тап: первый тап только грузит blob (bytes == null → onLoad). Когда
-    // байты приехали — авто-стартуем, не дожидаясь второго тапа.
-    if (_pendingPlay && old.bytes == null && widget.bytes != null) {
-      _pendingPlay = false;
-      _toggle();
-    }
-  }
-
-  @override
   void dispose() {
     _posSub?.cancel();
     _stateSub?.cancel();
@@ -3207,19 +3199,22 @@ class _VoiceTileState extends State<_VoiceTile> {
 
   Future<void> _ensureFile() async {
     if (_tmpPath != null) return;
+    final data = widget.bytes ?? _loaded;
+    if (data == null) return;
     // Играем из ВРЕМЕННОГО ФАЙЛА, а не из BytesSource: даёт надёжную позицию
     // (onPositionChanged → заливка/перемотка работают) и быстрый старт.
     final dir = await getTemporaryDirectory();
     final f = File('${dir.path}/gc_play_${widget.hashCode}.m4a');
-    await f.writeAsBytes(widget.bytes!);
+    await f.writeAsBytes(data);
     _tmpPath = f.path;
   }
 
   Future<void> _toggle() async {
-    if (widget.bytes == null) {
-      _pendingPlay = true;
-      widget.onLoad();
-      return;
+    if (widget.bytes == null && _loaded == null) {
+      // Первый тап: грузим blob и СРАЗУ играем (без второго тапа).
+      final b = await widget.onLoad();
+      if (!mounted || b == null) return;
+      setState(() => _loaded = b);
     }
     if (_playing) {
       await _player.pause();
