@@ -1168,8 +1168,11 @@ class ChatRepo {
       // открывается мгновенно, без скачивания и расшифровки.
       await _db.cacheFile(fileId.toString(), encBytes, mime);
       _plainCachePut(fileId, data);
-      // 4. Шифруем payload пэйра для отправки (device-fanout — надёжнее primary).
-      final peerPub = (await getPeerDevicePubs(toUsername)).first;
+      // 4. Шифруем payload пэйра. device[0] — через /send (вернёт sid),
+      // ОСТАЛЬНЫМ устройствам пира — sealed-копии (как у текста). Без fanout
+      // мультидевайс-получатель на не-первом устройстве файл не расшифрует.
+      final peerDevPubs = await getPeerDevicePubs(toUsername);
+      final peerPub = peerDevPubs.first;
       final payload = {
         'type': voice ? 'voice' : 'file',
         'file_id': fileId,
@@ -1218,6 +1221,22 @@ class ChatRepo {
         if (recipientOnline) 'delivered': 1,
       });
       await _refreshMessages(toUsername);
+      // FANOUT файла остальным устройствам пира — sealed-копии с тем же payload
+      // (file_id + key + iv). Иначе у мультидевайс-получателя расшифровывает
+      // файл только device[0]. /send_sealed НЕ создаёт дубль-сообщений.
+      if (peerDevPubs.length > 1) {
+        final me = _myUsername ?? await AuthService.username() ?? '';
+        for (var i = 1; i < peerDevPubs.length; i++) {
+          unawaited(
+            _fanoutSealedPayload(
+              toUsername: toUsername,
+              pub: peerDevPubs[i],
+              me: me,
+              payload: payload,
+            ),
+          );
+        }
+      }
     } catch (e) {
       if (kDebugMode) print('[sendDmFile] $e');
       rethrow;
@@ -1480,6 +1499,29 @@ class ChatRepo {
     }
   }
 
+  /// Sealed-копия ПРОИЗВОЛЬНОГО payload (например файл: file_id+key+iv) на одно
+  /// устройство пира. Получатель распакует через _ingestSealed (он умеет file).
+  Future<void> _fanoutSealedPayload({
+    required String toUsername,
+    required Uint8List pub,
+    required String me,
+    required Map<String, dynamic> payload,
+  }) async {
+    try {
+      final ct = await _crypto.encryptSealed(
+        receiverPubRaw: pub,
+        payload: payload,
+        fromUsername: me,
+      );
+      await _api.chatPost('/send_sealed', {
+        'to_username': toUsername,
+        'ciphertext': ct,
+      });
+    } catch (e) {
+      if (kDebugMode) print('[ChatRepo._fanoutSealedPayload] $e');
+    }
+  }
+
   /// Mapping payload.sid → local sid для sealed delivered/read echo.
   /// LRU-cap чтобы не накапливать память (sealed-delivered приходит сразу
   /// после отправки; mapping нужен только short-term).
@@ -1548,7 +1590,11 @@ class ChatRepo {
     if (username == null) return;
     _peerPubCache.remove(username);
     _peerDevicePubsCache.remove(username);
-    if (kDebugMode) print('[ChatRepo] device-cache очищен для @$username');
+    // КРИТ: v2-кэш ТОЖЕ инвалидируем. Иначе после ротации/нового устройства
+    // пира мы продолжаем слать его СТАРОМУ device → текущее устройство пира не
+    // расшифрует («ошибка расшифровки»). Раньше чистили только v1-кэши.
+    _v2KeysCache.remove(username);
+    if (kDebugMode) print('[ChatRepo] key-cache (v1+v2) очищен для @$username');
   }
 
   Future<void> _onPresence(Map<String, dynamic> d) async {
@@ -1593,6 +1639,9 @@ class ChatRepo {
         );
       }
       _peerDevicePubsCache.remove(peerUsername);
+      // Чистим и v2-кэш: если мы пропустили событие devices_changed этого пира,
+      // наш следующий ОТПРАВ к нему пойдёт по свежим ключам (а не старому device).
+      _v2KeysCache.remove(peerUsername);
       await _refreshPeerPubAfterDecryptFail(peerUsername);
       plain = await _tryDecryptAnyPub(peerUsername, cipher);
     }
