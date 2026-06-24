@@ -349,31 +349,39 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void _remeasureComposer({bool animate = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final box =
-          _composerKey.currentContext?.findRenderObject() as RenderBox?;
-      if (box == null) return;
-      final h = box.size.height;
-      if (h != _composerH) {
-        final grew = h > _composerH;
-        final delta = h - _composerH;
-        setState(() => _composerH = h);
-        if (grew && _scrollCtrl.hasClients) {
-          final target = (_scrollCtrl.offset + delta).clamp(
-            0.0,
-            _scrollCtrl.position.maxScrollExtent,
-          );
-          if (animate) {
-            _scrollCtrl.animateTo(
-              target,
-              duration: const Duration(milliseconds: 240),
-              curve: Curves.easeOutCubic,
-            );
-          } else {
-            _scrollCtrl.jumpTo(target);
-          }
-        }
-      }
+      _measureComposer(animate);
+      // Повторный замер после оседания клавиатуры / анимации reply-bar: первый
+      // замер ловит промежуточную высоту → стрелка «вниз» и нижний паддинг не
+      // успевают за выросшим reply-bar (reply-bar перекрывал стрелку). #1.
+      Future.delayed(const Duration(milliseconds: 330), () {
+        if (mounted) _measureComposer(false);
+      });
     });
+  }
+
+  void _measureComposer(bool animate) {
+    final box = _composerKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final h = box.size.height;
+    if (h == _composerH) return;
+    final grew = h > _composerH;
+    final delta = h - _composerH;
+    setState(() => _composerH = h);
+    if (grew && _scrollCtrl.hasClients) {
+      final target = (_scrollCtrl.offset + delta).clamp(
+        0.0,
+        _scrollCtrl.position.maxScrollExtent,
+      );
+      if (animate) {
+        _scrollCtrl.animateTo(
+          target,
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOutCubic,
+        );
+      } else {
+        _scrollCtrl.jumpTo(target);
+      }
+    }
   }
 
   @override
@@ -3717,12 +3725,18 @@ class _ChatHeader extends StatelessWidget {
                   ),
                 ),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(4, 8, 12, 8),
+            padding: const EdgeInsets.fromLTRB(0, 8, 12, 8),
             child: Row(
               children: [
-                IconButton(
-                  icon: Icon(Icons.arrow_back, color: GE.text),
-                  onPressed: () => Navigator.of(context).maybePop(),
+                // #2: вся левая зона (край экрана → аватарка) = одна большая
+                // tap-зона «назад» (прямоугольник), а не маленький круглый IconButton.
+                InkWell(
+                  onTap: () => Navigator.of(context).maybePop(),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 11, 18, 11),
+                    child: Icon(Icons.arrow_back, color: GE.text),
+                  ),
                 ),
                 Stack(
                   clipBehavior: Clip.none,
