@@ -55,6 +55,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   // Кнопка «вниз» (видна при прокрутке вверх) + замочек авто-скролла на отправке.
   bool _showScrollDown = false;
   bool _scrollLock = false;
+  // Стартовая позиция скролла ставится в билдере на ПЕРВОЙ непустой отрисовке
+  // (когда сообщения реально загружены), а не в _init (там список ещё пуст).
+  bool _didInitialScroll = false;
   final _imagePicker = ImagePicker();
   final _recorder = AudioRecorder();
 
@@ -207,27 +210,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     ChatRepo.instance.fetchPendingSealed();
     if (!mounted) return;
     setState(() {});
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (widget.highlightSid != null) {
-        _scrollToSid(widget.highlightSid!);
-        setState(() => _highlightSid = widget.highlightSid);
-        _highlightTimer?.cancel();
-        _highlightTimer = Timer(const Duration(seconds: 3), () {
-          if (mounted) setState(() => _highlightSid = null);
-        });
-      } else {
-        final saved = _scrollMemory[widget.peer];
-        if (saved != null && _scrollCtrl.hasClients) {
-          // Уже заходили — возвращаемся туда, где остановились.
-          _scrollCtrl.jumpTo(
-            saved.clamp(0.0, _scrollCtrl.position.maxScrollExtent),
-          );
-        } else {
-          // Первый заход в этот чат — в самый низ.
-          _scrollToBottom(false);
-        }
-      }
-    });
+    // Подсветка цели forward/reply — визуальный таймер. Сам СКРОЛЛ к стартовой
+    // позиции (низ / сохранённая / к highlightSid) делается в билдере списка на
+    // ПЕРВОЙ непустой отрисовке: здесь сообщения ещё грузятся, скроллить некуда.
+    if (widget.highlightSid != null) {
+      setState(() => _highlightSid = widget.highlightSid);
+      _highlightTimer?.cancel();
+      _highlightTimer = Timer(const Duration(seconds: 3), () {
+        if (mounted) setState(() => _highlightSid = null);
+      });
+    }
   }
 
   void _scrollToSid(int sid) {
@@ -849,12 +841,31 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           builder: (_, msgs, __) {
                             if (msgs.isEmpty) return _empty();
                             WidgetsBinding.instance.addPostFrameCallback((_) {
-                              if (mounted && _scrollCtrl.hasClients) {
-                                final at = _scrollCtrl.position.pixels;
-                                final max =
-                                    _scrollCtrl.position.maxScrollExtent;
-                                if (max - at < 200) _scrollToBottom(true);
+                              if (!mounted || !_scrollCtrl.hasClients) return;
+                              if (!_didInitialScroll) {
+                                // Первая непустая отрисовка: контент есть,
+                                // maxScrollExtent валиден — ставим старт.
+                                _didInitialScroll = true;
+                                if (widget.highlightSid != null) {
+                                  _scrollToSid(widget.highlightSid!);
+                                } else {
+                                  final saved = _scrollMemory[widget.peer];
+                                  if (saved != null) {
+                                    _scrollCtrl.jumpTo(saved.clamp(
+                                      0.0,
+                                      _scrollCtrl.position.maxScrollExtent,
+                                    ));
+                                  } else {
+                                    // Первый заход в чат → в самый низ.
+                                    _scrollToBottom(false);
+                                  }
+                                }
+                                return;
                               }
+                              // Авто-следование: если уже у низа — к новому соо.
+                              final at = _scrollCtrl.position.pixels;
+                              final max = _scrollCtrl.position.maxScrollExtent;
+                              if (max - at < 200) _scrollToBottom(true);
                             });
                             return ListView.builder(
                               controller: _scrollCtrl,

@@ -401,6 +401,18 @@ class DbService {
     return r.length;
   }
 
+  /// Пометить ВСЕ входящие пира прочитанными одним UPDATE — гарантирует, что
+  /// бейдж (unreadCount по тем же условиям) обнулится при открытии чата, даже
+  /// если часть строк не отрисовывается (контрол-фреймы/дубликаты/релеи).
+  Future<int> markAllRead(String username) async {
+    return _safeDb.update(
+      'messages',
+      {'read': 1},
+      where: 'peer = ? AND from_me = 0 AND read = 0',
+      whereArgs: [username],
+    );
+  }
+
   // ─── PeerKeys (TOFU) ─────────────────────────────────────────────────
   Future<String?> getPinnedPub(String username) async {
     final r = await _safeDb.query('peerkeys',

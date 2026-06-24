@@ -1931,24 +1931,28 @@ class ChatRepo {
     // Гарантированно подгружаем историю из БД при открытии чата.
     _msgsLoadedFromDb.add(peer);
     await _refreshMessages(peer);
+    // Помечаем входящие прочитанными ЛОКАЛЬНО СНАЧАЛА — не завися от сервера.
+    // (Был баг: /read на сервер шёл ДО локального read=1; если серверный вызов
+    //  падал, catch его глотал и сообщения оставались непрочитанными → бейдж
+    //  непрочитанных не сбрасывался при открытии чата.)
+    final msgs = await _db.getMessages(peer);
+    final theirIds = msgs
+        .where((m) => !m.fromMe && !m.read)
+        .map((m) => m.sid)
+        .toList();
+    // Метим ВСЕ входящие прочитанными напрямую в БД (в т.ч. не отрисованные
+    // строки — контрол-фреймы/дубликаты/релеи), чтобы бейдж точно обнулился.
+    await _db.markAllRead(peer);
     await _db.resetUnread(peer);
+    await _refreshMessages(peer);
     dialogsNotifier.value = await _db.getDialogs();
-    // Сообщим серверу что прочитал входящие (он пингует sender'у двойную галку).
-    try {
-      final msgs = await _db.getMessages(peer);
-      final theirIds = msgs
-          .where((m) => !m.fromMe && !m.read)
-          .map((m) => m.sid)
-          .toList();
-      if (theirIds.isNotEmpty) {
+    // Сервер — best-effort (двойная галка отправителю); падение не мешает локалу.
+    if (theirIds.isNotEmpty) {
+      try {
         await _api.chatPost('/read', {'ids': theirIds, 'from_username': peer});
-        for (final id in theirIds) {
-          await _db.updateMessageFlags(peer, id, {'read': 1});
-        }
-        await _refreshMessages(peer);
+      } catch (e) {
+        if (kDebugMode) print('[markChatRead] server /read: $e');
       }
-    } catch (e) {
-      if (kDebugMode) print('[markChatRead] $e');
     }
   }
 }
