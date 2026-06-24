@@ -1288,14 +1288,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     child: inner,
                                   ),
                                 );
-                                final bubble = Container(
+                                final bubble = AnimatedContainer(
                                   key: _bubbleKeys.putIfAbsent(
                                     m.sid,
                                     () => GlobalKey(),
                                   ),
+                                  duration: const Duration(milliseconds: 160),
+                                  curve: Curves.easeOut,
                                   color: selected
                                       ? GE.primary.withValues(alpha: 0.14)
-                                      : null,
+                                      : Colors.transparent,
                                   child: Dismissible(
                                     key: ValueKey(
                                       'msg_${m.sid}_${m.tempSid ?? ""}',

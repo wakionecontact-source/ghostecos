@@ -46,6 +46,14 @@ class GE {
         brightness: currentBrightness,
         scaffoldBackgroundColor: Colors.transparent,
         fontFamily: 'Inter',
+        // Плавные переходы между экранами — мягкий zoom+fade (M3), премиально.
+        // App-wide, без правок каждого Navigator.push.
+        pageTransitionsTheme: const PageTransitionsTheme(
+          builders: {
+            TargetPlatform.android: ZoomPageTransitionsBuilder(),
+            TargetPlatform.iOS: ZoomPageTransitionsBuilder(),
+          },
+        ),
         colorScheme: ColorScheme.fromSeed(
           seedColor: primary,
           brightness: currentBrightness,
