@@ -113,6 +113,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   int? _dragAnchorSid;
   bool _dragSelecting = false;
   bool _dragRemoving = false; // режим по якорю: true = снимаем, false = добавляем
+  Set<int> _dragBaseSel = {}; // снимок выбора ДО текущего жеста (range-поведение)
   final Map<int, GlobalKey> _bubbleKeys = {};
 
   void _startDragSelect(StoredMessage m) {
@@ -122,6 +123,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // Telegram-«рисование»: зажал на УЖЕ выбранном → ведение СНИМАЕТ; на
     // невыбранном → добавляет. Режим фиксируем по якорю на старте.
     _dragRemoving = _selSids.contains(m.sid);
+    _dragBaseSel = Set<int>.from(_selSids); // снимок СВЕЖИЙ на каждый жест
     setState(() {
       _dragSelecting = true;
       if (_dragRemoving) {
@@ -132,8 +134,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     });
   }
 
-  // Применяем режим (_dragRemoving) к диапазону якорь..палец: добавляем ИЛИ
-  // снимаем все сообщения на пути.
+  // Range-поведение (как в TG): выбор = снимок-до-жеста, к диапазону якорь..палец
+  // применён режим. Ведёшь дальше — диапазон растёт; ведёшь НАЗАД — сжимается
+  // (отменяя промежуточные). Свежий снимок + сброс на новом касании = старый
+  // выбор за пределами диапазона не затирается.
   void _updateDragSelect(Offset globalPos) {
     final anchor = _dragAnchorSid;
     if (anchor == null) return;
@@ -145,16 +149,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (ai >= 0 && ci >= 0) {
         final lo = ai < ci ? ai : ci;
         final hi = ai < ci ? ci : ai;
-        var changed = false;
+        final next = Set<int>.from(_dragBaseSel);
         for (var i = lo; i <= hi; i++) {
-          final sid = msgs[i].sid;
           if (_dragRemoving) {
-            if (_selSids.remove(sid)) changed = true;
+            next.remove(msgs[i].sid);
           } else {
-            if (_selSids.add(sid)) changed = true;
+            next.add(msgs[i].sid);
           }
         }
-        if (changed) setState(() {});
+        setState(() => _selSids
+          ..clear()
+          ..addAll(next));
       }
     }
     _dragEdgeAutoscroll(globalPos.dy); // у краёв — подкручиваем ленту
@@ -1147,8 +1152,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               _lastMsgCount = msgs.length;
                             });
                             return Listener(
+                              // Новое касание — сбрасываем возможный «зависший»
+                              // drag (если onPointerUp был пропущен), чтобы
+                              // стейл-снимок не затирал выбор. Long-press потом
+                              // переармирует через _startDragSelect.
+                              onPointerDown: (_) {
+                                _dragSelecting = false;
+                                _dragAnchorSid = null;
+                              },
                               // Сырые pointer-move во время drag-select — надёжно,
-                              // мимо арены жестов. На время выделения скролл off.
+                              // мимо арены жестов.
                               onPointerMove: (e) {
                                 if (_dragSelecting) {
                                   _updateDragSelect(e.position);
