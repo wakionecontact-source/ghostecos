@@ -946,6 +946,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 // САМОГО низа (jump), новые соо — следуем
                                 // (animate). Свою отправку держит _send+замочек.
                                 _scrollToBottom(grew);
+                                // Входящие пришли пока юзер У ДНА (видит их) →
+                                // сразу помечаем прочитанными, чтобы бейдж в
+                                // списке не копился из «уже увиденных».
+                                if (grew &&
+                                    msgs
+                                        .sublist(_lastMsgCount)
+                                        .any((m) => !m.fromMe)) {
+                                  ChatRepo.instance.markPeerSeen(widget.peer);
+                                }
                               } else if (grew) {
                                 // Пролистан вверх + входящие → бейдж + ОДНА линия
                                 // «Новое» (ставим только если её ещё нет —

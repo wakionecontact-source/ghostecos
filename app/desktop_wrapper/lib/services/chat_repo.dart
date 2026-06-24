@@ -1947,6 +1947,15 @@ class ChatRepo {
   /// _init ДО markChatRead (тот пометит всё прочитанным).
   Future<int?> firstUnreadSid(String peer) => _db.firstUnreadSid(peer);
 
+  /// Лёгкая пометка «прочитано» — когда соо приходят, ПОКА чат открыт и юзер у
+  /// дна (видит их). Без сети и без _refreshMessages (флаг read у входящих не
+  /// влияет на их отрисовку) — только чистим счётчик, чтобы бейдж не копился.
+  Future<void> markPeerSeen(String peer) async {
+    await _db.markAllRead(peer);
+    await _db.resetUnread(peer);
+    dialogsNotifier.value = await _db.getDialogs();
+  }
+
   Future<void> markChatRead(String peer) async {
     // Гарантированно подгружаем историю из БД при открытии чата.
     _msgsLoadedFromDb.add(peer);
