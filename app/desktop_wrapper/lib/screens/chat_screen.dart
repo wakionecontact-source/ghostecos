@@ -58,6 +58,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   // Стартовая позиция скролла ставится в билдере на ПЕРВОЙ непустой отрисовке
   // (когда сообщения реально загружены), а не в _init (там список ещё пуст).
   bool _didInitialScroll = false;
+  // Линия «Новое» + бейдж непрочитанных В ОТКРЫТОМ чате (live).
+  int? _newLineSid; // sid соо, НАД которым рисуется разделитель «Новое»
+  bool _newLineConsumed = false; // прочитал → линия без лейбла (обычный divider)
+  int _unreadInChat = 0; // живой счётчик непрочитанных пока чат открыт (badge)
+  int _lastMsgCount = 0; // для детекта новых соо в билдере
+  int _arrowStage = 0; // 2-stage тап стрелки: 0=центр на линию, 1=в самый низ
   final _imagePicker = ImagePicker();
   final _recorder = AudioRecorder();
 
@@ -152,6 +158,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _scrollCtrl.position.maxScrollExtent - _scrollCtrl.position.pixels;
     final show = fromBottom > 600;
     if (show != _showScrollDown) setState(() => _showScrollDown = show);
+    // Дошёл до низа → «прочитал»: гасим бейдж, стрелка обычная, линия «Новое»
+    // демотируется в обычный divider (готова для следующей партии новых).
+    if (fromBottom < 80 &&
+        (_unreadInChat != 0 || _arrowStage != 0 || !_newLineConsumed)) {
+      setState(() {
+        _unreadInChat = 0;
+        _arrowStage = 0;
+        _newLineConsumed = true;
+      });
+      ChatRepo.instance.markChatRead(widget.peer); // подчистить и БД
+    }
   }
 
   void _onInputChanged() {
@@ -204,6 +221,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _inputCtrl.text = draft;
       _inputCtrl.selection = TextSelection.collapsed(offset: draft.length);
     }
+    // Граница «Новое» — ДО markChatRead (тот пометит всё прочитанным).
+    _newLineSid = await ChatRepo.instance.firstUnreadSid(widget.peer);
+    _newLineConsumed = false;
     await ChatRepo.instance.markChatRead(widget.peer);
     // Сразу проверяем свежие сообщения от веба (Sealed Sender 2.0) и legacy.
     ChatRepo.instance.fetchPending();
@@ -266,6 +286,69 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     } else {
       _scrollCtrl.jumpTo(pos);
     }
+  }
+
+  // 2-stage тап стрелки: при наличии бейджа 1-й тап центрирует линию «Новое»,
+  // 2-й — в самый низ. Без бейджа — сразу вниз.
+  void _onArrowTap() {
+    if (_unreadInChat > 0 &&
+        _newLineSid != null &&
+        !_newLineConsumed &&
+        _arrowStage == 0) {
+      _arrowStage = 1;
+      _centerOnSid(_newLineSid!);
+    } else {
+      _arrowStage = 0;
+      _scrollToBottom(true);
+    }
+  }
+
+  // Скролл так, чтобы соо с данным sid оказалось по центру экрана (anchor —
+  // линия «Новое»). Высота элемента приблизительная (точную не знаем заранее).
+  void _centerOnSid(int sid) {
+    final msgs = ChatRepo.instance.messagesNotifier(widget.peer).value;
+    final idx = msgs.indexWhere((m) => m.sid == sid);
+    if (idx < 0 || !_scrollCtrl.hasClients) return;
+    final target =
+        (idx * 72.0) - (_scrollCtrl.position.viewportDimension / 2);
+    _scrollCtrl.animateTo(
+      target.clamp(0.0, _scrollCtrl.position.maxScrollExtent),
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOut,
+    );
+  }
+
+  // Горизонтальный разделитель «Новое» (unread separator). После прочтения
+  // (_newLineConsumed) — обычная тонкая линия без лейбла.
+  Widget _newMessagesLine() {
+    if (_newLineConsumed) {
+      return Container(
+        height: 1,
+        margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 40),
+        color: GE.glassBorder,
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        children: [
+          Expanded(child: Container(height: 1, color: GE.primary.withValues(alpha: 0.5))),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Text(
+              'Новое',
+              style: TextStyle(
+                color: GE.primary,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+          Expanded(child: Container(height: 1, color: GE.primary.withValues(alpha: 0.5))),
+        ],
+      ),
+    );
   }
 
   Future<void> _send() async {
@@ -860,12 +943,37 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     _scrollToBottom(false);
                                   }
                                 }
+                                _lastMsgCount = msgs.length;
                                 return;
                               }
-                              // Авто-следование: если уже у низа — к новому соо.
-                              final at = _scrollCtrl.position.pixels;
-                              final max = _scrollCtrl.position.maxScrollExtent;
-                              if (max - at < 200) _scrollToBottom(true);
+                              // Пришли новые соо? (свои — скроллит _send с учётом
+                              // замочка; тут обрабатываем только ВХОДЯЩИЕ).
+                              if (msgs.length > _lastMsgCount) {
+                                final added = msgs.sublist(_lastMsgCount);
+                                final incoming =
+                                    added.where((m) => !m.fromMe).toList();
+                                if (incoming.isNotEmpty) {
+                                  final at = _scrollCtrl.position.pixels;
+                                  final max =
+                                      _scrollCtrl.position.maxScrollExtent;
+                                  final atBottom = (max - at) < 340; // ~5 соо
+                                  if (atBottom) {
+                                    // У дна → следуем за новым (task 1).
+                                    _scrollToBottom(true);
+                                  } else {
+                                    // Пролистан вверх → бейдж + линия «Новое».
+                                    setState(() {
+                                      if (_newLineSid == null ||
+                                          _newLineConsumed) {
+                                        _newLineSid = incoming.first.sid;
+                                        _newLineConsumed = false;
+                                      }
+                                      _unreadInChat += incoming.length;
+                                    });
+                                  }
+                                }
+                              }
+                              _lastMsgCount = msgs.length;
                             });
                             return ListView.builder(
                               controller: _scrollCtrl,
@@ -945,11 +1053,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     child: gestured,
                                   ),
                                 );
-                                if (!newSender && !newDay) return bubble;
+                                final showNewLine =
+                                    _newLineSid != null && m.sid == _newLineSid;
+                                if (!newSender && !newDay && !showNewLine) {
+                                  return bubble;
+                                }
                                 return Column(
                                   crossAxisAlignment:
                                       CrossAxisAlignment.stretch,
                                   children: [
+                                    if (showNewLine) _newMessagesLine(),
                                     if (newDay) _dateChip(m.createdAt),
                                     if (newSender && !newDay)
                                       Center(
@@ -992,8 +1105,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 ),
               ),
             ),
-            // Кнопка «вниз» + замочек (TG-style): видна при прокрутке вверх.
-            if (_showScrollDown)
+            // Кнопка «вниз» + замочек (TG-style): видна при прокрутке вверх ИЛИ
+            // когда есть непрочитанные в этом чате (бейдж).
+            if (_showScrollDown || _unreadInChat > 0)
               Positioned(
                 right: 14,
                 bottom:
@@ -1007,73 +1121,106 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Widget _scrollDownButton() {
-    // Единый «жидкое стекло» сегмент: замочек сверху + стрелка снизу, склеены
-    // и разделены тонкой 1px-линией (не два отдельных кружка). backdrop-blur.
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(22),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-        child: Container(
-          width: 44,
-          decoration: BoxDecoration(
-            color: GE.bgDeep.withValues(alpha: 0.55),
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: GE.glassBorder),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.30),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
+    // Вариант B: круг-стрелка с бейджем непрочитанных (как в TG) + мини-замочек
+    // над ней. Тап стрелки = 2-stage (1-й центрирует линию «Новое», 2-й — вниз).
+    // Замочек = «не дёргать мой scroll при отправке своего сообщения».
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => setState(() => _scrollLock = !_scrollLock),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(15),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+              child: Container(
+                width: 30,
+                height: 30,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _scrollLock
+                      ? GE.primary.withValues(alpha: 0.85)
+                      : GE.bgDeep.withValues(alpha: 0.55),
+                  border: Border.all(color: GE.glassBorder),
+                ),
+                child: Icon(
+                  _scrollLock ? Icons.lock : Icons.lock_open,
+                  size: 14,
+                  color: _scrollLock ? Colors.white : GE.sub,
+                ),
               ),
-            ],
+            ),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+        ),
+        const SizedBox(height: 7),
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _onArrowTap,
+          child: Stack(
+            clipBehavior: Clip.none,
             children: [
-              // Замочек: закрыт = отправка своего сообщения НЕ дёргает скролл.
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => setState(() => _scrollLock = !_scrollLock),
-                child: Container(
-                  width: 44,
-                  height: 40,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: _scrollLock
-                        ? GE.primary.withValues(alpha: 0.85)
-                        : Colors.transparent,
-                    borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(22),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(23),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                  child: Container(
+                    width: 46,
+                    height: 46,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: GE.bgDeep.withValues(alpha: 0.6),
+                      border: Border.all(color: GE.glassBorder),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.30),
+                          blurRadius: 10,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      Icons.keyboard_arrow_down,
+                      size: 27,
+                      color: GE.text,
                     ),
                   ),
-                  child: Icon(
-                    _scrollLock ? Icons.lock : Icons.lock_open,
-                    size: 16,
-                    color: _scrollLock ? Colors.white : GE.sub,
-                  ),
                 ),
               ),
-              // 1px-разделитель между замочком и стрелкой.
-              Container(height: 1, width: 44, color: GE.glassBorder),
-              // Стрелка вниз → плавный скролл к низу.
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => _scrollToBottom(true),
-                child: Container(
-                  width: 44,
-                  height: 44,
-                  alignment: Alignment.center,
-                  child: Icon(
-                    Icons.keyboard_arrow_down,
-                    size: 26,
-                    color: GE.text,
+              if (_unreadInChat > 0)
+                Positioned(
+                  top: -4,
+                  right: -2,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 1,
+                    ),
+                    constraints: const BoxConstraints(minWidth: 20),
+                    decoration: BoxDecoration(
+                      color: GE.primary,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: GE.bgDeep, width: 1.5),
+                    ),
+                    child: Text(
+                      _unreadInChat > 99 ? '99+' : '$_unreadInChat',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        height: 1.2,
+                      ),
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
         ),
-      ),
+      ],
     );
   }
 

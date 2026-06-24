@@ -1927,6 +1927,10 @@ class ChatRepo {
     dialogsNotifier.value = await _db.getDialogs();
   }
 
+  /// sid первого непрочитанного входящего — граница линии «Новое». Звать в
+  /// _init ДО markChatRead (тот пометит всё прочитанным).
+  Future<int?> firstUnreadSid(String peer) => _db.firstUnreadSid(peer);
+
   Future<void> markChatRead(String peer) async {
     // Гарантированно подгружаем историю из БД при открытии чата.
     _msgsLoadedFromDb.add(peer);

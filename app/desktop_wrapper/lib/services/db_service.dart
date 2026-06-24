@@ -413,6 +413,20 @@ class DbService {
     );
   }
 
+  /// sid первого непрочитанного входящего (в порядке времени) — граница для
+  /// линии «Новое». null если непрочитанных нет. Звать ДО markChatRead.
+  Future<int?> firstUnreadSid(String username) async {
+    final r = await _safeDb.query(
+      'messages',
+      columns: ['sid'],
+      where: 'peer = ? AND from_me = 0 AND read = 0 AND deleted = 0',
+      whereArgs: [username],
+      orderBy: 'created_at ASC',
+      limit: 1,
+    );
+    return r.isEmpty ? null : r.first['sid'] as int;
+  }
+
   // ─── PeerKeys (TOFU) ─────────────────────────────────────────────────
   Future<String?> getPinnedPub(String username) async {
     final r = await _safeDb.query('peerkeys',
