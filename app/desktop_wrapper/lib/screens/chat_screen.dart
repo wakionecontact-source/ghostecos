@@ -55,6 +55,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final _composerKey = GlobalKey();
   double _composerH = 96;
   String get _draftKey => 'chat_draft_${widget.peer}';
+  bool _emojiOpen = false; // инлайн эмодзи-панель снизу (composer над ней)
+  static const double _emojiPanelH = 300;
   // Кнопка «вниз» (видна при прокрутке вверх) + замочек авто-скролла на отправке.
   bool _showScrollDown = false;
   bool _scrollLock = false;
@@ -293,6 +295,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _inputCtrl.addListener(_onInputChanged);
     _scrollCtrl.addListener(_onScroll);
+    // В чате блокируем переворот экрана (только портрет).
+    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     _init();
   }
 
@@ -333,8 +337,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     } else {
       _prefs?.setString(_draftKey, t);
     }
-    // Scroll-up при росте поля: меряем композер, на рост двигаем ленту вверх,
-    // чтобы последнее сообщение не пряталось под выросшим композером.
+    _remeasureComposer(); // рост многострочного поля — подвинуть ленту
+  }
+
+  // Меряем композер (его высота растёт при reply-bar / многострочном вводе) и
+  // двигаем ленту вверх на дельту, чтобы последнее сообщение не пряталось под
+  // ним. animate=true → плавно (easeOutCubic) — для появления reply-bar.
+  void _remeasureComposer({bool animate = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final box =
@@ -346,12 +355,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         final delta = h - _composerH;
         setState(() => _composerH = h);
         if (grew && _scrollCtrl.hasClients) {
-          _scrollCtrl.jumpTo(
-            (_scrollCtrl.offset + delta).clamp(
-              0.0,
-              _scrollCtrl.position.maxScrollExtent,
-            ),
+          final target = (_scrollCtrl.offset + delta).clamp(
+            0.0,
+            _scrollCtrl.position.maxScrollExtent,
           );
+          if (animate) {
+            _scrollCtrl.animateTo(
+              target,
+              duration: const Duration(milliseconds: 240),
+              curve: Curves.easeOutCubic,
+            );
+          } else {
+            _scrollCtrl.jumpTo(target);
+          }
         }
       }
     });
@@ -412,6 +428,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    // Возвращаем все ориентации при выходе из чата.
+    SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     _highlightTimer?.cancel();
     _recordTicker?.cancel();
     _edgeTimer?.cancel();
@@ -570,28 +588,26 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
-  // Эмодзи-пикер (категории + поиск). Лист остаётся открытым — можно набрать
-  // несколько подряд; вставляем в позицию курсора.
-  void _openEmojiPicker() {
-    FocusScope.of(context).unfocus();
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => EmojiPicker(
-        onPick: (e) {
-          final text = _inputCtrl.text;
-          final sel = _inputCtrl.selection;
-          final start = sel.start < 0 ? text.length : sel.start;
-          final end = sel.end < 0 ? text.length : sel.end;
-          final next = text.replaceRange(start, end, e);
-          _inputCtrl.value = TextEditingValue(
-            text: next,
-            selection: TextSelection.collapsed(offset: start + e.length),
-          );
-          setState(() {});
-        },
-      ),
+  // Эмодзи-панель выезжает СНИЗУ, composer остаётся НАД ней (как клавиатура).
+  void _toggleEmoji() {
+    setState(() => _emojiOpen = !_emojiOpen);
+    if (_emojiOpen) {
+      FocusScope.of(context).unfocus(); // прячем системную клаву — панель вместо
+    }
+    _remeasureComposer();
+  }
+
+  void _insertEmoji(String e) {
+    final text = _inputCtrl.text;
+    final sel = _inputCtrl.selection;
+    final start = sel.start < 0 ? text.length : sel.start;
+    final end = sel.end < 0 ? text.length : sel.end;
+    final next = text.replaceRange(start, end, e);
+    _inputCtrl.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: start + e.length),
     );
+    setState(() {});
   }
 
   Future<void> _pickAndSendImage(ImageSource src) async {
@@ -905,6 +921,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     switch (res) {
       case 'reply':
         setState(() => _replyTo = m);
+        _remeasureComposer(animate: true); // доскролл под выросший reply-bar
         break;
       case 'edit':
         setState(() {
@@ -912,6 +929,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           _inputCtrl.text = m.text;
           _inputCtrl.selection = TextSelection.collapsed(offset: m.text.length);
         });
+        _remeasureComposer(animate: true);
         break;
       case 'copy':
         await Clipboard.setData(ClipboardData(text: m.text));
@@ -1221,7 +1239,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 12,
                                 headerPad,
                                 12,
-                                _composerH + 12,
+                                _composerH + (_emojiOpen ? _emojiPanelH : 0) + 12,
                               ),
                               itemCount: msgs.length,
                               itemBuilder: (_, i) {
@@ -1290,6 +1308,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     confirmDismiss: (_) async {
                                       setState(() => _replyTo = m);
                                       HapticFeedback.selectionClick();
+                                      _remeasureComposer(animate: true);
                                       return false;
                                     },
                                     background: Container(
@@ -1341,12 +1360,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ),
             ),
             // Фрост-композер снизу: лента уходит ЗА него → стекло размывает (как шапка).
+            // При открытой эмодзи-панели composer приподнят НАД ней (как клавиатура).
             Positioned(
               left: 0,
               right: 0,
-              bottom: 0,
+              bottom: _emojiOpen ? _emojiPanelH : 0,
               child: SafeArea(
                 top: false,
+                bottom: !_emojiOpen, // над панелью bottom-inset не нужен
                 child: Column(
                   key: _composerKey,
                   mainAxisSize: MainAxisSize.min,
@@ -1357,6 +1378,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 ),
               ),
             ),
+            // Эмодзи-панель — выезжает снизу, composer сидит НАД ней.
+            if (_emojiOpen)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: _emojiPanelH,
+                child: EmojiPicker(onPick: _insertEmoji),
+              ),
             // Кнопка «вниз» + замочек (TG-style): видна при прокрутке вверх ИЛИ
             // когда есть непрочитанные в этом чате (бейдж).
             if (_showScrollDown || _unreadInChat > 0)
@@ -1643,10 +1673,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           IconButton(
                             visualDensity: VisualDensity.compact,
                             icon: Icon(
-                              Icons.emoji_emotions_outlined,
-                              color: GE.sub,
+                              _emojiOpen
+                                  ? Icons.keyboard_outlined
+                                  : Icons.emoji_emotions_outlined,
+                              color: _emojiOpen ? GE.primary : GE.sub,
                             ),
-                            onPressed: _openEmojiPicker,
+                            onPressed: _toggleEmoji,
                           ),
                           IconButton(
                             visualDensity: VisualDensity.compact,
@@ -1666,6 +1698,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           style: TextStyle(color: GE.text, fontSize: 15),
                           cursorColor: GE.primary,
                           textInputAction: TextInputAction.newline,
+                          onTap: () {
+                            // Тап по полю → клавиатура вместо эмодзи-панели.
+                            if (_emojiOpen) setState(() => _emojiOpen = false);
+                          },
                           onChanged: (_) => setState(() {}),
                           decoration: InputDecoration(
                             hintText: 'Сообщение',

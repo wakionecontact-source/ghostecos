@@ -107,8 +107,8 @@ class _EmojiPickerState extends State<EmojiPicker> {
   @override
   Widget build(BuildContext context) {
     final shown = _shown;
+    // Высоту задаёт родитель (инлайн-панель в чате — Positioned height).
     return Container(
-      height: 330,
       decoration: BoxDecoration(
         color: GE.bgDeep.withValues(alpha: 0.98),
         border: Border(top: BorderSide(color: GE.glassBorder)),
