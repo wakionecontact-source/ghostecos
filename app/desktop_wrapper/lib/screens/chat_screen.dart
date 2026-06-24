@@ -67,6 +67,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   int _lastMsgCount = 0; // для детекта новых соо в билдере
   int _arrowStage = 0; // 2-stage тап стрелки: 0=центр на линию, 1=в самый низ
   bool _pinnedBottom = true; // юзер у дна → держим прилеплено к низу
+  double _lastMaxExtent = 0; // детект reflow (дозагрузка контента двигает низ)
 
   // Линия «Новое» плавно исчезает при ЛЮБОМ действии юзера (тап/скролл/отправка).
   void _clearNewLine() {
@@ -972,6 +973,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     _pinnedBottom = true;
                                   }
                                 }
+                                _lastMaxExtent =
+                                    _scrollCtrl.position.maxScrollExtent;
                                 return;
                               }
                               final grew = msgs.length > _lastMsgCount;
@@ -981,31 +984,39 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                         .where((m) => !m.fromMe)
                                         .toList()
                                   : const <StoredMessage>[];
-                              if (_pinnedBottom) {
-                                // Держим у дна: дозагрузка контента доводит до
-                                // САМОГО низа (jump), новые соо — следуем
-                                // (animate). Свою отправку держит _send+замочек.
+                              final max = _scrollCtrl.position.maxScrollExtent;
+                              final dragging =
+                                  _scrollCtrl.position.userScrollDirection !=
+                                  ScrollDirection.idle;
+                              final reflowed = max > _lastMaxExtent + 1;
+                              // Держим у дна ТОЛЬКО когда прилеплен, юзер НЕ тянет
+                              // сам, и есть реальная причина (новые соо / reflow).
+                              // Иначе jumpTo на каждую перерисовку клинил скролл
+                              // ВВЕРХ (юзер не мог листать историю).
+                              if (_pinnedBottom &&
+                                  !dragging &&
+                                  (grew || reflowed)) {
                                 _scrollToBottom(grew);
-                                if (incoming.isNotEmpty) {
-                                  // Входящие пришли пока юзер У ДНА (видит их) →
-                                  // в список бейдж НЕ копим (markPeerSeen), но
-                                  // линию «Новое» над новым ВСЁ РАВНО показываем
-                                  // (уйдёт fade-ом при любом действии).
+                              }
+                              if (incoming.isNotEmpty) {
+                                if (_pinnedBottom) {
+                                  // У дна — бейдж НЕ копим (markPeerSeen), но линию
+                                  // «Новое» показываем (уйдёт fade при действии).
                                   ChatRepo.instance.markPeerSeen(widget.peer);
                                   setState(() {
                                     _newLineSid ??= incoming.first.sid;
                                     _newLineOpacity = 1.0;
                                   });
+                                } else {
+                                  // Пролистан вверх → бейдж + ОДНА линия «Новое».
+                                  setState(() {
+                                    _newLineSid ??= incoming.first.sid;
+                                    _newLineOpacity = 1.0;
+                                    _unreadInChat += incoming.length;
+                                  });
                                 }
-                              } else if (incoming.isNotEmpty) {
-                                // Пролистан вверх → бейдж + ОДНА линия «Новое»
-                                // (ставим только если её ещё нет — накапливается).
-                                setState(() {
-                                  _newLineSid ??= incoming.first.sid;
-                                  _newLineOpacity = 1.0;
-                                  _unreadInChat += incoming.length;
-                                });
                               }
+                              _lastMaxExtent = max;
                               _lastMsgCount = msgs.length;
                             });
                             return ListView.builder(
