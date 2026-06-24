@@ -601,23 +601,14 @@ class ChatRepo {
     required String toUsername,
     required String text,
     required Map<String, dynamic> keys,
+    required int tempSid,
+    required String tmpKey,
     int? replyTo,
     String? replyPreview,
   }) async {
+    // Оптимистичный пузырь уже создан в sendDmText (мгновенно). Здесь только
+    // шифрование/отправка и промоут temp → клиентский v2 sid.
     final sid = DateTime.now().microsecondsSinceEpoch;
-    final optimistic = StoredMessage(
-      sid: sid,
-      peer: toUsername,
-      fromMe: true,
-      text: text,
-      createdAt: DateTime.now().toUtc().toIso8601String(),
-      pending: true,
-      replyTo: replyTo,
-      replyPreview: replyPreview,
-    );
-    await _db.upsertMessage(optimistic);
-    await _refreshMessages(toUsername);
-    await _bumpDialog(toUsername, lastText: text, fromMe: true);
     try {
       final payload = jsonEncode({
         'v': 2,
@@ -648,6 +639,13 @@ class ChatRepo {
         'to_username': toUsername,
         'envelopes': envelopes,
       });
+      // Промоут оптимистичного пузыря temp → клиентский v2 sid + delivered.
+      await _db.promoteOptimistic(
+        peer: toUsername,
+        tempSid: tmpKey,
+        realSid: sid,
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+      );
       await _db.updateMessageFlags(toUsername, sid, {
         'pending': 0,
         'delivered': 1,
@@ -655,6 +653,8 @@ class ChatRepo {
       await _refreshMessages(toUsername);
     } catch (e) {
       if (kDebugMode) print('[sendDmTextV2] $e');
+      await _db.updateMessageFlags(toUsername, tempSid, {'pending': 0});
+      await _refreshMessages(toUsername);
       rethrow;
     }
   }
@@ -1280,32 +1280,39 @@ class ChatRepo {
   }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
-    // v2 (Signal-style): если у пира есть identity+device — шлём sealed по v2.
+    // Оптимистичный пузырь СРАЗУ (до сетевых проверок v2/ключей) — иначе
+    // сообщение появляется только после round-trip (юзер видит пустой чат).
+    final tempSid = -DateTime.now().microsecondsSinceEpoch;
+    final tmpKey = 'tmp-$tempSid';
+    await _db.upsertMessage(
+      StoredMessage(
+        sid: tempSid,
+        peer: toUsername,
+        fromMe: true,
+        text: trimmed,
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+        pending: true,
+        tempSid: tmpKey,
+        replyTo: replyTo,
+        replyPreview: replyPreview,
+      ),
+    );
+    await _refreshMessages(toUsername);
+    await _bumpDialog(toUsername, lastText: trimmed, fromMe: true);
+
+    // v2 (Signal-style) если у пира есть identity+device, иначе v1 fanout.
     final v2keys = await getPeerV2Keys(toUsername);
     if (v2keys != null && CryptoV2.instance.ready) {
       return _sendDmTextV2(
         toUsername: toUsername,
         text: trimmed,
         keys: v2keys,
+        tempSid: tempSid,
+        tmpKey: tmpKey,
         replyTo: replyTo,
         replyPreview: replyPreview,
       );
     }
-    final tempSid = -DateTime.now().microsecondsSinceEpoch;
-    final optimistic = StoredMessage(
-      sid: tempSid,
-      peer: toUsername,
-      fromMe: true,
-      text: trimmed,
-      createdAt: DateTime.now().toUtc().toIso8601String(),
-      pending: true,
-      tempSid: 'tmp-$tempSid',
-      replyTo: replyTo,
-      replyPreview: replyPreview,
-    );
-    await _db.upsertMessage(optimistic);
-    await _refreshMessages(toUsername);
-    await _bumpDialog(toUsername, lastText: trimmed, fromMe: true);
 
     try {
       // TDA-4 fanout: шифруем под все pubkey'и пира (multi-device).

@@ -975,7 +975,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   key: _composerKey,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (_replyTo != null || _editing != null) _replyEditBar(),
+                    // reply/edit-превью теперь ВНУТРИ _composer() (единый блок).
                     _composer(),
                   ],
                 ),
@@ -996,50 +996,73 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Widget _scrollDownButton() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Замочек: закрыт = не дёргать скролл при отправке своего сообщения.
-        GestureDetector(
-          onTap: () => setState(() => _scrollLock = !_scrollLock),
-          child: Container(
-            margin: const EdgeInsets.only(bottom: 8),
-            padding: const EdgeInsets.all(7),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _scrollLock
-                  ? GE.primary
-                  : GE.bgDeep.withValues(alpha: 0.92),
-              border: Border.all(color: GE.glassBorder),
-            ),
-            child: Icon(
-              _scrollLock ? Icons.lock : Icons.lock_open,
-              size: 15,
-              color: _scrollLock ? Colors.white : GE.sub,
-            ),
+    // Единый «жидкое стекло» сегмент: замочек сверху + стрелка снизу, склеены
+    // и разделены тонкой 1px-линией (не два отдельных кружка). backdrop-blur.
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(22),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+        child: Container(
+          width: 44,
+          decoration: BoxDecoration(
+            color: GE.bgDeep.withValues(alpha: 0.55),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: GE.glassBorder),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.30),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
           ),
-        ),
-        // Стрелка вниз → плавный скролл к низу.
-        GestureDetector(
-          onTap: () => _scrollToBottom(true),
-          child: Container(
-            padding: const EdgeInsets.all(9),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: GE.bgDeep.withValues(alpha: 0.95),
-              border: Border.all(color: GE.glassBorder),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.3),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Замочек: закрыт = отправка своего сообщения НЕ дёргает скролл.
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => setState(() => _scrollLock = !_scrollLock),
+                child: Container(
+                  width: 44,
+                  height: 40,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: _scrollLock
+                        ? GE.primary.withValues(alpha: 0.85)
+                        : Colors.transparent,
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(22),
+                    ),
+                  ),
+                  child: Icon(
+                    _scrollLock ? Icons.lock : Icons.lock_open,
+                    size: 16,
+                    color: _scrollLock ? Colors.white : GE.sub,
+                  ),
                 ),
-              ],
-            ),
-            child: Icon(Icons.keyboard_arrow_down, size: 26, color: GE.text),
+              ),
+              // 1px-разделитель между замочком и стрелкой.
+              Container(height: 1, width: 44, color: GE.glassBorder),
+              // Стрелка вниз → плавный скролл к низу.
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _scrollToBottom(true),
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  alignment: Alignment.center,
+                  child: Icon(
+                    Icons.keyboard_arrow_down,
+                    size: 26,
+                    color: GE.text,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
-      ],
+      ),
     );
   }
 
@@ -1089,13 +1112,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Widget _replyEditBar() {
     final m = _editing ?? _replyTo;
     final isEdit = _editing != null;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: GlassCard(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        radius: GE.radiusMd,
-        child: Row(
-          children: [
+    // Внутри стекла композера: без своей карточки, снизу — 1px-разделитель,
+    // чтобы reply-превью и поле ввода читались как единый блок.
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 6, 4, 8),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: GE.glassBorder, width: 1)),
+      ),
+      child: Row(
+        children: [
             Icon(
               isEdit ? Icons.edit : Icons.reply,
               size: 16,
@@ -1137,7 +1162,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ),
           ],
         ),
-      ),
     );
   }
 
@@ -1186,7 +1210,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               stops: [0.0, 0.6, 1.0],
             ),
           ),
-          child: Padding(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Reply/edit-превью ВНУТРИ стекла композера → единый блок,
+              // разделитель — тонкая 1px-линия (см. _replyEditBar).
+              if (_replyTo != null || _editing != null) _replyEditBar(),
+              Padding(
             padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -1283,6 +1313,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 ),
               ],
             ),
+          ),
+            ],
           ),
         ),
       ),
