@@ -1157,9 +1157,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               onPointerUp: (_) => _endDragSelect(),
                               onPointerCancel: (_) => _endDragSelect(),
                               child: ListView.builder(
-                              physics: _dragSelecting
-                                  ? const NeverScrollableScrollPhysics()
-                                  : null,
+                              // physics НЕ переключаем на лету: пересборка
+                              // Scrollable посреди long-press сбрасывала жест.
+                              // Скролл и так заблокирован (long-press выиграл арену).
                               controller: _scrollCtrl,
                               padding: EdgeInsets.fromLTRB(
                                 12,
