@@ -9,6 +9,9 @@ import '../services/chat_repo.dart';
 import '../services/theme_service.dart';
 import '../widgets/glass.dart';
 import 'devices_screen.dart';
+import 'support_screen.dart';
+import 'saved_screen.dart';
+import 'lan_scan_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -115,13 +118,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 20),
+          _sectionTitle('Ещё'),
+          GlassCard(
+            child: Column(
+              children: [
+                _tile(Icons.bookmark_outline, 'Избранное',
+                    () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => const SavedScreen(),
+                        )),
+                    sub: 'Личные заметки, хранятся только на устройстве'),
+                _tile(Icons.wifi_find, 'Чаты по сети (LAN)',
+                    () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => const LanScanScreen(),
+                        )),
+                    sub: 'Общение по локальной сети без интернета (скоро)'),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
           _sectionTitle('О приложении'),
           GlassCard(
             child: Column(
               children: [
                 _tile(Icons.info_outline, 'Ghost · v0.2.0', () {}),
                 _tile(Icons.code, 'Открытый исходник на GitHub', () {}),
-                _tile(Icons.help_outline, 'Помощь', () {}),
+                _tile(
+                  Icons.help_outline,
+                  'Помощь',
+                  () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const SupportScreen(),
+                  )),
+                ),
               ],
             ),
           ),

@@ -19,6 +19,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:open_filex/open_filex.dart';
 import '../theme.dart';
+import '../widgets/emoji_picker.dart';
 import '../mesh_background.dart';
 import '../services/chat_repo.dart';
 import '../services/db_service.dart';
@@ -433,6 +434,30 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  // Эмодзи-пикер (категории + поиск). Лист остаётся открытым — можно набрать
+  // несколько подряд; вставляем в позицию курсора.
+  void _openEmojiPicker() {
+    FocusScope.of(context).unfocus();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => EmojiPicker(
+        onPick: (e) {
+          final text = _inputCtrl.text;
+          final sel = _inputCtrl.selection;
+          final start = sel.start < 0 ? text.length : sel.start;
+          final end = sel.end < 0 ? text.length : sel.end;
+          final next = text.replaceRange(start, end, e);
+          _inputCtrl.value = TextEditingValue(
+            text: next,
+            selection: TextSelection.collapsed(offset: start + e.length),
+          );
+          setState(() {});
+        },
+      ),
     );
   }
 
@@ -1439,9 +1464,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         icon: Icon(Icons.delete, color: GE.red),
                         onPressed: () => _stopAndSendRecording(cancel: true),
                       )
-                    : IconButton(
-                        icon: Icon(Icons.attach_file, color: GE.sub),
-                        onPressed: _sending ? null : _openAttachSheet,
+                    : Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            icon: Icon(
+                              Icons.emoji_emotions_outlined,
+                              color: GE.sub,
+                            ),
+                            onPressed: _openEmojiPicker,
+                          ),
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            icon: Icon(Icons.attach_file, color: GE.sub),
+                            onPressed: _sending ? null : _openAttachSheet,
+                          ),
+                        ],
                       ),
                 // Середина: при записи — таймер+живая вейвформа, иначе поле ввода.
                 Expanded(
