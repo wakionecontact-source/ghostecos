@@ -2347,13 +2347,14 @@ class _Bubble extends StatelessWidget {
       return const Icon(Icons.access_time, size: 11, color: Colors.white70);
     }
     if (m.read) {
-      return Icon(Icons.done_all, size: 14, color: GE.blue);
+      return Icon(Icons.done_all, size: 14, color: GE.blue); // 2 cyan — прочитано
     }
     if (m.delivered) {
-      return const Icon(Icons.done_all, size: 14, color: Colors.white70);
+      return const Icon(Icons.done, size: 13, color: Colors.white70); // 1 — доставлено
     }
-    // Отправлено (на сервере, ещё не доставлено) — одна галочка (не «дискета»).
-    return const Icon(Icons.check, size: 13, color: Colors.white54);
+    // На сервере, но получатель ещё не подтвердил доставку — дискета
+    // (промежуточное состояние, по просьбе waki вернули 4-м статусом).
+    return const Icon(Icons.save_outlined, size: 12, color: Colors.white54);
   }
 
   String _formatTime(dynamic at) {
