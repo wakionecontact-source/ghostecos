@@ -701,22 +701,53 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: GlassCard(
-            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
             radius: GE.radiusLg,
-            child: Wrap(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _attachTile(
-                  Icons.camera_alt,
-                  'Камера',
-                  () => _pickAndSendImage(ImageSource.camera),
+                Padding(
+                  padding: const EdgeInsets.only(left: 6, bottom: 8),
+                  child: Text(
+                    'Прикрепить',
+                    style: TextStyle(
+                      color: GE.sub,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
                 ),
-                _attachTile(
-                  Icons.photo_library,
-                  'Галерея',
-                  () => _pickAndSendImage(ImageSource.gallery),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _attachTile(
+                      Icons.photo_library_rounded,
+                      'Галерея',
+                      const Color(0xFF7C6FF0),
+                      () => _pickAndSendImage(ImageSource.gallery),
+                    ),
+                    _attachTile(
+                      Icons.camera_alt_rounded,
+                      'Камера',
+                      const Color(0xFFEF5DA8),
+                      () => _pickAndSendImage(ImageSource.camera),
+                    ),
+                    _attachTile(
+                      Icons.videocam_rounded,
+                      'Видео',
+                      const Color(0xFFF2994A),
+                      _pickAndSendVideo,
+                    ),
+                    _attachTile(
+                      Icons.insert_drive_file_rounded,
+                      'Файл',
+                      const Color(0xFF4A90E2),
+                      _pickAndSendFile,
+                    ),
+                  ],
                 ),
-                _attachTile(Icons.videocam, 'Видео', _pickAndSendVideo),
-                _attachTile(Icons.insert_drive_file, 'Файл', _pickAndSendFile),
               ],
             ),
           ),
@@ -725,29 +756,50 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
-  Widget _attachTile(IconData icon, String label, VoidCallback onTap) {
-    return SizedBox(
-      width: 96,
-      height: 96,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(GE.radiusMd),
-          onTap: onTap,
+  Widget _attachTile(
+    IconData icon,
+    String label,
+    Color color,
+    VoidCallback onTap,
+  ) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(GE.radiusMd),
+        onTap: onTap, // pick-методы сами закрывают лист (Navigator.maybePop)
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 44,
-                height: 44,
+                width: 56,
+                height: 56,
                 decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(colors: [GE.primary2, GE.primary]),
+                  borderRadius: BorderRadius.circular(18),
+                  gradient: LinearGradient(
+                    colors: [
+                      Color.alphaBlend(Colors.white.withValues(alpha: 0.12), color),
+                      color,
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: color.withValues(alpha: 0.35),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
-                child: Icon(icon, color: Colors.white, size: 20),
+                child: Icon(icon, color: Colors.white, size: 26),
               ),
-              const SizedBox(height: 6),
-              Text(label, style: TextStyle(color: GE.text, fontSize: 12)),
+              const SizedBox(height: 7),
+              Text(
+                label,
+                style: TextStyle(color: GE.text, fontSize: 12),
+              ),
             ],
           ),
         ),
