@@ -182,6 +182,25 @@ class CryptoV2 {
       signWithIdentity(utf8.encode('ghostchat-v2-identity-claim'));
   Future<Uint8List> signedPrekeySig() => signWithIdentity(_devPub!);
 
+  /// SECURITY: проверить, что signed_prekey_sig — подпись identity над
+  /// device_pub. Защита от подмены device_pub злым сервером (MITM). Зеркало
+  /// web `nacl.sign.detached.verify(device_pub, sig, identity_pub)`.
+  Future<bool> verifySignedPrekey({
+    required Uint8List identityPub,
+    required Uint8List devicePub,
+    required Uint8List signature,
+  }) async {
+    try {
+      final sig = Signature(
+        signature,
+        publicKey: SimplePublicKey(identityPub, type: KeyPairType.ed25519),
+      );
+      return await _ed.verify(devicePub, signature: sig);
+    } catch (_) {
+      return false;
+    }
+  }
+
   // ── Жизненный цикл ключей ───────────────────────────────────────
   /// Загрузить v2-ключи; при первом запуске — сгенерировать (mnemonic +
   /// identity + device) и сохранить. Публикация на сервер — отдельно (в репо).

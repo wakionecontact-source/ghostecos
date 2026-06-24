@@ -534,12 +534,40 @@ class ChatRepo {
     try {
       final r = await _api.chatGet('/v2/keys/$username');
       final m = Map<String, dynamic>.from(r as Map);
+      final idPubB64 = m['identity_pub'] as String?;
       final devs = (m['devices'] as List?) ?? const [];
-      if (m['identity_pub'] != null && devs.isNotEmpty) {
-        _v2KeysCache[username] = m;
-        return m;
+      if (idPubB64 != null && devs.isNotEmpty) {
+        final idPub = Uint8List.fromList(base64.decode(idPubB64));
+        // SECURITY: верифицируем signed_prekey_sig КАЖДОГО device через
+        // identity_pub. Без этого злой сервер подменит device_pub и прочитает
+        // v2-трафик (MITM). Используем только подтверждённые устройства.
+        final verified = <Map<String, dynamic>>[];
+        for (final d in devs) {
+          final dm = Map<String, dynamic>.from(d as Map);
+          final dPub = dm['device_pub'] as String?;
+          final sig = dm['signed_prekey_sig'] as String?;
+          if (dPub == null || sig == null) continue;
+          final ok = await CryptoV2.instance.verifySignedPrekey(
+            identityPub: idPub,
+            devicePub: Uint8List.fromList(base64.decode(dPub)),
+            signature: Uint8List.fromList(base64.decode(sig)),
+          );
+          if (ok) {
+            verified.add(dm);
+          } else if (kDebugMode) {
+            print(
+              '[getPeerV2Keys] device ${dm['device_id']} sig INVALID — '
+              'пропуск (возможна подмена сервером)',
+            );
+          }
+        }
+        if (verified.isNotEmpty) {
+          final out = {'identity_pub': idPubB64, 'devices': verified};
+          _v2KeysCache[username] = out;
+          return out;
+        }
       }
-      _v2KeysCache[username] = {}; // нет v2 — кэшируем, чтобы не дёргать сеть
+      _v2KeysCache[username] = {}; // нет доверенных v2-устройств → fallback v1
     } catch (e) {
       if (kDebugMode) print('[getPeerV2Keys] $e');
     }
@@ -1883,7 +1911,10 @@ class ChatRepo {
       lastText: lastText,
       lastAt: lastAt ?? DateTime.now().toUtc().toIso8601String(),
       lastFromMe: fromMe,
-      unread: incUnread ? (existing?.unread ?? 0) + 1 : (existing?.unread ?? 0),
+      // Считаем непрочитанные ИЗ сообщений (источник правды) — счётчик-инкремент
+      // дрейфовал (двойные доставки/мультидевайс → badge врал). incUnread больше
+      // не нужен для подсчёта, оставлен для совместимости вызовов.
+      unread: await _db.unreadCount(username),
     );
     await _db.upsertDialog(dlg);
     dialogsNotifier.value = await _db.getDialogs();

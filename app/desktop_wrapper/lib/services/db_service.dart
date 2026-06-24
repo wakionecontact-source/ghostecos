@@ -389,6 +389,18 @@ class DbService {
         where: 'username = ?', whereArgs: [username]);
   }
 
+  /// Реальное число непрочитанных входящих для пира — источник правды для
+  /// badge (вместо дрейфующего счётчика-инкремента).
+  Future<int> unreadCount(String username) async {
+    final r = await _safeDb.query(
+      'messages',
+      columns: ['sid'],
+      where: 'peer = ? AND from_me = 0 AND read = 0 AND deleted = 0',
+      whereArgs: [username],
+    );
+    return r.length;
+  }
+
   // ─── PeerKeys (TOFU) ─────────────────────────────────────────────────
   Future<String?> getPinnedPub(String username) async {
     final r = await _safeDb.query('peerkeys',
