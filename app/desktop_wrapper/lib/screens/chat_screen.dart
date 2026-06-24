@@ -2327,6 +2327,11 @@ class _MediaPartState extends State<_MediaPart> {
       widget.m.filePayload?['voice'] == 1;
   bool get _isVideo =>
       (widget.m.filePayload?['mime'] as String?)?.startsWith('video/') ?? false;
+  // Аудио-ФАЙЛ (mp3 и т.п.), не голосовое — свой плеер как у voice + имя/размер.
+  bool get _isAudioFile =>
+      !_isVoice &&
+      ((widget.m.filePayload?['mime'] as String?)?.startsWith('audio/') ??
+          false);
 
   @override
   void initState() {
@@ -2361,6 +2366,7 @@ class _MediaPartState extends State<_MediaPart> {
   Widget build(BuildContext context) {
     if (_isImage) return _imageView();
     if (_isVoice) return _voiceView();
+    if (_isAudioFile) return _audioFileView();
     if (_isVideo) return _videoView();
     return _fileView();
   }
@@ -2448,6 +2454,64 @@ class _MediaPartState extends State<_MediaPart> {
     );
   }
 
+  // Аудио-файл (mp3 и т.п.): хедер «имя · размер» + плеер как у голосового.
+  Widget _audioFileView() {
+    final fp = widget.m.filePayload!;
+    final name = fp['file_name'] as String? ?? 'аудио';
+    final size = (fp['size'] as int?) ?? 0;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 270),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(left: 4, top: 2, bottom: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.audiotrack,
+                  size: 15,
+                  color: widget.textColor.withValues(alpha: 0.75),
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: widget.textColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  _humanSize(size),
+                  style: TextStyle(
+                    color: widget.textColor.withValues(alpha: 0.55),
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _VoiceTile(
+            durationSec: 0,
+            bytes: _bytes,
+            loading: _loading,
+            onLoad: _load,
+            textColor: widget.textColor,
+            waveform: const <double>[],
+          ),
+        ],
+      ),
+    );
+  }
+
   // Спиннер с процентами загрузки медиа (как в TG) — прогресс по tempSid.
   Widget _uploadProgressIndicator() {
     return ValueListenableBuilder<double>(
@@ -2455,6 +2519,9 @@ class _MediaPartState extends State<_MediaPart> {
         widget.m.tempSid ?? '',
       ),
       builder: (_, p, __) {
+        // Загрузка завершена (100%), но ещё ждём ack сервера → «Обработка…»
+        // (раньше залипало на «Отправка 100%»).
+        final done = p >= 1.0;
         final pct = (p * 100).clamp(0, 100).round();
         return Column(
           mainAxisSize: MainAxisSize.min,
@@ -2466,24 +2533,28 @@ class _MediaPartState extends State<_MediaPart> {
                 alignment: Alignment.center,
                 children: [
                   CircularProgressIndicator(
-                    value: p > 0 ? p : null,
+                    value: done ? null : (p > 0 ? p : null),
                     strokeWidth: 3,
                     color: GE.primary,
                     backgroundColor: Colors.white24,
                   ),
-                  Text(
-                    '$pct',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
+                  if (!done)
+                    Text(
+                      '$pct',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),
             const SizedBox(height: 6),
-            Text('Отправка $pct%', style: TextStyle(color: GE.sub, fontSize: 11)),
+            Text(
+              done ? 'Обработка…' : 'Отправка $pct%',
+              style: TextStyle(color: GE.sub, fontSize: 11),
+            ),
           ],
         );
       },
