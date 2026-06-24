@@ -108,8 +108,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void _clearSel() => setState(() => _selSids.clear());
 
   // ── Drag-select: зажал и ведёшь палец вверх/вниз → выделяется ВСЁ на пути ──
+  // Long-press взводит флаг, а сами move ловит Listener списка (сырые pointer-
+  // события, не конкурируют в арене жестов); на время выделения скролл выключен.
   int? _dragAnchorSid;
   Set<int> _dragBaseSel = {};
+  bool _dragSelecting = false;
   final Map<int, GlobalKey> _bubbleKeys = {};
 
   void _startDragSelect(StoredMessage m) {
@@ -117,7 +120,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     HapticFeedback.selectionClick();
     _dragAnchorSid = m.sid;
     _dragBaseSel = Set<int>.from(_selSids);
-    setState(() => _selSids.add(m.sid));
+    setState(() {
+      _selSids.add(m.sid);
+      _dragSelecting = true;
+    });
   }
 
   void _updateDragSelect(Offset globalPos) {
@@ -143,7 +149,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _dragEdgeAutoscroll(globalPos.dy); // у краёв — подкручиваем ленту
   }
 
-  void _endDragSelect() => _dragAnchorSid = null;
+  void _endDragSelect() {
+    _dragAnchorSid = null;
+    if (_dragSelecting && mounted) setState(() => _dragSelecting = false);
+  }
 
   // Какое сообщение под пальцем (по глобальной Y) — перебор видимых пузырей.
   int? _sidAtGlobalY(double gy) {
@@ -1126,7 +1135,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               _lastMaxExtent = max;
                               _lastMsgCount = msgs.length;
                             });
-                            return ListView.builder(
+                            return Listener(
+                              // Сырые pointer-move во время drag-select — надёжно,
+                              // мимо арены жестов. На время выделения скролл off.
+                              onPointerMove: (e) {
+                                if (_dragSelecting) {
+                                  _updateDragSelect(e.position);
+                                }
+                              },
+                              onPointerUp: (_) => _endDragSelect(),
+                              onPointerCancel: (_) => _endDragSelect(),
+                              child: ListView.builder(
+                              physics: _dragSelecting
+                                  ? const NeverScrollableScrollPhysics()
+                                  : null,
                               controller: _scrollCtrl,
                               padding: EdgeInsets.fromLTRB(
                                 12,
@@ -1171,12 +1193,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                       _openBubbleMenu(m, d.globalPosition);
                                     }
                                   },
-                                  // Зажатие → начать выбор + drag-select:
-                                  // ведёшь палец вверх/вниз → выделяется ВСЁ на пути.
+                                  // Зажатие → начать выбор + drag-select. Само
+                                  // ведение ловит Listener списка (надёжнее, чем
+                                  // onLongPressMoveUpdate в скролл-листе).
                                   onLongPressStart: (_) => _startDragSelect(m),
-                                  onLongPressMoveUpdate: (d) =>
-                                      _updateDragSelect(d.globalPosition),
-                                  onLongPressEnd: (_) => _endDragSelect(),
                                   // В режиме выбора гасим внутренние тапы медиа.
                                   child: AbsorbPointer(
                                     absorbing: _selectionMode,
@@ -1243,6 +1263,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   ],
                                 );
                               },
+                            ),
                             );
                           },
                         ),
