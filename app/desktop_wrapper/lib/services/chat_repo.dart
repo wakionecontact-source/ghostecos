@@ -193,6 +193,16 @@ class ChatRepo {
     _initialized = false;
   }
 
+  /// Зарегистрировать FCM-токен на сервере (push-уведомления). Best-effort.
+  /// Сервер шлёт на токен generic-push (без контента) → App дёргает fetchPending.
+  Future<void> registerFcmToken(String token) async {
+    try {
+      await _api.chatPost('/fcm/register', {'token': token});
+    } catch (e) {
+      if (kDebugMode) print('[registerFcmToken] $e');
+    }
+  }
+
   // ─── Управление ключами (для UI Settings) ────────────────────────────
   /// Принудительно перезалить мой публичный ключ на сервер. Полезно когда
   /// автоматическая синхронизация не помогла и пиры пишут «не удалось

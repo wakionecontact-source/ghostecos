@@ -15,6 +15,7 @@ import 'mesh_background.dart';
 import 'services/auth_service.dart';
 import 'services/theme_service.dart';
 import 'services/notification_service.dart';
+import 'services/fcm_service.dart';
 import 'screens/welcome_screen.dart';
 import 'screens/auth_screen.dart';
 import 'screens/main_shell.dart';
@@ -34,6 +35,8 @@ void main() async {
   // Уведомления о новых сообщениях (пока приложение живо). Defensive — не
   // блокирует старт, если плагин недоступен.
   await NotificationService.instance.init();
+  // FCM (надёжный wake через Google Play Services, MIUI не блокирует).
+  await FcmService.instance.init();
   // Прозрачные status/nav bar — mesh должен просвечивать через них (Android 15+
   // и так включает edge-to-edge, но без этого system bars будут с дефолтным
   // тёмным фоном поверх mesh).
