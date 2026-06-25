@@ -102,6 +102,8 @@ class ChatRepo {
 
   /// Подписки WS — для cancel при logout.
   final List<dynamic> _subs = [];
+  StreamSubscription<bool>? _wsConnSub; // реконнект WS → догнать pending
+  bool _wsSkipFirstConn = true; // первый connect не дублируем (init фетчит сам)
 
   String? _myUsername;
 
@@ -152,6 +154,20 @@ class ChatRepo {
       _ws.on('chat.v2.new', _onChatV2New), // ← real-time v2
     ]);
 
+    // На КАЖДЫЙ реконнект WS догоняем pending: сообщения, пришедшие пока WS был
+    // мёртв (фон/Doze/обрыв сети), иначе теряются → нет уведомления. Первый
+    // connect пропускаем — init ниже уже фетчит. Идемпотентно (dedup по sid).
+    _wsConnSub = _ws.onConnectionChange.listen((connected) {
+      if (!connected) return;
+      if (_wsSkipFirstConn) {
+        _wsSkipFirstConn = false;
+        return;
+      }
+      unawaited(fetchPending());
+      unawaited(fetchPendingSealed());
+      unawaited(fetchPendingV2());
+    });
+
     // Догнать накопленное в фоне — оба канала.
     unawaited(fetchPending());
     unawaited(fetchPendingSealed());
@@ -168,6 +184,9 @@ class ChatRepo {
       } catch (_) {}
     }
     _subs.clear();
+    _wsConnSub?.cancel();
+    _wsConnSub = null;
+    _wsSkipFirstConn = true;
     _peerPubCache.clear();
     _msgsByPeer.clear();
     dialogsNotifier.value = [];

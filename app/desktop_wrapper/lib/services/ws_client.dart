@@ -147,7 +147,9 @@ class WsClient {
     if (_authFail) return;
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(Duration(milliseconds: _reconnectDelay), connect);
-    _reconnectDelay = (_reconnectDelay * 2).clamp(1000, 30000);
+    // Потолок 8с (был 30с): быстрее восстанавливаемся в фоне → меньше окно, в
+    // которое входящие пропускаются (на реконнекте ChatRepo догоняет pending).
+    _reconnectDelay = (_reconnectDelay * 2).clamp(1000, 8000);
   }
 
   /// Подписаться на событие по типу. Возвращает _Subscription с .cancel().
