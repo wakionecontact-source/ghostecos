@@ -37,7 +37,8 @@ class NotificationService {
 
   Future<void> init() async {
     try {
-      const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+      // Белая монохромная иконка (не @mipmap — тот даёт «белый квадрат»).
+      const android = AndroidInitializationSettings('ic_notification');
       const settings = InitializationSettings(android: android);
       await _plugin.initialize(
         settings,
@@ -97,6 +98,7 @@ class NotificationService {
           importance: Importance.high,
           priority: Priority.high,
           ticker: title,
+          icon: 'ic_notification', // белый призрак вместо дефолтного квадрата
         ),
       );
       await _plugin.show(_idSeq++, title, body, details, payload: payload);

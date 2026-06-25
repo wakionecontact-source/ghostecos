@@ -74,8 +74,11 @@ class ForegroundService {
       }
       if (await FlutterForegroundTask.isRunningService) return;
       await FlutterForegroundTask.startService(
-        notificationTitle: 'GhostChat — в сети',
-        notificationText: 'Поддерживаю связь для уведомлений',
+        notificationTitle: 'GhostChat',
+        notificationText: 'В сети',
+        notificationIcon: const NotificationIcon(
+          metaDataName: 'online.ghost_chat.fg_notification_icon',
+        ),
         callback: ghostForegroundCallback,
       );
     } catch (e) {
