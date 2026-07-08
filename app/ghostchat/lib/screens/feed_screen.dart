@@ -26,6 +26,7 @@ import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/feed_repo.dart';
 import '../widgets/glass.dart';
+import '../widgets/skeleton.dart';
 import 'comments_screen.dart';
 import 'profile_screen.dart';
 
@@ -222,7 +223,7 @@ class _FeedScreenState extends State<FeedScreen> {
       valueListenable: FeedRepo.instance.postsNotifier,
       builder: (_, posts, _) {
         if (_loadingFirst) {
-          return Center(child: CircularProgressIndicator(color: GE.primary));
+          return const SkeletonFeedList();
         }
         if (posts.isEmpty) {
           return ValueListenableBuilder<String?>(

@@ -13,8 +13,10 @@ import '../services/chat_repo.dart';
 import '../services/db_service.dart';
 import '../services/search_service.dart';
 import '../widgets/glass.dart';
+import '../widgets/skeleton.dart';
 import 'chat_screen.dart';
 import 'profile_screen.dart';
+import 'lan_scan_screen.dart';
 
 class ChatListScreen extends StatefulWidget {
   const ChatListScreen({super.key});
@@ -89,7 +91,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
   @override
   Widget build(BuildContext context) {
     if (!_initialized) {
-      return Center(child: CircularProgressIndicator(color: GE.primary));
+      return const SkeletonDialogList();
     }
     return Column(
       children: [
@@ -110,6 +112,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
               const Spacer(),
               // Кнопка «Новый чат» убрана — поиск ниже сам открывает чат по
               // username (если совпадение точное, можно начать переписку).
+              IconButton(
+                icon: Icon(Icons.wifi_tethering_rounded, color: GE.sub),
+                tooltip: 'Устройства поблизости',
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const LanScanScreen()),
+                ),
+              ),
             ],
           ),
         ),

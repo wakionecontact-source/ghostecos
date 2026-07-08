@@ -1,6 +1,6 @@
 // Ghost — единое native приложение. Mesh-фон сквозной + glass-карточки.
 //
-// Архитектура: welcome → auth → main_shell с табами (Чат / Лента / Банк /
+// Архитектура: welcome → permissions → auth → main_shell с табами (Чат /
 // Профиль). Никаких WebView. Cross-platform: Android, iOS, Windows, Linux,
 // macOS из одного кода.
 
@@ -16,8 +16,12 @@ import 'services/theme_service.dart';
 import 'services/notification_service.dart';
 import 'services/fcm_service.dart';
 import 'screens/welcome_screen.dart';
+import 'screens/permissions_screen.dart';
+import 'screens/key_choice_screen.dart';
 import 'screens/auth_screen.dart';
 import 'screens/main_shell.dart';
+import 'widgets/toast_overlay.dart';
+import 'widgets/key_gate.dart';
 
 // Desktop-only imports — на мобиле не подключатся (Platform-guard).
 import 'package:window_manager/window_manager.dart';
@@ -79,7 +83,12 @@ class GhostApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         navigatorKey: NotificationService.navigatorKey,
         theme: GE.theme(),
-        home: const _Root(),
+        // Оверлей внутренних уведомлений (тосты) — поверх всех экранов.
+        builder: (context, child) =>
+            ToastOverlay(child: child ?? const SizedBox.shrink()),
+        // НЕ const — иначе при смене темы home-поддерево не перерисовывается
+        // и тема меняется только внутри настроек, а не во всём приложении.
+        home: _Root(),
       ),
     );
   }
@@ -96,15 +105,16 @@ class _Root extends StatelessWidget {
     // кнопку «домой» (Android 15+ edge-to-edge по умолчанию).
     return Stack(
       children: [
-        // Тёмный лакшери: глубокий фон на весь апп (вместо mesh).
-        const Positioned.fill(
+        // Глубокий фон на весь апп — берёт цвета активной темы (чтобы светлая
+        // «Слоновая кость» не оставалась на тёмном фоне).
+        Positioned.fill(
           child: DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Color(0xFF17122B), Color(0xFF0D0B12)],
-                stops: [0.0, 0.55],
+                colors: [GE.bg, GE.bgDeep],
+                stops: const [0.0, 0.55],
               ),
             ),
           ),
@@ -123,7 +133,7 @@ class _Root extends StatelessWidget {
   }
 }
 
-enum _Stage { loading, welcome, auth, app }
+enum _Stage { loading, welcome, permissions, keychoice, auth, app }
 
 class _Router extends StatefulWidget {
   const _Router();
@@ -143,11 +153,17 @@ class _RouterState extends State<_Router> {
   Future<void> _initStage() async {
     final prefs = await SharedPreferences.getInstance();
     final welcomeDone = prefs.getBool('welcome_done') ?? false;
+    final permsDone = prefs.getBool('permissions_done') ?? false;
+    final keyChoiceDone = prefs.getBool('keychoice_done') ?? false;
     final token = await AuthService.token();
     if (!mounted) return;
     setState(() {
       if (!welcomeDone) {
         _stage = _Stage.welcome;
+      } else if (!permsDone) {
+        _stage = _Stage.permissions;
+      } else if (!keyChoiceDone) {
+        _stage = _Stage.keychoice;
       } else if (token == null || token.isEmpty) {
         _stage = _Stage.auth;
       } else {
@@ -156,25 +172,80 @@ class _RouterState extends State<_Router> {
     });
   }
 
+  /// После экрана выбора ключа: залогинен → app, иначе → auth.
+  Future<void> _afterKeyChoice() async {
+    final t = await AuthService.token();
+    if (!mounted) return;
+    setState(
+      () => _stage = (t != null && t.isNotEmpty) ? _Stage.app : _Stage.auth,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Плавный переход между стадиями онбординга (fade + лёгкий сдвиг).
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 420),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeIn,
+      transitionBuilder: (child, anim) => FadeTransition(
+        opacity: anim,
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, 0.035),
+            end: Offset.zero,
+          ).animate(anim),
+          child: child,
+        ),
+      ),
+      child: _stageView(),
+    );
+  }
+
+  Widget _stageView() {
     switch (_stage) {
       case _Stage.loading:
-        return Scaffold(
-          backgroundColor: Colors.transparent,
-          body: Center(child: CircularProgressIndicator(color: GE.primary)),
+        return KeyedSubtree(
+          key: const ValueKey('loading'),
+          child: Scaffold(
+            backgroundColor: Colors.transparent,
+            body: Center(child: CircularProgressIndicator(color: GE.primary)),
+          ),
         );
       case _Stage.welcome:
-        return WelcomeScreen(
-          onDone: () => setState(() => _stage = _Stage.auth),
+        return KeyedSubtree(
+          key: const ValueKey('welcome'),
+          child: WelcomeScreen(
+            onDone: () => setState(() => _stage = _Stage.permissions),
+          ),
+        );
+      case _Stage.permissions:
+        return KeyedSubtree(
+          key: const ValueKey('permissions'),
+          child: PermissionsScreen(
+            onDone: () => setState(() => _stage = _Stage.keychoice),
+          ),
+        );
+      case _Stage.keychoice:
+        return KeyedSubtree(
+          key: const ValueKey('keychoice'),
+          child: KeyChoiceScreen(onDone: _afterKeyChoice),
         );
       case _Stage.auth:
-        return AuthScreen(
-          onLoggedIn: () => setState(() => _stage = _Stage.app),
+        return KeyedSubtree(
+          key: const ValueKey('auth'),
+          child: AuthScreen(
+            onLoggedIn: () => setState(() => _stage = _Stage.app),
+          ),
         );
       case _Stage.app:
-        return MainShell(
-          onLoggedOut: () => setState(() => _stage = _Stage.auth),
+        return KeyedSubtree(
+          key: const ValueKey('app'),
+          child: KeyGate(
+            child: MainShell(
+              onLoggedOut: () => setState(() => _stage = _Stage.auth),
+            ),
+          ),
         );
     }
   }

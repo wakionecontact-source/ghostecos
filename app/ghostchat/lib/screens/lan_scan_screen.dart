@@ -1,20 +1,27 @@
-// LanScanScreen — «Чаты по сети (LAN)». ПОКА ЗАГЛУШКА.
+// LanScanScreen — «Устройства поблизости» (LAN + Wi-Fi Direct + Bluetooth).
 //
-// Никакого реального сетевого сканирования здесь нет — только UI:
-//   • анимация «радара» (пульсирующие круги + бегущий луч) через
-//     AnimationController + AnimatedBuilder, БЕЗ внешних пакетов;
-//   • пустой список-плейсхолдер «устройства не найдены»;
-//   • поясняющая карточка простым языком — что это за будущая фича;
-//   • кнопка «Обновить» — просто перезапускает анимацию сканирования.
-//
-// Будущая фича: общаться напрямую по локальной сети (один Wi-Fi / точка),
-// без интернета и без сервера.
+// Реальный поиск устройств в локальной сети / рядом (BLE) / Wi-Fi Direct,
+// перенесённый из старого GhostChat (ghostchat_mobile). Пока только список
+// найденных/принятых устройств — открытие чата с ними будет в одном из
+// следующих обновлений.
 
+import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../widgets/glass.dart';
+import '../services/permissions_service.dart';
+import '../core/local/app_logger.dart';
+import '../core/local/lan_settings.dart';
+import '../core/local/local_hub.dart';
+import '../core/local/local_transport.dart';
+import '../core/local/transports/lan_transport.dart';
+import '../core/local/transports/bluetooth_transport.dart';
+import '../core/local/transports/wifi_direct_transport.dart';
 
 class LanScanScreen extends StatefulWidget {
   const LanScanScreen({super.key});
@@ -26,42 +33,156 @@ class _LanScanScreenState extends State<LanScanScreen>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
 
-  // true — идёт «поиск» (крутится радар), false — «поиск завершён, пусто».
-  bool _scanning = true;
+  bool _starting = true;
+  bool _scanning = false;
+  String _status = 'Нажмите, чтобы начать поиск';
+
+  bool _showIp = false;
+  String _myIp = '';
+  bool _wifiConnected = false;
+  bool _btOn = false;
+
+  final List<LocalPeer> _acceptedPeers = [];
+  final Set<String> _seenDeviceIds = {};
+  LocalGroupedRequest? _incomingRequest;
+
+  StreamSubscription? _acceptSub;
+  StreamSubscription? _groupedSub;
+  Timer? _scanTimer;
+  Timer? _ipTimer;
 
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 2),
-    )..repeat();
-    // Через пару секунд «сканирование» завершается — но ничего не находим
-    // (это заглушка). Анимация продолжает мягко пульсировать.
-    _scheduleFinish();
+    _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
+    _bootstrap();
   }
 
-  void _scheduleFinish() {
-    Future.delayed(const Duration(seconds: 3), () {
+  Future<void> _bootstrap() async {
+    await LanSettings().load();
+
+    localHub.registerDefaults([
+      LanTransport(),
+      WifiDirectTransport(),
+      BluetoothTransport(),
+    ]);
+
+    _acceptSub = localHub.onAccept.listen(_onAccepted);
+    _groupedSub = localHub.onGroupedRequest.listen((req) {
       if (!mounted) return;
-      setState(() => _scanning = false);
+      setState(() => _incomingRequest = req);
     });
-  }
 
-  // Кнопка «Обновить» — перезапускаем анимацию и снова «ищем».
-  void _restart() {
-    if (!mounted) return;
-    setState(() => _scanning = true);
-    _ctrl
-      ..reset()
-      ..repeat();
-    _scheduleFinish();
+    await _requestPermissions();
+    await _refreshConnectivity();
+    await localHub.startAll();
+
+    _ipTimer = Timer.periodic(const Duration(seconds: 5), (_) => _refreshConnectivity());
+
+    if (mounted) setState(() => _starting = false);
   }
 
   @override
   void dispose() {
     _ctrl.dispose();
+    _acceptSub?.cancel();
+    _groupedSub?.cancel();
+    _scanTimer?.cancel();
+    _ipTimer?.cancel();
+    localHub.stopAll();
     super.dispose();
+  }
+
+  Future<void> _requestPermissions() async {
+    await ensurePermission(Permission.bluetoothScan);
+    await ensurePermission(Permission.bluetoothConnect);
+    await ensurePermission(Permission.bluetoothAdvertise);
+    await ensurePermission(Permission.nearbyWifiDevices);
+    await ensurePermission(Permission.locationWhenInUse);
+  }
+
+  Future<void> _refreshConnectivity() async {
+    try {
+      final ifaces = await NetworkInterface.list(type: InternetAddressType.IPv4);
+      String ip = '';
+      bool hasWlan = false;
+      for (final iface in ifaces) {
+        if (iface.name.toLowerCase().startsWith('wlan')) {
+          for (final addr in iface.addresses) {
+            if (!addr.isLoopback) { ip = addr.address; hasWlan = true; break; }
+          }
+        }
+      }
+      if (!hasWlan) {
+        for (final iface in ifaces) {
+          for (final addr in iface.addresses) {
+            if (!addr.isLoopback && addr.address.startsWith('192.168.')) {
+              ip = addr.address; hasWlan = true; break;
+            }
+          }
+          if (hasWlan) break;
+        }
+      }
+      if (!mounted) return;
+      setState(() { _myIp = ip; _wifiConnected = hasWlan; });
+    } catch (_) {}
+
+    try {
+      final on = await FlutterBluePlus.adapterState.first == BluetoothAdapterState.on;
+      if (mounted) setState(() => _btOn = on);
+    } catch (_) {
+      if (mounted) setState(() => _btOn = false);
+    }
+  }
+
+  void _onAccepted(LocalPeer peer) {
+    if (_seenDeviceIds.contains(peer.deviceId)) return;
+    _seenDeviceIds.add(peer.deviceId);
+    setState(() {
+      _acceptedPeers.add(peer);
+      _status = '${peer.label} принял(а) запрос';
+    });
+  }
+
+  Future<void> _startScan() async {
+    setState(() {
+      _scanning = true;
+      _acceptedPeers.clear();
+      _seenDeviceIds.clear();
+      _status = 'Ищем устройства поблизости…';
+    });
+    _ctrl.repeat();
+    await localHub.discoverAll();
+
+    var ticks = 0;
+    _scanTimer?.cancel();
+    _scanTimer = Timer.periodic(const Duration(seconds: 3), (t) async {
+      ticks++;
+      if (ticks >= 5) {
+        t.cancel();
+        if (mounted) {
+          setState(() {
+            _scanning = false;
+            _status = _acceptedPeers.isEmpty
+                ? 'Пока никого не нашли'
+                : '${_acceptedPeers.length} устройств рядом';
+          });
+        }
+        return;
+      }
+      await localHub.discoverAll();
+    });
+  }
+
+  Future<void> _respondToRequest(bool accept) async {
+    final req = _incomingRequest;
+    if (req == null) return;
+    setState(() => _incomingRequest = null);
+    if (accept) {
+      await localHub.sendAccept(req.bestPeer);
+    } else {
+      appLog.info('lan', 'Запрос от ${req.deviceId} отклонён');
+    }
   }
 
   @override
@@ -72,50 +193,113 @@ class _LanScanScreenState extends State<LanScanScreen>
   Widget _scaffold(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
-      appBar: GlassAppBar(showBack: true, titleText: 'Чаты по сети'),
+      appBar: GlassAppBar(showBack: true, titleText: 'Устройства поблизости'),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
         children: [
-          const SizedBox(height: 12),
+          if (!_wifiConnected || !_btOn) _warnings(),
+          const SizedBox(height: 8),
+          _ipRow(),
+          const SizedBox(height: 8),
           _radar(),
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
           Text(
-            _scanning ? 'Ищем устройства поблизости…' : 'Пока никого не нашли',
+            _status,
             textAlign: TextAlign.center,
-            style: TextStyle(
-              color: GE.text,
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-            ),
+            style: TextStyle(color: GE.sub, fontSize: 13, height: 1.4),
           ),
-          const SizedBox(height: 6),
-          Text(
-            _scanning
-                ? 'Смотрим, кто рядом в этой же сети Wi-Fi.'
-                : 'Эта функция ещё готовится — реального поиска пока нет.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: GE.sub, fontSize: 12, height: 1.4),
-          ),
-          const SizedBox(height: 22),
-          _emptyList(),
+          const SizedBox(height: 14),
+          _legend(),
           const SizedBox(height: 18),
-          Center(
-            child: GlassButton(
-              label: 'Обновить',
-              icon: Icons.refresh,
-              onTap: _restart,
-            ),
-          ),
-          const SizedBox(height: 22),
-          _infoCard(),
-          const SizedBox(height: 12),
-          _soonCard(),
+          if (_incomingRequest != null) ...[
+            _incomingRequestCard(_incomingRequest!),
+            const SizedBox(height: 14),
+          ],
+          _peersList(),
         ],
       ),
     );
   }
 
-  // ── Анимация радара ───────────────────────────────────────────────────
+  Widget _warnings() {
+    return GlassCard(
+      lite: true,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (!_wifiConnected)
+            Row(children: [
+              Icon(Icons.wifi_off, size: 15, color: GE.yellow),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Wi-Fi не подключён — LAN-поиск недоступен',
+                  style: TextStyle(color: GE.yellow, fontSize: 12))),
+            ]),
+          if (!_wifiConnected && !_btOn) const SizedBox(height: 4),
+          if (!_btOn)
+            Row(children: [
+              Icon(Icons.bluetooth_disabled, size: 15, color: GE.yellow),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Bluetooth выключен — BLE-поиск недоступен',
+                  style: TextStyle(color: GE.yellow, fontSize: 12))),
+            ]),
+        ],
+      ),
+    );
+  }
+
+  Widget _ipRow() {
+    final standard = LanSettings().standardIp;
+    return GlassCard(
+      lite: true,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Row(
+        children: [
+          Icon(Icons.lan_outlined, size: 15, color: GE.sub),
+          const SizedBox(width: 8),
+          Text('Мой IP: ', style: TextStyle(color: GE.sub, fontSize: 12)),
+          Expanded(
+            child: Text(
+              _showIp ? (_myIp.isNotEmpty ? _myIp : 'нет Wi-Fi') : '••••••••••',
+              style: TextStyle(
+                color: _myIp.isEmpty ? GE.red : GE.text,
+                fontSize: 12,
+                fontFamily: 'monospace',
+              ),
+            ),
+          ),
+          IconButton(
+            icon: Icon(
+              standard.isNotEmpty ? Icons.check_circle : Icons.check_circle_outline,
+              size: 18,
+              color: standard.isNotEmpty ? GE.green : GE.sub,
+            ),
+            tooltip: 'Стандартный IP',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            onPressed: _toggleStandardIp,
+          ),
+          IconButton(
+            icon: Icon(_showIp ? Icons.visibility : Icons.visibility_off, size: 18, color: GE.sub),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            onPressed: () => setState(() => _showIp = !_showIp),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _toggleStandardIp() async {
+    if (_myIp.isEmpty) return;
+    if (LanSettings().standardIp.isNotEmpty) {
+      await LanSettings().clearStandardIp();
+    } else {
+      await LanSettings().setStandardIp(_myIp);
+    }
+    if (mounted) setState(() {});
+  }
+
   Widget _radar() {
     return Center(
       child: SizedBox(
@@ -123,7 +307,7 @@ class _LanScanScreenState extends State<LanScanScreen>
         height: 200,
         child: AnimatedBuilder(
           animation: _ctrl,
-          builder: (_, __) {
+          builder: (_, _) {
             return CustomPaint(
               painter: _RadarPainter(
                 progress: _ctrl.value,
@@ -131,18 +315,23 @@ class _LanScanScreenState extends State<LanScanScreen>
                 scanning: _scanning,
               ),
               child: Center(
-                child: Container(
-                  width: 54,
-                  height: 54,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: GE.primary.withValues(alpha: 0.18),
-                    border: Border.all(color: GE.primary, width: 1.4),
-                  ),
-                  child: Icon(
-                    _scanning ? Icons.wifi_tethering : Icons.wifi_find,
-                    color: GE.primary,
-                    size: 26,
+                child: GestureDetector(
+                  onTap: (_starting || _scanning) ? null : _startScan,
+                  child: Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: GE.primary.withValues(alpha: _scanning ? 0.24 : 0.55),
+                      border: Border.all(color: GE.primary, width: 1.4),
+                    ),
+                    child: Icon(
+                      _starting
+                          ? Icons.hourglass_top
+                          : (_scanning ? Icons.wifi_tethering : Icons.search_rounded),
+                      color: Colors.white,
+                      size: 26,
+                    ),
                   ),
                 ),
               ),
@@ -153,135 +342,176 @@ class _LanScanScreenState extends State<LanScanScreen>
     );
   }
 
-  // ── Пустой список-плейсхолдер ─────────────────────────────────────────
-  Widget _emptyList() {
-    return GlassCard(
-      lite: true,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 22),
-      child: Column(
-        children: [
-          Icon(Icons.devices_other, color: GE.sub, size: 30),
-          const SizedBox(height: 10),
-          Text(
-            'Устройства не найдены',
-            style: TextStyle(
-              color: GE.text,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Когда рядом появится кто-то с приложением,\nон покажется в этом списке.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: GE.sub, fontSize: 11, height: 1.4),
-          ),
-        ],
-      ),
+  Widget _legend() {
+    return Row(
+      children: [
+        _legendChip(Icons.wifi, 'LAN',
+            active: localHub.startedTransports.contains(TransportType.lan) && _wifiConnected),
+        const SizedBox(width: 8),
+        _legendChip(Icons.wifi_tethering, 'Wi-Fi Direct',
+            active: localHub.startedTransports.contains(TransportType.wifiDirect)),
+        const SizedBox(width: 8),
+        _legendChip(Icons.bluetooth, 'Bluetooth',
+            active: localHub.startedTransports.contains(TransportType.bluetooth) && _btOn),
+      ],
     );
   }
 
-  // ── Поясняющая карточка про фичу ──────────────────────────────────────
-  Widget _infoCard() {
-    return GlassCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.lan_outlined, color: GE.primary, size: 20),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Что это такое',
-                  style: TextStyle(
-                    color: GE.text,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'Чаты по сети — это общение напрямую с теми, кто рядом, по локальной '
-            'сети (один Wi-Fi или общая точка доступа). Сообщения идут между '
-            'устройствами без интернета и без сервера.',
-            style: TextStyle(color: GE.sub, fontSize: 12, height: 1.5),
-          ),
-          const SizedBox(height: 12),
-          _bullet(Icons.wifi_off, 'Работает без интернета — нужна только общая сеть'),
-          _bullet(Icons.bolt, 'Быстро: данные не уходят за пределы вашей сети'),
-          _bullet(Icons.lock_outline, 'Меньше посредников — меньше следов'),
-        ],
+  Widget _legendChip(IconData icon, String label, {required bool active}) {
+    final c = active ? GE.primary : GE.sub;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: c.withValues(alpha: active ? 0.14 : 0.06),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: c.withValues(alpha: active ? 0.4 : 0.2)),
       ),
-    );
-  }
-
-  Widget _bullet(IconData icon, String text) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: GE.primary, size: 16),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              text,
-              style: TextStyle(color: GE.sub, fontSize: 12, height: 1.4),
-            ),
-          ),
+          Icon(icon, size: 13, color: c),
+          const SizedBox(width: 4),
+          Text(label, style: TextStyle(color: c, fontSize: 11)),
+          if (!active) ...[
+            const SizedBox(width: 3),
+            Icon(Icons.close, size: 10, color: c),
+          ],
         ],
       ),
     );
   }
 
-  // ── Карточка «скоро» ──────────────────────────────────────────────────
-  Widget _soonCard() {
+  Widget _incomingRequestCard(LocalGroupedRequest req) {
     return GlassCard(
-      lite: true,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      glow: true,
+      padding: const EdgeInsets.all(14),
       child: Row(
         children: [
           Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: GE.yellow.withValues(alpha: 0.16),
-              border: Border.all(color: GE.yellow, width: 1),
-            ),
-            child: Icon(Icons.hourglass_empty, color: GE.yellow, size: 19),
+            width: 40, height: 40,
+            decoration: BoxDecoration(shape: BoxShape.circle, color: GE.primary.withValues(alpha: 0.18)),
+            child: Icon(Icons.person_add_alt_1, color: GE.primary, size: 20),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Функция готовится',
-                  style: TextStyle(
-                    color: GE.text,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
+                Text('${req.label} хочет подключиться',
+                    style: TextStyle(color: GE.text, fontSize: 13, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 2),
-                Text(
-                  'Сейчас это только превью внешнего вида. Поиск устройств '
-                  'появится в одном из обновлений.',
-                  style: TextStyle(color: GE.sub, fontSize: 11, height: 1.4),
-                ),
+                Text(req.transports.map(transportLabel).join(', '),
+                    style: TextStyle(color: GE.sub, fontSize: 11)),
               ],
             ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            icon: Icon(Icons.close, color: GE.sub, size: 20),
+            onPressed: () => _respondToRequest(false),
+          ),
+          IconButton(
+            icon: Icon(Icons.check_circle, color: GE.green, size: 24),
+            onPressed: () => _respondToRequest(true),
           ),
         ],
       ),
     );
   }
+
+  Widget _peersList() {
+    if (_acceptedPeers.isEmpty) {
+      return GlassCard(
+        lite: true,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 22),
+        child: Column(
+          children: [
+            Icon(Icons.devices_other, color: GE.sub, size: 30),
+            const SizedBox(height: 10),
+            Text('Устройства не найдены',
+                style: TextStyle(color: GE.text, fontSize: 14, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Text(
+              'Нажмите на радар, чтобы начать поиск.\nНайденные устройства появятся здесь.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: GE.sub, fontSize: 11, height: 1.4),
+            ),
+          ],
+        ),
+      );
+    }
+    return Column(
+      children: _acceptedPeers.map((p) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: _peerTile(p),
+      )).toList(),
+    );
+  }
+
+  Widget _peerTile(LocalPeer peer) {
+    IconData icon;
+    switch (peer.transport) {
+      case TransportType.lan:        icon = Icons.wifi; break;
+      case TransportType.wifiDirect: icon = Icons.wifi_tethering; break;
+      case TransportType.bluetooth:  icon = Icons.bluetooth; break;
+    }
+    final name = peer.label;
+    return GlassCard(
+      lite: true,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      onTap: () {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Чат с устройствами поблизости появится в одном из следующих обновлений')),
+        );
+      },
+      child: Row(
+        children: [
+          Stack(
+            children: [
+              CircleAvatar(
+                radius: 20,
+                backgroundColor: GE.green.withValues(alpha: 0.16),
+                child: Text(
+                  name.isNotEmpty ? name[0].toUpperCase() : '?',
+                  style: TextStyle(color: GE.green, fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ),
+              Positioned(
+                right: -2, bottom: -2,
+                child: Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(color: GE.bg, shape: BoxShape.circle),
+                  child: Icon(icon, size: 12, color: GE.primary),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name, style: TextStyle(color: GE.text, fontWeight: FontWeight.w600, fontSize: 14)),
+                Text(transportLabel(peer.transport), style: TextStyle(color: GE.sub, fontSize: 11)),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: GE.green.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text('Принято', style: TextStyle(color: GE.green, fontSize: 10, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+extension on LocalPeer {
+  String get label => deviceId.length > 8 ? '${deviceId.substring(0, 8)}…' : deviceId;
 }
 
 // ── Художник радара ───────────────────────────────────────────────────
@@ -301,7 +531,6 @@ class _RadarPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final maxR = size.width / 2;
 
-    // Статичные кольца-сетка.
     final ring = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1
@@ -310,7 +539,6 @@ class _RadarPainter extends CustomPainter {
       canvas.drawCircle(center, maxR * i / 3, ring);
     }
 
-    // Пульсирующие волны (несколько, со сдвигом по фазе).
     const waves = 3;
     for (var i = 0; i < waves; i++) {
       final t = (progress + i / waves) % 1.0;
@@ -327,7 +555,6 @@ class _RadarPainter extends CustomPainter {
       );
     }
 
-    // Бегущий луч-сектор — только во время «сканирования».
     if (scanning) {
       final sweepStart = progress * 2 * math.pi;
       const sweepWidth = math.pi / 3; // 60°
@@ -341,7 +568,7 @@ class _RadarPainter extends CustomPainter {
             color.withValues(alpha: 0.35),
           ],
           stops: const [0.0, 1.0],
-          transform: GradientRotation(0),
+          transform: const GradientRotation(0),
         ).createShader(rect);
       canvas.drawArc(rect, sweepStart, sweepWidth, true, sweep);
     }

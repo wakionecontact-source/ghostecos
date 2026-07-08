@@ -2,7 +2,7 @@
 // Показывает: имя, платформу, last_seen, owner-флаг, кнопку Revoke.
 // «Это устройство» помечено отдельно.
 //
-// Endpoints: GET /api/soc/device/list, POST /api/soc/device/{id}/revoke
+// Endpoints: GET /api/chat/devices, POST /api/chat/devices/{device_pk}/revoke
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -35,7 +35,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
     setState(() => _loading = true);
     try {
       _myDeviceId = await AuthService.deviceId();
-      final r = await _api.socGet('/device/list');
+      final r = await _api.chatGet('/devices');
       if (!mounted) return;
       List<Map<String, dynamic>> list = [];
       if (r is Map && r['devices'] is List) {
@@ -87,7 +87,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
     );
     if (ok != true) return;
     try {
-      await _api.socPost('/device/${d['id']}/revoke');
+      await _api.chatPost('/devices/${d['id']}/revoke');
       await _load();
       _snack('Устройство отозвано');
     } catch (e) {

@@ -1,59 +1,44 @@
-// Welcome-онбординг при первом запуске. PageView из 4 слайдов с анимациями.
+// Welcome — экран приветствия (стиль 1.19.3: одна страница) в дизайне Ghost:
+// mesh-фон + glass + фиолет. Плавная staggered-анимация входа + «дышащий»
+// логотип (мягкий bob + пульс свечения). После «Далее» → экран разрешений.
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
+import '../widgets/glass.dart';
 
 class WelcomeScreen extends StatefulWidget {
   final VoidCallback onDone;
   const WelcomeScreen({super.key, required this.onDone});
+
   @override
   State<WelcomeScreen> createState() => _WelcomeScreenState();
 }
 
-class _Slide {
-  final IconData icon;
-  final String title;
-  final String body;
-  final Color accent;
-  const _Slide({
-    required this.icon,
-    required this.title,
-    required this.body,
-    required this.accent,
-  });
-}
+class _WelcomeScreenState extends State<WelcomeScreen>
+    with TickerProviderStateMixin {
+  late final AnimationController _entrance; // одноразовое появление
+  late final AnimationController _float; // бесконечное «дыхание» логотипа
 
-List<_Slide> get _slides => [
-  _Slide(
-    icon: Icons.lock_outline,
-    title: 'Ghost',
-    body: 'Приватная экосистема. Один аккаунт — мессенджер, соцсеть и банк.',
-    accent: GE.primary,
-  ),
-  _Slide(
-    icon: Icons.shield_outlined,
-    title: 'Sealed E2E',
-    body: 'Шифрование P-256 + AES-GCM. Сервер не знает кто кому пишет — sealed sender как в Signal.',
-    accent: GE.green,
-  ),
-  _Slide(
-    icon: Icons.currency_bitcoin,
-    title: 'Своя экономика',
-    body: 'Gost / Soul / Prem — три валюты. Зарабатывай активностью, торгуй NFT, покупай у других.',
-    accent: GE.yellow,
-  ),
-  _Slide(
-    icon: Icons.forum_outlined,
-    title: 'Своя лента',
-    body: 'Посты, реакции, репосты, миниска. Без рекламы, без алгоритмов, без слежки.',
-    accent: GE.red,
-  ),
-];
+  @override
+  void initState() {
+    super.initState();
+    _entrance = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    )..forward();
+    _float = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2800),
+    )..repeat(reverse: true);
+  }
 
-class _WelcomeScreenState extends State<WelcomeScreen> {
-  final _pageCtrl = PageController();
-  int _page = 0;
+  @override
+  void dispose() {
+    _entrance.dispose();
+    _float.dispose();
+    super.dispose();
+  }
 
   Future<void> _finish() async {
     final p = await SharedPreferences.getInstance();
@@ -61,165 +46,187 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     widget.onDone();
   }
 
+  /// Появление элемента: fade + сдвиг снизу, по интервалу [start..end]
+  /// общего контроллера _entrance (staggered-эффект).
+  Widget _reveal(double start, double end, Widget child) {
+    return AnimatedBuilder(
+      animation: _entrance,
+      child: child,
+      builder: (context, c) {
+        final t = Interval(
+          start,
+          end,
+          curve: Curves.easeOutCubic,
+        ).transform(_entrance.value);
+        return Opacity(
+          opacity: t.clamp(0.0, 1.0),
+          child: Transform.translate(
+            offset: Offset(0, (1 - t) * 22),
+            child: c,
+          ),
+        );
+      },
+    );
+  }
+
+  /// Логотип: лёгкий bob вверх-вниз + микро-scale + пульс свечения.
+  Widget _animatedLogo() {
+    return AnimatedBuilder(
+      animation: _float,
+      builder: (context, _) {
+        final f = Curves.easeInOut.transform(_float.value);
+        return Transform.translate(
+          offset: Offset(0, -5 * f),
+          child: Transform.scale(
+            scale: 1 + 0.025 * f,
+            child: Container(
+              width: 116,
+              height: 116,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(
+                  colors: [
+                    GE.primary.withValues(alpha: 0.35),
+                    GE.primary.withValues(alpha: 0),
+                  ],
+                ),
+                border: Border.all(
+                  color: GE.primary.withValues(alpha: 0.45),
+                  width: 1.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: GE.primary.withValues(alpha: 0.16 + 0.24 * f),
+                    blurRadius: 22 + 18 * f,
+                    spreadRadius: 1 + 2 * f,
+                  ),
+                ],
+              ),
+              child: ClipOval(
+                child: Image.asset(
+                  'assets/icon.png',
+                  width: 86,
+                  height: 86,
+                  fit: BoxFit.cover,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return MeshBackground(
-      child: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: PageView.builder(
-                controller: _pageCtrl,
-                onPageChanged: (i) => setState(() => _page = i),
-                itemCount: _slides.length,
-                itemBuilder: (_, i) => _SlideView(slide: _slides[i], visible: i == _page),
-              ),
-            ),
-            // Точки-индикатор
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(_slides.length, (i) {
-                  final active = i == _page;
-                  return AnimatedContainer(
-                    duration: const Duration(milliseconds: 250),
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    width: active ? 24 : 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: active ? GE.primary : GE.sub.withValues(alpha: 0.3),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  );
-                }),
-              ),
-            ),
-            // Кнопки
-            Padding(
-              padding: const EdgeInsets.fromLTRB(32, 0, 32, 40),
-              child: Row(
-                children: [
-                  TextButton(
-                    onPressed: _finish,
-                    child: Text('Пропустить',
-                        style: TextStyle(color: GE.sub, fontSize: 14)),
-                  ),
-                  const Spacer(),
-                  if (_page < _slides.length - 1)
-                    _PrimaryButton(
-                      label: 'Дальше',
-                      icon: Icons.arrow_forward,
-                      onTap: () => _pageCtrl.nextPage(
-                        duration: const Duration(milliseconds: 350),
-                        curve: Curves.easeOutCubic,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            child: Column(
+              children: [
+                const Spacer(flex: 3),
+                _reveal(0.0, 0.5, _animatedLogo()),
+                const SizedBox(height: 26),
+                _reveal(
+                  0.12,
+                  0.55,
+                  ShaderMask(
+                    shaderCallback: (b) =>
+                        LinearGradient(colors: [Colors.white, GE.primary])
+                            .createShader(b),
+                    child: const Text(
+                      'GhostChat',
+                      style: TextStyle(
+                        fontSize: 34,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                        letterSpacing: -0.5,
                       ),
-                    )
-                  else
-                    _PrimaryButton(label: 'Начать', icon: Icons.bolt, onTap: _finish),
-                ],
-              ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _reveal(
+                  0.20,
+                  0.60,
+                  Text(
+                    'Приватный мессенджер',
+                    style: TextStyle(
+                      color: GE.primary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const Spacer(flex: 2),
+                GlassCard(
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 18, horizontal: 18),
+                  child: Column(
+                    children: [
+                      _reveal(
+                        0.34,
+                        0.62,
+                        const _Feature(
+                          icon: Icons.lock_outline,
+                          title: 'Сквозное шифрование',
+                          body:
+                              'P-256 + AES-GCM. Сообщения видят только собеседники.',
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _reveal(
+                        0.42,
+                        0.70,
+                        const _Feature(
+                          icon: Icons.visibility_off_outlined,
+                          title: 'Sealed sender',
+                          body:
+                              'Сервер не знает, кто кому пишет — как в Signal.',
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _reveal(
+                        0.50,
+                        0.78,
+                        const _Feature(
+                          icon: Icons.block_outlined,
+                          title: 'Без слежки',
+                          body: 'Никаких логов, рекламы и сбора данных.',
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _reveal(
+                        0.58,
+                        0.86,
+                        const _Feature(
+                          icon: Icons.devices_outlined,
+                          title: 'Мультиустройство',
+                          body: 'Один аккаунт — телефон, планшет, десктоп.',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Spacer(flex: 3),
+                _reveal(
+                  0.74,
+                  1.0,
+                  GlassButton(
+                    label: 'Далее',
+                    icon: Icons.arrow_forward,
+                    primary: true,
+                    fullWidth: true,
+                    onTap: _finish,
+                  ),
+                ),
+                const SizedBox(height: 28),
+              ],
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SlideView extends StatefulWidget {
-  final _Slide slide;
-  final bool visible;
-  const _SlideView({required this.slide, required this.visible});
-  @override
-  State<_SlideView> createState() => _SlideViewState();
-}
-
-class _SlideViewState extends State<_SlideView> with SingleTickerProviderStateMixin {
-  late AnimationController _ctrl;
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 700),
-    );
-    if (widget.visible) _ctrl.forward();
-  }
-
-  @override
-  void didUpdateWidget(_SlideView old) {
-    super.didUpdateWidget(old);
-    if (widget.visible) _ctrl.forward(from: 0); else _ctrl.reset();
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final fade = CurvedAnimation(parent: _ctrl, curve: Curves.easeOut);
-    final slide = Tween<Offset>(
-      begin: const Offset(0, 0.08), end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
-    final scale = Tween<double>(
-      begin: 0.6, end: 1,
-    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.elasticOut));
-    final s = widget.slide;
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 480),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              ScaleTransition(
-                scale: scale,
-                child: Container(
-                  width: 120, height: 120,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: RadialGradient(
-                      colors: [s.accent.withValues(alpha: 0.30), s.accent.withValues(alpha: 0)],
-                    ),
-                    border: Border.all(color: s.accent.withValues(alpha: 0.4), width: 1.5),
-                  ),
-                  child: Icon(s.icon, size: 60, color: s.accent),
-                ),
-              ),
-              const SizedBox(height: 28),
-              SlideTransition(
-                position: slide,
-                child: FadeTransition(
-                  opacity: fade,
-                  child: Text(
-                    s.title,
-                    style: TextStyle(
-                      fontSize: 32, fontWeight: FontWeight.w800,
-                      color: GE.text, letterSpacing: -0.5,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-              SlideTransition(
-                position: slide,
-                child: FadeTransition(
-                  opacity: fade,
-                  child: Text(
-                    s.body,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 15, height: 1.55, color: GE.sub,
-                    ),
-                  ),
-                ),
-              ),
-            ],
           ),
         ),
       ),
@@ -227,39 +234,49 @@ class _SlideViewState extends State<_SlideView> with SingleTickerProviderStateMi
   }
 }
 
-class _PrimaryButton extends StatelessWidget {
-  final String label;
+class _Feature extends StatelessWidget {
   final IconData icon;
-  final VoidCallback onTap;
-  const _PrimaryButton({required this.label, required this.icon, required this.onTap});
+  final String title;
+  final String body;
+  const _Feature({required this.icon, required this.title, required this.body});
+
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(colors: [GE.primary, GE.primary2]),
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: [
-            BoxShadow(
-              color: GE.primary.withValues(alpha: 0.4),
-              blurRadius: 22, offset: const Offset(0, 8),
-            ),
-          ],
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 38,
+          height: 38,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: GE.primary.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, color: GE.primary, size: 20),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(label, style: const TextStyle(
-              color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700,
-            )),
-            const SizedBox(width: 8),
-            Icon(icon, color: Colors.white, size: 18),
-          ],
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  color: GE.text,
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                body,
+                style: TextStyle(color: GE.sub, fontSize: 12.5, height: 1.35),
+              ),
+            ],
+          ),
         ),
-      ),
+      ],
     );
   }
 }

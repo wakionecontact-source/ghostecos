@@ -14,6 +14,7 @@ import '../theme.dart';
 import '../services/feed_repo.dart';
 import '../services/social_repo.dart';
 import '../widgets/glass.dart';
+import '../widgets/skeleton.dart';
 import 'feed_screen.dart';
 import 'miniska_create_screen.dart';
 import 'profile_screen.dart';
@@ -432,7 +433,7 @@ class _MiniskaTabState extends State<_MiniskaTab> {
   Widget build(BuildContext context) {
     Widget body;
     if (_loading) {
-      body = Center(child: CircularProgressIndicator(color: GE.primary));
+      body = const SkeletonGrid(count: 6, childAspectRatio: 0.6);
     } else if (_error != null) {
       body = _emptyState('Не загрузилось', _error!, _load);
     } else if (_items.isEmpty) {
@@ -638,7 +639,7 @@ class _SearchTabState extends State<_SearchTab> {
 
   Widget _body() {
     if (_searching && _result == null) {
-      return Center(child: CircularProgressIndicator(color: GE.primary));
+      return const SkeletonRowList(count: 5, avatarSize: 40);
     }
     if (_result == null) {
       return Center(
@@ -801,7 +802,7 @@ class _NotifTabState extends State<_NotifTab> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return Center(child: CircularProgressIndicator(color: GE.primary));
+      return const SkeletonRowList(count: 6, avatarSize: 36);
     }
     if (_error != null) {
       return Center(

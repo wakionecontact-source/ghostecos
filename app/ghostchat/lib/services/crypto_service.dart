@@ -12,6 +12,7 @@
 // Pure Dart — без native plugin'ов, работает на любой compileSdk.
 
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -156,10 +157,14 @@ class CryptoService {
   }
 
   // PBKDF2(password, salt, 260000, SHA-256) → 32-байтный AES-ключ (как веб).
-  Uint8List _deriveMasterKey(String password, Uint8List salt) {
-    final kd = PBKDF2KeyDerivator(HMac(SHA256Digest(), 64))
-      ..init(Pbkdf2Parameters(salt, 260000, 32));
-    return kd.process(Uint8List.fromList(utf8.encode(password)));
+  // 260к итераций — тяжёлая CPU-работа (сотни мс), в отдельном изоляте, чтобы
+  // не морозить UI-поток/анимации на экране ввода пароля (KeyGate).
+  Future<Uint8List> _deriveMasterKey(String password, Uint8List salt) {
+    return Isolate.run(() {
+      final kd = PBKDF2KeyDerivator(HMac(SHA256Digest(), 64))
+        ..init(Pbkdf2Parameters(salt, 260000, 32));
+      return kd.process(Uint8List.fromList(utf8.encode(password)));
+    });
   }
 
   Uint8List _pubRawFromD(BigInt d) => _pubToRaw(ECPublicKey((_curve.G * d)!, _curve));
@@ -172,7 +177,7 @@ class CryptoService {
     final d32 = _encodeBigInt(_privD!, 32);
     final pkcs8 = _dToPkcs8(d32, _myPubRaw!);
     final salt = _randomBytes(16);
-    final master = _deriveMasterKey(password, salt);
+    final master = await _deriveMasterKey(password, salt);
     final iv = _randomBytes(12);
     final gcm = GCMBlockCipher(AESEngine())
       ..init(true, AEADParameters(KeyParameter(master), 128, iv, Uint8List(0)));
@@ -193,7 +198,7 @@ class CryptoService {
     if (enc.length < 12 + 16) throw Exception('encrypted_private_key слишком короткий');
     final iv = Uint8List.fromList(enc.sublist(0, 12));
     final ct = Uint8List.fromList(enc.sublist(12));
-    final master = _deriveMasterKey(password, Uint8List.fromList(base64Decode(saltB64)));
+    final master = await _deriveMasterKey(password, Uint8List.fromList(base64Decode(saltB64)));
     final gcm = GCMBlockCipher(AESEngine())
       ..init(false, AEADParameters(KeyParameter(master), 128, iv, Uint8List(0)));
     final pkcs8 = gcm.process(ct); // бросит InvalidCipherText при неверном пароле

@@ -15,6 +15,8 @@ import '../mesh_background.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../widgets/glass.dart';
+import '../widgets/skeleton.dart';
+import '../widgets/toast_overlay.dart';
 import 'chat_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -145,10 +147,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _snack(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
-    );
+    toast.show(msg);
   }
 
   @override
@@ -170,7 +169,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
           await _load();
         },
         child: _loading
-            ? Center(child: CircularProgressIndicator(color: GE.primary))
+            ? ListView(
+                physics: const NeverScrollableScrollPhysics(),
+                children: const [
+                  SkeletonProfileHeader(),
+                  SkeletonRow(avatarSize: 32),
+                  SkeletonRow(avatarSize: 32),
+                  SkeletonRow(avatarSize: 32),
+                ],
+              )
             : _error != null
                 ? _errorView()
                 : _body(),

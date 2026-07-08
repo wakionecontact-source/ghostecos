@@ -2,6 +2,20 @@
     <!-- Сеть — обязательно для release-сборки (в debug Flutter добавляет сам) -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- Поиск устройств поблизости: LAN (multicast/broadcast) -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
+    <!-- Поиск устройств поблизости: геолокация (нужна WiFi Direct + BLE scan) -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"/>
+    <!-- Поиск устройств поблизости: Bluetooth -->
+    <uses-permission android:name="android.permission.BLUETOOTH"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE"/>
     <!-- Уведомления (Android 13+ требует runtime permission) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- Микрофон для записи голосовых (запросится только когда юзер нажмёт) -->

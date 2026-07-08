@@ -1,18 +1,23 @@
-// Settings — настройки приложения. Сейчас: переключатель темы (5 пресетов
-// + светлая). Дальше M8: паник-пароль, экспорт ключей, диктофон фон, био-логин.
+// Настройки — хаб по отделам (как в 1.19.3): список разделов, каждый открывает
+// свой экран. Разделы: Внешний вид, Разрешения, Ключи (E2E), Устройства,
+// Избранное, О приложении.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../services/chat_repo.dart';
 import '../services/theme_service.dart';
+import '../services/permissions_service.dart';
 import '../widgets/glass.dart';
+import '../widgets/skeleton.dart';
+import '../widgets/toast_overlay.dart';
 import 'devices_screen.dart';
 import 'support_screen.dart';
 import 'saved_screen.dart';
-import 'lan_scan_screen.dart';
 
+// ─── Хаб ────────────────────────────────────────────────────────────────────
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
   @override
@@ -21,226 +26,384 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   @override
+  void initState() {
+    super.initState();
+    ThemeService.instance.notifier.addListener(_onTheme);
+  }
+
+  @override
+  void dispose() {
+    ThemeService.instance.notifier.removeListener(_onTheme);
+    super.dispose();
+  }
+
+  void _onTheme() {
+    if (mounted) setState(() {});
+  }
+
+  void _open(Widget screen) {
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return MeshBackground(child: _scaffold(context));
-  }
-
-  Widget _scaffold(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: GlassAppBar(
-        showBack: true,
-        titleText: 'Настройки',
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(12),
-        children: [
-          _sectionTitle('Внешний вид'),
-          _ThemeGrid(),
-          const SizedBox(height: 20),
-          _sectionTitle('Звук и уведомления'),
-          GlassCard(
-            child: Column(
-              children: [
-                _switchRow(Icons.notifications_active_outlined,
-                    'Системные уведомления', true, (_) {}),
-                _switchRow(Icons.volume_up_outlined,
-                    'Звук сообщений', true, (_) {}),
-                _switchRow(Icons.vibration,
-                    'Вибрация', true, (_) {}),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          _sectionTitle('Приватность'),
-          GlassCard(
-            child: Column(
-              children: [
-                _switchRow(Icons.lock_clock_outlined,
-                    'Auto-lock через 5 мин (готовится)', false, (_) {}),
-                _switchRow(Icons.shield_outlined,
-                    'Скрыть превью в шторке', true, (_) {}),
-                _switchRow(Icons.no_photography_outlined,
-                    'Запретить скриншоты (готовится)', false, (_) {}),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          _sectionTitle('Чат'),
-          GlassCard(
-            child: Column(
-              children: [
-                _switchRow(Icons.image_outlined,
-                    'Авто-загрузка картинок в Wi-Fi', true, (_) {}),
-                _switchRow(Icons.mic_external_on,
-                    'Авто-воспроизведение голосовых', false, (_) {}),
-                _switchRow(Icons.read_more,
-                    'Read-реситы (двойная галка)', true, (_) {}),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          _sectionTitle('Безопасность'),
-          GlassCard(
-            child: Column(
-              children: [
-                _tile(Icons.vpn_key_outlined, 'Экспорт seed-фразы', () {}),
-                _tile(Icons.fingerprint, 'Био-логин (готовится)', () {}),
-                _tile(Icons.password, 'Паник-пароль (готовится)', () {}),
-                _tile(Icons.devices_other,
-                    'Устройства аккаунта',
-                    () => Navigator.of(context).push(MaterialPageRoute(
-                          builder: (_) => const DevicesScreen(),
-                        )),
-                    sub: 'Список всех устройств, через которые входили'),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          _sectionTitle('E2E ключи'),
-          GlassCard(
-            child: Column(
-              children: [
-                _tile(
-                  Icons.vpn_key_outlined,
-                  'Seed-фраза v2 (12 слов)',
-                  () => _showSeed(context),
-                  sub: 'Бэкап v2-личности + привязка веба/других устройств',
-                ),
-                _tile(Icons.upload_outlined,
-                    'Перезалить мой ключ на сервер', _forcePublishKey,
-                    sub: 'Используй если пиры пишут «не удалось расшифровать»'),
-                _tile(Icons.refresh, 'Перегенерировать E2E-пару',
-                    () => _confirmRegenerate(context),
-                    sub: 'NUCLEAR: новый приват, всю старую переписку нельзя расшифровать',
-                    danger: true),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          _sectionTitle('Ещё'),
-          GlassCard(
-            child: Column(
-              children: [
-                _tile(Icons.bookmark_outline, 'Избранное',
-                    () => Navigator.of(context).push(MaterialPageRoute(
-                          builder: (_) => const SavedScreen(),
-                        )),
-                    sub: 'Личные заметки, хранятся только на устройстве'),
-                _tile(Icons.wifi_find, 'Чаты по сети (LAN)',
-                    () => Navigator.of(context).push(MaterialPageRoute(
-                          builder: (_) => const LanScanScreen(),
-                        )),
-                    sub: 'Общение по локальной сети без интернета (скоро)'),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          _sectionTitle('О приложении'),
-          GlassCard(
-            child: Column(
-              children: [
-                _tile(Icons.info_outline, 'Ghost · v0.2.0', () {}),
-                _tile(Icons.emoji_emotions_outlined,
-                    'Эмодзи — Twemoji (CC BY 4.0)', () {},
-                    sub: 'Графика эмодзи © Twitter/jdecked, лицензия CC BY 4.0'),
-                _tile(Icons.code, 'Открытый исходник на GitHub', () {}),
-                _tile(
-                  Icons.help_outline,
-                  'Помощь',
-                  () => Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => const SupportScreen(),
-                  )),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 60),
-        ],
-      ),
-    );
-  }
-
-  Widget _sectionTitle(String t) => Padding(
-        padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
-        child: Text(t.toUpperCase(),
-            style: TextStyle(
-                color: GE.sub, fontSize: 11, fontWeight: FontWeight.w700,
-                letterSpacing: 0.5)),
-      );
-
-  Widget _switchRow(IconData icon, String label, bool value, ValueChanged<bool> onChanged) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      child: Row(
-        children: [
-          Icon(icon, size: 20, color: GE.primary),
-          const SizedBox(width: 12),
-          Expanded(child: Text(label, style: TextStyle(color: GE.text, fontSize: 14))),
-          Switch(value: value, onChanged: onChanged, activeThumbColor: GE.primary),
-        ],
-      ),
-    );
-  }
-
-  Widget _tile(IconData icon, String label, VoidCallback onTap,
-      {String? sub, bool danger = false}) {
-    final color = danger ? GE.red : GE.primary;
-    final textColor = danger ? GE.red : GE.text;
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
+    return MeshBackground(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: GlassAppBar(showBack: true, titleText: 'Настройки'),
+        body: ListView(
+          padding: const EdgeInsets.all(12),
           children: [
-            Icon(icon, size: 20, color: color),
-            const SizedBox(width: 12),
-            Expanded(
+            GlassCard(
+              padding: const EdgeInsets.symmetric(vertical: 4),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(label, style: TextStyle(color: textColor, fontSize: 14)),
-                  if (sub != null) ...[
-                    const SizedBox(height: 2),
-                    Text(sub,
-                        style: TextStyle(color: GE.sub, fontSize: 11)),
-                  ],
+                  _row(Icons.palette_outlined, 'Внешний вид', 'Тема оформления',
+                      () => _open(const _AppearanceScreen())),
+                  _row(Icons.verified_user_outlined, 'Разрешения',
+                      'Доступ к камере, микрофону, уведомлениям',
+                      () => _open(const _PermissionsManageScreen())),
+                  _row(Icons.vpn_key_outlined, 'Ключи шифрования',
+                      'Бэкап, seed-фраза, перезалить ключ',
+                      () => _open(const _KeysScreen())),
+                  _row(Icons.devices_other_outlined, 'Устройства',
+                      'Сессии и доверенные устройства',
+                      () => _open(const DevicesScreen())),
+                  _row(Icons.bookmark_outline, 'Избранное',
+                      'Личные заметки на устройстве',
+                      () => _open(const SavedScreen())),
+                  _row(Icons.info_outline, 'О приложении', 'Версия, помощь',
+                      () => _open(const _AboutScreen()), last: true),
                 ],
               ),
             ),
-            Icon(Icons.chevron_right, color: GE.sub, size: 20),
           ],
         ),
       ),
     );
   }
 
-  Future<void> _forcePublishKey() async {
-    _snack('Заливаю ключ на сервер...');
-    final res = await ChatRepo.instance.forcePublishMyPubKey();
-    _snack(res);
+  Widget _row(IconData icon, String title, String sub, VoidCallback onTap,
+      {bool last = false}) {
+    return Column(
+      children: [
+        InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            child: Row(
+              children: [
+                Icon(icon, size: 20, color: GE.primary),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title,
+                          style: TextStyle(
+                              color: GE.text,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 2),
+                      Text(sub, style: TextStyle(color: GE.sub, fontSize: 11)),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right, color: GE.sub, size: 20),
+              ],
+            ),
+          ),
+        ),
+        if (!last) Divider(height: 1, color: GE.glassBorder, indent: 48),
+      ],
+    );
+  }
+}
+
+// ─── Helper: каркас раздела ───────────────────────────────────────────────────
+class _SectionScaffold extends StatelessWidget {
+  final String title;
+  final List<Widget> children;
+  const _SectionScaffold({required this.title, required this.children});
+  @override
+  Widget build(BuildContext context) {
+    return MeshBackground(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: GlassAppBar(showBack: true, titleText: title),
+        body: ListView(padding: const EdgeInsets.all(12), children: children),
+      ),
+    );
+  }
+}
+
+Widget _sectionTitle(String t) => Padding(
+      padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
+      child: Text(t.toUpperCase(),
+          style: TextStyle(
+              color: GE.sub,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.5)),
+    );
+
+Widget _tile(IconData icon, String label, VoidCallback onTap,
+    {String? sub, bool danger = false}) {
+  final color = danger ? GE.red : GE.primary;
+  final textColor = danger ? GE.red : GE.text;
+  return InkWell(
+    onTap: onTap,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: color),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: TextStyle(color: textColor, fontSize: 14)),
+                if (sub != null) ...[
+                  const SizedBox(height: 2),
+                  Text(sub, style: TextStyle(color: GE.sub, fontSize: 11)),
+                ],
+              ],
+            ),
+          ),
+          Icon(Icons.chevron_right, color: GE.sub, size: 20),
+        ],
+      ),
+    ),
+  );
+}
+
+// ─── Раздел: Внешний вид ──────────────────────────────────────────────────────
+class _AppearanceScreen extends StatefulWidget {
+  const _AppearanceScreen();
+  @override
+  State<_AppearanceScreen> createState() => _AppearanceScreenState();
+}
+
+class _AppearanceScreenState extends State<_AppearanceScreen> {
+  @override
+  void initState() {
+    super.initState();
+    ThemeService.instance.notifier.addListener(_onTheme);
   }
 
-  Future<void> _showSeed(BuildContext ctx) async {
-    final m = await ChatRepo.instance.v2Mnemonic();
+  @override
+  void dispose() {
+    ThemeService.instance.notifier.removeListener(_onTheme);
+    super.dispose();
+  }
+
+  void _onTheme() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionScaffold(
+      title: 'Внешний вид',
+      children: [_sectionTitle('Тема'), _ThemeGrid()],
+    );
+  }
+}
+
+// ─── Раздел: Разрешения ───────────────────────────────────────────────────────
+class _PermissionsManageScreen extends StatefulWidget {
+  const _PermissionsManageScreen();
+  @override
+  State<_PermissionsManageScreen> createState() =>
+      _PermissionsManageScreenState();
+}
+
+class _PermissionsManageScreenState extends State<_PermissionsManageScreen>
+    with WidgetsBindingObserver {
+  Map<Permission, PermissionStatus> _st = {};
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _refresh();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refresh();
+  }
+
+  Future<void> _refresh() async {
+    final s = await checkAllPermissions();
     if (!mounted) return;
+    setState(() {
+      _st = s;
+      _loading = false;
+    });
+  }
+
+  Future<void> _toggle(Permission p, bool granted) async {
+    if (granted) {
+      await openAppSettings(); // отозвать можно только в системных настройках
+    } else {
+      final st = await p.status;
+      if (st.isPermanentlyDenied) {
+        await openAppSettings();
+      } else {
+        await p.request();
+      }
+    }
+    await _refresh();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionScaffold(
+      title: 'Разрешения',
+      children: _loading
+          ? [
+              const SizedBox(height: 8),
+              GlassCard(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: const SkeletonRowList(count: 4, avatarSize: 28),
+              ),
+            ]
+          : [
+              GlassCard(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Column(
+                  children: [
+                    for (final p in appPermissions)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 4),
+                        child: Row(
+                          children: [
+                            Icon(permIcon(p), size: 20, color: GE.primary),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(permLabel(p),
+                                      style: TextStyle(
+                                          color: GE.text, fontSize: 14)),
+                                  Text(
+                                    (_st[p]?.isGranted ?? false)
+                                        ? 'Разрешено'
+                                        : 'Нет доступа',
+                                    style: TextStyle(
+                                        color: (_st[p]?.isGranted ?? false)
+                                            ? GE.green
+                                            : GE.sub,
+                                        fontSize: 11),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Switch(
+                              value: _st[p]?.isGranted ?? false,
+                              activeThumbColor: GE.primary,
+                              onChanged: (v) =>
+                                  _toggle(p, _st[p]?.isGranted ?? false),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(
+                  'Отозвать выданное разрешение можно только в системных '
+                  'настройках — переключатель откроет их.',
+                  style: TextStyle(color: GE.sub, fontSize: 11, height: 1.4),
+                ),
+              ),
+            ],
+    );
+  }
+}
+
+// ─── Раздел: Ключи шифрования ─────────────────────────────────────────────────
+class _KeysScreen extends StatelessWidget {
+  const _KeysScreen();
+
+  void _toast(String m) => toast.show(m);
+
+  Future<void> _cloudBackup(BuildContext context) async {
+    final pwd = await _askPassword(context);
+    if (pwd == null || pwd.isEmpty) return;
+    _toast('Включаю облачный бэкап…');
+    final r = await ChatRepo.instance
+        .retryKeySync(chosenMode: 'server', password: pwd);
+    _toast(r == KeySyncOutcome.ok
+        ? 'Облачный бэкап включён — ключ переживёт переустановку'
+        : 'Не вышло (проверь пароль)');
+  }
+
+  Future<String?> _askPassword(BuildContext context) {
+    final ctrl = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (d) => AlertDialog(
+        backgroundColor: GE.bgDeep,
+        title: Text('Пароль аккаунта', style: TextStyle(color: GE.text)),
+        content: TextField(
+          controller: ctrl,
+          obscureText: true,
+          style: TextStyle(color: GE.text),
+          decoration: InputDecoration(
+            hintText: 'Пароль',
+            hintStyle: TextStyle(color: GE.sub),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(d),
+              child: Text('Отмена', style: TextStyle(color: GE.sub))),
+          TextButton(
+              onPressed: () => Navigator.pop(d, ctrl.text),
+              child: const Text('Включить')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _forcePublish() async {
+    _toast('Заливаю ключ на сервер…');
+    _toast(await ChatRepo.instance.forcePublishMyPubKey());
+  }
+
+  Future<void> _showSeed(BuildContext context) async {
+    final m = await ChatRepo.instance.v2Mnemonic();
+    if (!context.mounted) return;
     if (m == null || m.trim().isEmpty) {
-      _snack('Seed ещё не создан (v2 не инициализирован)');
+      _toast('Seed ещё не создан (v2 не инициализирован)');
       return;
     }
     await showDialog<void>(
-      context: ctx,
+      context: context,
       builder: (d) => AlertDialog(
-        backgroundColor: const Color(0xFF0F172A),
+        backgroundColor: GE.bgDeep,
         title: Text('Seed-фраза v2', style: TextStyle(color: GE.text)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '12 слов — бэкап твоей v2-личности и привязка других устройств '
-              '(веба). Никому не показывай и не вводи на чужих сайтах.',
+              '12 слов — бэкап v2-личности и привязка других устройств. Никому '
+              'не показывай.',
               style: TextStyle(color: GE.sub, fontSize: 12, height: 1.4),
             ),
             const SizedBox(height: 12),
@@ -248,19 +411,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: GE.bgDeep,
+                color: GE.bg,
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: GE.glassBorder),
               ),
-              child: SelectableText(
-                m,
-                style: TextStyle(
-                  color: GE.text,
-                  fontSize: 15,
-                  height: 1.6,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              child: SelectableText(m,
+                  style: TextStyle(
+                      color: GE.text,
+                      fontSize: 15,
+                      height: 1.6,
+                      fontWeight: FontWeight.w600)),
             ),
           ],
         ),
@@ -268,59 +428,114 @@ class _SettingsScreenState extends State<SettingsScreen> {
           TextButton(
             onPressed: () {
               Clipboard.setData(ClipboardData(text: m));
-              _snack('Скопировано');
+              _toast('Скопировано');
             },
             child: const Text('Копировать'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(d),
-            child: const Text('Закрыть'),
-          ),
+              onPressed: () => Navigator.pop(d),
+              child: const Text('Закрыть')),
         ],
       ),
     );
   }
 
-  Future<void> _confirmRegenerate(BuildContext ctx) async {
+  Future<void> _confirmRegenerate(BuildContext context) async {
     final ok = await showDialog<bool>(
-      context: ctx,
+      context: context,
       builder: (dctx) => AlertDialog(
-        backgroundColor: const Color(0xFF0F172A),
-        title: Text('Перегенерировать E2E-пару?',
-            style: TextStyle(color: GE.text)),
+        backgroundColor: GE.bgDeep,
+        title:
+            Text('Перегенерировать ключ?', style: TextStyle(color: GE.text)),
         content: Text(
-          'ВНИМАНИЕ: будет создан новый приватный ключ. Все ранее присланные '
-          'тебе сообщения, зашифрованные старым публичным ключом, СТАНУТ '
-          'нечитаемыми. Делать ТОЛЬКО если ничего больше не помогает.',
+          'Будет создан новый приватный ключ. Все ранее присланные сообщения, '
+          'зашифрованные старым ключом, СТАНУТ нечитаемыми. Только если ничего '
+          'не помогает.',
           style: TextStyle(color: GE.sub),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(dctx, false),
-            child: const Text('Отмена'),
-          ),
+              onPressed: () => Navigator.pop(dctx, false),
+              child: const Text('Отмена')),
           TextButton(
-            onPressed: () => Navigator.pop(dctx, true),
-            child: Text('Перегенерировать', style: TextStyle(color: GE.red)),
-          ),
+              onPressed: () => Navigator.pop(dctx, true),
+              child: Text('Перегенерировать', style: TextStyle(color: GE.red))),
         ],
       ),
     );
     if (ok != true) return;
-    _snack('Генерирую новый ключ...');
-    final res = await ChatRepo.instance.regenerateKeys();
-    _snack(res);
+    _toast('Генерирую новый ключ…');
+    _toast(await ChatRepo.instance.regenerateKeys());
   }
 
-  void _snack(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+  @override
+  Widget build(BuildContext context) {
+    return _SectionScaffold(
+      title: 'Ключи шифрования',
+      children: [
+        _sectionTitle('Резервная копия'),
+        GlassCard(
+          child: Column(
+            children: [
+              _tile(Icons.cloud_upload_outlined, 'Включить облачный бэкап ключа',
+                  () => _cloudBackup(context),
+                  sub:
+                      'Ключ под твоим паролем — на сервере. Переживёт переустановку'),
+              _tile(Icons.vpn_key_outlined, 'Seed-фраза v2 (12 слов)',
+                  () => _showSeed(context),
+                  sub: 'Бэкап v2-личности + привязка веба/других устройств'),
+            ],
+          ),
+        ),
+        _sectionTitle('Обслуживание'),
+        GlassCard(
+          child: Column(
+            children: [
+              _tile(Icons.upload_outlined, 'Перезалить мой ключ на сервер',
+                  _forcePublish,
+                  sub: 'Если пиры пишут «не удалось расшифровать»'),
+              _tile(Icons.refresh, 'Перегенерировать E2E-пару',
+                  () => _confirmRegenerate(context),
+                  sub: 'NUCLEAR: новый приват, старую переписку не расшифровать',
+                  danger: true),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────
+// ─── Раздел: О приложении ─────────────────────────────────────────────────────
+class _AboutScreen extends StatelessWidget {
+  const _AboutScreen();
+  @override
+  Widget build(BuildContext context) {
+    return _SectionScaffold(
+      title: 'О приложении',
+      children: [
+        GlassCard(
+          child: Column(
+            children: [
+              _tile(Icons.info_outline, 'GhostChat · v1.1.10', () {}),
+              _tile(Icons.emoji_emotions_outlined,
+                  'Эмодзи — Twemoji (CC BY 4.0)', () {},
+                  sub: 'Графика эмодзи © Twitter/jdecked, CC BY 4.0'),
+              _tile(
+                Icons.help_outline,
+                'Помощь',
+                () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const SupportScreen())),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─── Сетка тем ────────────────────────────────────────────────────────────────
 class _ThemeGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -341,9 +556,7 @@ class _ThemeGrid extends StatelessWidget {
         final active = p.id == current.id;
         return InkWell(
           borderRadius: BorderRadius.circular(GE.radiusMd),
-          onTap: () async {
-            await ThemeService.instance.setPreset(p.id);
-          },
+          onTap: () => ThemeService.instance.setPreset(p.id),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 220),
             decoration: BoxDecoration(
@@ -374,27 +587,20 @@ class _ThemeGrid extends StatelessWidget {
                 Row(
                   children: [
                     Container(
-                      width: 18, height: 18,
+                      width: 18,
+                      height: 18,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        gradient: LinearGradient(colors: [p.primary, p.primary2]),
+                        gradient:
+                            LinearGradient(colors: [p.primary, p.primary2]),
                       ),
                     ),
                     const SizedBox(width: 8),
                     Container(
-                      width: 12, height: 12,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: p.green,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Container(
-                      width: 12, height: 12,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: p.yellow,
-                      ),
+                      width: 12,
+                      height: 12,
+                      decoration:
+                          BoxDecoration(shape: BoxShape.circle, color: p.green),
                     ),
                     const Spacer(),
                     if (active)
@@ -404,10 +610,14 @@ class _ThemeGrid extends StatelessWidget {
                 const Spacer(),
                 Text(p.name,
                     style: TextStyle(
-                        color: p.text, fontSize: 14, fontWeight: FontWeight.w700)),
+                        color: p.text,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700)),
                 Text(p.subtitle,
-                    maxLines: 2, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: p.text.withValues(alpha: 0.65), fontSize: 11)),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: p.text.withValues(alpha: 0.65), fontSize: 11)),
               ],
             ),
           ),

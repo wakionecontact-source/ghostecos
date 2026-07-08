@@ -16,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../widgets/glass.dart';
+import '../widgets/skeleton.dart';
 
 class SavedScreen extends StatefulWidget {
   const SavedScreen({super.key});
@@ -174,8 +175,7 @@ class _SavedScreenState extends State<SavedScreen> {
           children: [
             Expanded(
               child: _loading
-                  ? Center(
-                      child: CircularProgressIndicator(color: GE.primary))
+                  ? const SkeletonTextCardList()
                   : _notes.isEmpty
                       ? _empty()
                       : _list(),

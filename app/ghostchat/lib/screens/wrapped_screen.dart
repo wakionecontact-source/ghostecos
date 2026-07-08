@@ -10,6 +10,7 @@ import '../theme.dart';
 import '../mesh_background.dart';
 import '../services/api_client.dart';
 import '../widgets/glass.dart';
+import '../widgets/skeleton.dart';
 
 class WrappedScreen extends StatefulWidget {
   final String username;
@@ -95,7 +96,26 @@ class _WrappedScreenState extends State<WrappedScreen> {
         ],
       ),
       body: _loading
-          ? Center(child: CircularProgressIndicator(color: GE.primary))
+          ? Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: const [
+                  SkeletonBox(width: double.infinity, height: 140, radius: 16),
+                  SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(child: SkeletonBox(height: 70, radius: 12)),
+                      SizedBox(width: 10),
+                      Expanded(child: SkeletonBox(height: 70, radius: 12)),
+                      SizedBox(width: 10),
+                      Expanded(child: SkeletonBox(height: 70, radius: 12)),
+                    ],
+                  ),
+                  SizedBox(height: 12),
+                  SkeletonBox(width: double.infinity, height: 100, radius: 16),
+                ],
+              ),
+            )
           : _error != null
               ? _errorState()
               : RefreshIndicator(

@@ -2124,19 +2124,20 @@ class _Bubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final mine = m.fromMe;
     final align = mine ? Alignment.centerRight : Alignment.centerLeft;
-    // Тёмный лакшери: свои — глубокий фиолет-градиент, чужие — solid (фон ниже).
-    final bg = mine
-        ? const LinearGradient(
+    // Theme-реактивно (зеркало --bubble-mine/--bubble-theirs с сайта): свои —
+    // фиолет-градиент GE.primary2→GE.primary (135deg, как в web-css), чужие —
+    // плоская GE.surface (на вебе тоже flat, без градиента). Раньше цвета были
+    // захардкожены — в других палитрах (Лес/Аврора/Слоновая кость) выглядело
+    // чужеродно, в светлой теме — нечитаемо.
+    final bgGradient = mine
+        ? LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF6A4FD0), Color(0xFF3F2E9C)],
+            colors: [GE.primary2, GE.primary],
           )
-        : const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF1C1726), Color(0xFF131019)],
-          );
-    final textColor = mine ? Colors.white : const Color(0xFFD7D2DE);
+        : null;
+    final bgColor = mine ? null : GE.surface;
+    final textColor = mine ? Colors.white : GE.text;
     final isImg = _isImage(m);
     // Подряд идущие сообщения одного автора — теснее (верх 1), их размытие
     // соединяется; на смене автора — отступ больше (верх 5).
@@ -2164,10 +2165,10 @@ class _Bubble extends StatelessWidget {
               ? const EdgeInsets.all(4)
               : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            // Тёмный лакшери: чужие — тёмный градиент, свои — фиолет-градиент;
-            // тонкая светлая кромка (у своих ярче = inset-блик) + одна мягкая
-            // тень для премиум-объёма (лёгкая, без перегруза GPU).
-            gradient: bg,
+            // Свои — фиолет-градиент (bgGradient); чужие — плоская GE.surface
+            // (bgColor), плюс тонкая inset-кромка и мягкая тень для объёма.
+            gradient: bgGradient,
+            color: bgColor,
             borderRadius: BorderRadius.only(
               topLeft: const Radius.circular(16),
               topRight: const Radius.circular(16),

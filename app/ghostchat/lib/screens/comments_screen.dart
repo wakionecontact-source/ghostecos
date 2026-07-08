@@ -17,6 +17,7 @@ import '../mesh_background.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../widgets/glass.dart';
+import '../widgets/skeleton.dart';
 import 'profile_screen.dart';
 
 class CommentsScreen extends StatefulWidget {
@@ -275,7 +276,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
           ),
           Expanded(
             child: _loading
-                ? Center(child: CircularProgressIndicator(color: GE.primary))
+                ? const SkeletonRowList(count: 6, avatarSize: 32)
                 : _items.isEmpty
                     ? Center(
                         child: Padding(

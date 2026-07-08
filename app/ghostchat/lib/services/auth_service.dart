@@ -31,6 +31,16 @@ class AuthService {
   static String? _cachedToken;
   static bool _cacheReady = false;
 
+  // Пароль логина/регистрации, переданный синхронизации ключей на ОДИН цикл
+  // bootstrap'а (server-режим: восстановить/опубликовать приватник под паролем).
+  // НЕ персистится — живёт в RAM до первого takePendingPwd().
+  static String? _pendingPwd;
+  static String? takePendingPwd() {
+    final p = _pendingPwd;
+    _pendingPwd = null;
+    return p;
+  }
+
   static Future<String?> token() async {
     if (_cacheReady) return _cachedToken;
     try {
@@ -88,7 +98,13 @@ class AuthService {
     await p.setString(_kDeviceName, name);
   }
 
-  static Future<void> _saveAuth(Map d, {bool guest = false}) async {
+  static Future<void> _saveAuth(
+    Map d, {
+    bool guest = false,
+    String? password,
+  }) async {
+    // Пароль (логин/регистрация) → синхронизации ключей, одноразово.
+    _pendingPwd = password;
     _cachedToken = d['token'] as String;
     _cacheReady = true;
     try {
@@ -145,7 +161,7 @@ class AuthService {
         }));
     if (r.statusCode != 200) throw _err(r.data, r.statusCode!);
     final d = Map<String, dynamic>.from(r.data);
-    await _saveAuth(d);
+    await _saveAuth(d, password: password);
     return d;
   }
 
@@ -171,7 +187,7 @@ class AuthService {
         }));
     if (r.statusCode != 200) throw _err(r.data, r.statusCode!);
     final d = Map<String, dynamic>.from(r.data);
-    await _saveAuth(d);
+    await _saveAuth(d, password: password);
     return d;
   }
 

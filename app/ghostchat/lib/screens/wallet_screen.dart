@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
 import '../services/api_client.dart';
 import '../widgets/glass.dart';
+import '../widgets/skeleton.dart';
 import 'nft_screen.dart';
 
 class WalletScreen extends StatefulWidget {
@@ -88,8 +89,16 @@ class _WalletScreenState extends State<WalletScreen> {
           const SizedBox(height: 12),
           if (_loading)
             Padding(
-              padding: const EdgeInsets.all(32),
-              child: Center(child: CircularProgressIndicator(color: GE.primary)),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Column(
+                children: const [
+                  SkeletonBox(width: double.infinity, height: 90, radius: 16),
+                  SizedBox(height: 16),
+                  SkeletonTextCard(),
+                  SkeletonTextCard(),
+                  SkeletonTextCard(),
+                ],
+              ),
             )
           else if (_error != null)
             GlassCard(

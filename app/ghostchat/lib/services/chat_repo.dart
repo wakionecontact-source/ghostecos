@@ -13,6 +13,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pointycastle/export.dart';
 import 'package:video_compress/video_compress.dart';
 import 'api_client.dart';
@@ -110,38 +111,23 @@ class ChatRepo {
   bool _initialized = false;
 
   /// Вызвать ОДИН раз после login, когда DbService и CryptoService готовы.
+  ///
+  /// Офлайн-first: список диалогов живёт в SQLite и НЕ должен ждать сеть.
+  /// Раньше синхронизация ключей (сетевая, до ~4 последовательных запросов по
+  /// 30с таймаут = до ~2 минут) стояла ПЕРЕД загрузкой локальных диалогов —
+  /// без интернета UI висел в вечном спиннере. Теперь локальные данные
+  /// показываются сразу, а сеть (ключи + pending) синкается в фоне.
   Future<void> init() async {
     if (_initialized) return;
     _initialized = true;
     _myUsername = await AuthService.username();
 
-    // Синхронизация E2E-ключей (storage_mode-aware). Без пароля: если режим не
-    // выбран или server-режим требует приватник с сервера — выставим состояние в
-    // keySyncNotifier, а UI (KeyGate) дозапросит выбор/пароль. Никаких заглушек.
-    keySyncNotifier.value = await syncKeys();
-    if (kDebugMode) print('[ChatRepo] init keySync → ${keySyncNotifier.value}');
-    // Само-восстановление ключей: если синхронизация не удалась (server-режим
-    // застрял на чужой/битой серверной identity, либо режим не выбран) —
-    // переходим в LOCAL-режим и публикуем СВОЙ pub без заглушек. Иначе это
-    // устройство невидимо для отправителей (его ключа нет на сервере) и не
-    // расшифрует ничего. Local = per-device fanout, который и есть боевой v1.
-    if (keySyncNotifier.value != KeySyncOutcome.ok) {
-      if (kDebugMode) {
-        print(
-          '[ChatRepo] keySync != ok → fallback в local-режим (публикуем свой ключ)',
-        );
-      }
-      keySyncNotifier.value = await syncKeys(chosenMode: 'local');
-      if (kDebugMode) {
-        print('[ChatRepo] после local-fallback → ${keySyncNotifier.value}');
-      }
-    }
-
-    // Загрузить локальный список диалогов сразу.
+    // Локальный список диалогов — СРАЗУ, без сети.
     final dialogs = await _db.getDialogs();
     dialogsNotifier.value = dialogs;
 
-    // WS подписки.
+    // WS подписки — регистрация не требует сети (сама коннекция асинхронна
+    // и ретраится в WsClient).
     _subs.addAll([
       _ws.on('chat.new', _onChatNew),
       _ws.on('chat.echo', _onChatEcho),
@@ -156,7 +142,8 @@ class ChatRepo {
 
     // На КАЖДЫЙ реконнект WS догоняем pending: сообщения, пришедшие пока WS был
     // мёртв (фон/Doze/обрыв сети), иначе теряются → нет уведомления. Первый
-    // connect пропускаем — init ниже уже фетчит. Идемпотентно (dedup по sid).
+    // connect пропускаем — фоновая синхронизация ниже уже фетчит. Идемпотентно
+    // (dedup по sid).
     _wsConnSub = _ws.onConnectionChange.listen((connected) {
       if (!connected) return;
       if (_wsSkipFirstConn) {
@@ -168,7 +155,28 @@ class ChatRepo {
       unawaited(fetchPendingV2());
     });
 
-    // Догнать накопленное в фоне — оба канала.
+    // Сеть — ФОНОВО, не блокирует UI. Если офлайн — просто не выполнится,
+    // спишет ошибку и не мешает открытому списку локальных чатов.
+    unawaited(_syncKeysAndFetchPending());
+  }
+
+  /// Сетевая часть bootstrap'а: синхронизация E2E-ключей + догон pending.
+  /// Вызывается фоново из init() — не блокирует показ локальных диалогов.
+  Future<void> _syncKeysAndFetchPending() async {
+    // Синхронизация E2E-ключей. Пароль логина (одноразово из AuthService) нужен
+    // server-режиму, чтобы ВОССТАНОВИТЬ приватник с сервера, а не сгенерить
+    // новый (иначе старая переписка не расшифруется). Режим (server/local) —
+    // выбор пользователя из онбординга (pref key_storage_mode).
+    final pwd = AuthService.takePendingPwd();
+    final prefs = await SharedPreferences.getInstance();
+    final chosenMode = prefs.getString('key_storage_mode');
+    keySyncNotifier.value = await syncKeys(password: pwd, chosenMode: chosenMode);
+    if (kDebugMode) print('[ChatRepo] init keySync → ${keySyncNotifier.value}');
+    // НЕ откатываемся в local автоматически — раньше это ЗАТИРАЛО настоящий
+    // серверный ключ throwaway-ключом. needPassword / needChooseMode теперь
+    // перехватывает KeyGate (в MainShell) и дозапрашивает пароль / режим.
+
+    // Догнать накопленное — оба канала.
     unawaited(fetchPending());
     unawaited(fetchPendingSealed());
     // v2: опубликовать identity+device, затем догнать v2-входящие.
@@ -191,6 +199,26 @@ class ChatRepo {
     _msgsByPeer.clear();
     dialogsNotifier.value = [];
     _initialized = false;
+  }
+
+  /// KeyGate → пользователь ввёл пароль / выбрал режим. Повторяем синхронизацию;
+  /// при успехе догоняем входящие (которые могли не расшифроваться без ключа).
+  Future<KeySyncOutcome> retryKeySync({
+    String? password,
+    String? chosenMode,
+  }) async {
+    if (chosenMode != null) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('key_storage_mode', chosenMode);
+    }
+    final outcome = await syncKeys(password: password, chosenMode: chosenMode);
+    keySyncNotifier.value = outcome;
+    if (outcome == KeySyncOutcome.ok) {
+      unawaited(fetchPending());
+      unawaited(fetchPendingSealed());
+      unawaited(fetchPendingV2());
+    }
+    return outcome;
   }
 
   /// Зарегистрировать FCM-токен на сервере (push-уведомления). Best-effort.

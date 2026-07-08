@@ -15,6 +15,7 @@ import '../theme.dart';
 import '../mesh_background.dart';
 import '../services/api_client.dart';
 import '../widgets/glass.dart';
+import '../widgets/skeleton.dart';
 
 class NftScreen extends StatefulWidget {
   const NftScreen({super.key});
@@ -173,7 +174,7 @@ class _NftScreenState extends State<NftScreen> with TickerProviderStateMixin {
   }
 
   Widget _grid(bool loading, List<Map<String, dynamic>> items, Widget Function(Map<String, dynamic>) builder) {
-    if (loading) return Center(child: CircularProgressIndicator(color: GE.primary));
+    if (loading) return const SkeletonGrid(childAspectRatio: 0.75);
     if (items.isEmpty) {
       return Center(
         child: Padding(

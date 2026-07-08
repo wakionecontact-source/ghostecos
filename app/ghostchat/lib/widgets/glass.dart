@@ -14,13 +14,59 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../theme.dart';
 
+// ── "Liquid glass" токены — зеркало веб-фронта (--gl-* в chat/index.html) ──
+// Многослойное стекло БЕЗ полагания на один только blur: диагональный блик
+// (сверху-слева) + inset-подсветка через разные цвета сторон Border (Flutter
+// не умеет CSS inset-shadow напрямую — этим и эмулируем: светлый верх/лево,
+// тёмный низ/право, как будто стекло вдавлено).
+class _GlassTokens {
+  static LinearGradient sheen({bool strong = false}) => LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: strong
+            ? [
+                Colors.white.withValues(alpha: 0.12),
+                Colors.white.withValues(alpha: 0.03),
+                Colors.white.withValues(alpha: 0.015),
+              ]
+            : [
+                Colors.white.withValues(alpha: 0.075),
+                Colors.white.withValues(alpha: 0.020),
+                Colors.white.withValues(alpha: 0.010),
+              ],
+        stops: const [0.0, 0.55, 1.0],
+      );
+
+  static Border insetBorder({bool strong = false}) {
+    final light = Colors.white.withValues(alpha: strong ? 0.22 : 0.14);
+    final dark = Colors.black.withValues(alpha: strong ? 0.26 : 0.20);
+    return Border(
+      top: BorderSide(color: light, width: GE.glassStroke),
+      left: BorderSide(color: light, width: GE.glassStroke),
+      bottom: BorderSide(color: dark, width: GE.glassStroke),
+      right: BorderSide(color: dark, width: GE.glassStroke),
+    );
+  }
+
+  static List<BoxShadow> shadow({bool strong = false}) => [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: strong ? 0.45 : 0.30),
+          blurRadius: strong ? 32 : 18,
+          offset: Offset(0, strong ? 10 : 6),
+        ),
+      ];
+}
+
 /// Полупрозрачная карточка-стекло. По умолчанию закруглена 16px.
 /// Параметр [glow] подсвечивает фиолетовым (для CTA / выбранных).
+/// Параметр [strong] — более глубокая версия для модалок/шитов (глубже фон,
+/// ярче inset-подсветка, тяжелее тень) — зеркало --gl-bg-deep на вебе.
 class GlassCard extends StatelessWidget {
   final Widget child;
   final EdgeInsets padding;
   final double radius;
   final bool glow;
+  final bool strong;
   final VoidCallback? onTap;
   final Color? fillOverride;
   final double? blurOverride;
@@ -36,6 +82,7 @@ class GlassCard extends StatelessWidget {
     this.padding = const EdgeInsets.all(16),
     this.radius = GE.radiusMd,
     this.glow = false,
+    this.strong = false,
     this.onTap,
     this.fillOverride,
     this.blurOverride,
@@ -47,9 +94,11 @@ class GlassCard extends StatelessWidget {
     final radiusObj = BorderRadius.circular(radius);
     final base =
         fillOverride ??
-        (lite ? GE.glassFill.withValues(alpha: 0.55) : GE.glassFill);
-    // Тёмный лакшери (без жидкого стекла): чистая глубокая поверхность —
-    // деликатный верхний блик, мягкое затемнение снизу, тонкая кромка.
+        (strong
+            ? Color.alphaBlend(GE.bgDeep.withValues(alpha: 0.85), GE.glassFill)
+            : (lite ? GE.glassFill.withValues(alpha: 0.55) : GE.glassFill));
+    // Базовая заливка (тонкий вертикальный градиент глубины) + диагональный
+    // блик (сверху-слева) поверх — двухслойная имитация жидкого стекла с сайта.
     final fillDeco = BoxDecoration(
       borderRadius: radiusObj,
       gradient: LinearGradient(
@@ -62,15 +111,19 @@ class GlassCard extends StatelessWidget {
         ],
         stops: const [0.0, 0.5, 1.0],
       ),
-      border: Border.all(
-        color: Colors.white.withValues(alpha: 0.08),
-        width: GE.glassStroke,
-      ),
+      border: _GlassTokens.insetBorder(strong: strong),
     );
-    Widget fill = Container(
+    Widget fill = DecoratedBox(
       decoration: fillDeco,
-      padding: padding,
-      child: child,
+      child: DecoratedBox(
+        // Диагональный блик — отдельный слой ПОВЕРХ заливки (не смешиваем в
+        // одном LinearGradient, т.к. у блика своя ось topLeft→bottomRight).
+        decoration: BoxDecoration(
+          borderRadius: radiusObj,
+          gradient: _GlassTokens.sheen(strong: strong),
+        ),
+        child: Padding(padding: padding, child: child),
+      ),
     );
     if (!lite) {
       fill = ClipRRect(
@@ -96,11 +149,7 @@ class GlassCard extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: radiusObj,
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.30),
-            blurRadius: 18,
-            offset: const Offset(0, 6),
-          ),
+          ..._GlassTokens.shadow(strong: strong),
           if (glow)
             BoxShadow(color: GE.glowFill, blurRadius: 30, spreadRadius: 1),
         ],
@@ -168,11 +217,14 @@ class GlassButton extends StatelessWidget {
               ],
             ),
         borderRadius: radius,
-        // Светлая верхняя кромка — у CTA ярче (specular-блик на цветной кнопке).
-        border: Border.all(
-          color: Colors.white.withValues(alpha: isCta ? 0.24 : 0.16),
-          width: GE.glassStroke,
-        ),
+        // CTA — uniform specular-кромка на цветном градиенте. Не-CTA —
+        // inset-подсветка (светлый верх/лево, тёмный низ/право), как у карточек.
+        border: isCta
+            ? Border.all(
+                color: Colors.white.withValues(alpha: 0.24),
+                width: GE.glassStroke,
+              )
+            : _GlassTokens.insetBorder(),
         boxShadow: isCta
             ? [
                 BoxShadow(
@@ -365,31 +417,51 @@ Future<T?> showGlassSheet<T>(
       borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-        child: Container(
+        child: DecoratedBox(
+          // Шит поднят над контентом — "strong"-глубина, как модалки на сайте
+          // (--gl-bg-deep + border-strong + shadow-deep).
           decoration: BoxDecoration(
-            color: GE.glassFill,
-            border: Border(top: BorderSide(color: GE.glassBorder, width: 1)),
+            color: Color.alphaBlend(
+              GE.bgDeep.withValues(alpha: 0.85),
+              GE.glassFill,
+            ),
+            border: Border(
+              top: BorderSide(
+                color: Colors.white.withValues(alpha: 0.22),
+                width: 1,
+              ),
+            ),
+            boxShadow: _GlassTokens.shadow(strong: true),
           ),
-          padding: EdgeInsets.only(
-            top: 12,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
-          ),
-          height: height,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Grab handle сверху
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: GE.borderStrong,
-                  borderRadius: BorderRadius.circular(2),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: _GlassTokens.sheen(strong: true),
+            ),
+            child: Padding(
+              padding: EdgeInsets.only(
+                top: 12,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+              ),
+              child: SizedBox(
+                height: height,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Grab handle сверху
+                    Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: GE.borderStrong,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Flexible(child: child),
+                  ],
                 ),
               ),
-              const SizedBox(height: 14),
-              Flexible(child: child),
-            ],
+            ),
           ),
         ),
       ),

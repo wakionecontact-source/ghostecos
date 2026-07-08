@@ -17,11 +17,10 @@ import '../services/notification_service.dart';
 import '../services/foreground_service.dart';
 import '../services/fcm_service.dart';
 import '../widgets/glass.dart';
+import '../widgets/skeleton.dart';
 import 'settings_screen.dart';
 import 'chat_list_screen.dart';
 import 'devices_screen.dart';
-import 'profile_screen.dart';
-import 'wrapped_screen.dart';
 
 enum Section {
   chat(
@@ -134,7 +133,7 @@ class _MainShellState extends State<MainShell> {
     if (!_bootstrapped) {
       return Scaffold(
         backgroundColor: Colors.transparent,
-        body: Center(child: CircularProgressIndicator(color: GE.primary)),
+        body: SafeArea(child: SkeletonDialogList()),
       );
     }
     final isWide = MediaQuery.of(context).size.width >= 720;
@@ -279,10 +278,11 @@ class _GlassBottomNavState extends State<_GlassBottomNav> {
                     top: 6,
                     bottom: 6 + bottomInset,
                   ),
-                  decoration: const BoxDecoration(
-                    color: Color(0xF21A1623),
+                  decoration: BoxDecoration(
+                    // Цвет берём из активной темы (alphaBlend → непрозрачный бар).
+                    color: Color.alphaBlend(GE.surface, GE.bg),
                     border: Border(
-                      top: BorderSide(color: Color(0x14FFFFFF), width: 0.6),
+                      top: BorderSide(color: GE.border, width: 0.6),
                     ),
                   ),
                   child: Row(
@@ -523,11 +523,6 @@ class _ProfilePane extends StatelessWidget {
           children: [
             GlassCard(
               padding: const EdgeInsets.all(20),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => ProfileScreen(username: username),
-                ),
-              ),
               child: Row(
                 children: [
                   Container(
@@ -568,29 +563,9 @@ class _ProfilePane extends StatelessWidget {
                           '@$username',
                           style: TextStyle(color: GE.sub, fontSize: 13),
                         ),
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.person_outline,
-                              size: 12,
-                              color: GE.primary,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              'Открыть полный профиль',
-                              style: TextStyle(
-                                color: GE.primary,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
                       ],
                     ),
                   ),
-                  Icon(Icons.chevron_right, color: GE.sub),
                 ],
               ),
             ),
@@ -599,25 +574,6 @@ class _ProfilePane extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: Column(
                 children: [
-                  // Доступные разделы.
-                  _profileRow(
-                    Icons.devices_outlined,
-                    'Мои устройства',
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const DevicesScreen()),
-                    ),
-                  ),
-                  _profileRow(
-                    Icons.auto_awesome_outlined,
-                    'Wrapped — мой год',
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => WrappedScreen(username: username),
-                      ),
-                    ),
-                  ),
-                  // Настройки (темы, звук, приватность, чат, безопасность,
-                  // E2E-ключи) — единый экран SettingsScreen.
                   _profileRow(
                     Icons.settings_outlined,
                     'Настройки',
@@ -626,23 +582,11 @@ class _ProfilePane extends StatelessWidget {
                     ),
                   ),
                   _profileRow(
-                    Icons.palette_outlined,
-                    'Темы интерфейса',
+                    Icons.devices_outlined,
+                    'Мои устройства',
                     onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                      MaterialPageRoute(builder: (_) => const DevicesScreen()),
                     ),
-                  ),
-                  _profileRow(
-                    Icons.shield_outlined,
-                    'Безопасность',
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                    ),
-                  ),
-                  _profileRow(
-                    Icons.terminal_outlined,
-                    'Логи',
-                    onTap: () => _todo(context, 'Просмотрщик логов в M8'),
                   ),
                 ],
               ),
@@ -658,7 +602,7 @@ class _ProfilePane extends StatelessWidget {
             const SizedBox(height: 24),
             Center(
               child: Text(
-                '${GE.appName} · v0.2.0 · ${Platform.operatingSystem}',
+                '${GE.appName} · v1.1.10 · ${Platform.operatingSystem}',
                 style: TextStyle(color: GE.muted, fontSize: 11),
               ),
             ),
@@ -720,9 +664,4 @@ class _ProfilePane extends StatelessWidget {
     );
   }
 
-  void _todo(BuildContext context, String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
-    );
-  }
 }
