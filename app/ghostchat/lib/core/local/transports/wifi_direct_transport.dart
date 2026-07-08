@@ -142,6 +142,7 @@ class WifiDirectTransport implements LocalTransport {
     _sendToPeer(peerId, jsonEncode({
       'type':      'discover',
       'device_id': devId,
+      'x25519_pub': CryptoV2.instance.devicePubB64,
     }));
   }
 
@@ -162,10 +163,12 @@ class WifiDirectTransport implements LocalTransport {
         final peerDeviceId = pkt['device_id'] as String? ?? '';
         if (peerDeviceId.isEmpty) return;
         if (isBlocked(peerDeviceId, peerId)) return;
+        final peerX25519Pub = pkt['x25519_pub'] as String? ?? '';
 
         _requestCtrl.add(LocalPeer(
           peerId:       '$peerDeviceId@wd:$peerId',
           deviceId:     peerDeviceId,
+          x25519PubB64: peerX25519Pub,
           transport:    TransportType.wifiDirect,
           address:      peerId,
         ));

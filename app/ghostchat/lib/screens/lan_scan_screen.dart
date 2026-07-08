@@ -1,13 +1,15 @@
 // LanScanScreen — «Устройства поблизости» (LAN + Wi-Fi Direct + Bluetooth).
 //
 // Реальный поиск устройств в локальной сети / рядом (BLE) / Wi-Fi Direct,
-// перенесённый из старого GhostChat (ghostchat_mobile). Пока только список
-// найденных/принятых устройств — открытие чата с ними будет в одном из
-// следующих обновлений.
+// перенесённый из старого GhostChat (ghostchat_mobile). Принятые устройства
+// открывают LanChatScreen — чат привязан к устройству, не к аккаунту.
+// Транспорты стартуют/останавливаются в MainShell (app-wide), этот экран
+// только подписывается на уже бегущий localHub.
 
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -15,13 +17,13 @@ import '../theme.dart';
 import '../mesh_background.dart';
 import '../widgets/glass.dart';
 import '../services/permissions_service.dart';
+import '../services/notification_service.dart';
+import '../services/lan_chat_store.dart';
 import '../core/local/app_logger.dart';
 import '../core/local/lan_settings.dart';
 import '../core/local/local_hub.dart';
 import '../core/local/local_transport.dart';
-import '../core/local/transports/lan_transport.dart';
-import '../core/local/transports/bluetooth_transport.dart';
-import '../core/local/transports/wifi_direct_transport.dart';
+import 'lan_chat_screen.dart';
 
 class LanScanScreen extends StatefulWidget {
   const LanScanScreen({super.key});
@@ -30,12 +32,13 @@ class LanScanScreen extends StatefulWidget {
 }
 
 class _LanScanScreenState extends State<LanScanScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final AnimationController _ctrl;
 
   bool _starting = true;
   bool _scanning = false;
   String _status = 'Нажмите, чтобы начать поиск';
+  AppLifecycleState _appState = AppLifecycleState.resumed;
 
   bool _showIp = false;
   String _myIp = '';
@@ -44,6 +47,7 @@ class _LanScanScreenState extends State<LanScanScreen>
 
   final List<LocalPeer> _acceptedPeers = [];
   final Set<String> _seenDeviceIds = {};
+  final Set<String> _respondedDeviceIds = {};
   LocalGroupedRequest? _incomingRequest;
 
   StreamSubscription? _acceptSub;
@@ -54,28 +58,38 @@ class _LanScanScreenState extends State<LanScanScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
     _bootstrap();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appState = state;
   }
 
   Future<void> _bootstrap() async {
     await LanSettings().load();
 
-    localHub.registerDefaults([
-      LanTransport(),
-      WifiDirectTransport(),
-      BluetoothTransport(),
-    ]);
-
+    // Транспорты регистрируются и стартуют на уровне MainShell (живут пока
+    // юзер залогинен, не только пока открыт этот экран) — здесь только
+    // подписываемся на уже бегущий localHub.
     _acceptSub = localHub.onAccept.listen(_onAccepted);
     _groupedSub = localHub.onGroupedRequest.listen((req) {
       if (!mounted) return;
+      // Устройство продолжает слать discover-волны, пока сканирует — не
+      // показываем повторно то, на что уже ответили в этой сессии.
+      if (_respondedDeviceIds.contains(req.deviceId)) return;
       setState(() => _incomingRequest = req);
+      // Приложение свёрнуто (но экран ещё жив) — карточку в UI не видно,
+      // зовём системное уведомление. На переднем плане хватает карточки.
+      if (_appState != AppLifecycleState.resumed) {
+        NotificationService.instance.onLanRequest(label: req.label);
+      }
     });
 
     await _requestPermissions();
     await _refreshConnectivity();
-    await localHub.startAll();
 
     _ipTimer = Timer.periodic(const Duration(seconds: 5), (_) => _refreshConnectivity());
 
@@ -84,12 +98,12 @@ class _LanScanScreenState extends State<LanScanScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _ctrl.dispose();
     _acceptSub?.cancel();
     _groupedSub?.cancel();
     _scanTimer?.cancel();
     _ipTimer?.cancel();
-    localHub.stopAll();
     super.dispose();
   }
 
@@ -142,6 +156,12 @@ class _LanScanScreenState extends State<LanScanScreen>
       _acceptedPeers.add(peer);
       _status = '${peer.label} принял(а) запрос';
     });
+    LanChatStore.instance.createOrGetChat(
+      deviceId: peer.deviceId,
+      displayName: peer.label,
+      peerPubB64: peer.x25519PubB64,
+      transport: peer.chatType,
+    );
   }
 
   Future<void> _startScan() async {
@@ -177,9 +197,15 @@ class _LanScanScreenState extends State<LanScanScreen>
   Future<void> _respondToRequest(bool accept) async {
     final req = _incomingRequest;
     if (req == null) return;
+    _respondedDeviceIds.add(req.deviceId);
     setState(() => _incomingRequest = null);
     if (accept) {
       await localHub.sendAccept(req.bestPeer);
+      // sendAccept шлёт наш публичный ключ инициатору, но сами мы видим этот
+      // peer только со стороны "кто-то постучался" — покажем его в своём же
+      // списке сразу, не дожидаясь ответного onAccept (которого и не будет:
+      // инициатор — не мы).
+      _onAccepted(req.bestPeer);
     } else {
       appLog.info('lan', 'Запрос от ${req.deviceId} отклонён');
     }
@@ -193,7 +219,17 @@ class _LanScanScreenState extends State<LanScanScreen>
   Widget _scaffold(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
-      appBar: GlassAppBar(showBack: true, titleText: 'Устройства поблизости'),
+      appBar: GlassAppBar(
+        showBack: true,
+        titleText: 'Устройства поблизости',
+        actions: [
+          IconButton(
+            icon: Icon(Icons.settings_outlined, color: GE.sub),
+            tooltip: 'Настройки приложения',
+            onPressed: openAppSettings,
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
         children: [
@@ -303,40 +339,66 @@ class _LanScanScreenState extends State<LanScanScreen>
   Widget _radar() {
     return Center(
       child: SizedBox(
-        width: 200,
-        height: 200,
-        child: AnimatedBuilder(
-          animation: _ctrl,
-          builder: (_, _) {
-            return CustomPaint(
-              painter: _RadarPainter(
-                progress: _ctrl.value,
-                color: GE.primary,
-                scanning: _scanning,
-              ),
-              child: Center(
-                child: GestureDetector(
-                  onTap: (_starting || _scanning) ? null : _startScan,
-                  child: Container(
-                    width: 64,
-                    height: 64,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: GE.primary.withValues(alpha: _scanning ? 0.24 : 0.55),
-                      border: Border.all(color: GE.primary, width: 1.4),
-                    ),
-                    child: Icon(
-                      _starting
-                          ? Icons.hourglass_top
-                          : (_scanning ? Icons.wifi_tethering : Icons.search_rounded),
-                      color: Colors.white,
-                      size: 26,
-                    ),
+        width: 260,
+        height: 260,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // Мягкое стеклянное пятно под радаром — размытие фона с
+            // растворяющимися краями, чтобы кольца не сливались с mesh-фоном.
+            IgnorePointer(
+              child: ShaderMask(
+                shaderCallback: (rect) => const RadialGradient(
+                  colors: [Colors.white, Colors.white, Colors.transparent],
+                  stops: [0.0, 0.5, 1.0],
+                ).createShader(rect),
+                blendMode: BlendMode.dstIn,
+                child: ClipOval(
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                    child: Container(color: GE.bg.withValues(alpha: 0.4)),
                   ),
                 ),
               ),
-            );
-          },
+            ),
+            SizedBox(
+              width: 200,
+              height: 200,
+              child: AnimatedBuilder(
+                animation: _ctrl,
+                builder: (_, _) {
+                  return CustomPaint(
+                    painter: _RadarPainter(
+                      progress: _ctrl.value,
+                      color: GE.primary,
+                      scanning: _scanning,
+                    ),
+                    child: Center(
+                      child: GestureDetector(
+                        onTap: (_starting || _scanning) ? null : _startScan,
+                        child: Container(
+                          width: 64,
+                          height: 64,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: GE.primary.withValues(alpha: _scanning ? 0.24 : 0.55),
+                            border: Border.all(color: GE.primary, width: 1.4),
+                          ),
+                          child: Icon(
+                            _starting
+                                ? Icons.hourglass_top
+                                : (_scanning ? Icons.wifi_tethering : Icons.search_rounded),
+                            color: Colors.white,
+                            size: 26,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -459,11 +521,9 @@ class _LanScanScreenState extends State<LanScanScreen>
     return GlassCard(
       lite: true,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      onTap: () {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Чат с устройствами поблизости появится в одном из следующих обновлений')),
-        );
-      },
+      onTap: () => Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => LanChatScreen(deviceId: peer.deviceId, displayName: name),
+      )),
       child: Row(
         children: [
           Stack(

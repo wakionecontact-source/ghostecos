@@ -111,6 +111,7 @@ class LanTransport implements LocalTransport {
             if (pkt['type'] != 'discover') return;
             final deviceId = pkt['device_id'] as String? ?? '';
             if (deviceId.isEmpty || deviceId == _myDeviceId) return;
+            final x25519Pub = pkt['x25519_pub'] as String? ?? '';
             final senderIp = dg.address.address;
             appLog.info('lan', '← discover от $senderIp device=$deviceId');
             if (isBlocked(deviceId, senderIp)) {
@@ -121,6 +122,7 @@ class LanTransport implements LocalTransport {
               peerId:       '$deviceId@$senderIp',
               address:      senderIp,
               deviceId:     deviceId,
+              x25519PubB64: x25519Pub,
               transport:    TransportType.lan,
             ));
           } catch (_) {}
@@ -248,6 +250,7 @@ class LanTransport implements LocalTransport {
       final pkt = utf8.encode(jsonEncode({
         'type':      'discover',
         'device_id': devId,
+        'x25519_pub': CryptoV2.instance.devicePubB64,
       }));
 
       // 1) Broadcast на .255

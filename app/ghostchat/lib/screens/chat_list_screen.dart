@@ -12,14 +12,17 @@ import '../theme.dart';
 import '../services/chat_repo.dart';
 import '../services/db_service.dart';
 import '../services/search_service.dart';
+import '../services/lan_chat_store.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
 import 'chat_screen.dart';
 import 'profile_screen.dart';
 import 'lan_scan_screen.dart';
+import 'lan_chat_screen.dart';
 
 class ChatListScreen extends StatefulWidget {
-  const ChatListScreen({super.key});
+  final bool isGuest;
+  const ChatListScreen({super.key, this.isGuest = false});
   @override
   State<ChatListScreen> createState() => _ChatListScreenState();
 }
@@ -40,7 +43,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   Future<void> _init() async {
-    await ChatRepo.instance.init();
+    // Гость: НИКАКИХ обращений к серверным ChatRepo/поиску — только LAN.
+    if (!widget.isGuest) await ChatRepo.instance.init();
     _prefs = await SharedPreferences.getInstance();
     if (mounted) setState(() => _initialized = true);
   }
@@ -122,6 +126,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
             ],
           ),
         ),
+        // Гость: поиска нет вообще — он всегда бьёт в серверный SearchService.
+        if (widget.isGuest) const SizedBox(height: 4),
+        if (!widget.isGuest)
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
           child: GlassInput(
@@ -146,24 +153,52 @@ class _ChatListScreenState extends State<ChatListScreen> {
     );
   }
 
+  // LAN-чаты привязаны к УСТРОЙСТВУ (не к аккаунту, см. LanChatStore) —
+  // показываем их в общем списке на любом залогиненном аккаунте, вперемешку
+  // с серверными диалогами, отсортированными по времени последнего сообщения.
   Widget _buildDialogs() {
     return ValueListenableBuilder<List<StoredDialog>>(
       valueListenable: ChatRepo.instance.dialogsNotifier,
-      builder: (_, dialogs, _) {
-        if (dialogs.isEmpty) return _empty();
-        return RefreshIndicator(
-          color: GE.primary,
-          onRefresh: ChatRepo.instance.fetchPending,
-          child: ListView.separated(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            itemCount: dialogs.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 4),
-            itemBuilder: (_, i) =>
-                _DialogTile(dialogs[i], prefs: _prefs, onReturn: _refresh),
-          ),
+      builder: (_, serverDialogs, _) {
+        return ValueListenableBuilder<List<StoredDialog>>(
+          valueListenable: LanChatStore.instance.dialogsNotifier,
+          builder: (_, lanDialogs, _) {
+            if (serverDialogs.isEmpty && lanDialogs.isEmpty) return _empty();
+            final all = [...serverDialogs, ...lanDialogs]
+              ..sort((a, b) => _dialogTime(b).compareTo(_dialogTime(a)));
+            return RefreshIndicator(
+              color: GE.primary,
+              onRefresh: widget.isGuest
+                  ? () async {}
+                  : ChatRepo.instance.fetchPending,
+              child: ListView.separated(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                itemCount: all.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 4),
+                itemBuilder: (_, i) {
+                  final d = all[i];
+                  if (d.username.startsWith(lanDialogPrefix)) {
+                    return _LanDialogTile(d);
+                  }
+                  return _DialogTile(d, prefs: _prefs, onReturn: _refresh);
+                },
+              ),
+            );
+          },
         );
       },
     );
+  }
+
+  DateTime _dialogTime(StoredDialog d) {
+    final at = d.lastAt;
+    if (at == null) return DateTime.fromMillisecondsSinceEpoch(0);
+    try {
+      if (at is int) return DateTime.fromMillisecondsSinceEpoch(at * 1000);
+      return DateTime.parse(at.toString());
+    } catch (_) {
+      return DateTime.fromMillisecondsSinceEpoch(0);
+    }
   }
 
   Widget _buildSearchResults() {
@@ -529,7 +564,7 @@ class _DialogTile extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        _formatTime(d.lastAt),
+                        _formatDialogTime(d.lastAt),
                         style: TextStyle(color: GE.sub, fontSize: 11),
                       ),
                     ],
@@ -570,49 +605,159 @@ class _DialogTile extends StatelessWidget {
     );
   }
 
-  String _formatTime(dynamic at) {
-    if (at == null) return '';
-    DateTime dt;
+}
+
+String _formatDialogTime(dynamic at) {
+  if (at == null) return '';
+  DateTime dt;
+  try {
+    if (at is int) {
+      dt = DateTime.fromMillisecondsSinceEpoch(at * 1000);
+    } else {
+      final p = DateTime.parse(at.toString());
+      // created_at — наивная UTC-строка (без 'Z'); помечаем UTC, чтобы toLocal
+      // ниже дал верное местное время (а не уехало на −3ч).
+      dt = p.isUtc
+          ? p
+          : DateTime.utc(
+              p.year,
+              p.month,
+              p.day,
+              p.hour,
+              p.minute,
+              p.second,
+              p.millisecond,
+            );
+    }
+  } catch (_) {
+    return '';
+  }
+  final now = DateTime.now();
+  final local = dt.toLocal();
+  if (now.year == local.year &&
+      now.month == local.month &&
+      now.day == local.day) {
+    return DateFormat('HH:mm').format(local);
+  }
+  final daysAgo = now.difference(local).inDays;
+  if (daysAgo < 7) {
     try {
-      if (at is int) {
-        dt = DateTime.fromMillisecondsSinceEpoch(at * 1000);
-      } else {
-        final p = DateTime.parse(at.toString());
-        // created_at — наивная UTC-строка (без 'Z'); помечаем UTC, чтобы toLocal
-        // ниже дал верное местное время (а не уехало на −3ч).
-        dt = p.isUtc
-            ? p
-            : DateTime.utc(
-                p.year,
-                p.month,
-                p.day,
-                p.hour,
-                p.minute,
-                p.second,
-                p.millisecond,
-              );
-      }
+      return DateFormat('E', 'ru').format(local);
     } catch (_) {
-      return '';
+      // Локаль ещё не успела инициализироваться — fallback.
+      const days = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'];
+      return days[local.weekday - 1];
     }
-    final now = DateTime.now();
-    final local = dt.toLocal();
-    if (now.year == local.year &&
-        now.month == local.month &&
-        now.day == local.day) {
-      return DateFormat('HH:mm').format(local);
-    }
-    final daysAgo = now.difference(local).inDays;
-    if (daysAgo < 7) {
-      try {
-        return DateFormat('E', 'ru').format(local);
-      } catch (_) {
-        // Локаль ещё не успела инициализироваться — fallback.
-        const days = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'];
-        return days[local.weekday - 1];
-      }
-    }
-    return DateFormat('dd.MM').format(local);
+  }
+  return DateFormat('dd.MM').format(local);
+}
+
+// ─── LAN-диалог: привязан к устройству, не к аккаунту ────────────────────
+class _LanDialogTile extends StatelessWidget {
+  final StoredDialog d;
+  const _LanDialogTile(this.d);
+
+  String get _deviceId => d.username.substring(lanDialogPrefix.length);
+
+  Future<void> _confirmClear(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0F172A),
+        title: Text('Очистить историю?', style: TextStyle(color: GE.text)),
+        content: Text(
+          'Переписка с ${d.displayName} по LAN удалится с этого устройства. '
+          'Отменить нельзя.',
+          style: TextStyle(color: GE.sub),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dctx, false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dctx, true),
+            child: Text('Очистить', style: TextStyle(color: GE.red)),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) await LanChatStore.instance.clearChat(_deviceId);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(GE.radiusMd),
+      onLongPress: () => _confirmClear(context),
+      onTap: () => Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => LanChatScreen(deviceId: _deviceId, displayName: d.displayName),
+      )),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: Row(
+          children: [
+            Stack(
+              children: [
+                _Avatar(d.displayName, size: 48),
+                Positioned(
+                  right: -1,
+                  bottom: -1,
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(color: GE.bg, shape: BoxShape.circle),
+                    child: Icon(Icons.wifi_tethering_rounded, size: 13, color: GE.primary),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          d.displayName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: GE.text, fontSize: 15, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      Text(_formatDialogTime(d.lastAt), style: TextStyle(color: GE.sub, fontSize: 11)),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          d.lastText.isEmpty ? 'Устройство поблизости' : d.lastText,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: GE.sub, fontSize: 13),
+                        ),
+                      ),
+                      if (d.unread > 0) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(color: GE.primary, borderRadius: BorderRadius.circular(10)),
+                          child: Text('${d.unread > 99 ? "99+" : d.unread}',
+                              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

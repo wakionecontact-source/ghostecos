@@ -124,13 +124,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
 class _SectionScaffold extends StatelessWidget {
   final String title;
   final List<Widget> children;
-  const _SectionScaffold({required this.title, required this.children});
+  final List<Widget>? actions;
+  const _SectionScaffold({
+    required this.title,
+    required this.children,
+    this.actions,
+  });
   @override
   Widget build(BuildContext context) {
     return MeshBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: GlassAppBar(showBack: true, titleText: title),
+        appBar: GlassAppBar(showBack: true, titleText: title, actions: actions),
         body: ListView(padding: const EdgeInsets.all(12), children: children),
       ),
     );
@@ -269,6 +274,13 @@ class _PermissionsManageScreenState extends State<_PermissionsManageScreen>
   Widget build(BuildContext context) {
     return _SectionScaffold(
       title: 'Разрешения',
+      actions: [
+        IconButton(
+          icon: Icon(Icons.settings_outlined, color: GE.sub),
+          tooltip: 'Настройки приложения',
+          onPressed: openAppSettings,
+        ),
+      ],
       children: _loading
           ? [
               const SizedBox(height: 8),

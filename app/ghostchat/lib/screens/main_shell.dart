@@ -5,6 +5,8 @@
 //
 // Каждый экран — native, без WebView. Заглушки пока (M5-M7 их наполнят).
 
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -16,11 +18,19 @@ import '../services/ws_client.dart';
 import '../services/notification_service.dart';
 import '../services/foreground_service.dart';
 import '../services/fcm_service.dart';
+import '../services/lan_chat_store.dart';
+import '../services/crypto_v2.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
 import 'settings_screen.dart';
 import 'chat_list_screen.dart';
 import 'devices_screen.dart';
+import '../core/local/local_hub.dart';
+import '../core/local/local_transport.dart';
+import '../core/local/lan_settings.dart';
+import '../core/local/transports/lan_transport.dart';
+import '../core/local/transports/bluetooth_transport.dart';
+import '../core/local/transports/wifi_direct_transport.dart';
 
 enum Section {
   chat(
@@ -54,9 +64,11 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   Section _section = Section.chat;
   bool _bootstrapped = false;
+  bool _isGuest = false;
   String? _username;
   String? _displayName;
   String? _error;
+  StreamSubscription? _lanMsgSub;
 
   @override
   void initState() {
@@ -69,8 +81,24 @@ class _MainShellState extends State<MainShell> {
   /// 2. Открыть БД для этого юзера.
   /// 3. Сгенерить/загрузить E2E ключи.
   /// 4. Подключить WebSocket.
+  /// 5. Поднять LAN/BLE/Wi-Fi Direct — на уровне всего приложения (не только
+  ///    пока открыт экран "Устройства поблизости"), т.к. LAN-чаты привязаны
+  ///    к устройству и должны принимать сообщения независимо от экрана.
+  ///
+  /// Гость (шаги 2-4 и FCM пропускаются целиком) — гостевой аккаунт НИКАК
+  /// не взаимодействует с сервером, доступны только LAN-чаты (шаг 5).
   Future<void> _bootstrap() async {
     try {
+      _isGuest = await AuthService.isGuest();
+
+      if (_isGuest) {
+        _username = 'Гость';
+        _displayName = 'Гость';
+        await _startLan();
+        if (mounted) setState(() => _bootstrapped = true);
+        return;
+      }
+
       final u = await AuthService.username();
       final dn = await AuthService.displayName();
       if (u == null) throw Exception('Нет username');
@@ -80,6 +108,7 @@ class _MainShellState extends State<MainShell> {
       await DbService.instance.init(u);
       await CryptoService.instance.ensureKeys();
       WsClient.instance.connect();
+      await _startLan();
 
       if (mounted) setState(() => _bootstrapped = true);
       // После логина — спросить разрешение на уведомления (если ещё не выдано).
@@ -92,13 +121,57 @@ class _MainShellState extends State<MainShell> {
     }
   }
 
+  Future<void> _startLan() async {
+    await LanChatStore.instance.init();
+    await LanSettings().load();
+    await CryptoV2.instance.ensureKeys();
+
+    localHub.registerDefaults([
+      LanTransport(),
+      WifiDirectTransport(),
+      BluetoothTransport(),
+    ]);
+    _lanMsgSub = localHub.onMessage.listen(_onLanMessage);
+    await localHub.startAll();
+  }
+
+  /// Входящее LAN-сообщение → расшифровать (ключ пира взят из БД LAN-чатов,
+  /// сохранённый там при подключении) и сохранить в историю. Работает даже
+  /// если экран этого чата сейчас не открыт.
+  Future<void> _onLanMessage(LocalMessageEvent m) async {
+    if (m.encB64.isEmpty) return;
+    try {
+      final clear = await CryptoV2.instance.decryptForMe(m.encB64);
+      if (clear == null) return;
+      final text = utf8.decode(clear);
+      await LanChatStore.instance.addMessage(
+        deviceId: m.fromUsername,
+        msgId: m.msgId,
+        fromMe: false,
+        text: text,
+        // sentAt приходит в миллисекундах (см. LocalHub keepalive), а БД
+        // хранит секунды — как created_at в DbService.
+        createdAtSec: m.sentAt > 0 ? m.sentAt ~/ 1000 : null,
+      );
+    } catch (_) {}
+  }
+
   Future<void> _logout() async {
-    await ForegroundService.instance.stop();
-    await WsClient.instance.disconnect();
-    await DbService.instance.close();
-    await CryptoService.instance.wipe();
+    if (!_isGuest) {
+      await ForegroundService.instance.stop();
+      await WsClient.instance.disconnect();
+      await DbService.instance.close();
+      await CryptoService.instance.wipe();
+    }
     await AuthService.logout();
     widget.onLoggedOut();
+  }
+
+  @override
+  void dispose() {
+    _lanMsgSub?.cancel();
+    localHub.stopAll();
+    super.dispose();
   }
 
   @override
@@ -176,8 +249,9 @@ class _MainShellState extends State<MainShell> {
     // Пока заглушки. M5-M7 их наполнят.
     switch (_section) {
       case Section.chat:
-        return const ChatListScreen();
+        return ChatListScreen(isGuest: _isGuest);
       case Section.profile:
+        if (_isGuest) return _GuestPane(onExit: _logout);
         return _ProfilePane(
           username: _username ?? '?',
           displayName: _displayName ?? '?',
@@ -497,6 +571,48 @@ class _RailItem extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Гостевой режим: нет аккаунта — только выход/регистрация ────────────
+class _GuestPane extends StatelessWidget {
+  final VoidCallback onExit;
+  const _GuestPane({required this.onExit});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: GlassCard(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.person_outline, size: 44, color: GE.primary),
+              const SizedBox(height: 12),
+              Text('Гостевой режим',
+                  style: TextStyle(color: GE.text, fontSize: 17, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 8),
+              Text(
+                'Аккаунта нет — доступны только чаты с устройствами поблизости. '
+                'Сервер не используется вообще.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: GE.sub, fontSize: 13, height: 1.4),
+              ),
+              const SizedBox(height: 18),
+              GlassButton(
+                label: 'Выйти из гостевого режима',
+                icon: Icons.logout,
+                danger: true,
+                fullWidth: true,
+                onTap: onExit,
+              ),
+            ],
+          ),
         ),
       ),
     );

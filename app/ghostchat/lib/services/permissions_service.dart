@@ -5,8 +5,8 @@
 // лениво, прямо перед действием (запись голосового, вложение фото и т.д.).
 //
 // Список под актуальный апп и манифест: уведомления, микрофон (голосовые),
-// фото/видео (галерея), фон (батарея). НЕТ камеры/аудиофайлов/Bluetooth/Wi-Fi/
-// гео — этих фич (съёмка, mesh) в новом GhostChat пока нет.
+// фото/видео (галерея), фон (батарея), Bluetooth/геолокация/поиск устройств
+// (LAN/BLE/Wi-Fi Direct — экран «Устройства поблизости»).
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -17,6 +17,11 @@ const List<Permission> appPermissions = <Permission>[
   Permission.photos,
   Permission.videos,
   Permission.ignoreBatteryOptimizations,
+  Permission.bluetoothScan,
+  Permission.bluetoothConnect,
+  Permission.bluetoothAdvertise,
+  Permission.nearbyWifiDevices,
+  Permission.locationWhenInUse,
 ];
 
 String permLabel(Permission p) {
@@ -25,6 +30,11 @@ String permLabel(Permission p) {
   if (p == Permission.photos) return 'Фото';
   if (p == Permission.videos) return 'Видео';
   if (p == Permission.ignoreBatteryOptimizations) return 'Работа в фоне';
+  if (p == Permission.bluetoothScan ||
+      p == Permission.bluetoothConnect ||
+      p == Permission.bluetoothAdvertise) return 'Bluetooth';
+  if (p == Permission.nearbyWifiDevices) return 'Устройства поблизости';
+  if (p == Permission.locationWhenInUse) return 'Геолокация';
   return p.toString();
 }
 
@@ -36,6 +46,15 @@ String permDesc(Permission p) {
   if (p == Permission.ignoreBatteryOptimizations) {
     return 'Доставка сообщений при свёрнутом приложении';
   }
+  if (p == Permission.bluetoothScan ||
+      p == Permission.bluetoothConnect ||
+      p == Permission.bluetoothAdvertise) {
+    return 'Поиск устройств рядом по BLE';
+  }
+  if (p == Permission.nearbyWifiDevices) return 'Поиск устройств по Wi-Fi Direct';
+  if (p == Permission.locationWhenInUse) {
+    return 'Нужна системе для поиска по Bluetooth/Wi-Fi Direct';
+  }
   return '';
 }
 
@@ -45,6 +64,11 @@ IconData permIcon(Permission p) {
   if (p == Permission.photos) return Icons.photo_outlined;
   if (p == Permission.videos) return Icons.videocam_outlined;
   if (p == Permission.ignoreBatteryOptimizations) return Icons.battery_saver;
+  if (p == Permission.bluetoothScan ||
+      p == Permission.bluetoothConnect ||
+      p == Permission.bluetoothAdvertise) return Icons.bluetooth;
+  if (p == Permission.nearbyWifiDevices) return Icons.wifi_tethering;
+  if (p == Permission.locationWhenInUse) return Icons.location_on_outlined;
   return Icons.shield_outlined;
 }
 
@@ -59,16 +83,28 @@ Future<Map<Permission, PermissionStatus>> checkAllPermissions() async {
 
 /// Запросить все разом (кнопка «Запросить разрешения» на онбординге).
 /// Батарея — отдельным системным диалогом, остальные пачкой.
-Future<Map<Permission, PermissionStatus>> requestAllPermissions() async {
-  if (await Permission.ignoreBatteryOptimizations.isDenied) {
+/// [only] — если передан, запрашиваются только эти разрешения (галочки
+/// юзера в списке на онбординге); по умолчанию — все [appPermissions].
+Future<Map<Permission, PermissionStatus>> requestAllPermissions({
+  Set<Permission>? only,
+}) async {
+  final wanted = only ?? appPermissions.toSet();
+  if (wanted.contains(Permission.ignoreBatteryOptimizations) &&
+      await Permission.ignoreBatteryOptimizations.isDenied) {
     await Permission.ignoreBatteryOptimizations.request();
   }
-  await <Permission>[
+  final batch = <Permission>[
     Permission.notification,
     Permission.microphone,
     Permission.photos,
     Permission.videos,
-  ].request();
+    Permission.bluetoothScan,
+    Permission.bluetoothConnect,
+    Permission.bluetoothAdvertise,
+    Permission.nearbyWifiDevices,
+    Permission.locationWhenInUse,
+  ].where(wanted.contains).toList();
+  if (batch.isNotEmpty) await batch.request();
   return checkAllPermissions();
 }
 

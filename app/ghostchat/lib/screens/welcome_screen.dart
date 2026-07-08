@@ -1,6 +1,7 @@
 // Welcome — экран приветствия (стиль 1.19.3: одна страница) в дизайне Ghost:
 // mesh-фон + glass + фиолет. Плавная staggered-анимация входа + «дышащий»
 // логотип (мягкий bob + пульс свечения). После «Далее» → экран разрешений.
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme.dart';
@@ -19,6 +20,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
     with TickerProviderStateMixin {
   late final AnimationController _entrance; // одноразовое появление
   late final AnimationController _float; // бесконечное «дыхание» логотипа
+  late final AnimationController _ring; // медленно вращающееся кольцо-нимб
 
   @override
   void initState() {
@@ -31,12 +33,17 @@ class _WelcomeScreenState extends State<WelcomeScreen>
       vsync: this,
       duration: const Duration(milliseconds: 2800),
     )..repeat(reverse: true);
+    _ring = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 9000),
+    )..repeat();
   }
 
   @override
   void dispose() {
     _entrance.dispose();
     _float.dispose();
+    _ring.dispose();
     super.dispose();
   }
 
@@ -69,52 +76,117 @@ class _WelcomeScreenState extends State<WelcomeScreen>
     );
   }
 
-  /// Логотип: лёгкий bob вверх-вниз + микро-scale + пульс свечения.
+  /// Логотип: мягкое двухцветное сияние + медленно вращающийся нимб-кольцо
+  /// + сам призрак с лёгким bob/scale-«дыханием».
   Widget _animatedLogo() {
-    return AnimatedBuilder(
-      animation: _float,
-      builder: (context, _) {
-        final f = Curves.easeInOut.transform(_float.value);
-        return Transform.translate(
-          offset: Offset(0, -5 * f),
-          child: Transform.scale(
-            scale: 1 + 0.025 * f,
-            child: Container(
-              width: 116,
-              height: 116,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: RadialGradient(
-                  colors: [
-                    GE.primary.withValues(alpha: 0.35),
-                    GE.primary.withValues(alpha: 0),
+    return SizedBox(
+      width: 154,
+      height: 154,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // Слой 1 — широкое двухцветное сияние позади всего.
+          AnimatedBuilder(
+            animation: _float,
+            builder: (context, _) {
+              final f = Curves.easeInOut.transform(_float.value);
+              return Container(
+                width: 150,
+                height: 150,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: GE.primary.withValues(alpha: 0.20 + 0.16 * f),
+                      blurRadius: 46 + 16 * f,
+                      spreadRadius: 2,
+                    ),
+                    BoxShadow(
+                      color: GE.blue.withValues(alpha: 0.12),
+                      blurRadius: 64,
+                      spreadRadius: -8,
+                    ),
                   ],
                 ),
-                border: Border.all(
-                  color: GE.primary.withValues(alpha: 0.45),
-                  width: 1.5,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: GE.primary.withValues(alpha: 0.16 + 0.24 * f),
-                    blurRadius: 22 + 18 * f,
-                    spreadRadius: 1 + 2 * f,
-                  ),
-                ],
-              ),
-              child: ClipOval(
-                child: Image.asset(
-                  'assets/icon.png',
-                  width: 86,
-                  height: 86,
-                  fit: BoxFit.cover,
-                ),
-              ),
-            ),
+              );
+            },
           ),
-        );
-      },
+          // Слой 2 — тонкий вращающийся нимб (sweep-градиент, кольцом).
+          AnimatedBuilder(
+            animation: _ring,
+            builder: (context, _) {
+              return Transform.rotate(
+                angle: _ring.value * 2 * math.pi,
+                child: Container(
+                  width: 134,
+                  height: 134,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: SweepGradient(
+                      colors: [
+                        GE.primary.withValues(alpha: 0),
+                        GE.primary.withValues(alpha: 0.85),
+                        GE.blue.withValues(alpha: 0.55),
+                        GE.primary.withValues(alpha: 0),
+                      ],
+                      stops: const [0.0, 0.22, 0.5, 0.78],
+                    ),
+                  ),
+                  child: Center(
+                    child: Container(
+                      width: 127,
+                      height: 127,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: GE.bg,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+          // Слой 3 — сам призрак: лёгкий bob вверх-вниз + микро-scale.
+          AnimatedBuilder(
+            animation: _float,
+            builder: (context, _) {
+              final f = Curves.easeInOut.transform(_float.value);
+              return Transform.translate(
+                offset: Offset(0, -5 * f),
+                child: Transform.scale(
+                  scale: 1 + 0.025 * f,
+                  child: Container(
+                    width: 116,
+                    height: 116,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          GE.primary.withValues(alpha: 0.35),
+                          GE.primary.withValues(alpha: 0),
+                        ],
+                      ),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.22),
+                        width: 1,
+                      ),
+                    ),
+                    child: ClipOval(
+                      child: Image.asset(
+                        'assets/icon.png',
+                        width: 86,
+                        height: 86,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 

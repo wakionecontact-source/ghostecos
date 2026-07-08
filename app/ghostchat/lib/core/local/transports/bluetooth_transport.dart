@@ -80,6 +80,7 @@ class BluetoothTransport implements LocalTransport {
     try {
       final discoveryJson = jsonEncode({
         'device_id': _myDeviceId,
+        'x25519_pub': CryptoV2.instance.devicePubB64,
       });
       await _peripheralChannel.invokeMethod('start', {'discoveryJson': discoveryJson});
       appLog.info('bt', 'BLE peripheral запущен');
@@ -141,11 +142,13 @@ class BluetoothTransport implements LocalTransport {
         }
       } else if (type == 'discover') {
         final deviceId = pkt['device_id'] as String? ?? '';
+        final peerX25519Pub = pkt['x25519_pub'] as String? ?? '';
         appLog.info('bt', '← peripheral discover device=$deviceId');
         if (deviceId.isNotEmpty && !isBlocked(deviceId, address)) {
           _requestCtrl.add(LocalPeer(
             peerId:       '$deviceId@bt:$address',
             deviceId:     deviceId,
+            x25519PubB64: peerX25519Pub,
             transport:    TransportType.bluetooth,
             address:      address,
           ));
@@ -251,6 +254,7 @@ class BluetoothTransport implements LocalTransport {
 
       final discData = jsonDecode(utf8.decode(discBytes)) as Map<String, dynamic>;
       final deviceId = discData['device_id'] as String? ?? '';
+      final peerX25519Pub = discData['x25519_pub'] as String? ?? '';
 
       if (deviceId.isEmpty) {
         device.disconnect();
@@ -266,6 +270,7 @@ class BluetoothTransport implements LocalTransport {
       _requestCtrl.add(LocalPeer(
         peerId:       '$deviceId@bt:${device.remoteId.str}',
         deviceId:     deviceId,
+        x25519PubB64: peerX25519Pub,
         transport:    TransportType.bluetooth,
         address:      device.remoteId.str,
       ));

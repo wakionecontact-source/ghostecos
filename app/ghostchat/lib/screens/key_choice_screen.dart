@@ -110,41 +110,47 @@ class _KeyChoiceScreenState extends State<KeyChoiceScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Icon(icon, color: sel ? GE.primary : GE.sub, size: 22),
                 const SizedBox(width: 10),
-                Flexible(
-                  child: Text(
-                    title,
-                    style: TextStyle(
-                      color: GE.text,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                    ),
+                Expanded(
+                  child: Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          color: GE.text,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      if (badge != null)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: GE.primary.withValues(alpha: 0.16),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            badge,
+                            style: TextStyle(
+                              color: GE.primary,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-                if (badge != null) ...[
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: GE.primary.withValues(alpha: 0.16),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      badge,
-                      style: TextStyle(
-                        color: GE.primary,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
-                const Spacer(),
+                const SizedBox(width: 8),
                 Icon(
                   sel
                       ? Icons.radio_button_checked

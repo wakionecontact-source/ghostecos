@@ -11,6 +11,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../screens/chat_screen.dart';
+import '../screens/lan_scan_screen.dart';
 
 class NotificationService {
   NotificationService._();
@@ -84,6 +85,16 @@ class NotificationService {
     );
   }
 
+  /// Кто-то поблизости хочет подключиться по LAN/BLE/Wi-Fi Direct.
+  void onLanRequest({required String label}) {
+    if (!_ready) return;
+    _show(
+      title: 'Устройство поблизости',
+      body: '$label хочет подключиться',
+      payload: jsonEncode({'type': 'lan_request'}),
+    );
+  }
+
   Future<void> _show({
     required String title,
     required String body,
@@ -112,6 +123,12 @@ class NotificationService {
       final p = resp.payload;
       if (p == null) return;
       final data = jsonDecode(p) as Map<String, dynamic>;
+      if (data['type'] == 'lan_request') {
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(builder: (_) => const LanScanScreen()),
+        );
+        return;
+      }
       final peer = data['peer'] as String?;
       if (peer == null) return;
       navigatorKey.currentState?.push(

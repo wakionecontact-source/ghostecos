@@ -23,7 +23,11 @@ class _PermissionsScreenState extends State<PermissionsScreen>
     with WidgetsBindingObserver {
   bool _requesting = false;
   bool _requested = false;
+  bool _acknowledged = false;
   Map<Permission, PermissionStatus> _statuses = {};
+  final Map<Permission, bool> _selected = {
+    for (final p in appPermissions) p: true,
+  };
 
   @override
   void initState() {
@@ -51,9 +55,13 @@ class _PermissionsScreenState extends State<PermissionsScreen>
     if (_requested && _allGranted) _proceed();
   }
 
+  Set<Permission> get _wanted =>
+      _selected.entries.where((e) => e.value).map((e) => e.key).toSet();
+
   Future<void> _doRequest() async {
+    if (!_acknowledged) return;
     setState(() => _requesting = true);
-    final st = await requestAllPermissions();
+    final st = await requestAllPermissions(only: _wanted);
     if (!mounted) return;
     setState(() {
       _statuses = st;
@@ -81,11 +89,18 @@ class _PermissionsScreenState extends State<PermissionsScreen>
     if (_allGranted) _proceed();
   }
 
+  // Учитываем только те разрешения, которые юзер оставил отмеченными —
+  // снятая галочка = осознанный отказ, не считаем это "недостающим".
   bool get _allGranted =>
-      _statuses.isNotEmpty &&
-      _statuses.values.every((s) => s.isGranted || s.isLimited);
+      _statuses.entries
+          .where((e) => _wanted.contains(e.key))
+          .isNotEmpty &&
+      _statuses.entries
+          .where((e) => _wanted.contains(e.key))
+          .every((e) => e.value.isGranted || e.value.isLimited);
 
   List<Permission> get _denied => _statuses.entries
+      .where((e) => _wanted.contains(e.key))
       .where((e) => !e.value.isGranted && !e.value.isLimited)
       .map((e) => e.key)
       .toList();
@@ -103,16 +118,31 @@ class _PermissionsScreenState extends State<PermissionsScreen>
       child: Scaffold(
         backgroundColor: Colors.transparent,
         body: SafeArea(
-          child: _requesting
-              ? _loadingView()
-              : (_requested && !_allGranted ? _resultView() : _introView()),
+          child: Stack(
+            children: [
+              _requesting
+                  ? _loadingView()
+                  : (_requested && !_allGranted
+                      ? _resultView()
+                      : _introView()),
+              Positioned(
+                top: 4,
+                right: 4,
+                child: IconButton(
+                  icon: Icon(Icons.settings_outlined, color: GE.sub),
+                  tooltip: 'Настройки приложения',
+                  onPressed: openAppSettings,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _introView() {
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
         children: [
@@ -135,55 +165,98 @@ class _PermissionsScreenState extends State<PermissionsScreen>
             style: TextStyle(color: GE.sub, fontSize: 13, height: 1.5),
           ),
           const SizedBox(height: 20),
-          Expanded(
-            child: GlassCard(
+          GlassCard(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
               padding: const EdgeInsets.symmetric(vertical: 6),
-              child: ListView.separated(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                itemCount: appPermissions.length,
-                separatorBuilder: (_, __) =>
-                    Divider(height: 1, color: GE.glassBorder, indent: 60),
-                itemBuilder: (_, i) {
-                  final p = appPermissions[i];
-                  return ListTile(
-                    leading: Container(
-                      width: 38,
-                      height: 38,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: GE.primary.withValues(alpha: 0.14),
-                        borderRadius: BorderRadius.circular(10),
+              itemCount: appPermissions.length,
+              separatorBuilder: (_, __) =>
+                  Divider(height: 1, color: GE.glassBorder, indent: 60),
+              itemBuilder: (_, i) {
+                final p = appPermissions[i];
+                final checked = _selected[p] ?? true;
+                return ListTile(
+                  onTap: () => setState(() => _selected[p] = !checked),
+                  leading: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Checkbox(
+                        value: checked,
+                        activeColor: GE.primary,
+                        onChanged: (v) =>
+                            setState(() => _selected[p] = v ?? true),
                       ),
-                      child: Icon(permIcon(p), color: GE.primary, size: 20),
-                    ),
-                    title: Text(
-                      permLabel(p),
-                      style: TextStyle(
-                        color: GE.text,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
+                      Container(
+                        width: 38,
+                        height: 38,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: GE.primary.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(permIcon(p), color: GE.primary, size: 20),
                       ),
+                    ],
+                  ),
+                  title: Text(
+                    permLabel(p),
+                    style: TextStyle(
+                      color: GE.text,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
                     ),
-                    subtitle: Text(
-                      permDesc(p),
-                      style: TextStyle(
-                        color: GE.sub,
-                        fontSize: 11.5,
-                        height: 1.3,
-                      ),
+                  ),
+                  subtitle: Text(
+                    permDesc(p),
+                    style: TextStyle(
+                      color: GE.sub,
+                      fontSize: 11.5,
+                      height: 1.3,
                     ),
-                  );
-                },
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 12),
+          InkWell(
+            onTap: () => setState(() => _acknowledged = !_acknowledged),
+            borderRadius: BorderRadius.circular(10),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                children: [
+                  Checkbox(
+                    value: _acknowledged,
+                    activeColor: GE.primary,
+                    onChanged: (v) =>
+                        setState(() => _acknowledged = v ?? false),
+                  ),
+                  Expanded(
+                    child: Text(
+                      'Ознакомился со всеми разрешениями',
+                      style: TextStyle(color: GE.sub, fontSize: 13),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
-          const SizedBox(height: 16),
-          GlassButton(
-            label: 'Запросить разрешения',
-            icon: Icons.check_circle_outline,
-            primary: true,
-            fullWidth: true,
-            onTap: _doRequest,
+          const SizedBox(height: 6),
+          Opacity(
+            opacity: _acknowledged ? 1 : 0.4,
+            child: IgnorePointer(
+              ignoring: !_acknowledged,
+              child: GlassButton(
+                label: 'Запросить разрешения',
+                icon: Icons.check_circle_outline,
+                primary: true,
+                fullWidth: true,
+                onTap: _doRequest,
+              ),
+            ),
           ),
           const SizedBox(height: 8),
           TextButton(
@@ -227,7 +300,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
 
   Widget _resultView() {
     final denied = _denied;
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
         children: [
@@ -250,30 +323,30 @@ class _PermissionsScreenState extends State<PermissionsScreen>
             style: TextStyle(color: GE.sub, fontSize: 13, height: 1.5),
           ),
           const SizedBox(height: 18),
-          Expanded(
-            child: GlassCard(
+          GlassCard(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
               padding: const EdgeInsets.symmetric(vertical: 6),
-              child: ListView.separated(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                itemCount: denied.length,
-                separatorBuilder: (_, __) =>
-                    Divider(height: 1, color: GE.glassBorder, indent: 52),
-                itemBuilder: (_, i) {
-                  final p = denied[i];
-                  return ListTile(
-                    dense: true,
-                    leading: Icon(permIcon(p), color: GE.red, size: 20),
-                    title: Text(
-                      permLabel(p),
-                      style: TextStyle(color: GE.text, fontSize: 14),
-                    ),
-                    trailing: Text(
-                      'нет',
-                      style: TextStyle(color: GE.red, fontSize: 12),
-                    ),
-                  );
-                },
-              ),
+              itemCount: denied.length,
+              separatorBuilder: (_, __) =>
+                  Divider(height: 1, color: GE.glassBorder, indent: 52),
+              itemBuilder: (_, i) {
+                final p = denied[i];
+                return ListTile(
+                  dense: true,
+                  leading: Icon(permIcon(p), color: GE.red, size: 20),
+                  title: Text(
+                    permLabel(p),
+                    style: TextStyle(color: GE.text, fontSize: 14),
+                  ),
+                  trailing: Text(
+                    'нет',
+                    style: TextStyle(color: GE.red, fontSize: 12),
+                  ),
+                );
+              },
             ),
           ),
           const SizedBox(height: 16),

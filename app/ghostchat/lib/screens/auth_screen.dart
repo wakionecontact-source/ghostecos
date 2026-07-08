@@ -17,11 +17,24 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _isLogin = true;
   bool _busy = false;
   bool _age18 = false;
+  bool _agreedTerms = false;
   String? _err;
   final _userCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
   final _pwdCtrl = TextEditingController();
   final _pwd2Ctrl = TextEditingController();
+
+  Future<void> _guest() async {
+    setState(() { _err = null; _busy = true; });
+    try {
+      await AuthService.loginAsGuest();
+      widget.onLoggedIn();
+    } catch (e) {
+      setState(() => _err = e.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   Future<void> _go() async {
     setState(() { _err = null; _busy = true; });
@@ -40,6 +53,7 @@ class _AuthScreenState extends State<AuthScreen> {
         }
         if (_pwdCtrl.text != _pwd2Ctrl.text) throw 'Пароли не совпадают';
         if (!_age18) throw 'Подтвердите 18+';
+        if (!_agreedTerms) throw 'Примите условия использования и политику приватности';
         await AuthService.register(
           username: _userCtrl.text.trim().toLowerCase(),
           displayName: _nameCtrl.text.trim(),
@@ -99,6 +113,11 @@ class _AuthScreenState extends State<AuthScreen> {
                       value: _age18,
                       onChanged: (v) => setState(() => _age18 = v ?? false),
                     ),
+                    _TermsCheckbox(
+                      value: _agreedTerms,
+                      onChanged: (v) =>
+                          setState(() => _agreedTerms = v ?? false),
+                    ),
                   ],
                   if (_err != null) ...[
                     const SizedBox(height: 12),
@@ -117,6 +136,23 @@ class _AuthScreenState extends State<AuthScreen> {
                   _PrimaryBtn(
                     label: _isLogin ? 'Войти' : 'Зарегистрироваться',
                     busy: _busy, onTap: _go,
+                  ),
+                  const SizedBox(height: 12),
+                  TextButton(
+                    onPressed: _busy ? null : _guest,
+                    child: Text(
+                      'Продолжить как гость',
+                      style: TextStyle(color: GE.sub, fontSize: 13),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Text(
+                      'Только чаты с устройствами поблизости (LAN/BLE/Wi-Fi Direct). '
+                      'Без аккаунта — сервер вообще не используется.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: GE.sub, fontSize: 10.5, height: 1.4),
+                    ),
                   ),
                   const SizedBox(height: 16),
                   const _Disclaimer(),
@@ -294,12 +330,16 @@ class _PrimaryBtn extends StatelessWidget {
   }
 }
 
+Future<void> _openLegalPage(String path) async {
+  final url = Uri.parse('${GE.baseUrl}$path');
+  await launchUrl(url, mode: LaunchMode.externalApplication);
+}
+
+TapGestureRecognizer _tapRec(VoidCallback cb) =>
+    TapGestureRecognizer()..onTap = cb;
+
 class _Disclaimer extends StatelessWidget {
   const _Disclaimer();
-  Future<void> _open(String path) async {
-    final url = Uri.parse('${GE.baseUrl}$path');
-    await launchUrl(url, mode: LaunchMode.externalApplication);
-  }
   @override
   Widget build(BuildContext context) {
     final base = TextStyle(color: GE.sub, fontSize: 11, height: 1.55);
@@ -310,18 +350,61 @@ class _Disclaimer extends StatelessWidget {
         TextSpan(
           text: 'Условиями пользования',
           style: link,
-          recognizer: _tapRec(() => _open('/terms')),
+          recognizer: _tapRec(() => _openLegalPage('/terms')),
         ),
         const TextSpan(text: ' и '),
         TextSpan(
           text: 'Политикой приватности',
           style: link,
-          recognizer: _tapRec(() => _open('/privacy')),
+          recognizer: _tapRec(() => _openLegalPage('/privacy')),
         ),
       ]),
       textAlign: TextAlign.center,
     );
   }
-  static TapGestureRecognizer _tapRec(VoidCallback cb) =>
-      TapGestureRecognizer()..onTap = cb;
+}
+
+class _TermsCheckbox extends StatelessWidget {
+  final bool value;
+  final ValueChanged<bool?> onChanged;
+  const _TermsCheckbox({required this.value, required this.onChanged});
+  @override
+  Widget build(BuildContext context) {
+    final base = TextStyle(color: GE.sub, fontSize: 12, height: 1.5);
+    final link = TextStyle(color: GE.primary, fontSize: 12, height: 1.5);
+    return GestureDetector(
+      onTap: () => onChanged(!value),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Checkbox(
+            value: value, onChanged: onChanged,
+            activeColor: GE.primary,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text.rich(
+                TextSpan(style: base, children: [
+                  const TextSpan(text: 'Принимаю '),
+                  TextSpan(
+                    text: 'Условия использования',
+                    style: link,
+                    recognizer: _tapRec(() => _openLegalPage('/terms')),
+                  ),
+                  const TextSpan(text: ' и '),
+                  TextSpan(
+                    text: 'Политику приватности',
+                    style: link,
+                    recognizer: _tapRec(() => _openLegalPage('/privacy')),
+                  ),
+                ]),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

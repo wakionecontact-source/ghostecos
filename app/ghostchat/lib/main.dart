@@ -19,6 +19,7 @@ import 'screens/welcome_screen.dart';
 import 'screens/permissions_screen.dart';
 import 'screens/key_choice_screen.dart';
 import 'screens/auth_screen.dart';
+import 'screens/preparing_screen.dart';
 import 'screens/main_shell.dart';
 import 'widgets/toast_overlay.dart';
 import 'widgets/key_gate.dart';
@@ -133,7 +134,7 @@ class _Root extends StatelessWidget {
   }
 }
 
-enum _Stage { loading, welcome, permissions, keychoice, auth, app }
+enum _Stage { loading, welcome, permissions, keychoice, auth, preparing, app }
 
 class _Router extends StatefulWidget {
   const _Router();
@@ -156,29 +157,41 @@ class _RouterState extends State<_Router> {
     final permsDone = prefs.getBool('permissions_done') ?? false;
     final keyChoiceDone = prefs.getBool('keychoice_done') ?? false;
     final token = await AuthService.token();
+    final loggedIn = token != null && token.isNotEmpty;
+    final isGuest = loggedIn && await AuthService.isGuest();
     if (!mounted) return;
     setState(() {
       if (!welcomeDone) {
         _stage = _Stage.welcome;
       } else if (!permsDone) {
         _stage = _Stage.permissions;
-      } else if (!keyChoiceDone) {
-        _stage = _Stage.keychoice;
-      } else if (token == null || token.isEmpty) {
+      } else if (!loggedIn) {
+        // Выбор ключа — ПОСЛЕ входа/регистрации, а не до: до этого момента
+        // ещё нет аккаунта, которому ключ вообще принадлежит.
         _stage = _Stage.auth;
+      } else if (!keyChoiceDone && !isGuest) {
+        // У гостя нет аккаунта и нет ключа для бэкапа на сервере — этот шаг
+        // ему не нужен вообще, не только "потом".
+        _stage = _Stage.keychoice;
       } else {
         _stage = _Stage.app;
       }
     });
   }
 
-  /// После экрана выбора ключа: залогинен → app, иначе → auth.
-  Future<void> _afterKeyChoice() async {
-    final t = await AuthService.token();
+  /// После экрана "Привет" — на выбор ключа (если ещё не делали на этом
+  /// устройстве) или сразу в приложение. Гостю выбор ключа не нужен вообще —
+  /// у гостя нет аккаунта и нет ключа для бэкапа на сервере.
+  Future<void> _afterPreparing() async {
+    final isGuest = await AuthService.isGuest();
+    if (isGuest) {
+      if (mounted) setState(() => _stage = _Stage.app);
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final keyChoiceDone = prefs.getBool('keychoice_done') ?? false;
     if (!mounted) return;
-    setState(
-      () => _stage = (t != null && t.isNotEmpty) ? _Stage.app : _Stage.auth,
-    );
+    setState(() => _stage = keyChoiceDone ? _Stage.app : _Stage.keychoice);
   }
 
   @override
@@ -223,20 +236,27 @@ class _RouterState extends State<_Router> {
         return KeyedSubtree(
           key: const ValueKey('permissions'),
           child: PermissionsScreen(
-            onDone: () => setState(() => _stage = _Stage.keychoice),
+            onDone: () => setState(() => _stage = _Stage.auth),
           ),
         );
       case _Stage.keychoice:
         return KeyedSubtree(
           key: const ValueKey('keychoice'),
-          child: KeyChoiceScreen(onDone: _afterKeyChoice),
+          child: KeyChoiceScreen(
+            onDone: () => setState(() => _stage = _Stage.app),
+          ),
         );
       case _Stage.auth:
         return KeyedSubtree(
           key: const ValueKey('auth'),
           child: AuthScreen(
-            onLoggedIn: () => setState(() => _stage = _Stage.app),
+            onLoggedIn: () => setState(() => _stage = _Stage.preparing),
           ),
+        );
+      case _Stage.preparing:
+        return KeyedSubtree(
+          key: const ValueKey('preparing'),
+          child: PreparingScreen(onDone: _afterPreparing),
         );
       case _Stage.app:
         return KeyedSubtree(
