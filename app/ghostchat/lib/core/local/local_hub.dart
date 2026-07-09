@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'app_logger.dart';
 import 'local_transport.dart';
 import 'lan_settings.dart';
@@ -45,6 +46,7 @@ class LocalHub {
 
   // Merged broadcast streams
   final _groupedRequestCtrl = StreamController<LocalGroupedRequest>.broadcast();
+  final _collectingCtrl = StreamController<LocalPeer>.broadcast();
   final _requestCtrl = StreamController<LocalPeer>.broadcast();
   final _acceptCtrl  = StreamController<LocalPeer>.broadcast();
   final _msgCtrl     = StreamController<LocalMessageEvent>.broadcast();
@@ -52,6 +54,9 @@ class LocalHub {
   final _seenCtrl    = StreamController<LocalSeenEvent>.broadcast();
 
   Stream<LocalGroupedRequest> get onGroupedRequest => _groupedRequestCtrl.stream;
+  /// Первый сигнал от нового device_id — ДО того, как окно сбора (5 сек)
+  /// закроется. UI показывает "Подождите..." с этим UUID сразу же.
+  Stream<LocalPeer>         get onCollecting => _collectingCtrl.stream;
   Stream<LocalPeer>         get onRequest => _requestCtrl.stream;
   Stream<LocalPeer>         get onAccept  => _acceptCtrl.stream;
   Stream<LocalMessageEvent> get onMessage => _msgCtrl.stream;
@@ -66,6 +71,11 @@ class LocalHub {
   // Ping latency per peer (username → ms)
   final Map<String, int> _pingLatency = {};
   int? getPingMs(String username) => _pingLatency[username];
+
+  // Способы связи, которые СЕЙЧАС реально доступны у пира (пришло в
+  // последнем ping/pong, а не "транспорт когда-то стартовал").
+  final Map<String, Set<TransportType>> _peerAvailable = {};
+  Set<TransportType>? availableTransportsFor(String username) => _peerAvailable[username];
 
   // Keepalive timers
   final Map<String, Timer> _keepaliveTimers = {};
@@ -126,11 +136,11 @@ class LocalHub {
       _subs.add(t.onMessage.listen((m) {
         // Handle keepalive pong
         if (m.msgId == '__pong__') {
-          _handlePong(m.fromUsername);
+          _handlePong(m.fromUsername, m.encB64);
           return;
         }
         if (m.msgId == '__ping__') {
-          _handlePingReceived(m.fromUsername);
+          _handlePingReceived(m.fromUsername, m.encB64);
           return;
         }
         _msgCtrl.add(m);
@@ -155,7 +165,11 @@ class LocalHub {
     _onlineStatus.clear();
   }
 
-  /// Handle raw request from a single transport — debounce 2 sec
+  /// Handle raw request from a single transport — собираем сигналы одного
+  /// device_id "окном" в 5 сек: каждый НОВЫЙ сигнал (в т.ч. с другого
+  /// транспорта) продлевает окно ещё на 5 сек, пока сигналы не перестанут
+  /// приходить. Цель — понять ВСЕ способы связи с устройством, а не решить
+  /// по первому же сигналу.
   void _onRawRequest(LocalPeer peer) {
     final did = peer.deviceId;
     if (did.isEmpty) return;
@@ -164,6 +178,7 @@ class LocalHub {
     if (!LanSettings().isLanTransportEnabled(peer.transport)) return;
     if (LanSettings().isLanDeviceBlocked(did)) return;
 
+    final isNewGroup = !_pendingRequests.containsKey(did);
     final group = _pendingRequests.putIfAbsent(
       did, () => LocalGroupedRequest(deviceId: did),
     );
@@ -171,9 +186,10 @@ class LocalHub {
     group.peers[peer.transport] = peer;
 
     appLog.debug('lan', 'Запрос от $did (${transportLabel(peer.transport)})');
+    if (isNewGroup) _collectingCtrl.add(peer);
     // Reset debounce timer
     _debounceTimers[did]?.cancel();
-    _debounceTimers[did] = Timer(const Duration(seconds: 2), () {
+    _debounceTimers[did] = Timer(const Duration(seconds: 5), () {
       final req = _pendingRequests.remove(did);
       _debounceTimers.remove(did);
       if (req != null) {
@@ -206,6 +222,36 @@ class LocalHub {
     _onlineCtrl.add(MapEntry(username, false));
   }
 
+  /// Способы связи, которые СЕЙЧАС реально живы у меня (не "транспорт
+  /// когда-то стартовал", а "проверили прямо перед отправкой") — кладём в
+  /// тело ping/pong, чтобы собеседник знал, чем реально можно достучаться.
+  Future<String> _myAvailabilityPayload() async {
+    final available = <String>[];
+    for (final t in _transports) {
+      if (!LanSettings().isLanTransportEnabled(t.type)) continue;
+      try {
+        if (await t.isCurrentlyAvailable()) available.add(t.type.name);
+      } catch (_) {}
+    }
+    return jsonEncode({'t': available});
+  }
+
+  Set<TransportType> _parseAvailability(String payload) {
+    if (payload.isEmpty) return {};
+    try {
+      final data = jsonDecode(payload) as Map<String, dynamic>;
+      final list = (data['t'] as List? ?? []).cast<String>();
+      return list.map((n) {
+        return TransportType.values.firstWhere(
+          (v) => v.name == n,
+          orElse: () => TransportType.lan,
+        );
+      }).toSet();
+    } catch (_) {
+      return {};
+    }
+  }
+
   Future<void> _sendPing(String username) async {
     final t = transportFor(username);
     if (t == null) {
@@ -214,7 +260,8 @@ class LocalHub {
     }
     _lastPingSent[username] = DateTime.now();
     try {
-      await t.sendMessage(username, '__ping__', '', 0);
+      final payload = await _myAvailabilityPayload();
+      await t.sendMessage(username, '__ping__', payload, 0);
       // If no pong within 15 sec, mark offline
       Future.delayed(const Duration(seconds: 15), () {
         final lastPong = _lastPongRecv[username];
@@ -231,15 +278,18 @@ class LocalHub {
     }
   }
 
-  void _handlePingReceived(String fromUsername) {
-    // Reply with pong
+  Future<void> _handlePingReceived(String fromUsername, String payload) async {
+    if (payload.isNotEmpty) _peerAvailable[fromUsername] = _parseAvailability(payload);
+    // Reply with pong — тоже несёт НАШУ доступность.
     final t = transportFor(fromUsername);
     if (t != null) {
-      t.sendMessage(fromUsername, '__pong__', '', DateTime.now().millisecondsSinceEpoch);
+      final myPayload = await _myAvailabilityPayload();
+      t.sendMessage(fromUsername, '__pong__', myPayload, DateTime.now().millisecondsSinceEpoch);
     }
   }
 
-  void _handlePong(String fromUsername) {
+  void _handlePong(String fromUsername, String payload) {
+    if (payload.isNotEmpty) _peerAvailable[fromUsername] = _parseAvailability(payload);
     _lastPongRecv[fromUsername] = DateTime.now();
     final sent = _lastPingSent[fromUsername];
     if (sent != null) {

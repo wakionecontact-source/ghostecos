@@ -37,6 +37,10 @@ class ToastManager {
   final _ctrl = StreamController<void>.broadcast();
   Stream<void> get onChange => _ctrl.stream;
 
+  /// Открыть экран логов — выставляется один раз в main.dart. Кнопка "Логи"
+  /// на тосте видна, только если этот колбэк задан.
+  VoidCallback? onNavigateToLogs;
+
   _ToastEntry? get current => _queue.isNotEmpty ? _queue.first : null;
   int get length => _queue.length;
 
@@ -158,6 +162,7 @@ class _ToastOverlayState extends State<ToastOverlay>
                       entry: _showing!,
                       queue: toast.length,
                       onClose: toast.dismiss,
+                      onLogs: toast.onNavigateToLogs,
                     ),
                   ),
                 ),
@@ -173,10 +178,12 @@ class _ToastCard extends StatelessWidget {
   final _ToastEntry entry;
   final int queue;
   final VoidCallback onClose;
+  final VoidCallback? onLogs;
   const _ToastCard({
     required this.entry,
     required this.queue,
     required this.onClose,
+    this.onLogs,
   });
 
   Color get _accent => switch (entry.level) {
@@ -283,7 +290,7 @@ class _ToastCard extends StatelessWidget {
                   12,
                   4,
                   12,
-                  entry.action == null ? 12 : 6,
+                  (entry.action == null && onLogs == null) ? 12 : 6,
                 ),
                 child: Text(
                   entry.message,
@@ -292,38 +299,55 @@ class _ToastCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              if (entry.action != null)
+              if (entry.action != null || onLogs != null)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 0, 10, 8),
                   child: Row(
                     children: [
                       const Spacer(),
-                      SizedBox(
-                        height: 28,
-                        child: TextButton(
-                          onPressed: () {
-                            onClose();
-                            entry.action!.onPressed();
-                          },
-                          style: TextButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            backgroundColor: _accent.withValues(alpha: 0.16),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
+                      if (entry.action != null)
+                        SizedBox(
+                          height: 28,
+                          child: TextButton(
+                            onPressed: () {
+                              onClose();
+                              entry.action!.onPressed();
+                            },
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              backgroundColor: _accent.withValues(alpha: 0.16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
                             ),
-                          ),
-                          child: Text(
-                            entry.action!.label,
-                            style: TextStyle(
-                              color: _accent,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
+                            child: Text(
+                              entry.action!.label,
+                              style: TextStyle(
+                                color: _accent,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ),
-                      ),
+                      if (entry.action != null && onLogs != null)
+                        const SizedBox(width: 6),
+                      if (onLogs != null)
+                        SizedBox(
+                          height: 28,
+                          child: TextButton.icon(
+                            onPressed: () { onClose(); onLogs!(); },
+                            icon: Icon(Icons.terminal_rounded, size: 13, color: GE.sub),
+                            label: Text('Логи', style: TextStyle(color: GE.sub, fontSize: 11.5)),
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),

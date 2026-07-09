@@ -21,6 +21,7 @@ import 'screens/key_choice_screen.dart';
 import 'screens/auth_screen.dart';
 import 'screens/preparing_screen.dart';
 import 'screens/main_shell.dart';
+import 'screens/logs_screen.dart';
 import 'widgets/toast_overlay.dart';
 import 'widgets/key_gate.dart';
 
@@ -38,6 +39,11 @@ void main() async {
   await ThemeService.instance.load();
   // Уведомления о новых сообщениях (пока приложение живо). Defensive.
   await NotificationService.instance.init();
+  // Кнопка "Логи" на тостах — открывает LogsScreen поверх текущего экрана.
+  toast.onNavigateToLogs = () {
+    NotificationService.navigatorKey.currentState
+        ?.push(MaterialPageRoute(builder: (_) => const LogsScreen()));
+  };
   // FCM (надёжный wake через Google Play Services, MIUI не блокирует).
   await FcmService.instance.init();
   // Прозрачные status/nav bar — mesh должен просвечивать через них (Android 15+

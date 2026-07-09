@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import '../app_logger.dart';
 import '../local_transport.dart';
+import '../lan_identity.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/crypto_v2.dart';
 
@@ -102,7 +103,7 @@ class LanTransport implements LocalTransport {
             reuseAddress: true, reusePort: false);
         _udp!.broadcastEnabled = true;
         appLog.info('lan', 'UDP слушает на :47777');
-        _udp!.listen((event) {
+        _udp!.listen((event) async {
           if (event != RawSocketEvent.read) return;
           final dg = _udp?.receive();
           if (dg == null) return;
@@ -112,17 +113,27 @@ class LanTransport implements LocalTransport {
             final deviceId = pkt['device_id'] as String? ?? '';
             if (deviceId.isEmpty || deviceId == _myDeviceId) return;
             final x25519Pub = pkt['x25519_pub'] as String? ?? '';
+            final identityPub = pkt['identity_pub'] as String? ?? '';
+            final sig = pkt['signed_prekey_sig'] as String? ?? '';
             final senderIp = dg.address.address;
             appLog.info('lan', '← discover от $senderIp device=$deviceId');
             if (isBlocked(deviceId, senderIp)) {
               appLog.debug('lan', 'Заблокирован: $deviceId / $senderIp');
               return;
             }
+            final verified = await verifyPeerIdentity(
+              x25519PubB64: x25519Pub,
+              identityPubB64: identityPub,
+              signedPrekeySigB64: sig,
+            );
+            if (!verified) return;
             _requestCtrl.add(LocalPeer(
               peerId:       '$deviceId@$senderIp',
               address:      senderIp,
               deviceId:     deviceId,
               x25519PubB64: x25519Pub,
+              identityPubB64: identityPub,
+              signedPrekeySigB64: sig,
               transport:    TransportType.lan,
             ));
           } catch (_) {}
@@ -172,8 +183,17 @@ class LanTransport implements LocalTransport {
           if (type == 'accept') {
             final deviceId  = pkt['device_id']  as String? ?? '';
             final x25519Pub = pkt['x25519_pub'] as String? ?? '';
+            final identityPub = pkt['identity_pub'] as String? ?? '';
+            final sig = pkt['signed_prekey_sig'] as String? ?? '';
             if (deviceId.isEmpty) return;
             appLog.info('lan', '← accept от $remoteIp device=$deviceId');
+
+            final verified = await verifyPeerIdentity(
+              x25519PubB64: x25519Pub,
+              identityPubB64: identityPub,
+              signedPrekeySigB64: sig,
+            );
+            if (!verified) return;
 
             if (x25519Pub.isNotEmpty) {
               try {
@@ -185,6 +205,8 @@ class LanTransport implements LocalTransport {
               peerId:       '$deviceId@$remoteIp',
               deviceId:     deviceId,
               x25519PubB64: x25519Pub,
+              identityPubB64: identityPub,
+              signedPrekeySigB64: sig,
               transport:    TransportType.lan,
               address:      remoteIp,
             ));
@@ -233,6 +255,13 @@ class LanTransport implements LocalTransport {
     } catch (_) {}
   }
 
+  @override
+  Future<bool> isCurrentlyAvailable() async {
+    if (!_running) return false;
+    final ip = await _localIp();
+    return ip.isNotEmpty && ip != '192.168.1.1'; // fallback-заглушка _localIp
+  }
+
   // ── Outgoing discover broadcast ───────────────────────────────────────────
 
   @override
@@ -246,11 +275,12 @@ class LanTransport implements LocalTransport {
       final myIp  = await _localIp();
       final bcast = _broadcastAddr(myIp);
       final devId = await AuthService.deviceId();
+      final idFields = await signedIdentityFields();
 
       final pkt = utf8.encode(jsonEncode({
         'type':      'discover',
         'device_id': devId,
-        'x25519_pub': CryptoV2.instance.devicePubB64,
+        ...idFields,
       }));
 
       // 1) Broadcast на .255
@@ -277,12 +307,12 @@ class LanTransport implements LocalTransport {
   @override
   Future<void> sendAccept(LocalPeer peer) async {
     try {
-      final x25519b64 = CryptoV2.instance.devicePubB64;
       final devId = await AuthService.deviceId();
+      final idFields = await signedIdentityFields();
       await _sendTcp(peer.address, jsonEncode({
         'type':      'accept',
         'device_id': devId,
-        'x25519_pub': x25519b64,
+        ...idFields,
       }));
       appLog.info('lan', '→ accept на ${peer.address} (device=$devId)');
 

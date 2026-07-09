@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import '../app_logger.dart';
 import '../local_transport.dart';
+import '../lan_identity.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/crypto_v2.dart';
 
@@ -78,9 +79,10 @@ class BluetoothTransport implements LocalTransport {
 
     // Start BLE peripheral (GATT server + advertising) so other devices can find us
     try {
+      final idFields = await signedIdentityFields();
       final discoveryJson = jsonEncode({
         'device_id': _myDeviceId,
-        'x25519_pub': CryptoV2.instance.devicePubB64,
+        ...idFields,
       });
       await _peripheralChannel.invokeMethod('start', {'discoveryJson': discoveryJson});
       appLog.info('bt', 'BLE peripheral запущен');
@@ -103,7 +105,7 @@ class BluetoothTransport implements LocalTransport {
     });
   }
 
-  void _handlePeripheralData(String address, String jsonStr) {
+  Future<void> _handlePeripheralData(String address, String jsonStr) async {
     try {
       final pkt = jsonDecode(jsonStr) as Map<String, dynamic>;
       final type = pkt['type'] as String? ?? '';
@@ -143,12 +145,22 @@ class BluetoothTransport implements LocalTransport {
       } else if (type == 'discover') {
         final deviceId = pkt['device_id'] as String? ?? '';
         final peerX25519Pub = pkt['x25519_pub'] as String? ?? '';
+        final identityPub = pkt['identity_pub'] as String? ?? '';
+        final sig = pkt['signed_prekey_sig'] as String? ?? '';
         appLog.info('bt', '← peripheral discover device=$deviceId');
         if (deviceId.isNotEmpty && !isBlocked(deviceId, address)) {
+          final verified = await verifyPeerIdentity(
+            x25519PubB64: peerX25519Pub,
+            identityPubB64: identityPub,
+            signedPrekeySigB64: sig,
+          );
+          if (!verified) return;
           _requestCtrl.add(LocalPeer(
             peerId:       '$deviceId@bt:$address',
             deviceId:     deviceId,
             x25519PubB64: peerX25519Pub,
+            identityPubB64: identityPub,
+            signedPrekeySigB64: sig,
             transport:    TransportType.bluetooth,
             address:      address,
           ));
@@ -170,6 +182,16 @@ class BluetoothTransport implements LocalTransport {
     }
     _sessions.clear();
     _knownDevices.clear();
+  }
+
+  @override
+  Future<bool> isCurrentlyAvailable() async {
+    if (!_running) return false;
+    try {
+      return await FlutterBluePlus.adapterState.first == BluetoothAdapterState.on;
+    } catch (_) {
+      return false;
+    }
   }
 
   @override
@@ -255,6 +277,8 @@ class BluetoothTransport implements LocalTransport {
       final discData = jsonDecode(utf8.decode(discBytes)) as Map<String, dynamic>;
       final deviceId = discData['device_id'] as String? ?? '';
       final peerX25519Pub = discData['x25519_pub'] as String? ?? '';
+      final identityPub = discData['identity_pub'] as String? ?? '';
+      final sig = discData['signed_prekey_sig'] as String? ?? '';
 
       if (deviceId.isEmpty) {
         device.disconnect();
@@ -265,12 +289,23 @@ class BluetoothTransport implements LocalTransport {
         device.disconnect();
         return;
       }
+      final verified = await verifyPeerIdentity(
+        x25519PubB64: peerX25519Pub,
+        identityPubB64: identityPub,
+        signedPrekeySigB64: sig,
+      );
+      if (!verified) {
+        device.disconnect();
+        return;
+      }
 
       appLog.info('bt', '← discover device=$deviceId через BLE');
       _requestCtrl.add(LocalPeer(
         peerId:       '$deviceId@bt:${device.remoteId.str}',
         deviceId:     deviceId,
         x25519PubB64: peerX25519Pub,
+        identityPubB64: identityPub,
+        signedPrekeySigB64: sig,
         transport:    TransportType.bluetooth,
         address:      device.remoteId.str,
       ));
@@ -336,7 +371,16 @@ class BluetoothTransport implements LocalTransport {
   Future<void> _handleAccept(String fromDeviceId, Map<String, dynamic> pkt) async {
     final deviceId  = pkt['device_id']  as String? ?? fromDeviceId;
     final x25519Pub = pkt['x25519_pub'] as String? ?? '';
+    final identityPub = pkt['identity_pub'] as String? ?? '';
+    final sig = pkt['signed_prekey_sig'] as String? ?? '';
     appLog.info('bt', '← accept device=$deviceId');
+
+    final verified = await verifyPeerIdentity(
+      x25519PubB64: x25519Pub,
+      identityPubB64: identityPub,
+      signedPrekeySigB64: sig,
+    );
+    if (!verified) return;
 
     if (x25519Pub.isNotEmpty) {
       try {
@@ -355,6 +399,8 @@ class BluetoothTransport implements LocalTransport {
       peerId:       '$deviceId@bt',
       deviceId:     deviceId,
       x25519PubB64: x25519Pub,
+      identityPubB64: identityPub,
+      signedPrekeySigB64: sig,
       transport:    TransportType.bluetooth,
       address:      _sessions[deviceId]?.address ?? '',
     ));
@@ -363,12 +409,12 @@ class BluetoothTransport implements LocalTransport {
   @override
   Future<void> sendAccept(LocalPeer peer) async {
     try {
-      final x25519b64 = CryptoV2.instance.devicePubB64;
       final devId = await AuthService.deviceId();
+      final idFields = await signedIdentityFields();
       await _sendToUser(peer.deviceId, jsonEncode({
         'type':      'accept',
         'device_id': devId,
-        'x25519_pub': x25519b64,
+        ...idFields,
       }));
       appLog.info('bt', '→ accept device=${peer.deviceId}');
 

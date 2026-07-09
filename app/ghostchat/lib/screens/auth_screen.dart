@@ -271,27 +271,21 @@ class _Age18Checkbox extends StatelessWidget {
   const _Age18Checkbox({required this.value, required this.onChanged});
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () => onChanged(!value),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Checkbox(
-            value: value, onChanged: onChanged,
-            activeColor: GE.primary,
-            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: Text(
+            'Подтверждаю, что мне исполнилось 18 лет',
+            style: TextStyle(color: GE.sub, fontSize: 12, height: 1.5),
           ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(
-                'Подтверждаю, что мне исполнилось 18 лет',
-                style: TextStyle(color: GE.sub, fontSize: 12, height: 1.5),
-              ),
-            ),
-          ),
-        ],
-      ),
+        ),
+        Switch(
+          value: value,
+          onChanged: (v) => onChanged(v),
+          activeThumbColor: GE.primary,
+        ),
+      ],
     );
   }
 }
@@ -372,39 +366,33 @@ class _TermsCheckbox extends StatelessWidget {
   Widget build(BuildContext context) {
     final base = TextStyle(color: GE.sub, fontSize: 12, height: 1.5);
     final link = TextStyle(color: GE.primary, fontSize: 12, height: 1.5);
-    return GestureDetector(
-      onTap: () => onChanged(!value),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Checkbox(
-            value: value, onChanged: onChanged,
-            activeColor: GE.primary,
-            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text.rich(
-                TextSpan(style: base, children: [
-                  const TextSpan(text: 'Принимаю '),
-                  TextSpan(
-                    text: 'Условия использования',
-                    style: link,
-                    recognizer: _tapRec(() => _openLegalPage('/terms')),
-                  ),
-                  const TextSpan(text: ' и '),
-                  TextSpan(
-                    text: 'Политику приватности',
-                    style: link,
-                    recognizer: _tapRec(() => _openLegalPage('/privacy')),
-                  ),
-                ]),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: Text.rich(
+            TextSpan(style: base, children: [
+              const TextSpan(text: 'Принимаю '),
+              TextSpan(
+                text: 'Условия использования',
+                style: link,
+                recognizer: _tapRec(() => _openLegalPage('/terms')),
               ),
-            ),
+              const TextSpan(text: ' и '),
+              TextSpan(
+                text: 'Политику приватности',
+                style: link,
+                recognizer: _tapRec(() => _openLegalPage('/privacy')),
+              ),
+            ]),
           ),
-        ],
-      ),
+        ),
+        Switch(
+          value: value,
+          onChanged: (v) => onChanged(v),
+          activeThumbColor: GE.primary,
+        ),
+      ],
     );
   }
 }

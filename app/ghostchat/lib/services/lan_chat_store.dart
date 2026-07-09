@@ -63,13 +63,14 @@ class LanChatStore {
     final path = p.join(dir.path, 'lan_chats.db');
     _db = await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, v) async {
         await db.execute('''
           CREATE TABLE lan_dialogs (
             device_id     TEXT PRIMARY KEY,
             display_name  TEXT NOT NULL,
             peer_pub      TEXT NOT NULL DEFAULT '',
+            identity_pub  TEXT NOT NULL DEFAULT '',
             transport     TEXT NOT NULL DEFAULT 'lan',
             last_text     TEXT NOT NULL DEFAULT '',
             last_at       INTEGER,
@@ -88,6 +89,12 @@ class LanChatStore {
         ''');
         await db.execute(
             'CREATE INDEX idx_lan_msg_device ON lan_messages(device_id, created_at)');
+      },
+      onUpgrade: (db, oldV, newV) async {
+        if (oldV < 2) {
+          await db.execute(
+              "ALTER TABLE lan_dialogs ADD COLUMN identity_pub TEXT NOT NULL DEFAULT ''");
+        }
       },
     );
     await _reloadDialogs();
@@ -113,12 +120,29 @@ class LanChatStore {
         .toList();
   }
 
+  /// TOFU-проверка: если для этого device_id уже есть закреплённая
+  /// identity_pub и пришедшая НЕ совпадает — это либо переустановка чужого
+  /// устройства с тем же UUID, либо подмена. Возвращает false → вызывающий
+  /// код должен отклонить соединение, а не тихо переписать ключ.
+  Future<bool> checkAndPinIdentity(String deviceId, String identityPubB64) async {
+    if (identityPubB64.isEmpty) return true; // старые пиры без подписи — не блокируем
+    final rows = await _safeDb.query('lan_dialogs',
+        columns: ['identity_pub'], where: 'device_id = ?', whereArgs: [deviceId], limit: 1);
+    if (rows.isEmpty || (rows.first['identity_pub'] as String? ?? '').isEmpty) {
+      return true; // пока нечего сверять — запишется в createOrGetChat
+    }
+    return rows.first['identity_pub'] == identityPubB64;
+  }
+
   /// Создать диалог при первом принятии/подключении, либо обновить
   /// публичный ключ пира, если он изменился/раньше был неизвестен.
+  /// ВАЖНО: identity_pub закрепляется один раз и больше не переписывается
+  /// молча — на смену identity надо явно звать checkAndPinIdentity заранее.
   Future<void> createOrGetChat({
     required String deviceId,
     required String displayName,
     String peerPubB64 = '',
+    String identityPubB64 = '',
     String transport = 'lan',
   }) async {
     final existing = await _safeDb.query('lan_dialogs',
@@ -128,15 +152,24 @@ class LanChatStore {
         'device_id': deviceId,
         'display_name': displayName,
         'peer_pub': peerPubB64,
+        'identity_pub': identityPubB64,
         'transport': transport,
         'last_text': '',
         'last_at': _nowSec(),
         'last_from_me': 0,
         'unread': 0,
       });
-    } else if (peerPubB64.isNotEmpty) {
-      await _safeDb.update('lan_dialogs', {'peer_pub': peerPubB64},
-          where: 'device_id = ?', whereArgs: [deviceId]);
+    } else {
+      final update = <String, Object?>{};
+      if (peerPubB64.isNotEmpty) update['peer_pub'] = peerPubB64;
+      final storedIdentity = existing.first['identity_pub'] as String? ?? '';
+      if (storedIdentity.isEmpty && identityPubB64.isNotEmpty) {
+        update['identity_pub'] = identityPubB64;
+      }
+      if (update.isNotEmpty) {
+        await _safeDb.update('lan_dialogs', update,
+            where: 'device_id = ?', whereArgs: [deviceId]);
+      }
     }
     await _reloadDialogs();
   }

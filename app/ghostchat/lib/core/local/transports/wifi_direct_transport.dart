@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 import '../app_logger.dart';
 import '../local_transport.dart';
+import '../lan_identity.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/crypto_v2.dart';
 
@@ -95,6 +96,9 @@ class WifiDirectTransport implements LocalTransport {
   }
 
   @override
+  Future<bool> isCurrentlyAvailable() async => _running;
+
+  @override
   Future<void> discover() async {
     if (!_running) return;
     appLog.info('wifi_direct', '→ WiFi Direct discover');
@@ -139,10 +143,11 @@ class WifiDirectTransport implements LocalTransport {
 
   Future<void> _sendDiscoverPacket(String peerId) async {
     final devId = await AuthService.deviceId();
+    final idFields = await signedIdentityFields();
     _sendToPeer(peerId, jsonEncode({
       'type':      'discover',
       'device_id': devId,
-      'x25519_pub': CryptoV2.instance.devicePubB64,
+      ...idFields,
     }));
   }
 
@@ -155,7 +160,7 @@ class WifiDirectTransport implements LocalTransport {
     } catch (_) {}
   }
 
-  void _handleData(String peerId, String message) {
+  Future<void> _handleData(String peerId, String message) async {
     try {
       final pkt = jsonDecode(message) as Map<String, dynamic>;
       final type = pkt['type'] as String? ?? '';
@@ -164,11 +169,21 @@ class WifiDirectTransport implements LocalTransport {
         if (peerDeviceId.isEmpty) return;
         if (isBlocked(peerDeviceId, peerId)) return;
         final peerX25519Pub = pkt['x25519_pub'] as String? ?? '';
+        final identityPub = pkt['identity_pub'] as String? ?? '';
+        final sig = pkt['signed_prekey_sig'] as String? ?? '';
+        final verified = await verifyPeerIdentity(
+          x25519PubB64: peerX25519Pub,
+          identityPubB64: identityPub,
+          signedPrekeySigB64: sig,
+        );
+        if (!verified) return;
 
         _requestCtrl.add(LocalPeer(
           peerId:       '$peerDeviceId@wd:$peerId',
           deviceId:     peerDeviceId,
           x25519PubB64: peerX25519Pub,
+          identityPubB64: identityPub,
+          signedPrekeySigB64: sig,
           transport:    TransportType.wifiDirect,
           address:      peerId,
         ));
@@ -211,8 +226,17 @@ class WifiDirectTransport implements LocalTransport {
   Future<void> _handleAcceptPkt(Map<String, dynamic> pkt, String peerId) async {
     final deviceId  = pkt['device_id']  as String? ?? '';
     final x25519Pub = pkt['x25519_pub'] as String? ?? '';
+    final identityPub = pkt['identity_pub'] as String? ?? '';
+    final sig = pkt['signed_prekey_sig'] as String? ?? '';
     if (deviceId.isEmpty) return;
     appLog.info('wifi_direct', '← accept device=$deviceId');
+
+    final verified = await verifyPeerIdentity(
+      x25519PubB64: x25519Pub,
+      identityPubB64: identityPub,
+      signedPrekeySigB64: sig,
+    );
+    if (!verified) return;
 
     _deviceToUsername[peerId] = deviceId;
     _usernameToDevice[deviceId] = peerId;
@@ -227,6 +251,8 @@ class WifiDirectTransport implements LocalTransport {
       peerId:       '$deviceId@wd',
       deviceId:     deviceId,
       x25519PubB64: x25519Pub,
+      identityPubB64: identityPub,
+      signedPrekeySigB64: sig,
       transport:    TransportType.wifiDirect,
       address:      peerId,
     ));
@@ -236,12 +262,12 @@ class WifiDirectTransport implements LocalTransport {
   Future<void> sendAccept(LocalPeer peer) async {
     final nearbyId = _usernameToDevice[peer.deviceId] ?? peer.address;
     try {
-      final x25519b64 = CryptoV2.instance.devicePubB64;
       final devId = await AuthService.deviceId();
+      final idFields = await signedIdentityFields();
       _sendToPeer(nearbyId, jsonEncode({
         'type':      'accept',
         'device_id': devId,
-        'x25519_pub': x25519b64,
+        ...idFields,
       }));
       appLog.info('wifi_direct', '→ accept device=${peer.deviceId}');
 

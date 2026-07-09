@@ -16,6 +16,8 @@ import '../widgets/toast_overlay.dart';
 import 'devices_screen.dart';
 import 'support_screen.dart';
 import 'saved_screen.dart';
+import 'logs_screen.dart';
+import 'lan_settings_screen.dart';
 
 // ─── Хаб ────────────────────────────────────────────────────────────────────
 class SettingsScreen extends StatefulWidget {
@@ -69,9 +71,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _row(Icons.devices_other_outlined, 'Устройства',
                       'Сессии и доверенные устройства',
                       () => _open(const DevicesScreen())),
+                  _row(Icons.wifi_tethering_rounded, 'LAN-чаты',
+                      'Приём запросов, приоритет, блокировки',
+                      () => _open(const LanSettingsScreen())),
                   _row(Icons.bookmark_outline, 'Избранное',
                       'Личные заметки на устройстве',
                       () => _open(const SavedScreen())),
+                  _row(Icons.terminal_rounded, 'Логи',
+                      'Внутренний журнал (LAN/BLE/Wi-Fi Direct)',
+                      () => _open(const LogsScreen())),
                   _row(Icons.info_outline, 'О приложении', 'Версия, помощь',
                       () => _open(const _AboutScreen()), last: true),
                 ],

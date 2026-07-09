@@ -75,9 +75,58 @@ class LanSettings {
   Future<void> addLanBlockedDevice(String deviceId) async {
     if (!lanBlockedDevices.contains(deviceId)) {
       lanBlockedDevices.add(deviceId);
-      final p = await SharedPreferences.getInstance();
-      await p.setString('lan_blocked_devices', jsonEncode(lanBlockedDevices));
+      await _saveBlocked();
     }
+  }
+
+  Future<void> removeLanBlockedDevice(String deviceId) async {
+    if (lanBlockedDevices.remove(deviceId)) {
+      await _saveBlocked();
+    }
+  }
+
+  Future<void> _saveBlocked() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString('lan_blocked_devices', jsonEncode(lanBlockedDevices));
+  }
+
+  Future<void> setLanAcceptRequests(bool v) async {
+    lanAcceptRequests = v;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('lan_accept_requests', v);
+  }
+
+  Future<void> setLanAcceptWifi(bool v) async {
+    lanAcceptWifi = v;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('lan_accept_wifi', v);
+  }
+
+  Future<void> setLanAcceptWifiDirect(bool v) async {
+    lanAcceptWifiDirect = v;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('lan_accept_wifi_direct', v);
+  }
+
+  Future<void> setLanAcceptBluetooth(bool v) async {
+    lanAcceptBluetooth = v;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('lan_accept_bluetooth', v);
+  }
+
+  Future<void> setLanPingEnabled(bool v) async {
+    lanPingEnabled = v;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('lan_ping_enabled', v);
+  }
+
+  Future<void> setLanTransportPriority(List<TransportType> order) async {
+    lanTransportPriority = order;
+    final p = await SharedPreferences.getInstance();
+    await p.setString(
+      'lan_transport_priority',
+      jsonEncode(order.map((t) => t.name).toList()),
+    );
   }
 
   Future<void> setStandardIp(String ip) async {

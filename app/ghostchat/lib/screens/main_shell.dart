@@ -11,6 +11,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
+import '../mesh_background.dart';
 import '../services/auth_service.dart';
 import '../services/db_service.dart';
 import '../services/crypto_service.dart';
@@ -19,15 +20,18 @@ import '../services/notification_service.dart';
 import '../services/foreground_service.dart';
 import '../services/fcm_service.dart';
 import '../services/lan_chat_store.dart';
+import '../services/bookmark_store.dart';
 import '../services/crypto_v2.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
+import '../widgets/toast_overlay.dart';
 import 'settings_screen.dart';
 import 'chat_list_screen.dart';
-import 'devices_screen.dart';
+import 'lan_scan_screen.dart';
 import '../core/local/local_hub.dart';
 import '../core/local/local_transport.dart';
 import '../core/local/lan_settings.dart';
+import '../core/local/app_logger.dart';
 import '../core/local/transports/lan_transport.dart';
 import '../core/local/transports/bluetooth_transport.dart';
 import '../core/local/transports/wifi_direct_transport.dart';
@@ -69,6 +73,8 @@ class _MainShellState extends State<MainShell> {
   String? _displayName;
   String? _error;
   StreamSubscription? _lanMsgSub;
+  StreamSubscription? _lanCollectingSub;
+  StreamSubscription? _lanAcceptSub;
 
   @override
   void initState() {
@@ -94,6 +100,7 @@ class _MainShellState extends State<MainShell> {
       if (_isGuest) {
         _username = 'Гость';
         _displayName = 'Гость';
+        await BookmarkStore.instance.init('guest');
         await _startLan();
         if (mounted) setState(() => _bootstrapped = true);
         return;
@@ -106,6 +113,7 @@ class _MainShellState extends State<MainShell> {
       _displayName = dn ?? u;
 
       await DbService.instance.init(u);
+      await BookmarkStore.instance.init(u);
       await CryptoService.instance.ensureKeys();
       WsClient.instance.connect();
       await _startLan();
@@ -132,8 +140,59 @@ class _MainShellState extends State<MainShell> {
       BluetoothTransport(),
     ]);
     _lanMsgSub = localHub.onMessage.listen(_onLanMessage);
+    _lanCollectingSub = localHub.onCollecting.listen(_onLanSignalCaught);
+    _lanAcceptSub = localHub.onAccept.listen(_onLanAccepted);
     await localHub.startAll();
   }
+
+  /// Кто-то принял наш запрос (или мы приняли его — sendAccept тоже шлёт
+  /// себе через localHub) → сохранить чат в LanChatStore СРАЗУ, независимо
+  /// от того, открыт ли сейчас экран "Устройства поблизости". Без этого
+  /// сторона, которая не смотрела в этот экран в момент прилёта accept-
+  /// пакета, никогда не получала запись чата — сообщения приходили, но
+  /// showить их было некуда (createOrGetChat ни разу не вызывался).
+  Future<void> _onLanAccepted(LocalPeer peer) async {
+    final identityOk = await LanChatStore.instance
+        .checkAndPinIdentity(peer.deviceId, peer.identityPubB64);
+    if (!identityOk) {
+      appLog.warn('security', 'Identity ${peer.deviceId} изменилась — отклонено');
+      return;
+    }
+    await LanChatStore.instance.createOrGetChat(
+      deviceId: peer.deviceId,
+      displayName: peer.label,
+      peerPubB64: peer.x25519PubB64,
+      identityPubB64: peer.identityPubB64,
+      transport: peer.chatType,
+    );
+  }
+
+  /// Сигнал пойман (не дожидаясь конца 5-сек окна сбора — реагируем сразу):
+  /// приложение свёрнуто → системный пуш; приложение открыто, но не на
+  /// экране "Устройства поблизости" → тост с переходом туда; если юзер уже
+  /// там — карточка на самом экране сбора и так всё покажет, дублировать
+  /// не нужно.
+  void _onLanSignalCaught(LocalPeer peer) {
+    if (LanScanScreen.isVisible) return;
+    final backgrounded =
+        WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed;
+    if (backgrounded) {
+      NotificationService.instance.onLanRequest(label: _shortId(peer.deviceId));
+      return;
+    }
+    toast.show(
+      'Поймали сигнал от ${_shortId(peer.deviceId)}',
+      level: ToastLevel.info,
+      action: ToastAction(
+        label: 'Открыть',
+        onPressed: () => Navigator.of(context)
+            .push(MaterialPageRoute(builder: (_) => const LanScanScreen())),
+      ),
+    );
+  }
+
+  String _shortId(String deviceId) =>
+      deviceId.length > 8 ? '${deviceId.substring(0, 8)}…' : deviceId;
 
   /// Входящее LAN-сообщение → расшифровать (ключ пира взят из БД LAN-чатов,
   /// сохранённый там при подключении) и сохранить в историю. Работает даже
@@ -170,12 +229,20 @@ class _MainShellState extends State<MainShell> {
   @override
   void dispose() {
     _lanMsgSub?.cancel();
+    _lanCollectingSub?.cancel();
+    _lanAcceptSub?.cancel();
     localHub.stopAll();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    // Scaffold'ы ниже прозрачные и рассчитаны на фон снаружи — как во всех
+    // остальных экранах приложения (mesh-сетка), а не плоский градиент.
+    return MeshBackground(child: _content(context));
+  }
+
+  Widget _content(BuildContext context) {
     if (_error != null) {
       return Scaffold(
         backgroundColor: Colors.transparent,
@@ -584,35 +651,72 @@ class _GuestPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: GlassCard(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.person_outline, size: 44, color: GE.primary),
-              const SizedBox(height: 12),
-              Text('Гостевой режим',
-                  style: TextStyle(color: GE.text, fontSize: 17, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 8),
-              Text(
-                'Аккаунта нет — доступны только чаты с устройствами поблизости. '
-                'Сервер не используется вообще.',
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            GlassCard(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                children: [
+                  Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(colors: [GE.sub, GE.muted]),
+                    ),
+                    alignment: Alignment.center,
+                    child: Icon(Icons.person_outline, color: Colors.white, size: 26),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Гость',
+                            style: TextStyle(color: GE.text, fontSize: 18, fontWeight: FontWeight.w700)),
+                        Text('Без аккаунта — только LAN-чаты',
+                            style: TextStyle(color: GE.sub, fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            GlassCard(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: _profileRow(
+                Icons.settings_outlined,
+                'Настройки',
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Text(
+                'Сервер вообще не используется — сообщения ходят напрямую между '
+                'устройствами поблизости (LAN/BLE/Wi-Fi Direct).',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: GE.sub, fontSize: 13, height: 1.4),
+                style: TextStyle(color: GE.sub, fontSize: 12, height: 1.4),
               ),
-              const SizedBox(height: 18),
-              GlassButton(
-                label: 'Выйти из гостевого режима',
-                icon: Icons.logout,
-                danger: true,
-                fullWidth: true,
-                onTap: onExit,
-              ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 16),
+            GlassButton(
+              label: 'Выйти из гостевого режима',
+              icon: Icons.logout,
+              danger: true,
+              fullWidth: true,
+              onTap: onExit,
+            ),
+            const SizedBox(height: 8),
+          ],
         ),
       ),
     );
@@ -697,13 +801,6 @@ class _ProfilePane extends StatelessWidget {
                       MaterialPageRoute(builder: (_) => const SettingsScreen()),
                     ),
                   ),
-                  _profileRow(
-                    Icons.devices_outlined,
-                    'Мои устройства',
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const DevicesScreen()),
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -754,30 +851,30 @@ class _ProfilePane extends StatelessWidget {
     if (ok == true) onLogout();
   }
 
-  Widget _profileRow(IconData icon, String label, {VoidCallback? onTap}) {
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          children: [
-            Icon(icon, size: 18, color: GE.primary),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Text(
-                label,
-                style: TextStyle(
-                  color: GE.text,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                ),
+}
+
+Widget _profileRow(IconData icon, String label, {VoidCallback? onTap}) {
+  return InkWell(
+    onTap: onTap,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: GE.primary),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: GE.text,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
               ),
             ),
-            Icon(Icons.chevron_right, color: GE.sub, size: 18),
-          ],
-        ),
+          ),
+          Icon(Icons.chevron_right, color: GE.sub, size: 18),
+        ],
       ),
-    );
-  }
-
+    ),
+  );
 }

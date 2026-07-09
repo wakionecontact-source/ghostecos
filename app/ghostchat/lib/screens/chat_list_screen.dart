@@ -13,12 +13,14 @@ import '../services/chat_repo.dart';
 import '../services/db_service.dart';
 import '../services/search_service.dart';
 import '../services/lan_chat_store.dart';
+import '../services/bookmark_store.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
 import 'chat_screen.dart';
 import 'profile_screen.dart';
 import 'lan_scan_screen.dart';
 import 'lan_chat_screen.dart';
+import 'bookmark_chat_screen.dart';
 
 class ChatListScreen extends StatefulWidget {
   final bool isGuest;
@@ -123,6 +125,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   MaterialPageRoute(builder: (_) => const LanScanScreen()),
                 ),
               ),
+              IconButton(
+                icon: Icon(Icons.edit_outlined, color: GE.sub),
+                tooltip: 'Новое',
+                onPressed: () => _openCreateMenu(context),
+              ),
             ],
           ),
         ),
@@ -153,9 +160,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
     );
   }
 
-  // LAN-чаты привязаны к УСТРОЙСТВУ (не к аккаунту, см. LanChatStore) —
-  // показываем их в общем списке на любом залогиненном аккаунте, вперемешку
-  // с серверными диалогами, отсортированными по времени последнего сообщения.
+  // LAN-чаты привязаны к УСТРОЙСТВУ (не к аккаунту, см. LanChatStore),
+  // закладки — к аккаунту (см. BookmarkStore) — показываем всё вперемешку
+  // с серверными диалогами, отсортированными по времени последнего сообщения
+  // ("Избранное" всегда наверху — см. BookmarkStore._reloadDialogs).
   Widget _buildDialogs() {
     return ValueListenableBuilder<List<StoredDialog>>(
       valueListenable: ChatRepo.instance.dialogsNotifier,
@@ -163,30 +171,149 @@ class _ChatListScreenState extends State<ChatListScreen> {
         return ValueListenableBuilder<List<StoredDialog>>(
           valueListenable: LanChatStore.instance.dialogsNotifier,
           builder: (_, lanDialogs, _) {
-            if (serverDialogs.isEmpty && lanDialogs.isEmpty) return _empty();
-            final all = [...serverDialogs, ...lanDialogs]
-              ..sort((a, b) => _dialogTime(b).compareTo(_dialogTime(a)));
-            return RefreshIndicator(
-              color: GE.primary,
-              onRefresh: widget.isGuest
-                  ? () async {}
-                  : ChatRepo.instance.fetchPending,
-              child: ListView.separated(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                itemCount: all.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 4),
-                itemBuilder: (_, i) {
-                  final d = all[i];
-                  if (d.username.startsWith(lanDialogPrefix)) {
-                    return _LanDialogTile(d);
-                  }
-                  return _DialogTile(d, prefs: _prefs, onReturn: _refresh);
-                },
-              ),
+            return ValueListenableBuilder<List<StoredDialog>>(
+              valueListenable: BookmarkStore.instance.dialogsNotifier,
+              builder: (_, bookmarkDialogs, _) {
+                if (serverDialogs.isEmpty && lanDialogs.isEmpty && bookmarkDialogs.isEmpty) {
+                  return _empty();
+                }
+                final defaultBm = bookmarkDialogs
+                    .where((d) => d.username == '$bookmarkDialogPrefix$defaultBookmarkId')
+                    .toList();
+                final restBm = bookmarkDialogs
+                    .where((d) => d.username != '$bookmarkDialogPrefix$defaultBookmarkId')
+                    .toList();
+                final rest = [...serverDialogs, ...lanDialogs, ...restBm]
+                  ..sort((a, b) => _dialogTime(b).compareTo(_dialogTime(a)));
+                final all = [...defaultBm, ...rest];
+                return RefreshIndicator(
+                  color: GE.primary,
+                  onRefresh: widget.isGuest
+                      ? () async {}
+                      : ChatRepo.instance.fetchPending,
+                  child: ListView.separated(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    itemCount: all.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 4),
+                    itemBuilder: (_, i) {
+                      final d = all[i];
+                      if (d.username.startsWith(bookmarkDialogPrefix)) {
+                        return _BookmarkDialogTile(d);
+                      }
+                      if (d.username.startsWith(lanDialogPrefix)) {
+                        return _LanDialogTile(d);
+                      }
+                      return _DialogTile(d, prefs: _prefs, onReturn: _refresh);
+                    },
+                  ),
+                );
+              },
             );
           },
         );
       },
+    );
+  }
+
+  void _openCreateMenu(BuildContext context) {
+    showGlassSheet<void>(
+      context,
+      height: 200,
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 6),
+            _createMenuRow(
+              icon: Icons.edit_note,
+              label: 'Чат',
+              enabled: !widget.isGuest,
+              subtitle: widget.isGuest ? 'Недоступно гостю' : null,
+              onTap: () {
+                Navigator.pop(context);
+                _newChatPrompt(context);
+              },
+            ),
+            _createMenuRow(
+              icon: Icons.bookmark_add_outlined,
+              label: 'Закладка',
+              enabled: true,
+              onTap: () {
+                Navigator.pop(context);
+                _createBookmarkPrompt(context);
+              },
+            ),
+            const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _createMenuRow({
+    required IconData icon,
+    required String label,
+    required bool enabled,
+    String? subtitle,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: enabled ? onTap : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: enabled ? GE.primary : GE.sub.withValues(alpha: 0.4)),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(label, style: TextStyle(color: enabled ? GE.text : GE.sub.withValues(alpha: 0.4), fontSize: 15)),
+                  if (subtitle != null)
+                    Text(subtitle, style: TextStyle(color: GE.sub.withValues(alpha: 0.6), fontSize: 12)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _createBookmarkPrompt(BuildContext context) async {
+    final ctrl = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0F172A),
+        title: Text('Новая закладка', style: TextStyle(color: GE.text)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: InputDecoration(
+            hintText: 'Название',
+            hintStyle: TextStyle(color: GE.sub),
+          ),
+          style: TextStyle(color: GE.text),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('Создать'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) return;
+    final id = await BookmarkStore.instance.createBookmark(name);
+    if (!mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => BookmarkChatScreen(bookmarkId: id, name: name, isDefault: false),
+      ),
     );
   }
 
@@ -278,6 +405,45 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   Widget _empty() {
+    // Гость: НИКАКОГО пути к серверному ChatScreen (даже без ввода юзернейма
+    // руками) — только устройства поблизости через LanScanScreen.
+    if (widget.isGuest) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: GlassCard(
+            lite: true,
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.wifi_tethering_rounded, size: 48, color: GE.primary),
+                const SizedBox(height: 14),
+                Text(
+                  'Пока нет чатов поблизости',
+                  style: TextStyle(color: GE.text, fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Найдите устройство рядом по Wi-Fi/Bluetooth — гостю доступны только они',
+                  style: TextStyle(color: GE.sub, fontSize: 13),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                GlassButton(
+                  label: 'Найти устройства',
+                  icon: Icons.wifi_tethering_rounded,
+                  primary: true,
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const LanScanScreen()),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -750,6 +916,78 @@ class _LanDialogTile extends StatelessWidget {
                         ),
                       ],
                     ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Закладка: локальная запись, привязана к аккаунту (или гость) ────────
+class _BookmarkDialogTile extends StatelessWidget {
+  final StoredDialog d;
+  const _BookmarkDialogTile(this.d);
+
+  String get _id => d.username.substring(bookmarkDialogPrefix.length);
+  bool get _isDefault => _id == defaultBookmarkId;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(GE.radiusMd),
+      onTap: () => Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => BookmarkChatScreen(bookmarkId: _id, name: d.displayName, isDefault: _isDefault),
+      )),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: Row(
+          children: [
+            Stack(
+              children: [
+                _Avatar(d.displayName, size: 48),
+                Positioned(
+                  right: -1,
+                  bottom: -1,
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(color: GE.bg, shape: BoxShape.circle),
+                    child: Icon(
+                      _isDefault ? Icons.star_rounded : Icons.bookmark_rounded,
+                      size: 13,
+                      color: GE.primary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          d.displayName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: GE.text, fontSize: 15, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      Text(_formatDialogTime(d.lastAt), style: TextStyle(color: GE.sub, fontSize: 11)),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    d.lastText.isEmpty ? 'Личные заметки' : d.lastText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: GE.sub, fontSize: 13),
                   ),
                 ],
               ),

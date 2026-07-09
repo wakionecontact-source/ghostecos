@@ -17,7 +17,6 @@ import '../theme.dart';
 import '../mesh_background.dart';
 import '../widgets/glass.dart';
 import '../services/permissions_service.dart';
-import '../services/notification_service.dart';
 import '../services/lan_chat_store.dart';
 import '../core/local/app_logger.dart';
 import '../core/local/lan_settings.dart';
@@ -27,18 +26,22 @@ import 'lan_chat_screen.dart';
 
 class LanScanScreen extends StatefulWidget {
   const LanScanScreen({super.key});
+
+  /// true пока этот экран смонтирован — MainShell смотрит сюда, чтобы не
+  /// дублировать уведомление о пойманном сигнале карточкой на этом же экране.
+  static bool isVisible = false;
+
   @override
   State<LanScanScreen> createState() => _LanScanScreenState();
 }
 
 class _LanScanScreenState extends State<LanScanScreen>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+    with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
 
   bool _starting = true;
   bool _scanning = false;
   String _status = 'Нажмите, чтобы начать поиск';
-  AppLifecycleState _appState = AppLifecycleState.resumed;
 
   bool _showIp = false;
   String _myIp = '';
@@ -49,23 +52,20 @@ class _LanScanScreenState extends State<LanScanScreen>
   final Set<String> _seenDeviceIds = {};
   final Set<String> _respondedDeviceIds = {};
   LocalGroupedRequest? _incomingRequest;
+  LocalPeer? _collectingPeer; // сигнал ловится, окно 5 сек ещё не закрылось
 
   StreamSubscription? _acceptSub;
   StreamSubscription? _groupedSub;
+  StreamSubscription? _collectingSub;
   Timer? _scanTimer;
   Timer? _ipTimer;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
+    LanScanScreen.isVisible = true;
     _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
     _bootstrap();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    _appState = state;
   }
 
   Future<void> _bootstrap() async {
@@ -75,17 +75,22 @@ class _LanScanScreenState extends State<LanScanScreen>
     // юзер залогинен, не только пока открыт этот экран) — здесь только
     // подписываемся на уже бегущий localHub.
     _acceptSub = localHub.onAccept.listen(_onAccepted);
+    _collectingSub = localHub.onCollecting.listen((peer) {
+      if (!mounted) return;
+      if (_respondedDeviceIds.contains(peer.deviceId)) return;
+      setState(() => _collectingPeer = peer);
+    });
     _groupedSub = localHub.onGroupedRequest.listen((req) {
       if (!mounted) return;
       // Устройство продолжает слать discover-волны, пока сканирует — не
       // показываем повторно то, на что уже ответили в этой сессии.
       if (_respondedDeviceIds.contains(req.deviceId)) return;
-      setState(() => _incomingRequest = req);
-      // Приложение свёрнуто (но экран ещё жив) — карточку в UI не видно,
-      // зовём системное уведомление. На переднем плане хватает карточки.
-      if (_appState != AppLifecycleState.resumed) {
-        NotificationService.instance.onLanRequest(label: req.label);
-      }
+      setState(() {
+        _collectingPeer = null; // окно сбора закрылось — теперь можно решать
+        _incomingRequest = req;
+      });
+      // Уведомление (пуш/тост) шлёт MainShell глобально — этот экран открыт,
+      // карточки достаточно, дублировать не нужно.
     });
 
     await _requestPermissions();
@@ -98,10 +103,11 @@ class _LanScanScreenState extends State<LanScanScreen>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
+    LanScanScreen.isVisible = false;
     _ctrl.dispose();
     _acceptSub?.cancel();
     _groupedSub?.cancel();
+    _collectingSub?.cancel();
     _scanTimer?.cancel();
     _ipTimer?.cancel();
     super.dispose();
@@ -149,8 +155,17 @@ class _LanScanScreenState extends State<LanScanScreen>
     }
   }
 
-  void _onAccepted(LocalPeer peer) {
+  Future<void> _onAccepted(LocalPeer peer) async {
     if (_seenDeviceIds.contains(peer.deviceId)) return;
+    // TOFU: если identity этого device_id уже закреплена и НЕ совпадает —
+    // это подмена (или переустановка чужого устройства с тем же UUID),
+    // отклоняем молча, не показываем как подключённое.
+    final identityOk = await LanChatStore.instance
+        .checkAndPinIdentity(peer.deviceId, peer.identityPubB64);
+    if (!identityOk) {
+      appLog.warn('security', 'Identity ${peer.deviceId} изменилась — отклонено');
+      return;
+    }
     _seenDeviceIds.add(peer.deviceId);
     setState(() {
       _acceptedPeers.add(peer);
@@ -160,6 +175,7 @@ class _LanScanScreenState extends State<LanScanScreen>
       deviceId: peer.deviceId,
       displayName: peer.label,
       peerPubB64: peer.x25519PubB64,
+      identityPubB64: peer.identityPubB64,
       transport: peer.chatType,
     );
   }
@@ -211,6 +227,16 @@ class _LanScanScreenState extends State<LanScanScreen>
     }
   }
 
+  Future<void> _blockRequest() async {
+    final req = _incomingRequest;
+    if (req == null) return;
+    _respondedDeviceIds.add(req.deviceId);
+    setState(() => _incomingRequest = null);
+    localHub.blockDeviceId(req.deviceId);
+    await LanSettings().addLanBlockedDevice(req.deviceId);
+    appLog.info('lan', 'Устройство ${req.deviceId} заблокировано');
+  }
+
   @override
   Widget build(BuildContext context) {
     return MeshBackground(child: _scaffold(context));
@@ -247,7 +273,10 @@ class _LanScanScreenState extends State<LanScanScreen>
           const SizedBox(height: 14),
           _legend(),
           const SizedBox(height: 18),
-          if (_incomingRequest != null) ...[
+          if (_collectingPeer != null) ...[
+            _collectingCard(_collectingPeer!),
+            const SizedBox(height: 14),
+          ] else if (_incomingRequest != null) ...[
             _incomingRequestCard(_incomingRequest!),
             const SizedBox(height: 14),
           ],
@@ -443,6 +472,36 @@ class _LanScanScreenState extends State<LanScanScreen>
     );
   }
 
+  /// Сигнал(ы) от нового устройства ещё собираются (окно 5 сек, продлевается
+  /// каждым новым сигналом) — узнаём ВСЕ способы связи, прежде чем
+  /// предлагать принять/отклонить.
+  Widget _collectingCard(LocalPeer peer) {
+    return GlassCard(
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 22, height: 22,
+            child: CircularProgressIndicator(strokeWidth: 2.2, color: GE.primary),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Подождите…',
+                    style: TextStyle(color: GE.text, fontSize: 13, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 2),
+                Text('Собираем способы связи с ${peer.label}',
+                    style: TextStyle(color: GE.sub, fontSize: 11)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _incomingRequestCard(LocalGroupedRequest req) {
     return GlassCard(
       glow: true,
@@ -467,7 +526,12 @@ class _LanScanScreenState extends State<LanScanScreen>
               ],
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 4),
+          IconButton(
+            icon: Icon(Icons.block, color: GE.red, size: 18),
+            tooltip: 'Заблокировать',
+            onPressed: _blockRequest,
+          ),
           IconButton(
             icon: Icon(Icons.close, color: GE.sub, size: 20),
             onPressed: () => _respondToRequest(false),
@@ -568,10 +632,6 @@ class _LanScanScreenState extends State<LanScanScreen>
       ),
     );
   }
-}
-
-extension on LocalPeer {
-  String get label => deviceId.length > 8 ? '${deviceId.substring(0, 8)}…' : deviceId;
 }
 
 // ── Художник радара ───────────────────────────────────────────────────

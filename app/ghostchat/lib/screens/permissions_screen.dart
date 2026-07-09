@@ -177,28 +177,20 @@ class _PermissionsScreenState extends State<PermissionsScreen>
               itemBuilder: (_, i) {
                 final p = appPermissions[i];
                 final checked = _selected[p] ?? true;
-                return ListTile(
-                  onTap: () => setState(() => _selected[p] = !checked),
-                  leading: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Checkbox(
-                        value: checked,
-                        activeColor: GE.primary,
-                        onChanged: (v) =>
-                            setState(() => _selected[p] = v ?? true),
-                      ),
-                      Container(
-                        width: 38,
-                        height: 38,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: GE.primary.withValues(alpha: 0.14),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Icon(permIcon(p), color: GE.primary, size: 20),
-                      ),
-                    ],
+                return SwitchListTile(
+                  contentPadding: const EdgeInsets.only(left: 12, right: 12),
+                  value: checked,
+                  activeThumbColor: GE.primary,
+                  onChanged: (v) => setState(() => _selected[p] = v),
+                  secondary: Container(
+                    width: 38,
+                    height: 38,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: GE.primary.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(permIcon(p), color: GE.primary, size: 20),
                   ),
                   title: Text(
                     permLabel(p),
@@ -228,17 +220,16 @@ class _PermissionsScreenState extends State<PermissionsScreen>
               padding: const EdgeInsets.symmetric(vertical: 6),
               child: Row(
                 children: [
-                  Checkbox(
-                    value: _acknowledged,
-                    activeColor: GE.primary,
-                    onChanged: (v) =>
-                        setState(() => _acknowledged = v ?? false),
-                  ),
                   Expanded(
                     child: Text(
                       'Ознакомился со всеми разрешениями',
                       style: TextStyle(color: GE.sub, fontSize: 13),
                     ),
+                  ),
+                  Switch(
+                    value: _acknowledged,
+                    activeThumbColor: GE.primary,
+                    onChanged: (v) => setState(() => _acknowledged = v),
                   ),
                 ],
               ),

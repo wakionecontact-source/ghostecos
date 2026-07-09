@@ -160,24 +160,56 @@ class _LanChatScreenState extends State<LanChatScreen> {
   Widget build(BuildContext context) {
     final online = localHub.isOnline(widget.deviceId) ||
         localHub.hasSession(widget.deviceId);
+    final pingMs = localHub.getPingMs(widget.deviceId);
+    final available = localHub.availableTransportsFor(widget.deviceId);
     return MeshBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: GlassAppBar(
           showBack: true,
-          title: Row(
+          title: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Text(widget.displayName,
                   style: TextStyle(color: GE.text, fontSize: 16, fontWeight: FontWeight.w700)),
-              const SizedBox(width: 8),
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: online ? GE.green : GE.sub,
-                ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: online ? GE.green : GE.sub,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    online
+                        ? (pingMs != null ? 'в сети · $pingMs мс' : 'в сети')
+                        : 'офлайн',
+                    style: TextStyle(color: GE.sub, fontSize: 11),
+                  ),
+                  if (available != null && available.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    ...TransportType.values.map((t) {
+                      final on = available.contains(t);
+                      return Padding(
+                        padding: const EdgeInsets.only(left: 2),
+                        child: Icon(
+                          switch (t) {
+                            TransportType.lan => Icons.wifi,
+                            TransportType.wifiDirect => Icons.wifi_tethering,
+                            TransportType.bluetooth => Icons.bluetooth,
+                          },
+                          size: 12,
+                          color: on ? GE.primary : GE.sub.withValues(alpha: 0.35),
+                        ),
+                      );
+                    }),
+                  ],
+                ],
               ),
             ],
           ),
