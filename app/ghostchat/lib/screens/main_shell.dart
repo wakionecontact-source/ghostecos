@@ -21,6 +21,8 @@ import '../services/fcm_service.dart';
 import '../services/lan_chat_store.dart';
 import '../services/bookmark_store.dart';
 import '../services/crypto_v2.dart';
+import '../services/chat_repo.dart';
+import '../services/triangle_service.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
 import '../widgets/toast_overlay.dart';
@@ -76,6 +78,7 @@ class _MainShellState extends State<MainShell> {
   StreamSubscription? _lanCollectingSub;
   StreamSubscription? _lanAcceptSub;
   StreamSubscription? _lanStaleSub;
+  StreamSubscription? _triangleMsgSub;
   // Не спамим — раз в сессию приложения на device_id достаточно.
   final Set<String> _notifiedStale = {};
 
@@ -119,6 +122,9 @@ class _MainShellState extends State<MainShell> {
       await BookmarkStore.instance.init(u);
       await CryptoService.instance.ensureKeys();
       WsClient.instance.connect();
+      // Треугольник (NAT-punch P2P апгрейд существующих серверных чатов) —
+      // только для реальных аккаунтов, гостю сервер/контакты не доступны.
+      _triangleMsgSub = triangleService.onMessage.listen(_onTriangleMessage);
       await _startLan();
 
       if (mounted) setState(() => _bootstrapped = true);
@@ -200,6 +206,16 @@ class _MainShellState extends State<MainShell> {
   String _shortId(String deviceId) =>
       deviceId.length > 8 ? '${deviceId.substring(0, 8)}…' : deviceId;
 
+  /// Входящее P2P-сообщение по «Треугольнику» — заводим в тот же чат, что
+  /// и обычные серверные сообщения (см. ChatRepo.ingestTriangleMessage).
+  Future<void> _onTriangleMessage(TriangleTextMessage m) async {
+    await ChatRepo.instance.ingestTriangleMessage(
+      fromUsername: m.fromUsername,
+      text: m.text,
+      sentAtMs: m.sentAtMs,
+    );
+  }
+
   /// Пинг от устройства, чат с которым удалён на этом телефоне — понг ему
   /// НЕ уходит (см. LocalHub._handlePingReceived), но юзер должен узнать:
   /// это может быть попытка старого контакта восстановить связь. Открывает
@@ -267,6 +283,7 @@ class _MainShellState extends State<MainShell> {
     _lanCollectingSub?.cancel();
     _lanAcceptSub?.cancel();
     _lanStaleSub?.cancel();
+    _triangleMsgSub?.cancel();
     localHub.stopAll();
     super.dispose();
   }

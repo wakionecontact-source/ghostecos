@@ -23,6 +23,7 @@ import 'notification_service.dart';
 import 'crypto_v2.dart';
 import 'db_service.dart';
 import 'ws_client.dart';
+import 'triangle_service.dart';
 
 /// Итог синхронизации ключей — UI (KeyGate) реагирует:
 ///   ok             — всё синхронизировано, показывать ничего не надо;
@@ -668,6 +669,43 @@ class ChatRepo {
     // Оптимистичный пузырь уже создан в sendDmText (мгновенно). Здесь только
     // шифрование/отправка и промоут temp → клиентский v2 sid.
     final sid = DateTime.now().microsecondsSinceEpoch;
+
+    // Треугольник (см. triangle_service.dart): если с этим контактом уже
+    // есть подтверждённая P2P-сессия — шлём напрямую, минуя сервер. Нет
+    // сессии — пробуем установить её В ФОНЕ для следующих сообщений (не
+    // блокируем ЭТО отправкой через punch, у него таймаут ~10с).
+    final identityPubB64 = keys['identity_pub'] as String?;
+    final devices = (keys['devices'] as List);
+    final firstDevicePubB64 = devices.isNotEmpty
+        ? (Map<String, dynamic>.from(devices.first as Map)['device_pub'] as String?)
+        : null;
+    TrianglePeerKeys? peerKeys;
+    if (identityPubB64 != null && firstDevicePubB64 != null) {
+      peerKeys = TrianglePeerKeys(
+        username: toUsername,
+        devicePubB64: firstDevicePubB64,
+        identityPubB64: identityPubB64,
+      );
+    }
+    if (peerKeys != null && triangleService.hasSession(toUsername)) {
+      final sentViaP2p = await triangleService.sendText(toUsername, sid.toString(), text);
+      if (sentViaP2p) {
+        await _db.promoteOptimistic(
+          peer: toUsername,
+          tempSid: tmpKey,
+          realSid: sid,
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        );
+        await _db.updateMessageFlags(toUsername, sid, {'pending': 0, 'delivered': 1});
+        await _refreshMessages(toUsername);
+        return;
+      }
+      // sendText вернул false (сокет не готов/ошибка) — падаем в обычную
+      // отправку через сервер ниже, юзер не должен заметить разницу.
+    } else if (peerKeys != null) {
+      unawaited(triangleService.attemptConnect(peerKeys));
+    }
+
     try {
       final payload = jsonEncode({
         'v': 2,
@@ -896,6 +934,23 @@ class ChatRepo {
     if (!isMine) {
       NotificationService.instance.onIncoming(peer: fromUser, preview: preview);
     }
+  }
+
+  /// Входящее P2P-сообщение (режим «Треугольник», см. triangle_service.dart)
+  /// — заводим в ТОТ ЖЕ пайплайн, что обычные v2-сообщения с сервера, чтобы
+  /// оно легло в общую историю чата (апгрейд существующего чата, а не
+  /// отдельный список, как у LAN). sid не передаём — _ingestV2 сам выведет
+  /// детерминированный из (отправитель|время|текст), как для python-моста.
+  Future<void> ingestTriangleMessage({
+    required String fromUsername,
+    required String text,
+    required int sentAtMs,
+  }) async {
+    await _ingestV2({
+      'type': 'msg',
+      'from_username': fromUsername,
+      'text': text,
+    }, sentAtMs ~/ 1000);
   }
 
   /// Sealed-сообщения хранятся в отдельной таблице на сервере (chat_dm_sealed),
