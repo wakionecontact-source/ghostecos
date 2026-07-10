@@ -89,6 +89,16 @@ class LocalHub {
   final _onlineCtrl = StreamController<MapEntry<String, bool>>.broadcast();
   Stream<MapEntry<String, bool>> get onOnlineChanged => _onlineCtrl.stream;
 
+  // Проверка "знаем ли мы ещё этот device_id как активный чат" — оставлена
+  // как callback, а не прямая зависимость от LanChatStore (core/local не
+  // должен знать про services/persistence слой). Вызывающий (MainShell)
+  // подставляет реальную проверку по БД.
+  Future<bool> Function(String deviceId)? isKnownPeerChecker;
+  final _staleContactCtrl = StreamController<String>.broadcast();
+  /// Пришёл пинг от устройства, с которым чата уже нет (удалён локально) —
+  /// понг ему НЕ уходит молча, вместо этого сюда прилетает device_id.
+  Stream<String> get onStaleContact => _staleContactCtrl.stream;
+
   bool _registered = false;
 
   void register(LocalTransport t) {
@@ -163,6 +173,8 @@ class LocalHub {
     _keepaliveTimers.clear();
     _pingLatency.clear();
     _onlineStatus.clear();
+    _missedPongs.clear();
+    _keepaliveStartedAt.clear();
   }
 
   /// Handle raw request from a single transport — собираем сигналы одного
@@ -202,24 +214,90 @@ class LocalHub {
     _requestCtrl.add(peer);
   }
 
-  // ── Keepalive (every 10 sec) ───────────────────────────────────────────
+  // ── Keepalive (базовый интервал 5 сек + бэкофф при потере понгов) ──────
+
+  static const _basePingInterval = Duration(seconds: 5);
+  static const _pongTimeout      = Duration(seconds: 4);
+  static const _maxPingInterval  = Duration(seconds: 60);
+
+  // Подряд пропущенных понгов на этого пира — после 3-х подряд начинаем
+  // увеличивать интервал между пингами (незачем долбить эфир в пустоту),
+  // сбрасывается в 0 при первом же успешном понге.
+  final Map<String, int> _missedPongs = {};
+
+  // Когда СТАРТОВАЛИ keepalive к этому deviceId — даёт grace-период для
+  // isKnownPeerChecker: сразу после accept асинхронная запись диалога в БД
+  // (в MainShell) ещё может не успеть закончиться к моменту первого пинга,
+  // это не "устаревший контакт", а нормальная гонка на старте.
+  final Map<String, DateTime> _keepaliveStartedAt = {};
+  static const _staleCheckGrace = Duration(seconds: 15);
 
   void _startKeepalive(String username) {
     if (!LanSettings().lanPingEnabled) return;
     _keepaliveTimers[username]?.cancel();
+    _missedPongs[username] = 0;
+    _keepaliveStartedAt[username] = DateTime.now();
     _onlineStatus[username] = true;
     _onlineCtrl.add(MapEntry(username, true));
-
-    _keepaliveTimers[username] = Timer.periodic(
-      const Duration(seconds: 10), (_) => _sendPing(username),
-    );
+    _pingCycle(username);
   }
 
   void _stopKeepalive(String username) {
     _keepaliveTimers[username]?.cancel();
     _keepaliveTimers.remove(username);
+    _missedPongs.remove(username);
+    _keepaliveStartedAt.remove(username);
     _onlineStatus[username] = false;
     _onlineCtrl.add(MapEntry(username, false));
+  }
+
+  /// Шлёт пинг, ждёт _pongTimeout на ответ, затем сам планирует следующий
+  /// цикл — с базовым интервалом, если понг пришёл, или с растущим
+  /// (бэкофф), если несколько подряд не пришло.
+  Future<void> _pingCycle(String username) async {
+    final t = transportFor(username);
+    if (t == null) {
+      _stopKeepalive(username);
+      return;
+    }
+    _lastPingSent[username] = DateTime.now();
+    try {
+      final payload = await _myAvailabilityPayload();
+      await t.sendMessage(username, '__ping__', payload, 0);
+    } catch (_) {
+      _stopKeepalive(username);
+      return;
+    }
+    final sentAt = _lastPingSent[username]!;
+    _keepaliveTimers[username] = Timer(_pongTimeout, () {
+      final lastPong = _lastPongRecv[username];
+      final gotPong = lastPong != null && !lastPong.isBefore(sentAt);
+      Duration nextDelay;
+      if (gotPong) {
+        _missedPongs[username] = 0;
+        if (_onlineStatus[username] != true) {
+          _onlineStatus[username] = true;
+          _onlineCtrl.add(MapEntry(username, true));
+        }
+        nextDelay = _basePingInterval;
+      } else {
+        final missed = (_missedPongs[username] ?? 0) + 1;
+        _missedPongs[username] = missed;
+        if (missed >= 3 && _onlineStatus[username] != false) {
+          _onlineStatus[username] = false;
+          _onlineCtrl.add(MapEntry(username, false));
+        }
+        if (missed >= 3) {
+          final extraSteps = (missed - 2).clamp(0, 4);
+          final ms = (_basePingInterval.inMilliseconds * (1 << extraSteps))
+              .clamp(_basePingInterval.inMilliseconds, _maxPingInterval.inMilliseconds);
+          nextDelay = Duration(milliseconds: ms);
+        } else {
+          nextDelay = _basePingInterval;
+        }
+      }
+      _keepaliveTimers[username] = Timer(nextDelay, () => _pingCycle(username));
+    });
   }
 
   /// Способы связи, которые СЕЙЧАС реально живы у меня (не "транспорт
@@ -252,34 +330,24 @@ class LocalHub {
     }
   }
 
-  Future<void> _sendPing(String username) async {
-    final t = transportFor(username);
-    if (t == null) {
-      _stopKeepalive(username);
-      return;
-    }
-    _lastPingSent[username] = DateTime.now();
-    try {
-      final payload = await _myAvailabilityPayload();
-      await t.sendMessage(username, '__ping__', payload, 0);
-      // If no pong within 15 sec, mark offline
-      Future.delayed(const Duration(seconds: 15), () {
-        final lastPong = _lastPongRecv[username];
-        final lastPing = _lastPingSent[username];
-        if (lastPing != null && (lastPong == null || lastPong.isBefore(lastPing))) {
-          if (_onlineStatus[username] == true) {
-            _onlineStatus[username] = false;
-            _onlineCtrl.add(MapEntry(username, false));
-          }
-        }
-      });
-    } catch (_) {
-      _stopKeepalive(username);
-    }
-  }
-
   Future<void> _handlePingReceived(String fromUsername, String payload) async {
     if (payload.isNotEmpty) _peerAvailable[fromUsername] = _parseAvailability(payload);
+
+    final checker = isKnownPeerChecker;
+    if (checker != null) {
+      final startedAt = _keepaliveStartedAt[fromUsername];
+      final withinGrace = startedAt != null &&
+          DateTime.now().difference(startedAt) < _staleCheckGrace;
+      if (!withinGrace && !(await checker(fromUsername))) {
+        // Чат с этим устройством удалён локально (или никогда не
+        // создавался, но тогда пинг вообще не должен был прийти — keepalive
+        // стартует только после accept) — не подтверждаем связь молча,
+        // сигналим наружу вместо тихого понга.
+        _staleContactCtrl.add(fromUsername);
+        return;
+      }
+    }
+
     // Reply with pong — тоже несёт НАШУ доступность.
     final t = transportFor(fromUsername);
     if (t != null) {
@@ -301,6 +369,15 @@ class LocalHub {
       _onlineStatus[fromUsername] = true;
       _onlineCtrl.add(MapEntry(fromUsername, true));
     }
+  }
+
+  /// Ручной пинг по кнопке — сбрасывает текущий отложенный тик и шлёт сразу,
+  /// не дожидаясь очередного цикла (и не ломает бэкофф-состояние — если
+  /// понг придёт, missedPongs сам сбросится в _pingCycle как обычно).
+  Future<void> pingNow(String username) async {
+    if (!hasSession(username)) return;
+    _keepaliveTimers[username]?.cancel();
+    await _pingCycle(username);
   }
 
   // ── Transport priority ─────────────────────────────────────────────────

@@ -95,6 +95,18 @@ class NotificationService {
     );
   }
 
+  /// Пингует устройство, с которым чат был удалён на этом телефоне — мы ему
+  /// не отвечаем понгом молча, но даём знать юзеру (тот же экран, что и для
+  /// обычного запроса — там же можно заблокировать/восстановить).
+  void onLanStaleContact({required String label}) {
+    if (!_ready) return;
+    _show(
+      title: 'Сигнал от старого устройства',
+      body: 'Чат с $label был удалён, но оно всё ещё на связи',
+      payload: jsonEncode({'type': 'lan_request'}),
+    );
+  }
+
   Future<void> _show({
     required String title,
     required String body,

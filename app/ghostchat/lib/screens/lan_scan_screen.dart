@@ -7,6 +7,7 @@
 // только подписывается на уже бегущий localHub.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' show ImageFilter;
@@ -51,12 +52,21 @@ class _LanScanScreenState extends State<LanScanScreen>
   final List<LocalPeer> _acceptedPeers = [];
   final Set<String> _seenDeviceIds = {};
   final Set<String> _respondedDeviceIds = {};
+  // Способы связи, замеченные при обнаружении/принятии устройства — вместе
+  // с живыми данными из пинга (localHub.availableTransportsFor) даёт полный
+  // список, а не только тот транспорт, что "победил" по приоритету.
+  final Map<String, Set<TransportType>> _peerTransports = {};
   LocalGroupedRequest? _incomingRequest;
   LocalPeer? _collectingPeer; // сигнал ловится, окно 5 сек ещё не закрылось
+  // Пингует нас устройство, чат с которым удалён локально (см.
+  // LocalHub.onStaleContact) — не обычный запрос на подключение, отдельная
+  // карточка с блокировкой/восстановлением вместо принять/отклонить.
+  final Set<String> _staleContactIds = {};
 
   StreamSubscription? _acceptSub;
   StreamSubscription? _groupedSub;
   StreamSubscription? _collectingSub;
+  StreamSubscription? _staleSub;
   Timer? _scanTimer;
   Timer? _ipTimer;
 
@@ -92,6 +102,10 @@ class _LanScanScreenState extends State<LanScanScreen>
       // Уведомление (пуш/тост) шлёт MainShell глобально — этот экран открыт,
       // карточки достаточно, дублировать не нужно.
     });
+    _staleSub = localHub.onStaleContact.listen((deviceId) {
+      if (!mounted) return;
+      setState(() => _staleContactIds.add(deviceId));
+    });
 
     await _requestPermissions();
     await _refreshConnectivity();
@@ -108,6 +122,7 @@ class _LanScanScreenState extends State<LanScanScreen>
     _acceptSub?.cancel();
     _groupedSub?.cancel();
     _collectingSub?.cancel();
+    _staleSub?.cancel();
     _scanTimer?.cancel();
     _ipTimer?.cancel();
     super.dispose();
@@ -169,6 +184,7 @@ class _LanScanScreenState extends State<LanScanScreen>
     _seenDeviceIds.add(peer.deviceId);
     setState(() {
       _acceptedPeers.add(peer);
+      _peerTransports.putIfAbsent(peer.deviceId, () => {}).add(peer.transport);
       _status = '${peer.label} принял(а) запрос';
     });
     LanChatStore.instance.createOrGetChat(
@@ -216,6 +232,7 @@ class _LanScanScreenState extends State<LanScanScreen>
     _respondedDeviceIds.add(req.deviceId);
     setState(() => _incomingRequest = null);
     if (accept) {
+      _peerTransports.putIfAbsent(req.deviceId, () => {}).addAll(req.transports);
       await localHub.sendAccept(req.bestPeer);
       // sendAccept шлёт наш публичный ключ инициатору, но сами мы видим этот
       // peer только со стороны "кто-то постучался" — покажем его в своём же
@@ -225,6 +242,71 @@ class _LanScanScreenState extends State<LanScanScreen>
     } else {
       appLog.info('lan', 'Запрос от ${req.deviceId} отклонён');
     }
+  }
+
+  Future<void> _blockStale(String deviceId) async {
+    setState(() => _staleContactIds.remove(deviceId));
+    localHub.blockDeviceId(deviceId);
+    await LanSettings().addLanBlockedDevice(deviceId);
+    appLog.info('lan', 'Старый контакт $deviceId заблокирован');
+  }
+
+  /// Восстанавливает ЗАПИСЬ чата (используя ключ, который транспорт ещё
+  /// держит в памяти с прошлого раза) — НЕ переносит историю сообщений и НЕ
+  /// перепроверяет identity заново (для этого нужен полноценный новый
+  /// discover/accept-хендшейк). Если транспорт уже не помнит ключ (например,
+  /// приложение перезапускалось) — просит подождать новый запрос от пира.
+  Future<void> _restoreStale(String deviceId) async {
+    final key = localHub.getKey(deviceId);
+    if (key == null) {
+      setState(() => _staleContactIds.remove(deviceId));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Нет активной сессии с этим устройством — дождитесь нового запроса от него'),
+      ));
+      return;
+    }
+    await LanChatStore.instance.createOrGetChat(
+      deviceId: deviceId,
+      displayName: deviceId.length > 8 ? '${deviceId.substring(0, 8)}…' : deviceId,
+      peerPubB64: base64Encode(key),
+    );
+    setState(() => _staleContactIds.remove(deviceId));
+  }
+
+  Widget _staleContactCard(String deviceId) {
+    final label = deviceId.length > 8 ? '${deviceId.substring(0, 8)}…' : deviceId;
+    return GlassCard(
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        children: [
+          Icon(Icons.history_toggle_off_rounded, color: GE.yellow, size: 22),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Сигнал от $label',
+                    style: TextStyle(color: GE.text, fontSize: 13, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 2),
+                Text('Чат с этим устройством был удалён, но оно всё ещё на связи',
+                    style: TextStyle(color: GE.sub, fontSize: 11)),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.block, color: GE.red, size: 18),
+            tooltip: 'Заблокировать',
+            onPressed: () => _blockStale(deviceId),
+          ),
+          IconButton(
+            icon: Icon(Icons.restore, color: GE.green, size: 20),
+            tooltip: 'Восстановить подключение',
+            onPressed: () => _restoreStale(deviceId),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _blockRequest() async {
@@ -278,6 +360,10 @@ class _LanScanScreenState extends State<LanScanScreen>
             const SizedBox(height: 14),
           ] else if (_incomingRequest != null) ...[
             _incomingRequestCard(_incomingRequest!),
+            const SizedBox(height: 14),
+          ],
+          for (final id in _staleContactIds) ...[
+            _staleContactCard(id),
             const SizedBox(height: 14),
           ],
           _peersList(),
@@ -546,47 +632,90 @@ class _LanScanScreenState extends State<LanScanScreen>
   }
 
   Widget _peersList() {
-    if (_acceptedPeers.isEmpty) {
-      return GlassCard(
-        lite: true,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 22),
-        child: Column(
-          children: [
-            Icon(Icons.devices_other, color: GE.sub, size: 30),
-            const SizedBox(height: 10),
-            Text('Устройства не найдены',
-                style: TextStyle(color: GE.text, fontSize: 14, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 4),
-            Text(
-              'Нажмите на радар, чтобы начать поиск.\nНайденные устройства появятся здесь.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: GE.sub, fontSize: 11, height: 1.4),
+    // Список берём из БД (LanChatStore), а не из сессионного _acceptedPeers —
+    // все устройства, с кем когда-либо обменялись рукопожатием, должны
+    // оставаться здесь, а не пропадать при закрытии экрана.
+    return ValueListenableBuilder<List<LanKnownDevice>>(
+      valueListenable: LanChatStore.instance.knownDevicesNotifier,
+      builder: (_, known, _) {
+        if (known.isEmpty) {
+          // Уже показана карточка "Подождите..." или "хочет подключиться"
+          // выше — не дублируем "устройства не найдены" одновременно с ней.
+          if (_collectingPeer != null || _incomingRequest != null || _staleContactIds.isNotEmpty) {
+            return const SizedBox.shrink();
+          }
+          return GlassCard(
+            lite: true,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 22),
+            child: Column(
+              children: [
+                Icon(Icons.devices_other, color: GE.sub, size: 30),
+                const SizedBox(height: 10),
+                Text('Устройства не найдены',
+                    style: TextStyle(color: GE.text, fontSize: 14, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 4),
+                Text(
+                  'Нажмите на радар, чтобы начать поиск.\nНайденные устройства появятся здесь.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: GE.sub, fontSize: 11, height: 1.4),
+                ),
+              ],
             ),
-          ],
-        ),
-      );
-    }
-    return Column(
-      children: _acceptedPeers.map((p) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: _peerTile(p),
-      )).toList(),
+          );
+        }
+        return Column(
+          children: known.map((d) => Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _peerTile(d),
+          )).toList(),
+        );
+      },
     );
   }
 
-  Widget _peerTile(LocalPeer peer) {
+  TransportType _parseTransport(String s) {
+    switch (s) {
+      case 'wifi_direct': return TransportType.wifiDirect;
+      case 'bluetooth':   return TransportType.bluetooth;
+      default:            return TransportType.lan;
+    }
+  }
+
+  /// Только что / Xм / Xч / Xд / дата — насколько давно было принято.
+  String _relativeAcceptedTime(int? acceptedAtSec) {
+    if (acceptedAtSec == null) return '';
+    final dt = DateTime.fromMillisecondsSinceEpoch(acceptedAtSec * 1000);
+    final diff = DateTime.now().difference(dt);
+    if (diff.inSeconds < 60) return 'Только что';
+    if (diff.inMinutes < 60) return '${diff.inMinutes} м';
+    if (diff.inHours < 24) return '${diff.inHours} ч';
+    if (diff.inDays < 7) return '${diff.inDays} д';
+    return '${dt.day.toString().padLeft(2, '0')}.${dt.month.toString().padLeft(2, '0')}.${dt.year.toString().substring(2)}';
+  }
+
+  Widget _peerTile(LanKnownDevice device) {
+    final baseTransport = _parseTransport(device.transport);
     IconData icon;
-    switch (peer.transport) {
+    switch (baseTransport) {
       case TransportType.lan:        icon = Icons.wifi; break;
       case TransportType.wifiDirect: icon = Icons.wifi_tethering; break;
       case TransportType.bluetooth:  icon = Icons.bluetooth; break;
     }
-    final name = peer.label;
+    final name = device.displayName;
+    // Живые данные из пинга (если уже были) поверх того, что видели при
+    // обнаружении/принятии — полный список способов связи, а не один.
+    final methods = {
+      ...(_peerTransports[device.deviceId] ?? const {}),
+      ...(localHub.availableTransportsFor(device.deviceId) ?? const {}),
+    };
+    if (methods.isEmpty) methods.add(baseTransport);
+    final pingMs = localHub.getPingMs(device.deviceId);
+    final online = localHub.isOnline(device.deviceId);
     return GlassCard(
       lite: true,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       onTap: () => Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => LanChatScreen(deviceId: peer.deviceId, displayName: name),
+        builder: (_) => LanChatScreen(deviceId: device.deviceId, displayName: name),
       )),
       child: Row(
         children: [
@@ -616,7 +745,12 @@ class _LanScanScreenState extends State<LanScanScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(name, style: TextStyle(color: GE.text, fontWeight: FontWeight.w600, fontSize: 14)),
-                Text(transportLabel(peer.transport), style: TextStyle(color: GE.sub, fontSize: 11)),
+                Text(
+                  online && pingMs != null
+                      ? '${methods.map(transportLabel).join(' · ')} · $pingMs мс'
+                      : methods.map(transportLabel).join(' · '),
+                  style: TextStyle(color: GE.sub, fontSize: 11),
+                ),
               ],
             ),
           ),
@@ -626,7 +760,8 @@ class _LanScanScreenState extends State<LanScanScreen>
               color: GE.green.withValues(alpha: 0.16),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Text('Принято', style: TextStyle(color: GE.green, fontSize: 10, fontWeight: FontWeight.w600)),
+            child: Text('Принято ${_relativeAcceptedTime(device.acceptedAt)}',
+                style: TextStyle(color: GE.green, fontSize: 10, fontWeight: FontWeight.w600)),
           ),
         ],
       ),

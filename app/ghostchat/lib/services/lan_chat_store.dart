@@ -15,12 +15,30 @@ import 'db_service.dart' show StoredDialog;
 
 const lanDialogPrefix = 'lan:';
 
+/// Устройство, с которым когда-либо был обмен ключами (принято) — для
+/// списка в LanScanScreen, живёт независимо от истории сообщений/чата.
+class LanKnownDevice {
+  final String deviceId;
+  final String displayName;
+  final int? acceptedAt; // unix seconds — момент первого рукопожатия
+  final String transport; // 'lan' | 'bluetooth' | 'wifiDirect' — как узнали изначально
+  const LanKnownDevice({
+    required this.deviceId,
+    required this.displayName,
+    this.acceptedAt,
+    this.transport = 'lan',
+  });
+}
+
 class LanChatMessage {
   final String msgId;
   final String deviceId;
   final bool fromMe;
   final String text;
   final int createdAt; // unix seconds — как created_at в DbService
+  final String? fileName;
+  final String? fileMime;
+  final Uint8List? fileBytes;
 
   LanChatMessage({
     required this.msgId,
@@ -28,7 +46,12 @@ class LanChatMessage {
     required this.fromMe,
     required this.text,
     required this.createdAt,
+    this.fileName,
+    this.fileMime,
+    this.fileBytes,
   });
+
+  bool get hasFile => fileName != null && fileBytes != null;
 
   Map<String, dynamic> toMap() => {
         'msg_id': msgId,
@@ -36,6 +59,9 @@ class LanChatMessage {
         'from_me': fromMe ? 1 : 0,
         'text': text,
         'created_at': createdAt,
+        'file_name': fileName,
+        'file_mime': fileMime,
+        'file_bytes': fileBytes,
       };
 
   static LanChatMessage fromMap(Map<String, dynamic> m) => LanChatMessage(
@@ -44,6 +70,9 @@ class LanChatMessage {
         fromMe: (m['from_me'] as int) == 1,
         text: m['text'] as String? ?? '',
         createdAt: m['created_at'] as int,
+        fileName: m['file_name'] as String?,
+        fileMime: m['file_mime'] as String?,
+        fileBytes: m['file_bytes'] as Uint8List?,
       );
 }
 
@@ -54,6 +83,10 @@ class LanChatStore {
   Database? _db;
   final ValueNotifier<List<StoredDialog>> dialogsNotifier =
       ValueNotifier(const []);
+  /// Все устройства, с которыми когда-либо обменялись рукопожатием — не
+  /// только те, что "принял в этой сессии" (для LanScanScreen).
+  final ValueNotifier<List<LanKnownDevice>> knownDevicesNotifier =
+      ValueNotifier(const []);
 
   static int _nowSec() => DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
@@ -63,7 +96,7 @@ class LanChatStore {
     final path = p.join(dir.path, 'lan_chats.db');
     _db = await openDatabase(
       path,
-      version: 2,
+      version: 4,
       onCreate: (db, v) async {
         await db.execute('''
           CREATE TABLE lan_dialogs (
@@ -75,7 +108,8 @@ class LanChatStore {
             last_text     TEXT NOT NULL DEFAULT '',
             last_at       INTEGER,
             last_from_me  INTEGER NOT NULL DEFAULT 0,
-            unread        INTEGER NOT NULL DEFAULT 0
+            unread        INTEGER NOT NULL DEFAULT 0,
+            accepted_at   INTEGER
           )
         ''');
         await db.execute('''
@@ -84,7 +118,10 @@ class LanChatStore {
             device_id     TEXT NOT NULL,
             from_me       INTEGER NOT NULL DEFAULT 0,
             text          TEXT NOT NULL DEFAULT '',
-            created_at    INTEGER NOT NULL
+            created_at    INTEGER NOT NULL,
+            file_name     TEXT,
+            file_mime     TEXT,
+            file_bytes    BLOB
           )
         ''');
         await db.execute(
@@ -94,6 +131,17 @@ class LanChatStore {
         if (oldV < 2) {
           await db.execute(
               "ALTER TABLE lan_dialogs ADD COLUMN identity_pub TEXT NOT NULL DEFAULT ''");
+        }
+        if (oldV < 3) {
+          await db.execute('ALTER TABLE lan_dialogs ADD COLUMN accepted_at INTEGER');
+          // Для уже существующих пар точного момента рукопожатия не знаем —
+          // берём last_at как лучшее приближение (когда чат создался).
+          await db.execute('UPDATE lan_dialogs SET accepted_at = last_at WHERE accepted_at IS NULL');
+        }
+        if (oldV < 4) {
+          await db.execute('ALTER TABLE lan_messages ADD COLUMN file_name TEXT');
+          await db.execute('ALTER TABLE lan_messages ADD COLUMN file_mime TEXT');
+          await db.execute('ALTER TABLE lan_messages ADD COLUMN file_bytes BLOB');
         }
       },
     );
@@ -118,6 +166,16 @@ class LanChatStore {
               unread: r['unread'] as int? ?? 0,
             ))
         .toList();
+    final known = rows
+        .map((r) => LanKnownDevice(
+              deviceId: r['device_id'] as String,
+              displayName: r['display_name'] as String,
+              acceptedAt: r['accepted_at'] as int?,
+              transport: r['transport'] as String? ?? 'lan',
+            ))
+        .toList()
+      ..sort((a, b) => (b.acceptedAt ?? 0).compareTo(a.acceptedAt ?? 0));
+    knownDevicesNotifier.value = known;
   }
 
   /// TOFU-проверка: если для этого device_id уже есть закреплённая
@@ -158,6 +216,7 @@ class LanChatStore {
         'last_at': _nowSec(),
         'last_from_me': 0,
         'unread': 0,
+        'accepted_at': _nowSec(),
       });
     } else {
       final update = <String, Object?>{};
@@ -205,8 +264,11 @@ class LanChatStore {
     required String deviceId,
     required String msgId,
     required bool fromMe,
-    required String text,
+    String text = '',
     int? createdAtSec,
+    String? fileName,
+    String? fileMime,
+    Uint8List? fileBytes,
   }) async {
     final at = createdAtSec ?? _nowSec();
     await _safeDb.insert(
@@ -217,14 +279,37 @@ class LanChatStore {
         fromMe: fromMe,
         text: text,
         createdAt: at,
+        fileName: fileName,
+        fileMime: fileMime,
+        fileBytes: fileBytes,
       ).toMap(),
       conflictAlgorithm: ConflictAlgorithm.ignore,
     );
+    final preview = text.isNotEmpty ? text : (fileName != null ? '📎 $fileName' : '');
     await _safeDb.rawUpdate(
       'UPDATE lan_dialogs SET last_text = ?, last_at = ?, last_from_me = ?, '
       'unread = unread + ? WHERE device_id = ?',
-      [text, at, fromMe ? 1 : 0, fromMe ? 0 : 1, deviceId],
+      [preview, at, fromMe ? 1 : 0, fromMe ? 0 : 1, deviceId],
     );
+    await _reloadDialogs();
+  }
+
+  Future<void> deleteMessages(String deviceId, List<String> msgIds) async {
+    if (msgIds.isEmpty) return;
+    final placeholders = List.filled(msgIds.length, '?').join(',');
+    await _safeDb.rawDelete(
+      'DELETE FROM lan_messages WHERE device_id = ? AND msg_id IN ($placeholders)',
+      [deviceId, ...msgIds],
+    );
+    await _reloadDialogs();
+  }
+
+  /// Переименовать локальный ярлык устройства (не влияет на его настоящий
+  /// device_id/identity — чисто отображаемое имя на этом устройстве).
+  Future<void> renameChat(String deviceId, String name) async {
+    if (name.trim().isEmpty) return;
+    await _safeDb.update('lan_dialogs', {'display_name': name.trim()},
+        where: 'device_id = ?', whereArgs: [deviceId]);
     await _reloadDialogs();
   }
 

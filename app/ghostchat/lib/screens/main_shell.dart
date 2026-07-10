@@ -6,7 +6,6 @@
 // Каждый экран — native, без WebView. Заглушки пока (M5-M7 их наполнят).
 
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -31,6 +30,7 @@ import 'lan_scan_screen.dart';
 import '../core/local/local_hub.dart';
 import '../core/local/local_transport.dart';
 import '../core/local/lan_settings.dart';
+import '../core/local/lan_message_codec.dart';
 import '../core/local/app_logger.dart';
 import '../core/local/transports/lan_transport.dart';
 import '../core/local/transports/bluetooth_transport.dart';
@@ -75,6 +75,9 @@ class _MainShellState extends State<MainShell> {
   StreamSubscription? _lanMsgSub;
   StreamSubscription? _lanCollectingSub;
   StreamSubscription? _lanAcceptSub;
+  StreamSubscription? _lanStaleSub;
+  // Не спамим — раз в сессию приложения на device_id достаточно.
+  final Set<String> _notifiedStale = {};
 
   @override
   void initState() {
@@ -142,6 +145,9 @@ class _MainShellState extends State<MainShell> {
     _lanMsgSub = localHub.onMessage.listen(_onLanMessage);
     _lanCollectingSub = localHub.onCollecting.listen(_onLanSignalCaught);
     _lanAcceptSub = localHub.onAccept.listen(_onLanAccepted);
+    _lanStaleSub = localHub.onStaleContact.listen(_onLanStaleContact);
+    localHub.isKnownPeerChecker =
+        (deviceId) async => (await LanChatStore.instance.getDisplayName(deviceId)) != null;
     await localHub.startAll();
   }
 
@@ -194,23 +200,52 @@ class _MainShellState extends State<MainShell> {
   String _shortId(String deviceId) =>
       deviceId.length > 8 ? '${deviceId.substring(0, 8)}…' : deviceId;
 
+  /// Пинг от устройства, чат с которым удалён на этом телефоне — понг ему
+  /// НЕ уходит (см. LocalHub._handlePingReceived), но юзер должен узнать:
+  /// это может быть попытка старого контакта восстановить связь. Открывает
+  /// тот же экран "Устройства поблизости" — там можно заблокировать.
+  void _onLanStaleContact(String deviceId) {
+    if (_notifiedStale.contains(deviceId)) return;
+    _notifiedStale.add(deviceId);
+    final label = _shortId(deviceId);
+    final backgrounded =
+        WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed;
+    if (backgrounded) {
+      NotificationService.instance.onLanStaleContact(label: label);
+      return;
+    }
+    toast.show(
+      'Сигнал от старого устройства ($label) — чат был удалён',
+      level: ToastLevel.warn,
+      action: ToastAction(
+        label: 'Открыть',
+        onPressed: () => Navigator.of(context)
+            .push(MaterialPageRoute(builder: (_) => const LanScanScreen())),
+      ),
+    );
+  }
+
   /// Входящее LAN-сообщение → расшифровать (ключ пира взят из БД LAN-чатов,
   /// сохранённый там при подключении) и сохранить в историю. Работает даже
-  /// если экран этого чата сейчас не открыт.
+  /// если экран этого чата сейчас не открыт. ЕДИНСТВЕННОЕ место, которое
+  /// пишет входящие LAN-сообщения в БД — LanChatScreen (если открыт) только
+  /// читает результат, не расшифровывает повторно (иначе гонка за один и
+  /// тот же msg_id между двумя параллельными decrypt+insert).
   Future<void> _onLanMessage(LocalMessageEvent m) async {
-    if (m.encB64.isEmpty) return;
     try {
-      final clear = await CryptoV2.instance.decryptForMe(m.encB64);
-      if (clear == null) return;
-      final text = utf8.decode(clear);
+      final decoded = await decodeLanMessage(m);
+      if (decoded == null) return;
       await LanChatStore.instance.addMessage(
         deviceId: m.fromUsername,
         msgId: m.msgId,
         fromMe: false,
-        text: text,
+        text: decoded.text,
         // sentAt приходит в миллисекундах (см. LocalHub keepalive), а БД
         // хранит секунды — как created_at в DbService.
         createdAtSec: m.sentAt > 0 ? m.sentAt ~/ 1000 : null,
+        fileName: decoded.fileName,
+        fileMime: decoded.fileMime,
+        fileBytes: decoded.fileBytes,
       );
     } catch (_) {}
   }
@@ -231,6 +266,7 @@ class _MainShellState extends State<MainShell> {
     _lanMsgSub?.cancel();
     _lanCollectingSub?.cancel();
     _lanAcceptSub?.cancel();
+    _lanStaleSub?.cancel();
     localHub.stopAll();
     super.dispose();
   }

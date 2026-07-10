@@ -147,7 +147,7 @@ class BluetoothTransport implements LocalTransport {
         final peerX25519Pub = pkt['x25519_pub'] as String? ?? '';
         final identityPub = pkt['identity_pub'] as String? ?? '';
         final sig = pkt['signed_prekey_sig'] as String? ?? '';
-        appLog.info('bt', '← peripheral discover device=$deviceId');
+        appLog.info('bt', '← мы peripheral, получили discover от central device=$deviceId');
         if (deviceId.isNotEmpty && !isBlocked(deviceId, address)) {
           final verified = await verifyPeerIdentity(
             x25519PubB64: peerX25519Pub,
@@ -155,6 +155,11 @@ class BluetoothTransport implements LocalTransport {
             signedPrekeySigB64: sig,
           );
           if (!verified) return;
+          // Роль "peripheral" — сессия без device/msgChar (нет GATT-клиента),
+          // ответы идут через нативный sendToDevice (см. _sendToUser). Кладём
+          // ДО _requestCtrl.add, иначе первый же _sendToUser в sendAccept()
+          // (на accept-нажатие) не найдёт сессию и тихо ничего не отправит.
+          _sessions[deviceId] = _BtSession(address: address, key: []);
           _requestCtrl.add(LocalPeer(
             peerId:       '$deviceId@bt:$address',
             deviceId:     deviceId,
@@ -299,16 +304,7 @@ class BluetoothTransport implements LocalTransport {
         return;
       }
 
-      appLog.info('bt', '← discover device=$deviceId через BLE');
-      _requestCtrl.add(LocalPeer(
-        peerId:       '$deviceId@bt:${device.remoteId.str}',
-        deviceId:     deviceId,
-        x25519PubB64: peerX25519Pub,
-        identityPubB64: identityPub,
-        signedPrekeySigB64: sig,
-        transport:    TransportType.bluetooth,
-        address:      device.remoteId.str,
-      ));
+      appLog.info('bt', '← нашли peripheral device=$deviceId через BLE (мы central — это МЫ его запрашиваем, не наоборот)');
 
       // Keep device reference for later (keyed by deviceId until we learn username)
       _sessions[deviceId] = _BtSession(
@@ -324,6 +320,21 @@ class BluetoothTransport implements LocalTransport {
         _handleIncoming(deviceId, bytes);
       });
 
+      // ВАЖНО: мы (central) сами нашли и подключились к peripheral — значит
+      // ЭТО МЫ хотим установить контакт, а не они. Раньше здесь стоял
+      // _requestCtrl.add(...), что заставляло СКАНИРУЮЩЕЕ устройство думать,
+      // будто ему прислали запрос — хотя peripheral просто постоянно
+      // разряжает рекламу (advertising) и никакого решения не принимал.
+      // Правильно (симметрично LAN discover()): central пишет СВОЙ discover
+      // в message-характеристику peripheral'а — и уже ОН получает карточку
+      // "хочет подключиться" и решает сам (см. _handlePeripheralData ниже).
+      final devId = await AuthService.deviceId();
+      final idFields = await signedIdentityFields();
+      await _sendToUser(deviceId, jsonEncode({
+        'type':      'discover',
+        'device_id': devId,
+        ...idFields,
+      }));
     } catch (_) {
       try { device.disconnect(); } catch (_) {}
     }
@@ -457,24 +468,43 @@ class BluetoothTransport implements LocalTransport {
     }));
   }
 
+  /// Отправка пиру — маршрут зависит от РОЛИ в этой конкретной паре:
+  /// - мы central (мы сканировали и подключились к ним) → пишем в их
+  ///   GATT-характеристику напрямую (s.msgChar не null);
+  /// - мы peripheral (это ОНИ подключились к нам) → у нас нет GATT-клиента,
+  ///   шлём через нативный peripheral-канал sendToDevice (GATT-нотификация).
   Future<void> _sendToUser(String username, String json) async {
     final s = _sessions[username];
-    if (s == null || s.msgChar == null) return;
-    try {
-      final bytes = utf8.encode(json);
-      // BLE has MTU limit — chunk if needed
-      final mtu = s.device?.mtuNow ?? 512;
-      final chunkSize = mtu - 3;
-      if (bytes.length <= chunkSize) {
-        await s.msgChar!.write(bytes, withoutResponse: true);
-      } else {
-        // Simple chunking: split into pieces
-        for (var i = 0; i < bytes.length; i += chunkSize) {
-          final end = (i + chunkSize > bytes.length) ? bytes.length : i + chunkSize;
-          await s.msgChar!.write(bytes.sublist(i, end), withoutResponse: true);
-          await Future.delayed(const Duration(milliseconds: 20));
+    if (s == null) return;
+    if (s.msgChar != null) {
+      try {
+        final bytes = utf8.encode(json);
+        // BLE has MTU limit — chunk if needed
+        final mtu = s.device?.mtuNow ?? 512;
+        final chunkSize = mtu - 3;
+        if (bytes.length <= chunkSize) {
+          await s.msgChar!.write(bytes, withoutResponse: true);
+        } else {
+          // Simple chunking: split into pieces
+          for (var i = 0; i < bytes.length; i += chunkSize) {
+            final end = (i + chunkSize > bytes.length) ? bytes.length : i + chunkSize;
+            await s.msgChar!.write(bytes.sublist(i, end), withoutResponse: true);
+            await Future.delayed(const Duration(milliseconds: 20));
+          }
         }
-      }
+      } catch (_) {}
+      return;
+    }
+    // Peripheral role: нет chunking на нативной стороне (sendNotification
+    // шлёт значение характеристики одним куском) — ок для служебных пакетов
+    // (discover/accept/ack/seen/короткий текст), но большие сообщения могут
+    // не дойти. Если понадобится слать крупное с peripheral-стороны — надо
+    // будет добавить chunking в BlePeripheralPlugin.kt.
+    try {
+      await _peripheralChannel.invokeMethod('sendToDevice', {
+        'address': s.address,
+        'json': json,
+      });
     } catch (_) {}
   }
 }
