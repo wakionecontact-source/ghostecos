@@ -189,7 +189,8 @@ class _LanScanScreenState extends State<LanScanScreen>
     });
     LanChatStore.instance.createOrGetChat(
       deviceId: peer.deviceId,
-      displayName: peer.label,
+      // Полный device_id — см. комментарий в main_shell.dart._onLanAccepted.
+      displayName: peer.deviceId,
       peerPubB64: peer.x25519PubB64,
       identityPubB64: peer.identityPubB64,
       transport: peer.chatType,

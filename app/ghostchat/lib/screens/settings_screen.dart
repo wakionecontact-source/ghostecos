@@ -1,10 +1,13 @@
 // Настройки — хаб по отделам (как в 1.19.3): список разделов, каждый открывает
 // свой экран. Разделы: Внешний вид, Разрешения, Ключи (E2E), Устройства,
-// Избранное, О приложении.
+// LAN-чаты, Логи, О приложении. «Избранное» сюда специально не входит —
+// оно теперь живёт в списке чатов (см. BookmarkStore/chat_list_screen.dart).
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../services/chat_repo.dart';
@@ -15,13 +18,13 @@ import '../widgets/skeleton.dart';
 import '../widgets/toast_overlay.dart';
 import 'devices_screen.dart';
 import 'support_screen.dart';
-import 'saved_screen.dart';
 import 'logs_screen.dart';
 import 'lan_settings_screen.dart';
 
 // ─── Хаб ────────────────────────────────────────────────────────────────────
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  final bool isGuest;
+  const SettingsScreen({super.key, this.isGuest = false});
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
@@ -70,16 +73,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       () => _open(const _KeysScreen())),
                   _row(Icons.devices_other_outlined, 'Устройства',
                       'Сессии и доверенные устройства',
-                      () => _open(const DevicesScreen())),
+                      () => _open(const DevicesScreen()),
+                      disabled: widget.isGuest),
                   _row(Icons.wifi_tethering_rounded, 'LAN-чаты',
                       'Приём запросов, приоритет, блокировки',
                       () => _open(const LanSettingsScreen())),
-                  _row(Icons.bookmark_outline, 'Избранное',
-                      'Личные заметки на устройстве',
-                      () => _open(const SavedScreen())),
                   _row(Icons.terminal_rounded, 'Логи',
                       'Внутренний журнал (LAN/BLE/Wi-Fi Direct)',
                       () => _open(const LogsScreen())),
+                  _row(Icons.download_outlined, 'Импортировать чаты',
+                      'Скоро',
+                      () => toast.show('Импорт чатов — скоро')),
+                  _row(Icons.upload_outlined, 'Экспортировать чаты',
+                      'Скоро',
+                      () => toast.show('Экспорт чатов — скоро')),
                   _row(Icons.info_outline, 'О приложении', 'Версия, помощь',
                       () => _open(const _AboutScreen()), last: true),
                 ],
@@ -91,17 +98,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  /// disabled=true — видно, но неактивно (не убираем совсем): для гостя
+  /// разделы, требующие сервер (например "Устройства").
   Widget _row(IconData icon, String title, String sub, VoidCallback onTap,
-      {bool last = false}) {
+      {bool last = false, bool disabled = false}) {
+    final iconColor = disabled ? GE.sub.withValues(alpha: 0.4) : GE.primary;
+    final textColor = disabled ? GE.sub.withValues(alpha: 0.5) : GE.text;
     return Column(
       children: [
         InkWell(
-          onTap: onTap,
+          onTap: disabled ? null : onTap,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
             child: Row(
               children: [
-                Icon(icon, size: 20, color: GE.primary),
+                Icon(icon, size: 20, color: iconColor),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(
@@ -109,15 +120,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     children: [
                       Text(title,
                           style: TextStyle(
-                              color: GE.text,
+                              color: textColor,
                               fontSize: 14,
                               fontWeight: FontWeight.w600)),
                       const SizedBox(height: 2),
-                      Text(sub, style: TextStyle(color: GE.sub, fontSize: 11)),
+                      Text(disabled ? 'Недоступно гостю' : sub,
+                          style: TextStyle(color: GE.sub.withValues(alpha: disabled ? 0.6 : 1), fontSize: 11)),
                     ],
                   ),
                 ),
-                Icon(Icons.chevron_right, color: GE.sub, size: 20),
+                if (!disabled) Icon(Icons.chevron_right, color: GE.sub, size: 20),
               ],
             ),
           ),
@@ -160,35 +172,37 @@ Widget _sectionTitle(String t) => Padding(
               letterSpacing: 0.5)),
     );
 
-Widget _tile(IconData icon, String label, VoidCallback onTap,
-    {String? sub, bool danger = false}) {
+/// onTap=null → чисто информационная строка: без риппла и без шеврона (не
+/// обещает взаимодействие, на которое нет реакции). trailingIcon переопределяет
+/// шеврон (например на "скопировать" или "внешняя ссылка").
+Widget _tile(IconData icon, String label, VoidCallback? onTap,
+    {String? sub, bool danger = false, IconData? trailingIcon}) {
   final color = danger ? GE.red : GE.primary;
   final textColor = danger ? GE.red : GE.text;
-  return InkWell(
-    onTap: onTap,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      child: Row(
-        children: [
-          Icon(icon, size: 20, color: color),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: TextStyle(color: textColor, fontSize: 14)),
-                if (sub != null) ...[
-                  const SizedBox(height: 2),
-                  Text(sub, style: TextStyle(color: GE.sub, fontSize: 11)),
-                ],
+  final content = Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+    child: Row(
+      children: [
+        Icon(icon, size: 20, color: color),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: TextStyle(color: textColor, fontSize: 14)),
+              if (sub != null) ...[
+                const SizedBox(height: 2),
+                Text(sub, style: TextStyle(color: GE.sub, fontSize: 11)),
               ],
-            ),
+            ],
           ),
-          Icon(Icons.chevron_right, color: GE.sub, size: 20),
-        ],
-      ),
+        ),
+        if (onTap != null) Icon(trailingIcon ?? Icons.chevron_right, color: GE.sub, size: 20),
+      ],
     ),
   );
+  if (onTap == null) return content;
+  return InkWell(onTap: onTap, child: content);
 }
 
 // ─── Раздел: Внешний вид ──────────────────────────────────────────────────────
@@ -527,8 +541,39 @@ class _KeysScreen extends StatelessWidget {
 }
 
 // ─── Раздел: О приложении ─────────────────────────────────────────────────────
-class _AboutScreen extends StatelessWidget {
+class _AboutScreen extends StatefulWidget {
   const _AboutScreen();
+  @override
+  State<_AboutScreen> createState() => _AboutScreenState();
+}
+
+class _AboutScreenState extends State<_AboutScreen> {
+  String _version = '…';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVersion();
+  }
+
+  Future<void> _loadVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (mounted) setState(() => _version = '${info.version}+${info.buildNumber}');
+    } catch (_) {
+      if (mounted) setState(() => _version = '?');
+    }
+  }
+
+  Future<void> _openChannel() async {
+    final uri = Uri.parse('https://t.me/waki_one');
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      toast.show('Не удалось открыть ссылку');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return _SectionScaffold(
@@ -537,10 +582,25 @@ class _AboutScreen extends StatelessWidget {
         GlassCard(
           child: Column(
             children: [
-              _tile(Icons.info_outline, 'GhostChat · v1.1.10', () {}),
+              _tile(
+                Icons.info_outline,
+                'GhostChat · v$_version',
+                () {
+                  Clipboard.setData(ClipboardData(text: _version));
+                  toast.show('Версия скопирована');
+                },
+                trailingIcon: Icons.copy_outlined,
+              ),
               _tile(Icons.emoji_emotions_outlined,
-                  'Эмодзи — Twemoji (CC BY 4.0)', () {},
+                  'Эмодзи — Twemoji (CC BY 4.0)', null,
                   sub: 'Графика эмодзи © Twitter/jdecked, CC BY 4.0'),
+              _tile(
+                Icons.telegram,
+                'Канал в Telegram',
+                _openChannel,
+                sub: '@waki_one',
+                trailingIcon: Icons.open_in_new,
+              ),
               _tile(
                 Icons.help_outline,
                 'Помощь',

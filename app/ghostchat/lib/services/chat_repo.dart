@@ -168,10 +168,15 @@ class ChatRepo {
     // server-режиму, чтобы ВОССТАНОВИТЬ приватник с сервера, а не сгенерить
     // новый (иначе старая переписка не расшифруется). Режим (server/local) —
     // выбор пользователя из онбординга (pref key_storage_mode).
-    final pwd = AuthService.takePendingPwd();
+    // peek, не take — если этот первый автоматический синк не выйдет ok
+    // (например транзиентная сетевая ошибка, а не реально неверный пароль),
+    // пароль остаётся доступен для одной тихой автопопытки в KeyGate, вместо
+    // того чтобы сразу заставлять юзера вводить его заново.
+    final pwd = AuthService.peekPendingPwd();
     final prefs = await SharedPreferences.getInstance();
     final chosenMode = prefs.getString('key_storage_mode');
     keySyncNotifier.value = await syncKeys(password: pwd, chosenMode: chosenMode);
+    if (keySyncNotifier.value == KeySyncOutcome.ok) AuthService.clearPendingPwd();
     if (kDebugMode) print('[ChatRepo] init keySync → ${keySyncNotifier.value}');
     // НЕ откатываемся в local автоматически — раньше это ЗАТИРАЛО настоящий
     // серверный ключ throwaway-ключом. needPassword / needChooseMode теперь
@@ -200,6 +205,20 @@ class ChatRepo {
     _msgsByPeer.clear();
     dialogsNotifier.value = [];
     _initialized = false;
+  }
+
+  /// Спрашивает у сервера, УЖЕ выбран ли режим хранения ключа для этого
+  /// аккаунта — используется на онбординге (main.dart _Router), чтобы не
+  /// показывать KeyChoiceScreen заново тому, кто уже выбирал (пусть даже на
+  /// другом устройстве — режим общий для аккаунта, не per-device).
+  /// null = сервер не ответил ИЛИ режим правда ещё не выбран — в обоих
+  /// случаях безопасно (fail-safe) продолжить показывать выбор как раньше.
+  Future<String?> fetchServerKeyMode() async {
+    try {
+      final sm = await _api.chatGet('/keys/storage_mode');
+      if (sm is Map) return sm['mode'] as String?;
+    } catch (_) {}
+    return null;
   }
 
   /// KeyGate → пользователь ввёл пароль / выбрал режим. Повторяем синхронизацию;

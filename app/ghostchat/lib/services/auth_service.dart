@@ -31,15 +31,18 @@ class AuthService {
   static String? _cachedToken;
   static bool _cacheReady = false;
 
-  // Пароль логина/регистрации, переданный синхронизации ключей на ОДИН цикл
-  // bootstrap'а (server-режим: восстановить/опубликовать приватник под паролем).
-  // НЕ персистится — живёт в RAM до первого takePendingPwd().
+  // Пароль логина/регистрации, переданный синхронизации ключей (server-режим:
+  // восстановить/опубликовать приватник под паролем). НЕ персистится — живёт
+  // в RAM. НЕ читается-и-стирается за один раз (как раньше) — иначе первая
+  // же неудачная попытка синка (например транзиентная сетевая ошибка, не
+  // связанная с самим паролем) стирала его, и KeyGate был вынужден спрашивать
+  // пароль у юзера ещё раз, хотя он его только что ввёл при входе. Теперь
+  // держим его до УСПЕШНОГО синка (clearPendingPwd) — так и ChatRepo.init(),
+  // и KeyGate.needPassword-автопопытка могут использовать один и тот же
+  // пароль, не спрашивая юзера дважды за один логин.
   static String? _pendingPwd;
-  static String? takePendingPwd() {
-    final p = _pendingPwd;
-    _pendingPwd = null;
-    return p;
-  }
+  static String? peekPendingPwd() => _pendingPwd;
+  static void clearPendingPwd() => _pendingPwd = null;
 
   static Future<String?> token() async {
     if (_cacheReady) return _cachedToken;

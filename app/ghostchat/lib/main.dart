@@ -12,6 +12,7 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'theme.dart';
 import 'services/auth_service.dart';
+import 'services/chat_repo.dart';
 import 'services/theme_service.dart';
 import 'services/notification_service.dart';
 import 'services/fcm_service.dart';
@@ -157,14 +158,34 @@ class _RouterState extends State<_Router> {
     _initStage();
   }
 
+  /// true → можно пропустить KeyChoiceScreen: либо уже выбирали локально на
+  /// ЭТОМ устройстве, либо сервер уже знает режим для этого АККАУНТА —
+  /// типичный кейс "новое устройство/переустановка для существующего
+  /// аккаунта", раньше в этом случае экран выбора вылезал заново, хотя
+  /// человек уже выбирал (просто не на этом телефоне). Fail-safe: если
+  /// сервер не ответил, ведём себя как раньше (просто по локальному флагу).
+  Future<bool> _resolveKeyChoiceDone(SharedPreferences prefs) async {
+    if (prefs.getBool('keychoice_done') ?? false) return true;
+    final serverMode = await ChatRepo.instance.fetchServerKeyMode();
+    if (serverMode != null) {
+      await prefs.setString('key_storage_mode', serverMode);
+      await prefs.setBool('keychoice_done', true);
+      return true;
+    }
+    return false;
+  }
+
   Future<void> _initStage() async {
     final prefs = await SharedPreferences.getInstance();
     final welcomeDone = prefs.getBool('welcome_done') ?? false;
     final permsDone = prefs.getBool('permissions_done') ?? false;
-    final keyChoiceDone = prefs.getBool('keychoice_done') ?? false;
     final token = await AuthService.token();
     final loggedIn = token != null && token.isNotEmpty;
     final isGuest = loggedIn && await AuthService.isGuest();
+    // Серверную проверку имеет смысл делать только если реально дойдём до
+    // этой развилки (уже вошли, не гость) — не гонять лишний запрос зря.
+    final keyChoiceDone =
+        (loggedIn && !isGuest) ? await _resolveKeyChoiceDone(prefs) : true;
     if (!mounted) return;
     setState(() {
       if (!welcomeDone) {
@@ -186,8 +207,9 @@ class _RouterState extends State<_Router> {
   }
 
   /// После экрана "Привет" — на выбор ключа (если ещё не делали на этом
-  /// устройстве) или сразу в приложение. Гостю выбор ключа не нужен вообще —
-  /// у гостя нет аккаунта и нет ключа для бэкапа на сервере.
+  /// устройстве И сервер ещё не знает режим для аккаунта) или сразу в
+  /// приложение. Гостю выбор ключа не нужен вообще — у гостя нет аккаунта и
+  /// нет ключа для бэкапа на сервере.
   Future<void> _afterPreparing() async {
     final isGuest = await AuthService.isGuest();
     if (isGuest) {
@@ -195,7 +217,7 @@ class _RouterState extends State<_Router> {
       return;
     }
     final prefs = await SharedPreferences.getInstance();
-    final keyChoiceDone = prefs.getBool('keychoice_done') ?? false;
+    final keyChoiceDone = await _resolveKeyChoiceDone(prefs);
     if (!mounted) return;
     setState(() => _stage = keyChoiceDone ? _Stage.app : _Stage.keychoice);
   }

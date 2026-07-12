@@ -269,6 +269,65 @@ class _LanChatScreenState extends State<LanChatScreen> {
     if (mounted) setState(() => _name = newName);
   }
 
+  Future<void> _deleteChat() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        backgroundColor: GE.bgDeep,
+        title: Text('Удалить чат?', style: TextStyle(color: GE.text)),
+        content: Text(
+          'Переписка с $_name по LAN удалится с этого устройства. Отменить нельзя.',
+          style: TextStyle(color: GE.sub),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dctx, false), child: const Text('Отмена')),
+          TextButton(
+            onPressed: () => Navigator.pop(dctx, true),
+            child: Text('Удалить', style: TextStyle(color: GE.red)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await LanChatStore.instance.clearChat(widget.deviceId);
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  Future<void> _openChatMenu() async {
+    final action = await showGlassSheet<String>(
+      context,
+      height: 140,
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _menuRow(Icons.edit_outlined, 'Переименовать', GE.primary, 'rename'),
+            _menuRow(Icons.delete_outline, 'Удалить чат', GE.red, 'delete'),
+            const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
+    if (action == 'rename') await _rename();
+    if (action == 'delete') await _deleteChat();
+  }
+
+  Widget _menuRow(IconData icon, String label, Color color, String value) {
+    return InkWell(
+      onTap: () => Navigator.pop(context, value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: color),
+            const SizedBox(width: 14),
+            Text(label, style: TextStyle(color: color == GE.red ? GE.red : GE.text, fontSize: 15)),
+          ],
+        ),
+      ),
+    );
+  }
+
   bool _pinging = false;
 
   /// Кнопка активна ВСЕГДА (не только пока "в сети") — именно в момент,
@@ -535,9 +594,9 @@ class _LanChatScreenState extends State<LanChatScreen> {
           onPressed: _pinging ? null : _manualPing,
         ),
         IconButton(
-          icon: Icon(Icons.edit_outlined, color: GE.sub),
-          tooltip: 'Переименовать',
-          onPressed: _rename,
+          icon: Icon(Icons.more_vert, color: GE.sub),
+          tooltip: 'Ещё',
+          onPressed: _openChatMenu,
         ),
       ],
     );

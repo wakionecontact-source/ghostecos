@@ -206,7 +206,10 @@ class _MainShellState extends State<MainShell> {
     }
     await LanChatStore.instance.createOrGetChat(
       deviceId: peer.deviceId,
-      displayName: peer.label,
+      // Полный device_id, не усечённый peer.label ("xxxxxxxx…") — иначе
+      // диалог переименования (LanChatScreen._rename) предзаполняется
+      // нечитаемым обрубком с многоточием вместо полного значения.
+      displayName: peer.deviceId,
       peerPubB64: peer.x25519PubB64,
       identityPubB64: peer.identityPubB64,
       transport: peer.chatType,
@@ -811,7 +814,7 @@ class _GuestPane extends StatelessWidget {
                 Icons.settings_outlined,
                 'Настройки',
                 onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                  MaterialPageRoute(builder: (_) => const SettingsScreen(isGuest: true)),
                 ),
               ),
             ),

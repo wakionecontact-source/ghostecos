@@ -41,11 +41,11 @@ class _PreparingScreenState extends State<PreparingScreen>
     )..repeat(reverse: true);
     _load();
 
-    _msgTimer = Timer.periodic(const Duration(milliseconds: 900), (_) {
+    _msgTimer = Timer.periodic(const Duration(milliseconds: 2000), (_) {
       if (!mounted) return;
       setState(() => _msgIndex = (_msgIndex + 1) % _messages.length);
     });
-    _doneTimer = Timer(const Duration(milliseconds: 2900), () {
+    _doneTimer = Timer(const Duration(milliseconds: 4200), () {
       if (mounted) widget.onDone();
     });
   }

@@ -6,6 +6,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../theme.dart';
+import '../services/auth_service.dart';
 import '../services/chat_repo.dart';
 import 'glass.dart';
 
@@ -43,6 +44,31 @@ class _GateOverlayState extends State<_GateOverlay> {
   final _pwd = TextEditingController();
   bool _busy = false;
   String? _err;
+
+  @override
+  void initState() {
+    super.initState();
+    // Если только что логинились с паролем и первый автосинк в ChatRepo.init()
+    // не долетел (сеть/тайминг) — тихо пробуем ТЕМ ЖЕ паролем ещё раз, прежде
+    // чем заставлять юзера вводить его вручную (см. AuthService.peekPendingPwd).
+    // initState зовётся ровно один раз за жизнь виджета — повторного триггера
+    // не будет, отдельный guard-флаг не нужен.
+    if (widget.outcome == KeySyncOutcome.needPassword) {
+      final pending = AuthService.peekPendingPwd();
+      if (pending != null) _autoRetry(pending);
+    }
+  }
+
+  Future<void> _autoRetry(String pending) async {
+    if (mounted) setState(() => _busy = true);
+    await ChatRepo.instance.retryKeySync(password: pending);
+    AuthService.clearPendingPwd();
+    if (!mounted) return;
+    setState(() => _busy = false);
+    // ok → оверлей скроется сам. Не ok — молча остаёмся на обычной форме,
+    // юзер даже не увидит, что была автопопытка (никакого "не подошло" тут,
+    // это не его ввод).
+  }
 
   @override
   void dispose() {
