@@ -151,6 +151,9 @@ class _Router extends StatefulWidget {
 
 class _RouterState extends State<_Router> {
   _Stage _stage = _Stage.loading;
+  // Гость нажал "Зарегистрироваться" в MainShell — следующий показ AuthScreen
+  // должен открыться сразу на вкладке регистрации, а не логина.
+  bool _authStartInRegister = false;
 
   @override
   void initState() {
@@ -278,7 +281,11 @@ class _RouterState extends State<_Router> {
         return KeyedSubtree(
           key: const ValueKey('auth'),
           child: AuthScreen(
-            onLoggedIn: () => setState(() => _stage = _Stage.preparing),
+            startInRegister: _authStartInRegister,
+            onLoggedIn: () => setState(() {
+              _authStartInRegister = false;
+              _stage = _Stage.preparing;
+            }),
           ),
         );
       case _Stage.preparing:
@@ -292,6 +299,10 @@ class _RouterState extends State<_Router> {
           child: KeyGate(
             child: MainShell(
               onLoggedOut: () => setState(() => _stage = _Stage.auth),
+              onRegister: () => setState(() {
+                _authStartInRegister = true;
+                _stage = _Stage.auth;
+              }),
             ),
           ),
         );

@@ -62,13 +62,14 @@ String _passHint(String raw) {
 
 class AuthScreen extends StatefulWidget {
   final VoidCallback onLoggedIn;
-  const AuthScreen({super.key, required this.onLoggedIn});
+  final bool startInRegister;
+  const AuthScreen({super.key, required this.onLoggedIn, this.startInRegister = false});
   @override
   State<AuthScreen> createState() => _AuthScreenState();
 }
 
 class _AuthScreenState extends State<AuthScreen> {
-  bool _isLogin = true;
+  late bool _isLogin = !widget.startInRegister;
   bool _busy = false;
   bool _age18 = false;
   bool _agreedTerms = false;

@@ -64,7 +64,8 @@ enum Section {
 
 class MainShell extends StatefulWidget {
   final VoidCallback onLoggedOut;
-  const MainShell({super.key, required this.onLoggedOut});
+  final VoidCallback onRegister;
+  const MainShell({super.key, required this.onLoggedOut, required this.onRegister});
   @override
   State<MainShell> createState() => _MainShellState();
 }
@@ -372,6 +373,13 @@ class _MainShellState extends State<MainShell> {
     widget.onLoggedOut();
   }
 
+  /// Гость жмёт "Зарегистрироваться" — та же зачистка гостевой сессии, что и
+  /// при обычном выходе, только ведёт на вкладку регистрации, а не логина.
+  Future<void> _goRegister() async {
+    await AuthService.logout();
+    widget.onRegister();
+  }
+
   @override
   void dispose() {
     _lanMsgSub?.cancel();
@@ -476,7 +484,7 @@ class _MainShellState extends State<MainShell> {
       case Section.chat:
         return ChatListScreen(isGuest: _isGuest);
       case Section.profile:
-        if (_isGuest) return _GuestPane(onExit: _logout);
+        if (_isGuest) return _GuestPane(onExit: _logout, onRegister: _goRegister);
         return _ProfilePane(
           username: _username ?? '?',
           displayName: _displayName ?? '?',
@@ -805,7 +813,8 @@ class _RailItem extends StatelessWidget {
 // ── Гостевой режим: нет аккаунта — только выход/регистрация ────────────
 class _GuestPane extends StatelessWidget {
   final VoidCallback onExit;
-  const _GuestPane({required this.onExit});
+  final VoidCallback onRegister;
+  const _GuestPane({required this.onExit, required this.onRegister});
 
   @override
   Widget build(BuildContext context) {
@@ -866,6 +875,14 @@ class _GuestPane extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
+            GlassButton(
+              label: 'Зарегистрироваться',
+              icon: Icons.person_add_alt_outlined,
+              primary: true,
+              fullWidth: true,
+              onTap: onRegister,
+            ),
+            const SizedBox(height: 10),
             GlassButton(
               label: 'Выйти из гостевого режима',
               icon: Icons.logout,
