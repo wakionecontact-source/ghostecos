@@ -11,6 +11,8 @@ import 'package:path_provider/path_provider.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../widgets/glass.dart';
+import '../widgets/emoji_picker.dart';
+import '../widgets/empty_chat_state.dart';
 import '../services/bookmark_store.dart';
 
 class BookmarkChatScreen extends StatefulWidget {
@@ -34,6 +36,8 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
   final List<BookmarkMessage> _messages = [];
   late String _name;
   bool _sending = false;
+  bool _emojiOpen = false;
+  static const double _emojiPanelH = 300;
 
   @override
   void initState() {
@@ -207,15 +211,10 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
           children: [
             Expanded(
               child: _messages.isEmpty
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(28),
-                        child: Text(
-                          'Пиши себе заметки или скидывай файлы — видно только тебе, хранится на этом устройстве.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: GE.sub, fontSize: 12.5, height: 1.4),
-                        ),
-                      ),
+                  ? const EmptyChatState(
+                      icon: Icons.bookmark_outline,
+                      title: 'Сообщений нет',
+                      subtitle: 'Заметки и файлы видно только тебе — хранится на этом устройстве',
                     )
                   : ListView.builder(
                       controller: _scrollCtrl,
@@ -225,6 +224,11 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
                     ),
             ),
             _inputRow(),
+            if (_emojiOpen)
+              SizedBox(
+                height: _emojiPanelH,
+                child: EmojiPicker(onPick: _insertEmoji),
+              ),
           ],
         ),
       ),
@@ -276,6 +280,23 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
     );
   }
 
+  void _toggleEmoji() {
+    setState(() => _emojiOpen = !_emojiOpen);
+    if (_emojiOpen) FocusScope.of(context).unfocus();
+  }
+
+  void _insertEmoji(String e) {
+    final text = _msgCtrl.text;
+    final sel = _msgCtrl.selection;
+    final start = sel.start < 0 ? text.length : sel.start;
+    final end = sel.end < 0 ? text.length : sel.end;
+    final next = text.replaceRange(start, end, e);
+    _msgCtrl.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: start + e.length),
+    );
+  }
+
   Widget _inputRow() {
     return Padding(
       padding: const EdgeInsets.all(10),
@@ -285,11 +306,21 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
             icon: Icon(Icons.attach_file, color: GE.sub),
             onPressed: _attachFile,
           ),
+          IconButton(
+            icon: Icon(
+              _emojiOpen ? Icons.keyboard_outlined : Icons.emoji_emotions_outlined,
+              color: _emojiOpen ? GE.primary : GE.sub,
+            ),
+            onPressed: _toggleEmoji,
+          ),
           Expanded(
             child: GlassInput(
               controller: _msgCtrl,
               hint: 'Заметка себе…',
               onSubmitted: (_) => _sendText(),
+              onTap: () {
+                if (_emojiOpen) setState(() => _emojiOpen = false);
+              },
             ),
           ),
           const SizedBox(width: 8),

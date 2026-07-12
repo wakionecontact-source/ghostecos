@@ -16,6 +16,9 @@ import 'package:uuid/uuid.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../widgets/glass.dart';
+import '../widgets/marquee_text.dart';
+import '../widgets/emoji_picker.dart';
+import '../widgets/empty_chat_state.dart';
 import '../services/lan_chat_store.dart';
 import '../core/local/local_hub.dart';
 import '../core/local/local_transport.dart';
@@ -52,6 +55,8 @@ class _LanChatScreenState extends State<LanChatScreen> {
   bool _sending = false;
   late String _name;
   bool _online = false;
+  bool _emojiOpen = false;
+  static const double _emojiPanelH = 300;
 
   bool get _selectionMode => _selectedIds.isNotEmpty;
 
@@ -132,6 +137,23 @@ class _LanChatScreenState extends State<LanChatScreen> {
     });
     _scrollToBottom();
     _notifySeen(fresh.where((m) => !m.fromMe).map((m) => m.msgId).toList());
+  }
+
+  void _toggleEmoji() {
+    setState(() => _emojiOpen = !_emojiOpen);
+    if (_emojiOpen) FocusScope.of(context).unfocus();
+  }
+
+  void _insertEmoji(String e) {
+    final text = _msgCtrl.text;
+    final sel = _msgCtrl.selection;
+    final start = sel.start < 0 ? text.length : sel.start;
+    final end = sel.end < 0 ? text.length : sel.end;
+    final next = text.replaceRange(start, end, e);
+    _msgCtrl.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: start + e.length),
+    );
   }
 
   Future<void> _send() async {
@@ -502,12 +524,10 @@ class _LanChatScreenState extends State<LanChatScreen> {
               ),
             Expanded(
               child: _messages.isEmpty
-                  ? Center(
-                      child: Text(
-                        'Начните переписку — сообщения видны только вам двоим',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: GE.sub, fontSize: 12.5),
-                      ),
+                  ? const EmptyChatState(
+                      icon: Icons.wifi_tethering,
+                      title: 'Сообщений нет',
+                      subtitle: 'Видно только вам двоим — сообщения идут напрямую, без сервера',
                     )
                   : ListView.builder(
                       controller: _scrollCtrl,
@@ -517,6 +537,11 @@ class _LanChatScreenState extends State<LanChatScreen> {
                     ),
             ),
             _inputRow(online),
+            if (_emojiOpen)
+              SizedBox(
+                height: _emojiPanelH,
+                child: EmojiPicker(onPick: _insertEmoji),
+              ),
           ],
         ),
       ),
@@ -551,8 +576,10 @@ class _LanChatScreenState extends State<LanChatScreen> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Text(_name,
-              style: TextStyle(color: GE.text, fontSize: 16, fontWeight: FontWeight.w700)),
+          MarqueeText(
+            text: _name,
+            style: TextStyle(color: GE.text, fontSize: 16, fontWeight: FontWeight.w700),
+          ),
           _pinging
               ? Row(
                   mainAxisSize: MainAxisSize.min,
@@ -619,8 +646,12 @@ class _LanChatScreenState extends State<LanChatScreen> {
   // промежуточного "на сервере", только очередь/доставлено/прочитано.
   Widget _ticks(LanChatMessage m) {
     switch (m.status) {
+      // Дискета = "лежит в локальной очереди, ждёт подключения" (пир офлайн,
+      // таймаут отправки). У LAN нет сервера-посредника, поэтому это не
+      // промежуточный шаг перед доставкой, а сам финальный смысл дискеты —
+      // тут нет отдельного "часиков"-состояния.
       case LanMsgStatus.queued:
-        return const Icon(Icons.access_time, size: 11, color: Colors.white70);
+        return const Icon(Icons.save_outlined, size: 12, color: Colors.white54);
       case LanMsgStatus.delivered:
         return const Icon(Icons.done, size: 13, color: Colors.white70);
       case LanMsgStatus.read:
@@ -708,11 +739,21 @@ class _LanChatScreenState extends State<LanChatScreen> {
             icon: Icon(Icons.attach_file, color: GE.sub),
             onPressed: _attachFile,
           ),
+          IconButton(
+            icon: Icon(
+              _emojiOpen ? Icons.keyboard_outlined : Icons.emoji_emotions_outlined,
+              color: _emojiOpen ? GE.primary : GE.sub,
+            ),
+            onPressed: _toggleEmoji,
+          ),
           Expanded(
             child: GlassInput(
               controller: _msgCtrl,
               hint: online ? 'Сообщение…' : 'Сообщение… (уйдёт при подключении)',
               onSubmitted: (_) => _send(),
+              onTap: () {
+                if (_emojiOpen) setState(() => _emojiOpen = false);
+              },
             ),
           ),
           const SizedBox(width: 8),

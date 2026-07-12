@@ -32,6 +32,8 @@ import '../services/ws_client.dart';
 import '../services/notification_service.dart';
 import '../widgets/attach_sheet.dart';
 import '../widgets/glass.dart';
+import '../widgets/marquee_text.dart';
+import '../widgets/empty_chat_state.dart';
 import 'profile_screen.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -1451,15 +1453,28 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   children: [
                                     if (showNewLine) _newMessagesLine(),
                                     if (newDay) _dateChip(m.createdAt),
+                                    // Цвет — сплошной, без градиента/фейда по
+                                    // краям, берётся от того, ЧЬЁ сообщение
+                                    // было последним ПЕРЕД линией (prev):
+                                    // моё → акцентный фиолетовый, собеседника
+                                    // → нейтральный серый. Раз линия рисуется
+                                    // только при смене автора, цвет естественно
+                                    // чередуется моё-собеседника-моё...
                                     if (newSender && !newDay)
                                       Center(
                                         child: Container(
                                           width: 44,
-                                          height: 1,
+                                          height: 3,
                                           margin: const EdgeInsets.symmetric(
                                             vertical: 7,
                                           ),
-                                          color: GE.borderStrong,
+                                          decoration: BoxDecoration(
+                                            color: prev.fromMe
+                                                ? GE.primary
+                                                : GE.sub,
+                                            borderRadius:
+                                                BorderRadius.circular(2),
+                                          ),
                                         ),
                                       ),
                                     bubble,
@@ -1724,26 +1739,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Widget _empty() {
-    return Center(
-      child: GlassCard(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.chat_bubble_outline, size: 40, color: GE.primary),
-            const SizedBox(height: 10),
-            Text(
-              'Напиши первое сообщение',
-              style: TextStyle(color: GE.text, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Всё шифруется на твоём устройстве',
-              style: TextStyle(color: GE.sub, fontSize: 12),
-            ),
-          ],
-        ),
-      ),
+    return const EmptyChatState(
+      title: 'Напиши первое сообщение',
+      subtitle: 'Всё шифруется на твоём устройстве',
     );
   }
 
@@ -3800,10 +3798,8 @@ class _ChatHeader extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text(
-                        displayName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      MarqueeText(
+                        text: displayName,
                         style: TextStyle(
                           color: GE.text,
                           fontSize: 15,

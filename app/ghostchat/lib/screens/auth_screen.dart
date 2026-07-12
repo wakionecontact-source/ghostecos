@@ -170,6 +170,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           controller: _userCtrl,
                           isValid: _usernameValid,
                           hintText: _usernameHint,
+                          atPrefix: true,
                         ),
                   if (!_isLogin) ...[
                     const SizedBox(height: 10),
@@ -281,6 +282,63 @@ Widget _input(String hint, TextEditingController c, {bool obscure = false}) {
   );
 }
 
+/// Поле username с "@" внутри текста, пока пусто и не в фокусе — при фокусе
+/// или вводе символ реально уезжает влево, наружу за левый край поля (тем же
+/// цветом, что обычный текст, без затухания). "@" не часть значения
+/// контроллера — чисто визуальная накладка поверх обычного _input.
+class _AtPrefixField extends StatelessWidget {
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final String hint;
+  const _AtPrefixField({
+    required this.controller,
+    required this.focusNode,
+    required this.hint,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final flown = focusNode.hasFocus || controller.text.isNotEmpty;
+    return Stack(
+      clipBehavior: Clip.none,
+      alignment: Alignment.centerLeft,
+      children: [
+        AnimatedPositioned(
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeOutCubic,
+          left: flown ? -18 : 14,
+          child: Text('@', style: TextStyle(color: GE.text, fontSize: 14)),
+        ),
+        TextField(
+          controller: controller,
+          focusNode: focusNode,
+          style: TextStyle(color: GE.text, fontSize: 14),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: TextStyle(color: GE.sub, fontSize: 14),
+            filled: true,
+            fillColor: const Color(0x66000000),
+            contentPadding:
+                const EdgeInsets.only(left: 28, right: 14, top: 14, bottom: 14),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: GE.borderStrong),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: GE.borderStrong),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: GE.primary, width: 1.5),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 /// Поле с живой подсказкой-критерием ПОД собой (см. _usernameHint/_nameHint/
 /// _passHint) — цвет меняется по мере ввода (серый → красный/зелёный),
 /// при неудачной попытке отправки формы shake() трясёт строку критерия,
@@ -291,6 +349,7 @@ class _ValidatedField extends StatefulWidget {
   final bool obscure;
   final bool Function(String) isValid;
   final String Function(String) hintText;
+  final bool atPrefix;
   const _ValidatedField({
     super.key,
     required this.hint,
@@ -298,6 +357,7 @@ class _ValidatedField extends StatefulWidget {
     required this.isValid,
     required this.hintText,
     this.obscure = false,
+    this.atPrefix = false,
   });
 
   @override
@@ -307,6 +367,7 @@ class _ValidatedField extends StatefulWidget {
 class _ValidatedFieldState extends State<_ValidatedField>
     with SingleTickerProviderStateMixin {
   late final AnimationController _shakeCtrl;
+  FocusNode? _focusNode;
 
   @override
   void initState() {
@@ -316,6 +377,9 @@ class _ValidatedFieldState extends State<_ValidatedField>
       duration: const Duration(milliseconds: 400),
     );
     widget.controller.addListener(_onChange);
+    if (widget.atPrefix) {
+      _focusNode = FocusNode()..addListener(_onChange);
+    }
   }
 
   void _onChange() {
@@ -327,6 +391,8 @@ class _ValidatedFieldState extends State<_ValidatedField>
   @override
   void dispose() {
     widget.controller.removeListener(_onChange);
+    _focusNode?.removeListener(_onChange);
+    _focusNode?.dispose();
     _shakeCtrl.dispose();
     super.dispose();
   }
@@ -340,7 +406,9 @@ class _ValidatedFieldState extends State<_ValidatedField>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _input(widget.hint, widget.controller, obscure: widget.obscure),
+        widget.atPrefix
+            ? _AtPrefixField(controller: widget.controller, focusNode: _focusNode!, hint: widget.hint)
+            : _input(widget.hint, widget.controller, obscure: widget.obscure),
         const SizedBox(height: 4),
         AnimatedBuilder(
           animation: _shakeCtrl,

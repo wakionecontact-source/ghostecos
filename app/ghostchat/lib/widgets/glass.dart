@@ -418,6 +418,7 @@ class GlassInput extends StatelessWidget {
   final String? Function(String?)? validator;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
+  final VoidCallback? onTap;
   final bool autofocus;
   final int? maxLines;
 
@@ -432,6 +433,7 @@ class GlassInput extends StatelessWidget {
     this.validator,
     this.onChanged,
     this.onSubmitted,
+    this.onTap,
     this.autofocus = false,
     this.maxLines = 1,
   });
@@ -456,6 +458,7 @@ class GlassInput extends StatelessWidget {
             validator: validator,
             onChanged: onChanged,
             onFieldSubmitted: onSubmitted,
+            onTap: onTap,
             autofocus: autofocus,
             maxLines: obscure ? 1 : maxLines,
             style: TextStyle(color: GE.text, fontSize: 14),
