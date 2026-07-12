@@ -7,9 +7,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -326,6 +326,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
   }
 
   void _toggleSelect(String msgId) {
+    HapticFeedback.selectionClick();
     setState(() {
       if (_selectedIds.contains(msgId)) {
         _selectedIds.remove(msgId);
@@ -486,7 +487,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
                   children: [
                     Text('соединение', style: TextStyle(color: GE.sub, fontSize: 11)),
                     const SizedBox(width: 3),
-                    _PingDots(color: GE.sub),
+                    GlassDots(color: GE.sub),
                   ],
                 )
               : Row(
@@ -632,55 +633,3 @@ class _LanChatScreenState extends State<LanChatScreen> {
   }
 }
 
-/// Три точки бегущей волной — "ждём подключения", показывается в шапке
-/// чата на время пинга/переподключения (см. _pinging в LanChatScreen).
-class _PingDots extends StatefulWidget {
-  final Color color;
-  const _PingDots({required this.color});
-
-  @override
-  State<_PingDots> createState() => _PingDotsState();
-}
-
-class _PingDotsState extends State<_PingDots> with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))..repeat();
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _ctrl,
-      builder: (_, _) {
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: List.generate(3, (i) {
-            final phase = (_ctrl.value + i * 0.25) % 1.0;
-            final opacity = 0.25 + 0.75 * (0.5 + 0.5 * math.sin(phase * 2 * math.pi));
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 1.5),
-              child: Opacity(
-                opacity: opacity,
-                child: Container(
-                  width: 4,
-                  height: 4,
-                  decoration: BoxDecoration(shape: BoxShape.circle, color: widget.color),
-                ),
-              ),
-            );
-          }),
-        );
-      },
-    );
-  }
-}

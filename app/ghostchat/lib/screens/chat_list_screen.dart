@@ -258,7 +258,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
     String? subtitle,
     required VoidCallback onTap,
   }) {
-    return InkWell(
+    return PressScale(
       onTap: enabled ? onTap : null,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
@@ -635,7 +635,7 @@ class _DialogTile extends StatelessWidget {
     VoidCallback onTap,
   ) {
     final danger = iconColor == GE.red;
-    return InkWell(
+    return PressScale(
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
@@ -684,8 +684,7 @@ class _DialogTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(GE.radiusMd),
+    return PressScale(
       onLongPress: () => _showMenu(context),
       onTap: () async {
         onTap?.call();
@@ -854,8 +853,7 @@ class _LanDialogTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(GE.radiusMd),
+    return PressScale(
       onLongPress: () => _confirmClear(context),
       onTap: () => Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => LanChatScreen(deviceId: _deviceId, displayName: d.displayName),
@@ -955,8 +953,7 @@ class _BookmarkDialogTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(GE.radiusMd),
+    return PressScale(
       onTap: () => Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => BookmarkChatScreen(bookmarkId: _id, name: d.displayName, isDefault: _isDefault),
       )),
@@ -1025,8 +1022,7 @@ class _UserTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(GE.radiusMd),
+    return PressScale(
       onTap: () {
         onTap?.call();
         Navigator.of(context).push(
@@ -1079,8 +1075,7 @@ class _MessageHitTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(GE.radiusMd),
+    return PressScale(
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),

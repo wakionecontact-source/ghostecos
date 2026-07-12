@@ -8,6 +8,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
@@ -394,6 +395,12 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
+  void _switchSection(Section s) {
+    if (s == _section) return;
+    HapticFeedback.selectionClick();
+    setState(() => _section = s);
+  }
+
   // ─── Layout: mobile (≤720) ─────────────────────────────────────────
   Widget _mobileLayout() {
     return Column(
@@ -401,7 +408,7 @@ class _MainShellState extends State<MainShell> {
         Expanded(child: _sectionBody()),
         _GlassBottomNav(
           current: _section,
-          onTap: (s) => setState(() => _section = s),
+          onTap: _switchSection,
         ),
       ],
     );
@@ -413,7 +420,7 @@ class _MainShellState extends State<MainShell> {
       children: [
         _SideRail(
           current: _section,
-          onTap: (s) => setState(() => _section = s),
+          onTap: _switchSection,
           username: _username ?? '?',
           displayName: _displayName ?? _username ?? '?',
           onLogout: _logout,

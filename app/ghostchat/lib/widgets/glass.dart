@@ -10,9 +10,126 @@
 //   GlassAppBar(title: 'Чаты', leading: BackButton())
 //   showGlassSheet(context, child: ...)
 
+import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import '../theme.dart';
+
+/// Пружинное нажатие (лёгкое сжатие + возврат) + лёгкая хаптика — единый
+/// "эпловский" отклик на тап вместо голого Material-ripple. Оборачивает
+/// кнопки/карточки/строки списков. onLongPress получает свою (более сильную)
+/// хаптику — так на ощупь отличимо "тап" от "долгое нажатие → меню/выделение".
+class PressScale extends StatefulWidget {
+  final Widget child;
+  final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
+  final double scaleDown;
+  final bool haptic;
+
+  const PressScale({
+    super.key,
+    required this.child,
+    this.onTap,
+    this.onLongPress,
+    this.scaleDown = 0.96,
+    this.haptic = true,
+  });
+
+  @override
+  State<PressScale> createState() => _PressScaleState();
+}
+
+class _PressScaleState extends State<PressScale> {
+  bool _pressed = false;
+
+  void _setPressed(bool v) {
+    if (mounted && _pressed != v) setState(() => _pressed = v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tappable = widget.onTap != null;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: tappable ? (_) => _setPressed(true) : null,
+      onTapUp: tappable ? (_) => _setPressed(false) : null,
+      onTapCancel: tappable ? () => _setPressed(false) : null,
+      onTap: tappable
+          ? () {
+              if (widget.haptic) HapticFeedback.lightImpact();
+              widget.onTap!();
+            }
+          : null,
+      onLongPress: widget.onLongPress == null
+          ? null
+          : () {
+              if (widget.haptic) HapticFeedback.mediumImpact();
+              widget.onLongPress!();
+            },
+      child: AnimatedScale(
+        scale: _pressed ? widget.scaleDown : 1.0,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOut,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+/// Три точки бегущей волной — единый лоадер вместо разномастных
+/// CircularProgressIndicator (кнопки, статус-строки и т.п.).
+class GlassDots extends StatefulWidget {
+  final Color color;
+  final double size;
+  const GlassDots({super.key, required this.color, this.size = 4});
+
+  @override
+  State<GlassDots> createState() => _GlassDotsState();
+}
+
+class _GlassDotsState extends State<GlassDots> with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, _) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(3, (i) {
+            final phase = (_ctrl.value + i * 0.25) % 1.0;
+            final opacity = 0.25 + 0.75 * (0.5 + 0.5 * math.sin(phase * 2 * math.pi));
+            return Padding(
+              padding: EdgeInsets.symmetric(horizontal: widget.size * 0.35),
+              child: Opacity(
+                opacity: opacity,
+                child: Container(
+                  width: widget.size,
+                  height: widget.size,
+                  decoration: BoxDecoration(shape: BoxShape.circle, color: widget.color),
+                ),
+              ),
+            );
+          }),
+        );
+      },
+    );
+  }
+}
 
 // ── "Liquid glass" токены — зеркало веб-фронта (--gl-* в chat/index.html) ──
 // Многослойное стекло БЕЗ полагания на один только blur: диагональный блик
@@ -138,10 +255,7 @@ class GlassCard extends StatelessWidget {
       );
     }
     if (onTap != null) {
-      fill = Material(
-        color: Colors.transparent,
-        child: InkWell(borderRadius: radiusObj, onTap: onTap, child: fill),
-      );
+      fill = PressScale(onTap: onTap, scaleDown: 0.98, child: fill);
     }
     // Тень — СНАРУЖИ ClipRRect (иначе блюр её срезает). Отрывает карточку от
     // фона → объём вместо «плоско».
@@ -170,6 +284,11 @@ class GlassButton extends StatelessWidget {
   final bool loading;
   final bool fullWidth;
 
+  /// Continuous-corner ("squircle", как у иконок/кнопок iOS) вместо обычного
+  /// circular radius — opt-in для сравнения дизайнов, не меняет остальные
+  /// кнопки по умолчанию.
+  final bool squircle;
+
   const GlassButton({
     super.key,
     required this.label,
@@ -179,11 +298,13 @@ class GlassButton extends StatelessWidget {
     this.danger = false,
     this.loading = false,
     this.fullWidth = false,
+    this.squircle = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final radius = BorderRadius.circular(GE.radiusSm);
+    final clipper = squircle ? ContinuousRectangleBorder(borderRadius: radius) : null;
     final isCta = primary || danger;
     final gradient = primary
         ? LinearGradient(
@@ -241,14 +362,7 @@ class GlassButton extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           if (loading)
-            const SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: Colors.white,
-              ),
-            )
+            const GlassDots(color: Colors.white, size: 5)
           else if (icon != null) ...[
             Icon(icon, size: 16, color: GE.text),
             const SizedBox(width: 8),
@@ -268,22 +382,25 @@ class GlassButton extends StatelessWidget {
     );
     if (!isCta) {
       // Для non-CTA добавляем backdrop blur — реальное «стекло»
-      content = ClipRRect(
-        borderRadius: radius,
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: GE.glassBlur, sigmaY: GE.glassBlur),
-          child: content,
-        ),
-      );
+      content = clipper != null
+          ? ClipPath(
+              clipper: ShapeBorderClipper(shape: clipper),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: GE.glassBlur, sigmaY: GE.glassBlur),
+                child: content,
+              ),
+            )
+          : ClipRRect(
+              borderRadius: radius,
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: GE.glassBlur, sigmaY: GE.glassBlur),
+                child: content,
+              ),
+            );
+    } else if (clipper != null) {
+      content = ClipPath(clipper: ShapeBorderClipper(shape: clipper), child: content);
     }
-    final tappable = Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: radius,
-        onTap: loading ? null : onTap,
-        child: content,
-      ),
-    );
+    final tappable = PressScale(onTap: loading ? null : onTap, child: content);
     return fullWidth
         ? SizedBox(width: double.infinity, child: tappable)
         : tappable;
