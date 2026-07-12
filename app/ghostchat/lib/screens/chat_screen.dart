@@ -1186,7 +1186,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         // Контент скроллит ЗА шапку → фрост размывает его = прозрачное стекло.
         extendBodyBehindAppBar: true,
         appBar: PreferredSize(
-          preferredSize: const Size.fromHeight(64),
+          // Раньше было const 64 — на устройствах с высоким статус-баром
+          // (вырез/шторка камеры) SafeArea внутри _ChatHeader/_SelectionHeader
+          // отжимал контент вниз ВНУТРИ этой же фиксированной коробки, и низ
+          // шапки обрезался вместо того, чтобы коробка выросла на инсет.
+          preferredSize: Size.fromHeight(MediaQuery.of(context).padding.top + 64),
           // Прозрачная фрост-шапка (лакшери): глубокий тинт, тает книзу + тёплый
           // золотистый разделитель снизу.
           child: ClipRect(

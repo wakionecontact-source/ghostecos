@@ -198,7 +198,18 @@ class _WelcomeScreenState extends State<WelcomeScreen>
         body: SafeArea(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 28),
-            child: Column(
+            // LayoutBuilder + ConstrainedBox(minHeight) + IntrinsicHeight:
+            // на портрете колонка ровно во всю высоту, Spacer'ы работают как
+            // раньше (пиксель-в-пиксель). На альбомной ориентации (или
+            // низком экране), где фиксированный контент выше доступной
+            // высоты, Spacer'ы схлопываются до минимума и лишнее уезжает в
+            // скролл вместо обрезки/наезда на карточку.
+            child: LayoutBuilder(
+              builder: (context, constraints) => SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                  child: IntrinsicHeight(
+                    child: Column(
               children: [
                 const Spacer(flex: 3),
                 _reveal(0.0, 0.5, _animatedLogo()),
@@ -298,6 +309,10 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                 ),
                 const SizedBox(height: 28),
               ],
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
         ),

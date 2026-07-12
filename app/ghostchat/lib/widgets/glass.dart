@@ -501,11 +501,13 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Тот же рецепт стекла, что и у GlassCard (blur+fill), чтобы шапка не
+    // выглядела отдельным слоем — только edge-to-edge вместо скруглений.
     return ClipRect(
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        filter: ImageFilter.blur(sigmaX: GE.glassBlur, sigmaY: GE.glassBlur),
         child: AppBar(
-          backgroundColor: GE.bg.withValues(alpha: 0.45),
+          backgroundColor: GE.glassFill,
           surfaceTintColor: Colors.transparent,
           shape: Border(bottom: BorderSide(color: GE.glassBorder, width: 0.5)),
           title: title ?? (titleText != null ? Text(titleText!) : null),

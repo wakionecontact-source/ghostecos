@@ -27,6 +27,7 @@ import '../services/triangle_service.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
 import '../widgets/toast_overlay.dart';
+import '../widgets/connectivity_badge.dart';
 import 'settings_screen.dart';
 import 'chat_list_screen.dart';
 import 'lan_scan_screen.dart';
@@ -399,7 +400,14 @@ class _MainShellState extends State<MainShell> {
   Widget build(BuildContext context) {
     // Scaffold'ы ниже прозрачные и рассчитаны на фон снаружи — как во всех
     // остальных экранах приложения (mesh-сетка), а не плоский градиент.
-    return MeshBackground(child: _content(context));
+    return MeshBackground(
+      child: Stack(
+        children: [
+          _content(context),
+          ConnectivityBadge(isGuest: _isGuest),
+        ],
+      ),
+    );
   }
 
   Widget _content(BuildContext context) {
