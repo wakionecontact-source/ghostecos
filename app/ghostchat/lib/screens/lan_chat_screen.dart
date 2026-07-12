@@ -32,6 +32,11 @@ class LanChatScreen extends StatefulWidget {
     required this.displayName,
   });
 
+  /// device_id чата, открытого ПРЯМО СЕЙЧАС — MainShell смотрит сюда, чтобы
+  /// не дублировать тост "снова на связи" карточкой на этом же экране (тут и
+  /// так видно по бейджу/пропаже офлайн-баннера).
+  static String? currentOpenDeviceId;
+
   @override
   State<LanChatScreen> createState() => _LanChatScreenState();
 }
@@ -43,23 +48,41 @@ class _LanChatScreenState extends State<LanChatScreen> {
   final Set<String> _seenMsgIds = {};
   final Set<String> _selectedIds = {};
   StreamSubscription? _msgSub;
-  Timer? _onlineTimer;
+  StreamSubscription? _onlineSub;
   bool _sending = false;
   late String _name;
+  bool _online = false;
 
   bool get _selectionMode => _selectedIds.isNotEmpty;
 
   @override
   void initState() {
     super.initState();
+    LanChatScreen.currentOpenDeviceId = widget.deviceId;
     _name = widget.displayName;
+    _online = localHub.isOnline(widget.deviceId) || localHub.hasSession(widget.deviceId);
     _load();
     _msgSub = localHub.onMessage.listen(_onIncoming);
-    // isOnline() опирается на keepalive-таймеры — обновляем индикатор тиком,
-    // не отдельным стримом (в LocalHub его для UI сейчас нет).
-    _onlineTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      if (mounted) setState(() {});
+    // Событийно, а не поллингом раз в 3с — быстрее реагирует и не крутит
+    // setState() впустую, когда ничего не изменилось.
+    _onlineSub = localHub.onOnlineChanged.listen((e) {
+      if (e.key != widget.deviceId || !mounted) return;
+      final wasOnline = _online;
+      setState(() => _online = e.value);
+      // Идея "уведомлять о разрыве": именно в ЭТОМ чате достаточно тихого
+      // тоста, баннер офлайн и так появится — не дублируем текстом дважды.
+      if (wasOnline && !e.value) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Устройство отключилось'), duration: Duration(seconds: 2)),
+        );
+      }
     });
+    // Автопопытка при открытии чата — юзеру не нужно тыкать кнопку самому,
+    // если сессия уже потерялась (сессии транспортов живут только в памяти
+    // и пропадают при перезапуске приложения).
+    if (!_online) {
+      localHub.discoverAll();
+    }
   }
 
   Future<void> _load() async {
@@ -271,13 +294,24 @@ class _LanChatScreenState extends State<LanChatScreen> {
           duration: const Duration(seconds: 2),
         ));
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Сессии нет — ищем устройство…'), duration: Duration(seconds: 2)),
-        );
+        // Событийно ждём accept ИМЕННО от этого устройства, а не фиксированную
+        // паузу — на другой стороне окно сбора сигналов 5 сек (см.
+        // local_hub.dart), фиксированные 3с раньше давали ложный "не
+        // отозвалось" даже когда реконнект вот-вот произойдёт.
+        final completer = Completer<bool>();
+        late StreamSubscription sub;
+        sub = localHub.onAccept.listen((peer) {
+          if (peer.deviceId == widget.deviceId && !completer.isCompleted) {
+            completer.complete(true);
+          }
+        });
         await localHub.discoverAll();
-        await Future.delayed(const Duration(seconds: 3));
+        final reconnected = await completer.future.timeout(
+          const Duration(seconds: 9),
+          onTimeout: () => false,
+        );
+        await sub.cancel();
         if (!mounted) return;
-        final reconnected = localHub.hasSession(widget.deviceId);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(reconnected
               ? 'Подключение восстановлено'
@@ -323,8 +357,11 @@ class _LanChatScreenState extends State<LanChatScreen> {
 
   @override
   void dispose() {
+    if (LanChatScreen.currentOpenDeviceId == widget.deviceId) {
+      LanChatScreen.currentOpenDeviceId = null;
+    }
     _msgSub?.cancel();
-    _onlineTimer?.cancel();
+    _onlineSub?.cancel();
     _msgCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
@@ -361,8 +398,14 @@ class _LanChatScreenState extends State<LanChatScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Flexible(
+                      // Разные формулировки: "уже было соединение и пропало"
+                      // читается иначе, чем "с начала запуска ещё не
+                      // подключались" — второе не обязательно означает
+                      // проблему (например только что перезапустили телефон).
                       child: Text(
-                        'Устройство сейчас не на связи — сообщения не дойдут',
+                        localHub.getPingMs(widget.deviceId) != null
+                            ? 'Связь потеряна — сообщения не дойдут'
+                            : 'Ещё не было соединения в этом запуске приложения',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: GE.yellow, fontSize: 11.5),
                       ),

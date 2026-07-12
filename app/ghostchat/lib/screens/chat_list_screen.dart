@@ -14,6 +14,7 @@ import '../services/db_service.dart';
 import '../services/search_service.dart';
 import '../services/lan_chat_store.dart';
 import '../services/bookmark_store.dart';
+import '../core/local/local_hub.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
 import 'chat_screen.dart';
@@ -884,6 +885,23 @@ class _LanDialogTile extends StatelessWidget {
                 children: [
                   Row(
                     children: [
+                      // Живой индикатор "в сети" — реагирует сразу на
+                      // реконнект/обрыв, не только когда открыт сам чат.
+                      StreamBuilder<MapEntry<String, bool>>(
+                        stream: localHub.onOnlineChanged,
+                        builder: (_, _) {
+                          final online = localHub.isOnline(_deviceId);
+                          return Container(
+                            width: 7,
+                            height: 7,
+                            margin: const EdgeInsets.only(right: 5),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: online ? GE.green : GE.sub.withValues(alpha: 0.3),
+                            ),
+                          );
+                        },
+                      ),
                       Expanded(
                         child: Text(
                           d.displayName,

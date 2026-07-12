@@ -99,6 +99,14 @@ class LocalHub {
   /// понг ему НЕ уходит молча, вместо этого сюда прилетает device_id.
   Stream<String> get onStaleContact => _staleContactCtrl.stream;
 
+  final _reconnectedCtrl = StreamController<LocalPeer>.broadcast();
+  /// Отдельно от onAccept — конкретно момент, когда УЖЕ известное устройство
+  /// (был чат раньше) само восстановило сессию автопринятием (см.
+  /// _onRawRequest). UI может показать мягкое "снова на связи" вместо
+  /// тишины или карточки "хочет подключиться" (которую в этом случае и не
+  /// показываем — см. автопринятие ниже).
+  Stream<LocalPeer> get onReconnected => _reconnectedCtrl.stream;
+
   bool _registered = false;
 
   void register(LocalTransport t) {
@@ -219,6 +227,7 @@ class LocalHub {
         appLog.info('lan', 'Автопереподключение к известному устройству $did');
         await sendAccept(req.bestPeer);
         _acceptCtrl.add(req.bestPeer);
+        _reconnectedCtrl.add(req.bestPeer);
         return;
       }
 

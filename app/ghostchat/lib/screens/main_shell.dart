@@ -29,6 +29,7 @@ import '../widgets/toast_overlay.dart';
 import 'settings_screen.dart';
 import 'chat_list_screen.dart';
 import 'lan_scan_screen.dart';
+import 'lan_chat_screen.dart';
 import '../core/local/local_hub.dart';
 import '../core/local/local_transport.dart';
 import '../core/local/lan_settings.dart';
@@ -78,7 +79,9 @@ class _MainShellState extends State<MainShell> {
   StreamSubscription? _lanCollectingSub;
   StreamSubscription? _lanAcceptSub;
   StreamSubscription? _lanStaleSub;
+  StreamSubscription? _lanReconnectedSub;
   StreamSubscription? _triangleMsgSub;
+  Timer? _lanRetryTimer;
   // Не спамим — раз в сессию приложения на device_id достаточно.
   final Set<String> _notifiedStale = {};
 
@@ -152,9 +155,39 @@ class _MainShellState extends State<MainShell> {
     _lanCollectingSub = localHub.onCollecting.listen(_onLanSignalCaught);
     _lanAcceptSub = localHub.onAccept.listen(_onLanAccepted);
     _lanStaleSub = localHub.onStaleContact.listen(_onLanStaleContact);
+    // "Снова на связи" — срабатывает когда МЫ автопринимаем чужой сигнал от
+    // уже известного устройства (см. _onRawRequest в local_hub.dart). Сторону
+    // "мы сами достучались" покрывает _startLanReconnectRetryLoop ниже —
+    // обе стороны реконнекта озвучиваются одинаково через _onLanReconnected.
+    _lanReconnectedSub = localHub.onReconnected.listen((p) => _onLanReconnected(p.deviceId));
     localHub.isKnownPeerChecker =
         (deviceId) async => (await LanChatStore.instance.getDisplayName(deviceId)) != null;
     await localHub.startAll();
+    _startLanReconnectRetryLoop();
+  }
+
+  /// Идея "фоновый ретрай": пока приложение открыто, раз в 30с тихо
+  /// широковещаем discover, если среди уже известных устройств есть хоть
+  /// одно офлайн — так чаты сами оживают, не дожидаясь, пока другая сторона
+  /// первой пришлёт сигнал (то же самое, что делает кнопка "Попробовать" в
+  /// LanChatScreen, только не глядя и не по чуть — сразу для всех разом).
+  void _startLanReconnectRetryLoop() {
+    _lanRetryTimer?.cancel();
+    _lanRetryTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
+      final known = LanChatStore.instance.knownDevicesNotifier.value;
+      final offlineBefore = known
+          .where((d) => !localHub.hasSession(d.deviceId))
+          .map((d) => d.deviceId)
+          .toSet();
+      if (offlineBefore.isEmpty) return;
+      await localHub.discoverAll();
+      // Даём окну сбора сигналов на другой стороне (5с) время сработать.
+      await Future.delayed(const Duration(seconds: 6));
+      if (!mounted) return;
+      for (final id in offlineBefore) {
+        if (localHub.hasSession(id)) _onLanReconnected(id);
+      }
+    });
   }
 
   /// Кто-то принял наш запрос (или мы приняли его — sendAccept тоже шлёт
@@ -205,6 +238,29 @@ class _MainShellState extends State<MainShell> {
 
   String _shortId(String deviceId) =>
       deviceId.length > 8 ? '${deviceId.substring(0, 8)}…' : deviceId;
+
+  /// Общая точка для "снова на связи" — не важно, кто был инициатором
+  /// (мы сами достучались фоновым ретраем/кнопкой, или это они пришли к
+  /// нам и мы их тихо автопринятые) — юзер должен узнать одинаково в обоих
+  /// случаях. Не пушим системным уведомлением (это не входящее сообщение,
+  /// каждый реконнект слать пуш — спам), только тихий тост, и только если
+  /// юзер прямо сейчас не смотрит в этот самый чат (там и так видно).
+  Future<void> _onLanReconnected(String deviceId) async {
+    if (LanChatScreen.currentOpenDeviceId == deviceId) return;
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
+    final name = await LanChatStore.instance.getDisplayName(deviceId) ?? _shortId(deviceId);
+    if (!mounted) return;
+    toast.show(
+      '$name снова на связи',
+      level: ToastLevel.info,
+      action: ToastAction(
+        label: 'Открыть',
+        onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => LanChatScreen(deviceId: deviceId, displayName: name),
+        )),
+      ),
+    );
+  }
 
   /// Входящее P2P-сообщение по «Треугольнику» — заводим в тот же чат, что
   /// и обычные серверные сообщения (см. ChatRepo.ingestTriangleMessage).
@@ -283,6 +339,8 @@ class _MainShellState extends State<MainShell> {
     _lanCollectingSub?.cancel();
     _lanAcceptSub?.cancel();
     _lanStaleSub?.cancel();
+    _lanReconnectedSub?.cancel();
+    _lanRetryTimer?.cancel();
     _triangleMsgSub?.cancel();
     localHub.stopAll();
     super.dispose();
