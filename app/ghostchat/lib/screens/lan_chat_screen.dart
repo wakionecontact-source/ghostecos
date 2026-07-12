@@ -5,7 +5,6 @@
 // реально на связи прямо сейчас — доставка не гарантируется офлайн-пиру.
 // История хранится в LanChatStore — привязана к устройству, не к аккаунту.
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -18,9 +17,9 @@ import '../theme.dart';
 import '../mesh_background.dart';
 import '../widgets/glass.dart';
 import '../services/lan_chat_store.dart';
-import '../services/crypto_v2.dart';
 import '../core/local/local_hub.dart';
 import '../core/local/local_transport.dart';
+import '../core/local/lan_message_codec.dart';
 
 const _maxLanFileBytes = 10 * 1024 * 1024; // 10MB — best-effort P2P, без прогресс-бара
 
@@ -95,6 +94,17 @@ class _LanChatScreenState extends State<LanChatScreen> {
       _seenMsgIds.addAll(msgs.map((m) => m.msgId));
     });
     _scrollToBottom();
+    _notifySeen(msgs.where((m) => !m.fromMe).map((m) => m.msgId).toList());
+  }
+
+  // Сообщаем собеседнику, что его сообщения прочитаны (двойная галочка у него).
+  // Шлём при каждом открытии чата на всю историю, а не только "новое" —
+  // повтор безвреден (markMessagesRead на его стороне — идемпотентный UPDATE),
+  // а трекать "уже слали seen для этого id" отдельным полем ради P2P-чата
+  // избыточно.
+  void _notifySeen(List<String> msgIds) {
+    if (msgIds.isEmpty || !localHub.hasSession(widget.deviceId)) return;
+    localHub.sendSeen(widget.deviceId, msgIds);
   }
 
   // ВАЖНО: расшифровку и запись в БД делает ТОЛЬКО глобальный обработчик в
@@ -121,12 +131,12 @@ class _LanChatScreenState extends State<LanChatScreen> {
       _messages.addAll(fresh);
     });
     _scrollToBottom();
+    _notifySeen(fresh.where((m) => !m.fromMe).map((m) => m.msgId).toList());
   }
 
   Future<void> _send() async {
     final text = _msgCtrl.text.trim();
     if (text.isEmpty || _sending) return;
-    if (!localHub.hasSession(widget.deviceId)) return; // офлайн — кнопка и так скрыта
 
     setState(() => _sending = true);
     try {
@@ -135,18 +145,20 @@ class _LanChatScreenState extends State<LanChatScreen> {
 
       final msgId = const Uuid().v4();
       final nowMs = DateTime.now().millisecondsSinceEpoch;
-      final envelope = jsonEncode({'t': 'txt', 'v': text});
-      final encB64 = await CryptoV2.instance.encryptV2(
-        base64Decode(peerPubB64),
-        utf8.encode(envelope),
-      );
-      await localHub.sendMessage(widget.deviceId, msgId, encB64, nowMs);
+      final encB64 = await encodeLanEnvelope(peerPubB64: peerPubB64, text: text);
+      // Офлайн — не блокируем отправку: шифруем и кладём в очередь, реально
+      // уйдёт при переподключении (см. флаш очереди в MainShell).
+      final online = localHub.hasSession(widget.deviceId);
+      if (online) {
+        await localHub.sendMessage(widget.deviceId, msgId, encB64, nowMs);
+      }
       await LanChatStore.instance.addMessage(
         deviceId: widget.deviceId,
         msgId: msgId,
         fromMe: true,
         text: text,
         createdAtSec: nowMs ~/ 1000,
+        queued: !online,
       );
       if (!mounted) return;
       _seenMsgIds.add(msgId);
@@ -157,6 +169,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
           fromMe: true,
           text: text,
           createdAt: nowMs ~/ 1000,
+          queued: !online,
         ));
         _msgCtrl.clear();
       });
@@ -167,7 +180,6 @@ class _LanChatScreenState extends State<LanChatScreen> {
   }
 
   Future<void> _attachFile() async {
-    if (!localHub.hasSession(widget.deviceId)) return;
     final file = await openFile();
     if (file == null) return;
     try {
@@ -184,17 +196,16 @@ class _LanChatScreenState extends State<LanChatScreen> {
 
       final msgId = const Uuid().v4();
       final nowMs = DateTime.now().millisecondsSinceEpoch;
-      final envelope = jsonEncode({
-        't': 'file',
-        'n': file.name,
-        'm': file.mimeType ?? '',
-        'd': base64Encode(bytes),
-      });
-      final encB64 = await CryptoV2.instance.encryptV2(
-        base64Decode(peerPubB64),
-        utf8.encode(envelope),
+      final encB64 = await encodeLanEnvelope(
+        peerPubB64: peerPubB64,
+        fileName: file.name,
+        fileMime: file.mimeType,
+        fileBytes: bytes,
       );
-      await localHub.sendMessage(widget.deviceId, msgId, encB64, nowMs);
+      final online = localHub.hasSession(widget.deviceId);
+      if (online) {
+        await localHub.sendMessage(widget.deviceId, msgId, encB64, nowMs);
+      }
       await LanChatStore.instance.addMessage(
         deviceId: widget.deviceId,
         msgId: msgId,
@@ -203,6 +214,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
         fileName: file.name,
         fileMime: file.mimeType,
         fileBytes: bytes,
+        queued: !online,
       );
       if (!mounted) return;
       _seenMsgIds.add(msgId);
@@ -216,6 +228,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
           fileName: file.name,
           fileMime: file.mimeType,
           fileBytes: bytes,
+          queued: !online,
         ));
       });
       _scrollToBottom();
@@ -602,6 +615,19 @@ class _LanChatScreenState extends State<LanChatScreen> {
     );
   }
 
+  // Как в обычном чате (chat_screen.dart._ticks), но без дискеты — у LAN нет
+  // промежуточного "на сервере", только очередь/доставлено/прочитано.
+  Widget _ticks(LanChatMessage m) {
+    switch (m.status) {
+      case LanMsgStatus.queued:
+        return const Icon(Icons.access_time, size: 11, color: Colors.white70);
+      case LanMsgStatus.delivered:
+        return const Icon(Icons.done, size: 13, color: Colors.white70);
+      case LanMsgStatus.read:
+        return Icon(Icons.done_all, size: 14, color: GE.blue);
+    }
+  }
+
   Widget _bubble(LanChatMessage m) {
     final time = DateTime.fromMillisecondsSinceEpoch(m.createdAt * 1000);
     final hh = time.hour.toString().padLeft(2, '0');
@@ -654,9 +680,15 @@ class _LanChatScreenState extends State<LanChatScreen> {
                   Text(m.text, style: TextStyle(color: m.fromMe ? Colors.white : GE.text, fontSize: 14)),
                 ],
                 const SizedBox(height: 2),
-                Text('$hh:$mm',
-                    style: TextStyle(
-                        color: m.fromMe ? Colors.white70 : GE.sub, fontSize: 10)),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('$hh:$mm',
+                        style: TextStyle(
+                            color: m.fromMe ? Colors.white70 : GE.sub, fontSize: 10)),
+                    if (m.fromMe) ...[const SizedBox(width: 4), _ticks(m)],
+                  ],
+                ),
               ],
             ),
           ),
@@ -666,25 +698,27 @@ class _LanChatScreenState extends State<LanChatScreen> {
   }
 
   Widget _inputRow(bool online) {
+    // Офлайн больше не блокирует отправку — сообщение уходит в очередь и
+    // улетит само при переподключении, поэтому обе кнопки активны всегда.
     return Padding(
       padding: const EdgeInsets.all(10),
       child: Row(
         children: [
           IconButton(
-            icon: Icon(Icons.attach_file, color: online ? GE.sub : GE.sub.withValues(alpha: 0.4)),
-            onPressed: online ? _attachFile : null,
+            icon: Icon(Icons.attach_file, color: GE.sub),
+            onPressed: _attachFile,
           ),
           Expanded(
             child: GlassInput(
               controller: _msgCtrl,
-              hint: online ? 'Сообщение…' : 'Устройство офлайн',
+              hint: online ? 'Сообщение…' : 'Сообщение… (уйдёт при подключении)',
               onSubmitted: (_) => _send(),
             ),
           ),
           const SizedBox(width: 8),
           IconButton(
-            icon: Icon(Icons.send_rounded, color: online ? GE.primary : GE.sub),
-            onPressed: online ? _send : null,
+            icon: Icon(Icons.send_rounded, color: GE.primary),
+            onPressed: _send,
           ),
         ],
       ),

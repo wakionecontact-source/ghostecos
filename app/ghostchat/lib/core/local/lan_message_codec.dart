@@ -38,3 +38,20 @@ Future<DecodedLanMessage?> decodeLanMessage(LocalMessageEvent m) async {
     return DecodedLanMessage(text: raw); // старый формат без конверта — совместимость
   }
 }
+
+/// Обратная сторона decodeLanMessage — шифрует текст/файл под известный
+/// pubkey пира в тот же формат конверта. Общая точка для LanChatScreen
+/// (обычная отправка) и очереди офлайн-сообщений (см. MainShell), чтобы не
+/// дублировать сборку конверта в двух местах.
+Future<String> encodeLanEnvelope({
+  required String peerPubB64,
+  String text = '',
+  String? fileName,
+  String? fileMime,
+  Uint8List? fileBytes,
+}) async {
+  final envelope = fileBytes != null && fileName != null
+      ? jsonEncode({'t': 'file', 'n': fileName, 'm': fileMime ?? '', 'd': base64Encode(fileBytes)})
+      : jsonEncode({'t': 'txt', 'v': text});
+  return CryptoV2.instance.encryptV2(base64Decode(peerPubB64), utf8.encode(envelope));
+}

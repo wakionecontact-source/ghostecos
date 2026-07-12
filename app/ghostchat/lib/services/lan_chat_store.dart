@@ -30,6 +30,11 @@ class LanKnownDevice {
   });
 }
 
+/// Статус СВОЕГО сообщения — зеркало серверного чата (chat_screen.dart
+/// _ticks), но БЕЗ промежуточной "дискеты" ("на сервере, не подтверждено
+/// доставкой") — тут сервера-посредника нет, только 3 состояния.
+enum LanMsgStatus { queued, delivered, read }
+
 class LanChatMessage {
   final String msgId;
   final String deviceId;
@@ -39,6 +44,11 @@ class LanChatMessage {
   final String? fileName;
   final String? fileMime;
   final Uint8List? fileBytes;
+  /// true — создано локально, но ещё не ушло по проводу (пир был офлайн).
+  /// Флашится автоматически при реконнекте (см. MainShell).
+  final bool queued;
+  final bool delivered; // пришёл __ack__ от пира
+  final bool read; // пришёл __seen__ от пира
 
   LanChatMessage({
     required this.msgId,
@@ -49,9 +59,15 @@ class LanChatMessage {
     this.fileName,
     this.fileMime,
     this.fileBytes,
+    this.queued = false,
+    this.delivered = false,
+    this.read = false,
   });
 
   bool get hasFile => fileName != null && fileBytes != null;
+
+  LanMsgStatus get status =>
+      read ? LanMsgStatus.read : (delivered ? LanMsgStatus.delivered : LanMsgStatus.queued);
 
   Map<String, dynamic> toMap() => {
         'msg_id': msgId,
@@ -62,6 +78,9 @@ class LanChatMessage {
         'file_name': fileName,
         'file_mime': fileMime,
         'file_bytes': fileBytes,
+        'queued': queued ? 1 : 0,
+        'is_delivered': delivered ? 1 : 0,
+        'is_read': read ? 1 : 0,
       };
 
   static LanChatMessage fromMap(Map<String, dynamic> m) => LanChatMessage(
@@ -73,6 +92,9 @@ class LanChatMessage {
         fileName: m['file_name'] as String?,
         fileMime: m['file_mime'] as String?,
         fileBytes: m['file_bytes'] as Uint8List?,
+        queued: (m['queued'] as int? ?? 0) == 1,
+        delivered: (m['is_delivered'] as int? ?? 0) == 1,
+        read: (m['is_read'] as int? ?? 0) == 1,
       );
 }
 
@@ -96,7 +118,7 @@ class LanChatStore {
     final path = p.join(dir.path, 'lan_chats.db');
     _db = await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: (db, v) async {
         await db.execute('''
           CREATE TABLE lan_dialogs (
@@ -121,7 +143,10 @@ class LanChatStore {
             created_at    INTEGER NOT NULL,
             file_name     TEXT,
             file_mime     TEXT,
-            file_bytes    BLOB
+            file_bytes    BLOB,
+            queued        INTEGER NOT NULL DEFAULT 0,
+            is_delivered  INTEGER NOT NULL DEFAULT 0,
+            is_read       INTEGER NOT NULL DEFAULT 0
           )
         ''');
         await db.execute(
@@ -142,6 +167,15 @@ class LanChatStore {
           await db.execute('ALTER TABLE lan_messages ADD COLUMN file_name TEXT');
           await db.execute('ALTER TABLE lan_messages ADD COLUMN file_mime TEXT');
           await db.execute('ALTER TABLE lan_messages ADD COLUMN file_bytes BLOB');
+        }
+        if (oldV < 5) {
+          await db.execute('ALTER TABLE lan_messages ADD COLUMN queued INTEGER NOT NULL DEFAULT 0');
+          await db.execute('ALTER TABLE lan_messages ADD COLUMN is_delivered INTEGER NOT NULL DEFAULT 0');
+          await db.execute('ALTER TABLE lan_messages ADD COLUMN is_read INTEGER NOT NULL DEFAULT 0');
+          // Старые сообщения были отправлены/приняты ДО этой фичи — считаем
+          // их доставленными (не будем задним числом гонять статус по немым
+          // историческим строкам).
+          await db.execute('UPDATE lan_messages SET is_delivered = 1 WHERE from_me = 1');
         }
       },
     );
@@ -269,6 +303,7 @@ class LanChatStore {
     String? fileName,
     String? fileMime,
     Uint8List? fileBytes,
+    bool queued = false,
   }) async {
     final at = createdAtSec ?? _nowSec();
     await _safeDb.insert(
@@ -282,6 +317,7 @@ class LanChatStore {
         fileName: fileName,
         fileMime: fileMime,
         fileBytes: fileBytes,
+        queued: queued,
       ).toMap(),
       conflictAlgorithm: ConflictAlgorithm.ignore,
     );
@@ -290,6 +326,43 @@ class LanChatStore {
       'UPDATE lan_dialogs SET last_text = ?, last_at = ?, last_from_me = ?, '
       'unread = unread + ? WHERE device_id = ?',
       [preview, at, fromMe ? 1 : 0, fromMe ? 0 : 1, deviceId],
+    );
+    await _reloadDialogs();
+  }
+
+  /// Сообщения, созданные локально, пока пир был офлайн — ждут флаша при
+  /// реконнекте (см. MainShell._flushQueuedLanMessages).
+  Future<List<LanChatMessage>> getQueuedMessages(String deviceId) async {
+    final rows = await _safeDb.query('lan_messages',
+        where: 'device_id = ? AND queued = 1', whereArgs: [deviceId], orderBy: 'created_at ASC');
+    return rows.map(LanChatMessage.fromMap).toList();
+  }
+
+  /// Сообщение реально ушло по проводу — снимаем queued (не меняет
+  /// delivered/read, это отдельные события от __ack__/__seen__).
+  Future<void> markSent(String deviceId, String msgId) async {
+    await _safeDb.update('lan_messages', {'queued': 0},
+        where: 'device_id = ? AND msg_id = ?', whereArgs: [deviceId, msgId]);
+    await _reloadDialogs();
+  }
+
+  /// Пришёл __ack__ от пира — сообщение точно доставлено на его устройство.
+  Future<void> markDelivered(String deviceId, String msgId) async {
+    await _safeDb.update('lan_messages', {'is_delivered': 1},
+        where: 'device_id = ? AND msg_id = ?', whereArgs: [deviceId, msgId]);
+    await _reloadDialogs();
+  }
+
+  /// Пришёл __seen__ от пира — список msg_id, которые он открыл/увидел.
+  /// НЕ путать с markRead(deviceId) ниже — тот про НАШ счётчик непрочитанных,
+  /// этот про то, что ЧУЖИЕ сообщения (наши, с их стороны) отметили прочитанными.
+  Future<void> markMessagesRead(String deviceId, List<String> msgIds) async {
+    if (msgIds.isEmpty) return;
+    final placeholders = List.filled(msgIds.length, '?').join(',');
+    await _safeDb.rawUpdate(
+      'UPDATE lan_messages SET is_delivered = 1, is_read = 1 '
+      'WHERE device_id = ? AND msg_id IN ($placeholders)',
+      [deviceId, ...msgIds],
     );
     await _reloadDialogs();
   }

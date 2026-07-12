@@ -81,6 +81,8 @@ class _MainShellState extends State<MainShell> {
   StreamSubscription? _lanAcceptSub;
   StreamSubscription? _lanStaleSub;
   StreamSubscription? _lanReconnectedSub;
+  StreamSubscription? _lanAckSub;
+  StreamSubscription? _lanSeenSub;
   StreamSubscription? _triangleMsgSub;
   Timer? _lanRetryTimer;
   // Не спамим — раз в сессию приложения на device_id достаточно.
@@ -161,6 +163,12 @@ class _MainShellState extends State<MainShell> {
     // "мы сами достучались" покрывает _startLanReconnectRetryLoop ниже —
     // обе стороны реконнекта озвучиваются одинаково через _onLanReconnected.
     _lanReconnectedSub = localHub.onReconnected.listen((p) => _onLanReconnected(p.deviceId));
+    // Статусы галочек для LAN-чата — работают глобально, а не только пока
+    // открыт сам LanChatScreen (тот же принцип, что и _onLanMessage ниже).
+    _lanAckSub = localHub.onAck.listen((e) =>
+        LanChatStore.instance.markDelivered(e.fromUsername, e.msgId));
+    _lanSeenSub = localHub.onSeen.listen((e) =>
+        LanChatStore.instance.markMessagesRead(e.fromUsername, e.msgIds));
     localHub.isKnownPeerChecker =
         (deviceId) async => (await LanChatStore.instance.getDisplayName(deviceId)) != null;
     await localHub.startAll();
@@ -250,6 +258,7 @@ class _MainShellState extends State<MainShell> {
   /// каждый реконнект слать пуш — спам), только тихий тост, и только если
   /// юзер прямо сейчас не смотрит в этот самый чат (там и так видно).
   Future<void> _onLanReconnected(String deviceId) async {
+    _flushLanQueue(deviceId);
     if (LanChatScreen.currentOpenDeviceId == deviceId) return;
     if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
     final name = await LanChatStore.instance.getDisplayName(deviceId) ?? _shortId(deviceId);
@@ -264,6 +273,32 @@ class _MainShellState extends State<MainShell> {
         )),
       ),
     );
+  }
+
+  /// Устройство снова на связи — досылаем всё, что накопилось в очереди,
+  /// пока его не было (см. LanChatScreen._send: офлайн-отправка не блокируется,
+  /// сообщение шифруется и кладётся в БД с queued=true сразу).
+  Future<void> _flushLanQueue(String deviceId) async {
+    final queued = await LanChatStore.instance.getQueuedMessages(deviceId);
+    if (queued.isEmpty) return;
+    final peerPubB64 = await LanChatStore.instance.getPeerPub(deviceId);
+    if (peerPubB64 == null) return;
+    for (final m in queued) {
+      if (!localHub.hasSession(deviceId)) break; // отвалилось посреди флаша
+      try {
+        final encB64 = await encodeLanEnvelope(
+          peerPubB64: peerPubB64,
+          text: m.text,
+          fileName: m.fileName,
+          fileMime: m.fileMime,
+          fileBytes: m.fileBytes,
+        );
+        await localHub.sendMessage(deviceId, m.msgId, encB64, m.createdAt * 1000);
+        await LanChatStore.instance.markSent(deviceId, m.msgId);
+      } catch (_) {
+        // Останется queued — попробуем на следующем реконнекте.
+      }
+    }
   }
 
   /// Входящее P2P-сообщение по «Треугольнику» — заводим в тот же чат, что
@@ -344,6 +379,8 @@ class _MainShellState extends State<MainShell> {
     _lanAcceptSub?.cancel();
     _lanStaleSub?.cancel();
     _lanReconnectedSub?.cancel();
+    _lanAckSub?.cancel();
+    _lanSeenSub?.cancel();
     _lanRetryTimer?.cancel();
     _triangleMsgSub?.cancel();
     localHub.stopAll();
