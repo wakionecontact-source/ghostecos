@@ -7,6 +7,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
@@ -479,37 +480,46 @@ class _LanChatScreenState extends State<LanChatScreen> {
         children: [
           Text(_name,
               style: TextStyle(color: GE.text, fontSize: 16, fontWeight: FontWeight.w700)),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(_barsIcon(bars), size: 12, color: online ? GE.green : GE.sub),
-              const SizedBox(width: 4),
-              Text(
-                online
-                    ? (pingMs != null ? 'в сети · $pingMs мс' : 'в сети')
-                    : 'офлайн',
-                style: TextStyle(color: GE.sub, fontSize: 11),
-              ),
-              if (available != null && available.isNotEmpty) ...[
-                const SizedBox(width: 6),
-                ...TransportType.values.map((t) {
-                  final on = available.contains(t);
-                  return Padding(
-                    padding: const EdgeInsets.only(left: 2),
-                    child: Icon(
-                      switch (t) {
-                        TransportType.lan => Icons.wifi,
-                        TransportType.wifiDirect => Icons.wifi_tethering,
-                        TransportType.bluetooth => Icons.bluetooth,
-                      },
-                      size: 12,
-                      color: on ? GE.primary : GE.sub.withValues(alpha: 0.35),
+          _pinging
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('соединение', style: TextStyle(color: GE.sub, fontSize: 11)),
+                    const SizedBox(width: 3),
+                    _PingDots(color: GE.sub),
+                  ],
+                )
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(_barsIcon(bars), size: 12, color: online ? GE.green : GE.sub),
+                    const SizedBox(width: 4),
+                    Text(
+                      online
+                          ? (pingMs != null ? 'в сети · $pingMs мс' : 'в сети')
+                          : 'офлайн',
+                      style: TextStyle(color: GE.sub, fontSize: 11),
                     ),
-                  );
-                }),
-              ],
-            ],
-          ),
+                    if (available != null && available.isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      ...TransportType.values.map((t) {
+                        final on = available.contains(t);
+                        return Padding(
+                          padding: const EdgeInsets.only(left: 2),
+                          child: Icon(
+                            switch (t) {
+                              TransportType.lan => Icons.wifi,
+                              TransportType.wifiDirect => Icons.wifi_tethering,
+                              TransportType.bluetooth => Icons.bluetooth,
+                            },
+                            size: 12,
+                            color: on ? GE.primary : GE.sub.withValues(alpha: 0.35),
+                          ),
+                        );
+                      }),
+                    ],
+                  ],
+                ),
         ],
       ),
       actions: [
@@ -618,6 +628,59 @@ class _LanChatScreenState extends State<LanChatScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Три точки бегущей волной — "ждём подключения", показывается в шапке
+/// чата на время пинга/переподключения (см. _pinging в LanChatScreen).
+class _PingDots extends StatefulWidget {
+  final Color color;
+  const _PingDots({required this.color});
+
+  @override
+  State<_PingDots> createState() => _PingDotsState();
+}
+
+class _PingDotsState extends State<_PingDots> with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, _) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(3, (i) {
+            final phase = (_ctrl.value + i * 0.25) % 1.0;
+            final opacity = 0.25 + 0.75 * (0.5 + 0.5 * math.sin(phase * 2 * math.pi));
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 1.5),
+              child: Opacity(
+                opacity: opacity,
+                child: Container(
+                  width: 4,
+                  height: 4,
+                  decoration: BoxDecoration(shape: BoxShape.circle, color: widget.color),
+                ),
+              ),
+            );
+          }),
+        );
+      },
     );
   }
 }
