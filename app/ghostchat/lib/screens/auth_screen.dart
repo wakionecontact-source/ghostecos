@@ -1,10 +1,64 @@
 // Login / Register native с дисклеймером ToS+Privacy.
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../auth_service.dart';
+
+// ── Лимиты регистрации — ЗЕРКАЛО серверных (social_router.py: _NAME_MIN/MAX,
+// _USER_MIN/MAX/TOTAL, _PASS_MIN/MAX). Если сервер поменяет — поменять и тут,
+// иначе клиент будет молчать про лимит, а сервер откажет уже после отправки.
+const _usernameMin = 3;
+const _usernameMax = 60; // без учёта точек (см. _usernameValid)
+const _usernameTotalMax = 64; // общий лимит длины строки (с точками)
+const _nameMin = 2;
+const _nameMax = 100;
+const _passMin = 8;
+const _passMax = 150;
+
+bool _usernameValid(String raw) {
+  final v = raw.trim().toLowerCase();
+  if (v.isEmpty || v.length > _usernameTotalMax) return false;
+  if (!RegExp(r'^[a-z0-9_.]+$').hasMatch(v)) return false;
+  final noDots = v.replaceAll('.', '');
+  return noDots.length >= _usernameMin && noDots.length <= _usernameMax;
+}
+
+String _usernameHint(String raw) {
+  final v = raw.trim();
+  if (v.isEmpty) return 'Латиница, цифры, _ и точка · $_usernameMin–$_usernameMax символов';
+  if (!RegExp(r'^[a-z0-9_.]+$').hasMatch(v.toLowerCase())) {
+    return 'Только латиница, цифры, _ и точка';
+  }
+  final noDots = v.replaceAll('.', '');
+  if (noDots.length < _usernameMin) return 'Ещё ${_usernameMin - noDots.length} симв. (точки не в счёт)';
+  if (noDots.length > _usernameMax) return 'Слишком длинное — максимум $_usernameMax символов';
+  return 'Похоже на валидное имя пользователя';
+}
+
+bool _nameValid(String raw) {
+  final v = raw.trim();
+  return v.length >= _nameMin && v.length <= _nameMax;
+}
+
+String _nameHint(String raw) {
+  final v = raw.trim();
+  if (v.isEmpty) return '$_nameMin–$_nameMax символов, любые';
+  if (v.length < _nameMin) return 'Ещё ${_nameMin - v.length} симв.';
+  if (v.length > _nameMax) return 'Слишком длинное — максимум $_nameMax символов';
+  return 'Ок';
+}
+
+bool _passValid(String raw) => raw.length >= _passMin && raw.length <= _passMax;
+
+String _passHint(String raw) {
+  if (raw.isEmpty) return '$_passMin–$_passMax символов';
+  if (raw.length < _passMin) return 'Ещё ${_passMin - raw.length} симв.';
+  if (raw.length > _passMax) return 'Слишком длинный — максимум $_passMax символов';
+  return 'Ок';
+}
 
 class AuthScreen extends StatefulWidget {
   final VoidCallback onLoggedIn;
@@ -23,6 +77,9 @@ class _AuthScreenState extends State<AuthScreen> {
   final _nameCtrl = TextEditingController();
   final _pwdCtrl = TextEditingController();
   final _pwd2Ctrl = TextEditingController();
+  final _userFieldKey = GlobalKey<_ValidatedFieldState>();
+  final _nameFieldKey = GlobalKey<_ValidatedFieldState>();
+  final _pwdFieldKey = GlobalKey<_ValidatedFieldState>();
 
   Future<void> _guest() async {
     setState(() { _err = null; _busy = true; });
@@ -51,6 +108,13 @@ class _AuthScreenState extends State<AuthScreen> {
             _pwd2Ctrl.text.isEmpty) {
           throw 'Заполните все поля';
         }
+        // Бьём тревогу локально по тем же лимитам, что и сервер — не гоняем
+        // запрос впустую, и сразу видно КАКОЕ поле не так (тряска).
+        var bad = false;
+        if (!_usernameValid(_userCtrl.text)) { _userFieldKey.currentState?.shake(); bad = true; }
+        if (!_nameValid(_nameCtrl.text)) { _nameFieldKey.currentState?.shake(); bad = true; }
+        if (!_passValid(_pwdCtrl.text)) { _pwdFieldKey.currentState?.shake(); bad = true; }
+        if (bad) throw 'Проверьте подсвеченные поля';
         if (_pwdCtrl.text != _pwd2Ctrl.text) throw 'Пароли не совпадают';
         if (!_age18) throw 'Подтвердите 18+';
         if (!_agreedTerms) throw 'Примите условия использования и политику приватности';
@@ -98,13 +162,36 @@ class _AuthScreenState extends State<AuthScreen> {
                     }),
                   ),
                   const SizedBox(height: 20),
-                  _input('Имя пользователя', _userCtrl),
+                  _isLogin
+                      ? _input('Имя пользователя', _userCtrl)
+                      : _ValidatedField(
+                          key: _userFieldKey,
+                          hint: 'Имя пользователя',
+                          controller: _userCtrl,
+                          isValid: _usernameValid,
+                          hintText: _usernameHint,
+                        ),
                   if (!_isLogin) ...[
                     const SizedBox(height: 10),
-                    _input('Отображаемое имя', _nameCtrl),
+                    _ValidatedField(
+                      key: _nameFieldKey,
+                      hint: 'Отображаемое имя',
+                      controller: _nameCtrl,
+                      isValid: _nameValid,
+                      hintText: _nameHint,
+                    ),
                   ],
                   const SizedBox(height: 10),
-                  _input('Пароль', _pwdCtrl, obscure: true),
+                  _isLogin
+                      ? _input('Пароль', _pwdCtrl, obscure: true)
+                      : _ValidatedField(
+                          key: _pwdFieldKey,
+                          hint: 'Пароль',
+                          controller: _pwdCtrl,
+                          obscure: true,
+                          isValid: _passValid,
+                          hintText: _passHint,
+                        ),
                   if (!_isLogin) ...[
                     const SizedBox(height: 10),
                     _input('Повторите пароль', _pwd2Ctrl, obscure: true),
@@ -165,30 +252,126 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 
-  static Widget _input(String hint, TextEditingController c, {bool obscure = false}) {
-    return TextField(
-      controller: c,
-      obscureText: obscure,
-      style: TextStyle(color: GE.text, fontSize: 14),
-      decoration: InputDecoration(
-        hintText: hint,
-        hintStyle: TextStyle(color: GE.sub, fontSize: 14),
-        filled: true,
-        fillColor: const Color(0x66000000),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: GE.borderStrong),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: GE.borderStrong),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: GE.primary, width: 1.5),
-        ),
+}
+
+Widget _input(String hint, TextEditingController c, {bool obscure = false}) {
+  return TextField(
+    controller: c,
+    obscureText: obscure,
+    style: TextStyle(color: GE.text, fontSize: 14),
+    decoration: InputDecoration(
+      hintText: hint,
+      hintStyle: TextStyle(color: GE.sub, fontSize: 14),
+      filled: true,
+      fillColor: const Color(0x66000000),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: GE.borderStrong),
       ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: GE.borderStrong),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: GE.primary, width: 1.5),
+      ),
+    ),
+  );
+}
+
+/// Поле с живой подсказкой-критерием ПОД собой (см. _usernameHint/_nameHint/
+/// _passHint) — цвет меняется по мере ввода (серый → красный/зелёный),
+/// при неудачной попытке отправки формы shake() трясёт строку критерия,
+/// чтобы взгляд сразу упал на то, что не так.
+class _ValidatedField extends StatefulWidget {
+  final String hint;
+  final TextEditingController controller;
+  final bool obscure;
+  final bool Function(String) isValid;
+  final String Function(String) hintText;
+  const _ValidatedField({
+    super.key,
+    required this.hint,
+    required this.controller,
+    required this.isValid,
+    required this.hintText,
+    this.obscure = false,
+  });
+
+  @override
+  State<_ValidatedField> createState() => _ValidatedFieldState();
+}
+
+class _ValidatedFieldState extends State<_ValidatedField>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _shakeCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _shakeCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 400),
+    );
+    widget.controller.addListener(_onChange);
+  }
+
+  void _onChange() {
+    if (mounted) setState(() {});
+  }
+
+  void shake() => _shakeCtrl.forward(from: 0);
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onChange);
+    _shakeCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = widget.controller.text;
+    final touched = text.trim().isNotEmpty;
+    final valid = widget.isValid(text);
+    final color = !touched ? GE.sub : (valid ? GE.green : GE.red);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _input(widget.hint, widget.controller, obscure: widget.obscure),
+        const SizedBox(height: 4),
+        AnimatedBuilder(
+          animation: _shakeCtrl,
+          builder: (context, child) {
+            final t = _shakeCtrl.value;
+            final dx = math.sin(t * math.pi * 6) * 4 * (1 - t);
+            return Transform.translate(offset: Offset(dx, 0), child: child);
+          },
+          child: Padding(
+            padding: const EdgeInsets.only(left: 4),
+            child: Row(
+              children: [
+                Icon(
+                  !touched
+                      ? Icons.info_outline
+                      : (valid ? Icons.check_circle : Icons.error_outline),
+                  size: 12,
+                  color: color,
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    widget.hintText(text),
+                    style: TextStyle(color: color, fontSize: 10.5),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
