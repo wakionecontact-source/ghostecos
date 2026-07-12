@@ -154,17 +154,6 @@ class _GlassTokens {
         stops: const [0.0, 0.55, 1.0],
       );
 
-  static Border insetBorder({bool strong = false}) {
-    final light = Colors.white.withValues(alpha: strong ? 0.22 : 0.14);
-    final dark = Colors.black.withValues(alpha: strong ? 0.26 : 0.20);
-    return Border(
-      top: BorderSide(color: light, width: GE.glassStroke),
-      left: BorderSide(color: light, width: GE.glassStroke),
-      bottom: BorderSide(color: dark, width: GE.glassStroke),
-      right: BorderSide(color: dark, width: GE.glassStroke),
-    );
-  }
-
   static List<BoxShadow> shadow({bool strong = false}) => [
         BoxShadow(
           color: Colors.black.withValues(alpha: strong ? 0.45 : 0.30),
@@ -228,7 +217,13 @@ class GlassCard extends StatelessWidget {
         ],
         stops: const [0.0, 0.5, 1.0],
       ),
-      border: _GlassTokens.insetBorder(strong: strong),
+      // Без border: Border с разными цветами по сторонам (см. недавно
+      // удалённый _GlassTokens.insetBorder) несовместим с borderRadius —
+      // Flutter кидает "A borderRadius can only be given on borders with
+      // uniform colors" при paint (в debug-сборке — assert, видно сразу;
+      // в release — assert просто вырезан, но эффект всё равно не тот,
+      // что задуман). Диагональный sheen-блик ниже даёт похожую подсветку
+      // без этого столкновения, да и borders договорились убрать везде.
     );
     Widget fill = DecoratedBox(
       decoration: fillDeco,
@@ -338,14 +333,15 @@ class GlassButton extends StatelessWidget {
               ],
             ),
         borderRadius: radius,
-        // CTA — uniform specular-кромка на цветном градиенте. Не-CTA —
-        // inset-подсветка (светлый верх/лево, тёмный низ/право), как у карточек.
+        // CTA — uniform specular-кромка на цветном градиенте. Не-CTA — без
+        // border (см. GlassCard.fillDeco про несовместимость borderRadius
+        // с не-uniform-цветным Border — та же ловушка была и тут).
         border: isCta
             ? Border.all(
                 color: Colors.white.withValues(alpha: 0.24),
                 width: GE.glassStroke,
               )
-            : _GlassTokens.insetBorder(),
+            : null,
         boxShadow: isCta
             ? [
                 BoxShadow(
