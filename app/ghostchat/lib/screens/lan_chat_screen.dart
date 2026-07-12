@@ -245,12 +245,49 @@ class _LanChatScreenState extends State<LanChatScreen> {
     if (mounted) setState(() => _name = newName);
   }
 
+  bool _pinging = false;
+
+  /// Кнопка активна ВСЕГДА (не только пока "в сети") — именно в момент,
+  /// когда чат выглядит офлайн, юзеру и нужна кнопка "попробовать снова".
+  /// Если живой транспортной сессии нет (например, приложение перезапускали
+  /// — сессии живут только в памяти) — сессии пинговать нечем, вместо этого
+  /// шлём широковещательный discover: если это устройство ещё помнит нас
+  /// (см. автопереподключение в local_hub.dart), оно само отзовётся.
   Future<void> _manualPing() async {
-    await localHub.pingNow(widget.deviceId);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Пинг отправлен'), duration: Duration(seconds: 1)),
-    );
+    if (_pinging) return;
+    setState(() => _pinging = true);
+    try {
+      if (localHub.hasSession(widget.deviceId)) {
+        await localHub.pingNow(widget.deviceId);
+        if (!mounted) return;
+        await Future.delayed(const Duration(seconds: 2));
+        if (!mounted) return;
+        final isOnline = localHub.isOnline(widget.deviceId);
+        final pingMs = localHub.getPingMs(widget.deviceId);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(isOnline
+              ? (pingMs != null ? 'Понг получен — $pingMs мс' : 'Понг получен')
+              : 'Нет ответа — устройство недоступно'),
+          duration: const Duration(seconds: 2),
+        ));
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Сессии нет — ищем устройство…'), duration: Duration(seconds: 2)),
+        );
+        await localHub.discoverAll();
+        await Future.delayed(const Duration(seconds: 3));
+        if (!mounted) return;
+        final reconnected = localHub.hasSession(widget.deviceId);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(reconnected
+              ? 'Подключение восстановлено'
+              : 'Устройство не отозвалось — попробуйте ещё раз позже'),
+          duration: const Duration(seconds: 2),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _pinging = false);
+    }
   }
 
   void _toggleSelect(String msgId) {
@@ -318,12 +355,32 @@ class _LanChatScreenState extends State<LanChatScreen> {
             if (!online)
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 6),
+                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
                 color: GE.yellow.withValues(alpha: 0.12),
-                child: Text(
-                  'Устройство сейчас не на связи — сообщения не дойдут',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: GE.yellow, fontSize: 11.5),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        'Устройство сейчас не на связи — сообщения не дойдут',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: GE.yellow, fontSize: 11.5),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: _pinging ? null : _manualPing,
+                      child: Text(
+                        _pinging ? 'Ищем…' : 'Попробовать',
+                        style: TextStyle(
+                          color: GE.yellow,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             Expanded(
@@ -414,9 +471,14 @@ class _LanChatScreenState extends State<LanChatScreen> {
       ),
       actions: [
         IconButton(
-          icon: Icon(Icons.wifi_tethering, color: GE.sub),
-          tooltip: 'Пинг сейчас',
-          onPressed: online ? _manualPing : null,
+          icon: _pinging
+              ? SizedBox(
+                  width: 18, height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: GE.sub),
+                )
+              : Icon(Icons.wifi_tethering, color: GE.sub),
+          tooltip: 'Пинг / переподключиться',
+          onPressed: _pinging ? null : _manualPing,
         ),
         IconButton(
           icon: Icon(Icons.edit_outlined, color: GE.sub),

@@ -201,13 +201,29 @@ class LocalHub {
     if (isNewGroup) _collectingCtrl.add(peer);
     // Reset debounce timer
     _debounceTimers[did]?.cancel();
-    _debounceTimers[did] = Timer(const Duration(seconds: 5), () {
+    _debounceTimers[did] = Timer(const Duration(seconds: 5), () async {
       final req = _pendingRequests.remove(did);
       _debounceTimers.remove(did);
-      if (req != null) {
-        appLog.info('lan', 'Grouped request: ${req.deviceId} (${req.transports.map(transportLabel).join(", ")})');
-        _groupedRequestCtrl.add(req);
+      if (req == null) return;
+
+      // Уже знакомое устройство (есть чат/было принятие раньше на этом
+      // устройстве) — не гоняем юзера через карточку "хочет подключиться"
+      // заново ради того, с кем и так уже переписывались (сессии транспортов
+      // живут только в памяти и пропадают при перезапуске приложения — без
+      // этого пришлось бы вручную "перезнакомиться" после каждого рестарта).
+      // TOFU identity-проверка всё равно происходит выше по стеку в
+      // MainShell (_onLanAccepted → checkAndPinIdentity), подмену не пропустим.
+      final checker = isKnownPeerChecker;
+      final known = checker != null && await checker(did);
+      if (known) {
+        appLog.info('lan', 'Автопереподключение к известному устройству $did');
+        await sendAccept(req.bestPeer);
+        _acceptCtrl.add(req.bestPeer);
+        return;
       }
+
+      appLog.info('lan', 'Grouped request: ${req.deviceId} (${req.transports.map(transportLabel).join(", ")})');
+      _groupedRequestCtrl.add(req);
     });
 
     // Also forward raw for backward compat
