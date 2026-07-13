@@ -5,7 +5,6 @@
 // macOS из одного кода.
 
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -82,11 +81,14 @@ class GhostApp extends StatelessWidget {
   const GhostApp({super.key});
   @override
   Widget build(BuildContext context) {
-    // ValueListenableBuilder перерисует MaterialApp при смене темы → все
-    // GE.* сразу подхватят новые значения через rebuild.
-    return ValueListenableBuilder<Palette>(
-      valueListenable: ThemeService.instance.notifier,
-      builder: (_, _, _) => MaterialApp(
+    // ListenableBuilder перерисует MaterialApp при смене палитры ИЛИ
+    // скругления углов → все GE.* сразу подхватят новые значения через
+    // rebuild (radiusSm/Md/Lg — геттеры от cornerFactor, см. theme.dart).
+    return ListenableBuilder(
+      listenable: Listenable.merge(
+        [ThemeService.instance.notifier, ThemeService.instance.cornerNotifier],
+      ),
+      builder: (_, _) => MaterialApp(
         title: GE.appName,
         debugShowCheckedModeBanner: false,
         navigatorKey: NotificationService.navigatorKey,

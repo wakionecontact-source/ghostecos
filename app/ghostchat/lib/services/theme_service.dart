@@ -69,9 +69,14 @@ class ThemeService {
   ThemeService._();
   static final ThemeService instance = ThemeService._();
   static const _key = 'gs_theme_preset_v1';
+  static const _cornerKey = 'gs_corner_factor_v1';
 
   /// Перерисовка UI при смене темы — main подписывается ValueListenableBuilder.
   final ValueNotifier<Palette> notifier = ValueNotifier(_presets.first);
+
+  /// Перерисовка UI при смене скругления — отдельный notifier, чтобы менять
+  /// углы не заставляло пересобирать всё, что слушает palette.
+  final ValueNotifier<double> cornerNotifier = ValueNotifier(GE.cornerFactor);
 
   /// Доступ ко всем доступным темам.
   List<Palette> get presets => _presets;
@@ -84,6 +89,11 @@ class ThemeService {
       orElse: () => _presets.first,
     );
     _apply(found);
+    final corner = prefs.getDouble(_cornerKey);
+    if (corner != null) {
+      GE.cornerFactor = corner.clamp(0.0, 1.0);
+      cornerNotifier.value = GE.cornerFactor;
+    }
   }
 
   Future<void> setPreset(String id) async {
@@ -91,6 +101,14 @@ class ThemeService {
     _apply(p);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_key, id);
+  }
+
+  Future<void> setCornerFactor(double factor) async {
+    final clamped = factor.clamp(0.0, 1.0);
+    GE.cornerFactor = clamped;
+    cornerNotifier.value = clamped;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_cornerKey, clamped);
   }
 
   void _apply(Palette p) {

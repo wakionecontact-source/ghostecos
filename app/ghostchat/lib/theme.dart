@@ -36,10 +36,19 @@ class GE {
   static const glassBlur = 18.0;
   /// Толщина бордера стекла.
   static const glassStroke = 1.0;
-  /// Скругление по умолчанию.
-  static const radiusSm = 10.0;
-  static const radiusMd = 16.0;
-  static const radiusLg = 22.0;
+
+  // ── Скругление углов — настраивается слайдером (Внешний вид → Скругление).
+  // cornerFactor 0.0 = острые углы, 1.0 = максимально круглые. Максимумы
+  // подобраны так, чтобы factor=0.5 (дефолт) давал ТЕ ЖЕ значения, что были
+  // здесь раньше как const — существующий вид не меняется, пока юзер сам не
+  // подвинет слайдер.
+  static const _radiusSmMax = 20.0;
+  static const _radiusMdMax = 32.0;
+  static const _radiusLgMax = 44.0;
+  static double cornerFactor = 0.5;
+  static double get radiusSm => _radiusSmMax * cornerFactor;
+  static double get radiusMd => _radiusMdMax * cornerFactor;
+  static double get radiusLg => _radiusLgMax * cornerFactor;
 
   static ThemeData theme() => ThemeData(
         useMaterial3: true,

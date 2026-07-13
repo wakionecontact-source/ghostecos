@@ -16,6 +16,7 @@ import '../services/permissions_service.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
 import '../widgets/toast_overlay.dart';
+import '../widgets/dotted_border_box.dart';
 import 'devices_screen.dart';
 import 'support_screen.dart';
 import 'logs_screen.dart';
@@ -233,7 +234,13 @@ class _AppearanceScreenState extends State<_AppearanceScreen> {
   Widget build(BuildContext context) {
     return _SectionScaffold(
       title: 'Внешний вид',
-      children: [_sectionTitle('Тема'), _ThemeGrid()],
+      children: [
+        _sectionTitle('Тема'),
+        _ThemeGrid(),
+        const SizedBox(height: 20),
+        _sectionTitle('Скругление'),
+        const _CornerRadiusSlider(),
+      ],
     );
   }
 }
@@ -630,8 +637,9 @@ class _ThemeGrid extends StatelessWidget {
         crossAxisSpacing: 10,
         mainAxisSpacing: 10,
       ),
-      itemCount: presets.length,
+      itemCount: presets.length + 1,
       itemBuilder: (_, i) {
+        if (i == presets.length) return const _CreateThemeCard();
         final p = presets[i];
         final active = p.id == current.id;
         return InkWell(
@@ -703,6 +711,117 @@ class _ThemeGrid extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// Слайдер глобального скругления углов — от острых (90°) до максимально
+/// круглых (45°), метка-градус сидит у самого угла превью-квадрата. Двигает
+/// живьём: ThemeService.setCornerFactor триггерит cornerNotifier, все
+/// GE.radiusSm/Md/Lg пересчитываются геттерами — эффект виден по всему
+/// приложению сразу, не только в этом превью.
+class _CornerRadiusSlider extends StatefulWidget {
+  const _CornerRadiusSlider();
+  @override
+  State<_CornerRadiusSlider> createState() => _CornerRadiusSliderState();
+}
+
+class _CornerRadiusSliderState extends State<_CornerRadiusSlider> {
+  late double _factor = GE.cornerFactor;
+
+  void _onChanged(double v) {
+    setState(() => _factor = v);
+    ThemeService.instance.setCornerFactor(v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final degrees = (90 - 45 * _factor).round();
+    final previewRadius = (10 + 38 * _factor).clamp(0.0, 48.0);
+    return GlassCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          SizedBox(
+            height: 100,
+            child: Center(
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    width: 96,
+                    height: 96,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(colors: [GE.primary2, GE.primary]),
+                      borderRadius: BorderRadius.circular(previewRadius),
+                    ),
+                  ),
+                  Positioned(
+                    left: -8,
+                    top: -8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: GE.bgDeep,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '$degrees°',
+                        style: TextStyle(
+                          color: GE.text,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Row(
+            children: [
+              Text('Острые', style: TextStyle(color: GE.sub, fontSize: 11)),
+              Expanded(
+                child: Slider(
+                  value: _factor,
+                  onChanged: _onChanged,
+                  activeColor: GE.primary,
+                ),
+              ),
+              Text('Круглые', style: TextStyle(color: GE.sub, fontSize: 11)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Заглушка "своя тема" — пока не функциональна (только визуальный стаб),
+/// нажатие даёт понять, что фича готовится, а не молчит без реакции.
+class _CreateThemeCard extends StatelessWidget {
+  const _CreateThemeCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(GE.radiusMd),
+      onTap: () => toast.show('Создание своих тем — скоро'),
+      child: DottedBorderBox(
+        radius: GE.radiusMd,
+        color: GE.sub.withValues(alpha: 0.4),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.add_rounded, color: GE.sub, size: 26),
+            const SizedBox(height: 6),
+            Text('Новая тема',
+                style: TextStyle(
+                    color: GE.sub, fontSize: 13, fontWeight: FontWeight.w600)),
+          ],
+        ),
+      ),
     );
   }
 }
