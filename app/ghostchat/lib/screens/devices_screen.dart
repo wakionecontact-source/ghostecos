@@ -11,6 +11,7 @@ import '../mesh_background.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../widgets/glass.dart';
+import '../widgets/toast_overlay.dart';
 
 class DevicesScreen extends StatefulWidget {
   const DevicesScreen({super.key});
@@ -95,12 +96,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
     }
   }
 
-  void _snack(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
-    );
-  }
+  void _snack(String msg) => toast.show(msg);
 
   @override
   Widget build(BuildContext context) {

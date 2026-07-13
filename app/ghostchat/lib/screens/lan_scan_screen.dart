@@ -17,6 +17,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../widgets/glass.dart';
+import '../widgets/toast_overlay.dart';
 import '../services/permissions_service.dart';
 import '../services/lan_chat_store.dart';
 import '../core/local/app_logger.dart';
@@ -261,10 +262,7 @@ class _LanScanScreenState extends State<LanScanScreen>
     final key = localHub.getKey(deviceId);
     if (key == null) {
       setState(() => _staleContactIds.remove(deviceId));
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Нет активной сессии с этим устройством — дождитесь нового запроса от него'),
-      ));
+      toast.show('Нет активной сессии с этим устройством — дождитесь нового запроса от него');
       return;
     }
     await LanChatStore.instance.createOrGetChat(

@@ -19,6 +19,7 @@ import '../widgets/glass.dart';
 import '../widgets/marquee_text.dart';
 import '../widgets/emoji_picker.dart';
 import '../widgets/empty_chat_state.dart';
+import '../widgets/toast_overlay.dart';
 import '../services/lan_chat_store.dart';
 import '../core/local/local_hub.dart';
 import '../core/local/local_transport.dart';
@@ -77,9 +78,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
       // Идея "уведомлять о разрыве": именно в ЭТОМ чате достаточно тихого
       // тоста, баннер офлайн и так появится — не дублируем текстом дважды.
       if (wasOnline && !e.value) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Устройство отключилось'), duration: Duration(seconds: 2)),
-        );
+        toast.show('Устройство отключилось');
       }
     });
     // Автопопытка при открытии чата — юзеру не нужно тыкать кнопку самому,
@@ -207,10 +206,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
     try {
       final bytes = await file.readAsBytes();
       if (bytes.length > _maxLanFileBytes) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Файл больше 10MB — P2P-канал не резиновый')),
-        );
+        toast.show('Файл больше 10MB — P2P-канал не резиновый');
         return;
       }
       final peerPubB64 = await LanChatStore.instance.getPeerPub(widget.deviceId);
@@ -255,10 +251,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
       });
       _scrollToBottom();
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось отправить файл: $e')),
-      );
+      toast.show('Не удалось отправить файл: $e');
     }
   }
 
@@ -271,10 +264,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
       await f.writeAsBytes(m.fileBytes!, flush: true);
       await OpenFilex.open(path);
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось открыть файл: $e')),
-      );
+      toast.show('Не удалось открыть файл: $e');
     }
   }
 
@@ -382,12 +372,9 @@ class _LanChatScreenState extends State<LanChatScreen> {
         if (!mounted) return;
         final isOnline = localHub.isOnline(widget.deviceId);
         final pingMs = localHub.getPingMs(widget.deviceId);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(isOnline
-              ? (pingMs != null ? 'Понг получен — $pingMs мс' : 'Понг получен')
-              : 'Нет ответа — устройство недоступно'),
-          duration: const Duration(seconds: 2),
-        ));
+        toast.show(isOnline
+            ? (pingMs != null ? 'Понг получен — $pingMs мс' : 'Понг получен')
+            : 'Нет ответа — устройство недоступно');
       } else {
         // Событийно ждём accept ИМЕННО от этого устройства, а не фиксированную
         // паузу — на другой стороне окно сбора сигналов 5 сек (см.
@@ -407,12 +394,9 @@ class _LanChatScreenState extends State<LanChatScreen> {
         );
         await sub.cancel();
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(reconnected
-              ? 'Подключение восстановлено'
-              : 'Устройство не отозвалось — попробуйте ещё раз позже'),
-          duration: const Duration(seconds: 2),
-        ));
+        toast.show(reconnected
+            ? 'Подключение восстановлено'
+            : 'Устройство не отозвалось — попробуйте ещё раз позже');
       }
     } finally {
       if (mounted) setState(() => _pinging = false);

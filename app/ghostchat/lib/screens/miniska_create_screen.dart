@@ -7,6 +7,7 @@ import '../theme.dart';
 import '../mesh_background.dart';
 import '../services/api_client.dart';
 import '../widgets/glass.dart';
+import '../widgets/toast_overlay.dart';
 
 class MiniskaCreateScreen extends StatefulWidget {
   const MiniskaCreateScreen({super.key});
@@ -70,9 +71,7 @@ class _MiniskaCreateScreenState extends State<MiniskaCreateScreen> {
       });
       if (!mounted) return;
       Navigator.pop(context, true);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Миниска опубликована')),
-      );
+      toast.show('Миниска опубликована');
     } catch (e) {
       if (!mounted) return;
       setState(() {

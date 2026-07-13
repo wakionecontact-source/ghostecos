@@ -11,6 +11,7 @@ import '../mesh_background.dart';
 import '../services/api_client.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
+import '../widgets/toast_overlay.dart';
 
 class WrappedScreen extends StatefulWidget {
   final String username;
@@ -63,10 +64,7 @@ class _WrappedScreenState extends State<WrappedScreen> {
   Future<void> _share() async {
     final url = '${GE.baseUrl}/wrapped/${widget.username}';
     await Clipboard.setData(ClipboardData(text: url));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Ссылка скопирована')),
-    );
+    toast.show('Ссылка скопирована');
   }
 
   Future<void> _openInBrowser() async {

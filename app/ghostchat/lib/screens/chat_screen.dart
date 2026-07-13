@@ -34,6 +34,7 @@ import '../widgets/attach_sheet.dart';
 import '../widgets/glass.dart';
 import '../widgets/marquee_text.dart';
 import '../widgets/empty_chat_state.dart';
+import '../widgets/toast_overlay.dart';
 import 'profile_screen.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -612,12 +613,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  void _snack(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
-    );
-  }
+  void _snack(String msg) => toast.show(msg);
 
   // Эмодзи-панель выезжает СНИЗУ, composer остаётся НАД ней (как клавиатура).
   void _toggleEmoji() {
@@ -2819,11 +2815,7 @@ class _MediaPartState extends State<_MediaPart> {
       b = _bytes;
     }
     if (b == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Не удалось открыть файл')),
-        );
-      }
+      toast.show('Не удалось открыть файл');
       return;
     }
     try {
@@ -2845,11 +2837,7 @@ class _MediaPartState extends State<_MediaPart> {
       // type=MIME помогает Android выбрать правильное приложение (плеер и т.п.).
       await OpenFilex.open(path, type: mime.isNotEmpty ? mime : null);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Не открылось: $e')),
-        );
-      }
+      toast.show('Не открылось: $e');
     }
   }
 
@@ -2880,11 +2868,7 @@ class _MediaPartState extends State<_MediaPart> {
         ),
       );
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Не открылось видео: $e')),
-        );
-      }
+      toast.show('Не открылось видео: $e');
     }
   }
 
@@ -3136,9 +3120,7 @@ class _VideoViewerState extends State<_VideoViewer> {
       // Без этого при сбое декодера экран висит чёрным («не играет»).
       if (!mounted) return;
       Navigator.of(context).maybePop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Видео не воспроизводится: $e')),
-      );
+      toast.show('Видео не воспроизводится: $e');
     });
     c.addListener(_onTick);
   }

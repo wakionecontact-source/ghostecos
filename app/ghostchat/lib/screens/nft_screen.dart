@@ -16,6 +16,7 @@ import '../mesh_background.dart';
 import '../services/api_client.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
+import '../widgets/toast_overlay.dart';
 
 class NftScreen extends StatefulWidget {
   const NftScreen({super.key});
@@ -110,14 +111,10 @@ class _NftScreenState extends State<NftScreen> with TickerProviderStateMixin {
     try {
       await _api.socPost('/nft/buy/$nftId', {});
       HapticFeedback.mediumImpact();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Куплено')),
-      );
+      toast.show('Куплено');
       _loadAll();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось купить: $e')),
-      );
+      toast.show('Не удалось купить: $e');
     }
   }
 

@@ -9,6 +9,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../theme.dart';
 import '../services/ws_client.dart';
+import 'toast_overlay.dart';
 
 class ConnectivityBadge extends StatefulWidget {
   final bool isGuest;
@@ -54,12 +55,6 @@ class _ConnectivityBadgeState extends State<ConnectivityBadge> {
     super.dispose();
   }
 
-  void _showInfo(String text) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(text), behavior: SnackBarBehavior.floating),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     // Жёлтый приоритетнее: если нет интернета, до сервера всё равно не
@@ -78,7 +73,7 @@ class _ConnectivityBadgeState extends State<ConnectivityBadge> {
       bottom: 0,
       child: Center(
         child: GestureDetector(
-          onTap: () => _showInfo(text),
+          onTap: () => toast.show(text, level: noInternet ? ToastLevel.warn : ToastLevel.error),
           child: Container(
             width: 34,
             height: 34,

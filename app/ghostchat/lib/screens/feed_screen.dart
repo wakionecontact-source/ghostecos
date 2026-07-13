@@ -27,6 +27,7 @@ import '../services/auth_service.dart';
 import '../services/feed_repo.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
+import '../widgets/toast_overlay.dart';
 import 'comments_screen.dart';
 import 'profile_screen.dart';
 
@@ -109,12 +110,7 @@ class _FeedScreenState extends State<FeedScreen> {
     if (mounted) setState(() => _loadingFirst = false);
   }
 
-  void _snack(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
-    );
-  }
+  void _snack(String msg) => toast.show(msg);
 
   @override
   Widget build(BuildContext context) {
@@ -1241,8 +1237,7 @@ class _PostCardState extends State<_PostCard> {
               Navigator.pop(sheetCtx, true);
             } catch (e) {
               setSheet(() => sending = false);
-              ScaffoldMessenger.of(innerCtx).showSnackBar(
-                  SnackBar(content: Text('Не отправилось: $e')));
+              toast.show('Не отправилось: $e');
             }
           }
           return Padding(
@@ -1842,9 +1837,7 @@ class _PollWidgetState extends State<_PollWidget> {
     try {
       await FeedRepo.instance.votePoll(widget.post.id, idx);
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не получилось проголосовать: $e')),
-      );
+      toast.show('Не получилось проголосовать: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }

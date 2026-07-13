@@ -18,6 +18,7 @@ import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
+import '../widgets/toast_overlay.dart';
 import 'profile_screen.dart';
 
 class CommentsScreen extends StatefulWidget {
@@ -219,12 +220,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
     _load(reset: true);
   }
 
-  void _snack(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
-    );
-  }
+  void _snack(String msg) => toast.show(msg);
 
   @override
   void dispose() {

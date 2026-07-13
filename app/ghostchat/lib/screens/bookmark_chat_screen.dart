@@ -13,6 +13,7 @@ import '../mesh_background.dart';
 import '../widgets/glass.dart';
 import '../widgets/emoji_picker.dart';
 import '../widgets/empty_chat_state.dart';
+import '../widgets/toast_overlay.dart';
 import '../services/bookmark_store.dart';
 
 class BookmarkChatScreen extends StatefulWidget {
@@ -104,10 +105,7 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
       });
       _scrollToBottom();
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось прикрепить файл: $e')),
-      );
+      toast.show('Не удалось прикрепить файл: $e');
     }
   }
 
@@ -120,10 +118,7 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
       await f.writeAsBytes(m.fileBytes!, flush: true);
       await OpenFilex.open(path);
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось открыть файл: $e')),
-      );
+      toast.show('Не удалось открыть файл: $e');
     }
   }
 

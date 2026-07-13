@@ -15,6 +15,7 @@ import '../services/feed_repo.dart';
 import '../services/social_repo.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
+import '../widgets/toast_overlay.dart';
 import 'feed_screen.dart';
 import 'miniska_create_screen.dart';
 import 'profile_screen.dart';
@@ -74,9 +75,7 @@ class _SocialPaneState extends State<SocialPane> {
                 setSheet(() => publishing = false);
               }
             } catch (e) {
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Картинка не загрузилась: $e')));
+              toast.show('Картинка не загрузилась: $e');
             }
           }
 
@@ -88,13 +87,11 @@ class _SocialPaneState extends State<SocialPane> {
               await FeedRepo.instance.publish(text, media: attachments, isNsfw: nsfw);
               if (!mounted) return;
               Navigator.pop(sheetCtx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Опубликовано')));
+              toast.show('Опубликовано');
               // Переключим на ленту чтобы юзер увидел свой пост
               setState(() => _index = 0);
             } catch (e) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Не опубликовалось: $e')));
+              toast.show('Не опубликовалось: $e');
             } finally {
               setSheet(() => publishing = false);
             }

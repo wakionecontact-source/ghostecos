@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../widgets/glass.dart';
+import '../widgets/toast_overlay.dart';
 
 class SupportScreen extends StatelessWidget {
   const SupportScreen({super.key});
@@ -161,7 +162,7 @@ class SupportScreen extends StatelessWidget {
                   Clipboard.setData(
                     const ClipboardData(text: _supportHandle),
                   );
-                  _snack(context, 'Скопировано');
+                  _snack('Скопировано');
                 },
               ),
             ],
@@ -171,7 +172,7 @@ class SupportScreen extends StatelessWidget {
             label: 'Открыть канал',
             icon: Icons.open_in_new,
             fullWidth: true,
-            onTap: () => _snack(context, 'Скоро'),
+            onTap: () => _snack('Скоро'),
           ),
         ],
       ),
@@ -191,11 +192,7 @@ class SupportScreen extends StatelessWidget {
         ),
       );
 
-  void _snack(BuildContext context, String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
-    );
-  }
+  void _snack(String msg) => toast.show(msg);
 }
 
 // ────────────────────────────────────────────────────────────────────────
