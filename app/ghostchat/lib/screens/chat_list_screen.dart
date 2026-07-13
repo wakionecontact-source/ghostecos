@@ -708,7 +708,32 @@ class _DialogTile extends StatelessWidget {
                         builder: (_) => ProfileScreen(username: d.username),
                       ),
                     ),
-              child: _Avatar(d.displayName, size: 48),
+              child: d.username.startsWith('g:')
+                  ? _Avatar(d.displayName, size: 48)
+                  : Stack(
+                      children: [
+                        _Avatar(d.displayName, size: 48),
+                        Positioned(
+                          right: -1,
+                          bottom: -1,
+                          child: ValueListenableBuilder<bool>(
+                            valueListenable:
+                                ChatRepo.instance.watchPresence(d.username),
+                            builder: (_, online, _) => online
+                                ? Container(
+                                    width: 13,
+                                    height: 13,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: GE.green,
+                                      border: Border.all(color: GE.bg, width: 2),
+                                    ),
+                                  )
+                                : const SizedBox.shrink(),
+                          ),
+                        ),
+                      ],
+                    ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -864,9 +889,17 @@ class _LanDialogTile extends StatelessWidget {
           children: [
             Stack(
               children: [
-                _Avatar(d.displayName, size: 48),
+                _Avatar(
+                  d.displayName,
+                  size: 48,
+                  icon: Icons.wifi_tethering_rounded,
+                  colors: [GE.green, GE.blue],
+                ),
+                // Бейдж типа — слева-снизу, чтобы справа-снизу было место под
+                // индикатор "в сети" (см. StreamBuilder ниже, живёт в строке
+                // с именем — тут отдельного дублирующего дота не нужно).
                 Positioned(
-                  right: -1,
+                  left: -1,
                   bottom: -1,
                   child: Container(
                     padding: const EdgeInsets.all(2),
@@ -963,9 +996,16 @@ class _BookmarkDialogTile extends StatelessWidget {
           children: [
             Stack(
               children: [
-                _Avatar(d.displayName, size: 48),
+                _Avatar(
+                  d.displayName,
+                  size: 48,
+                  icon: _isDefault ? Icons.star_rounded : Icons.bookmark_rounded,
+                  colors: _isDefault
+                      ? [GE.yellow, GE.primary2]
+                      : [GE.primary2, GE.primary],
+                ),
                 Positioned(
-                  right: -1,
+                  left: -1,
                   bottom: -1,
                   child: Container(
                     padding: const EdgeInsets.all(2),
@@ -1132,7 +1172,12 @@ class _MessageHitTile extends StatelessWidget {
 class _Avatar extends StatelessWidget {
   final String name;
   final double size;
-  const _Avatar(this.name, {this.size = 44});
+  // Особые типы чатов (Избранное/Закладка/LAN) получают свою иконку и
+  // градиент вместо инициала — отличимы от обычного контакта с первого
+  // взгляда, а не только по мелкому бейджику в углу.
+  final IconData? icon;
+  final List<Color>? colors;
+  const _Avatar(this.name, {this.size = 44, this.icon, this.colors});
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -1140,17 +1185,19 @@ class _Avatar extends StatelessWidget {
       height: size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        gradient: LinearGradient(colors: [GE.primary2, GE.primary]),
+        gradient: LinearGradient(colors: colors ?? [GE.primary2, GE.primary]),
       ),
       alignment: Alignment.center,
-      child: Text(
-        name.isNotEmpty ? name[0].toUpperCase() : '?',
-        style: TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.w800,
-          fontSize: size * 0.4,
-        ),
-      ),
+      child: icon != null
+          ? Icon(icon, color: Colors.white, size: size * 0.46)
+          : Text(
+              name.isNotEmpty ? name[0].toUpperCase() : '?',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: size * 0.4,
+              ),
+            ),
     );
   }
 }
