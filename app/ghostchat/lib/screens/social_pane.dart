@@ -295,14 +295,14 @@ class _SocialPaneState extends State<SocialPane> {
               duration: const Duration(milliseconds: 200),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
+                // Активная плитка — сплошной градиент (не полупрозрачный):
+                // текст/иконка тут белые хардкодом, полупрозрачная заливка
+                // на светлой теме просвечивала бы страницей и роняла контраст.
                 gradient: active
                     ? LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
-                        colors: [
-                          GE.primary.withValues(alpha: 0.30),
-                          GE.primary2.withValues(alpha: 0.18),
-                        ],
+                        colors: [GE.primary, GE.primary2],
                       )
                     : LinearGradient(
                         begin: Alignment.topLeft,
@@ -317,7 +317,7 @@ class _SocialPaneState extends State<SocialPane> {
                 border: Border.all(
                   color: active
                       ? GE.primary.withValues(alpha: 0.75)
-                      : Colors.white.withValues(alpha: 0.14),
+                      : GE.glassBorder,
                   width: active ? 1.2 : 0.8,
                 ),
                 boxShadow: [

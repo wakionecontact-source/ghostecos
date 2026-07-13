@@ -288,7 +288,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final name = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF0F172A),
+        backgroundColor: GE.bgDeep,
         title: Text('Новая закладка', style: TextStyle(color: GE.text)),
         content: TextField(
           controller: ctrl,
@@ -489,7 +489,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final username = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF0F172A),
+        backgroundColor: GE.bgDeep,
         title: Text('Новый чат', style: TextStyle(color: GE.text)),
         content: TextField(
           controller: ctrl,
@@ -660,7 +660,7 @@ class _DialogTile extends StatelessWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (dctx) => AlertDialog(
-        backgroundColor: const Color(0xFF0F172A),
+        backgroundColor: GE.bgDeep,
         title: Text('Очистить историю?', style: TextStyle(color: GE.text)),
         content: Text(
           'Сообщения чата с ${d.displayName} удалятся с этого устройства. '
@@ -829,7 +829,7 @@ class _LanDialogTile extends StatelessWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (dctx) => AlertDialog(
-        backgroundColor: const Color(0xFF0F172A),
+        backgroundColor: GE.bgDeep,
         title: Text('Очистить историю?', style: TextStyle(color: GE.text)),
         content: Text(
           'Переписка с ${d.displayName} по LAN удалится с этого устройства. '

@@ -117,8 +117,15 @@ class _Root extends StatelessWidget {
       children: [
         // Глубокий фон на весь апп — берёт цвета активной темы (чтобы светлая
         // «Слоновая кость» не оставалась на тёмном фоне).
+        // AnimatedContainer вместо DecoratedBox — при смене темы фон плавно
+        // перетекает старыми цветами в новые (BoxDecoration/LinearGradient
+        // анимируется "из коробки" через DecorationTween), а не щёлкает
+        // мгновенно. _Root/_Router своё состояние не теряют — это тот же
+        // виджет на том же месте дерева, просто с новым decoration.
         Positioned.fill(
-          child: DecoratedBox(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 420),
+            curve: Curves.easeInOut,
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,

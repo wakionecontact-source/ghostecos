@@ -96,7 +96,7 @@ class _NftScreenState extends State<NftScreen> with TickerProviderStateMixin {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF0F172A),
+        backgroundColor: GE.bgDeep,
         title: Text('Купить NFT?', style: TextStyle(color: GE.text)),
         content: Text('Цена: $price $currency',
             style: TextStyle(color: GE.sub, fontSize: 14)),

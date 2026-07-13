@@ -654,8 +654,11 @@ class _ThemeGrid extends StatelessWidget {
                 end: Alignment.bottomRight,
               ),
               borderRadius: BorderRadius.circular(GE.radiusMd),
+              // p.borderStrong (не хардкод white) — у каждого пресета свой
+              // адаптивный тон, иначе на светлой "Слоновой кости" рамка
+              // неактивной плитки была не видна на её же светлом фоне.
               border: Border.all(
-                color: active ? p.primary : Colors.white.withValues(alpha: 0.1),
+                color: active ? p.primary : p.borderStrong,
                 width: active ? 2 : 1,
               ),
               boxShadow: active

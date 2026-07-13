@@ -2068,12 +2068,9 @@ Widget _dateChip(dynamic at) {
       margin: const EdgeInsets.symmetric(vertical: 10),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.06),
+        color: GE.glassFill,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.08),
-          width: 0.5,
-        ),
+        border: Border.all(color: GE.glassBorder, width: 0.5),
       ),
       child: Text(
         _msgDateLabel(at),

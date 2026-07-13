@@ -435,10 +435,10 @@ class _SortChip extends StatelessWidget {
         duration: const Duration(milliseconds: 160),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: active ? GE.primary.withValues(alpha: 0.20) : Colors.white.withValues(alpha: 0.04),
+          color: active ? GE.primary.withValues(alpha: 0.20) : GE.glassFill,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: active ? GE.primary : Colors.white.withValues(alpha: 0.06),
+            color: active ? GE.primary : GE.glassBorder,
             width: active ? 1.2 : 0.6,
           ),
         ),

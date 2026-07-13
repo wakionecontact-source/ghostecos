@@ -954,7 +954,7 @@ class _PostCardState extends State<_PostCard> {
                         decoration: BoxDecoration(
                           color: p.myReaction == e.key
                               ? GE.primary.withValues(alpha: 0.18)
-                              : Colors.white.withValues(alpha: 0.04),
+                              : GE.glassFill,
                           borderRadius: BorderRadius.circular(99),
                           border: p.myReaction == e.key
                               ? Border.all(
@@ -1347,7 +1347,7 @@ class _PostCardState extends State<_PostCard> {
     final next = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF0F172A),
+        backgroundColor: GE.bgDeep,
         title: Text('Редактировать пост', style: TextStyle(color: GE.text)),
         content: TextField(
           controller: ctrl,
@@ -1378,7 +1378,7 @@ class _PostCardState extends State<_PostCard> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF0F172A),
+        backgroundColor: GE.bgDeep,
         title: Text('Удалить пост?', style: TextStyle(color: GE.text)),
         content: Text('Действие нельзя отменить.',
             style: TextStyle(color: GE.sub)),
@@ -1851,7 +1851,7 @@ class _PollWidgetState extends State<_PollWidget> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.04),
+        color: GE.glassFill,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: GE.glassBorder),
       ),

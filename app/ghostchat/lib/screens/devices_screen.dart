@@ -68,7 +68,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF0F172A),
+        backgroundColor: GE.bgDeep,
         title: Text('Отозвать устройство?',
             style: TextStyle(color: GE.text)),
         content: Text(
