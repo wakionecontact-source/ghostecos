@@ -4,6 +4,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'api_client.dart';
+import 'optimistic_action.dart';
 
 class FeedMedia {
   final String type; // 'image' | 'video' | 'audio'
@@ -334,46 +335,58 @@ class FeedRepo {
     await loadMore();
   }
 
-  /// Поставить/снять реакцию.
+  /// Поставить/снять реакцию. Оптимистично — счётчик реагирует сразу,
+  /// откатывается назад, если сервер не подтвердил за 5с/вернул ошибку.
   Future<void> react(int postId, String emoji) async {
     final list = [...postsNotifier.value];
     final i = list.indexWhere((p) => p.id == postId);
     if (i < 0) return;
     final p = list[i];
-    // optimistic
-    final prev = p.myReaction;
-    if (prev == emoji) {
-      p.reactions.update(emoji, (v) => (v - 1).clamp(0, 9999), ifAbsent: () => 0);
-      p.myReaction = null;
-    } else {
-      if (prev != null) {
-        p.reactions.update(prev, (v) => (v - 1).clamp(0, 9999), ifAbsent: () => 0);
-      }
-      p.reactions.update(emoji, (v) => v + 1, ifAbsent: () => 1);
-      p.myReaction = emoji;
-    }
-    postsNotifier.value = list;
-    try {
-      await _api.socPost('/react/$postId', {'emoji': emoji});
-    } catch (e) {
-      if (kDebugMode) print('[FeedRepo.react] $e');
-    }
+    final prevReaction = p.myReaction;
+    final prevCounts = Map<String, int>.from(p.reactions);
+    await optimisticAction(
+      apply: () {
+        if (prevReaction == emoji) {
+          p.reactions.update(emoji, (v) => (v - 1).clamp(0, 9999), ifAbsent: () => 0);
+          p.myReaction = null;
+        } else {
+          if (prevReaction != null) {
+            p.reactions.update(prevReaction, (v) => (v - 1).clamp(0, 9999), ifAbsent: () => 0);
+          }
+          p.reactions.update(emoji, (v) => v + 1, ifAbsent: () => 1);
+          p.myReaction = emoji;
+        }
+        postsNotifier.value = list;
+      },
+      request: () async => _api.socPost('/react/$postId', {'emoji': emoji}),
+      undo: () {
+        p.myReaction = prevReaction;
+        p.reactions
+          ..clear()
+          ..addAll(prevCounts);
+        postsNotifier.value = [...postsNotifier.value];
+      },
+      failureMessage: 'Реакция не сохранилась',
+    );
   }
 
-  /// Репостнуть пост в свой профиль.
+  /// Репостнуть пост в свой профиль. Оптимистично.
   Future<void> repost(int postId) async {
-    try {
-      await _api.socPost('/post/$postId/repost');
-      final list = [...postsNotifier.value];
-      final i = list.indexWhere((p) => p.id == postId);
-      if (i >= 0) {
+    final list = [...postsNotifier.value];
+    final i = list.indexWhere((p) => p.id == postId);
+    if (i < 0) return;
+    await optimisticAction(
+      apply: () {
         list[i].reposted = true;
         postsNotifier.value = list;
-      }
-    } catch (e) {
-      if (kDebugMode) print('[FeedRepo.repost] $e');
-      rethrow;
-    }
+      },
+      request: () async => _api.socPost('/post/$postId/repost'),
+      undo: () {
+        list[i].reposted = false;
+        postsNotifier.value = [...list];
+      },
+      failureMessage: 'Не репостнулось',
+    );
   }
 
   /// Опубликовать новый пост с медиа и NSFW.
@@ -428,20 +441,48 @@ class FeedRepo {
     }
   }
 
-  /// Голосование в опросе. Возвращает обновлённый state опроса.
+  /// Голосование в опросе. Оптимистично — локально прибавляем голос сразу,
+  /// сервер потом присылает авторитетные счётчики (перезаписываем ими же).
   Future<PollData?> votePoll(int postId, int optionIdx) async {
-    final r = await _api.socPost('/post/$postId/vote', {'option_idx': optionIdx});
-    if (r is! Map) return null;
-    final updated = PollData.tryParse(r);
-    if (updated != null) {
-      final list = [...postsNotifier.value];
-      final i = list.indexWhere((p) => p.id == postId);
-      if (i >= 0) {
-        list[i].poll = updated;
+    final list = [...postsNotifier.value];
+    final i = list.indexWhere((p) => p.id == postId);
+    if (i < 0) return null;
+    final poll = list[i].poll;
+    if (poll == null) return null;
+    final prevMyVote = poll.myVote;
+    final prevCounts = Map<int, int>.from(poll.counts);
+    final prevTotal = poll.total;
+    PollData? serverResult;
+    await optimisticAction(
+      apply: () {
+        if (prevMyVote != null) {
+          poll.counts.update(prevMyVote, (v) => (v - 1).clamp(0, 999999), ifAbsent: () => 0);
+        } else {
+          poll.total = prevTotal + 1;
+        }
+        poll.counts.update(optionIdx, (v) => v + 1, ifAbsent: () => 1);
+        poll.myVote = optionIdx;
         postsNotifier.value = list;
-      }
+      },
+      request: () async {
+        final r = await _api.socPost('/post/$postId/vote', {'option_idx': optionIdx});
+        if (r is Map) serverResult = PollData.tryParse(r);
+      },
+      undo: () {
+        poll.myVote = prevMyVote;
+        poll.counts
+          ..clear()
+          ..addAll(prevCounts);
+        poll.total = prevTotal;
+        postsNotifier.value = [...postsNotifier.value];
+      },
+      failureMessage: 'Голос не засчитался',
+    );
+    if (serverResult != null) {
+      list[i].poll = serverResult;
+      postsNotifier.value = [...postsNotifier.value];
     }
-    return updated;
+    return serverResult;
   }
 
   /// Аплоад файла (картинка/видео/аудио) → возвращает FeedMedia.
@@ -453,42 +494,66 @@ class FeedRepo {
     return FeedMedia(type: type, url: url);
   }
 
-  /// Удалить пост (только свой).
+  /// Удалить пост (только свой). Оптимистично — пропадает из ленты сразу,
+  /// возвращается на прежнее место, если сервер отказал.
   Future<void> deletePost(int postId) async {
-    await _api.socDelete('/post/$postId');
-    final list = postsNotifier.value.where((p) => p.id != postId).toList();
-    postsNotifier.value = list;
+    final list = postsNotifier.value;
+    final i = list.indexWhere((p) => p.id == postId);
+    if (i < 0) return;
+    final removed = list[i];
+    await optimisticAction(
+      apply: () {
+        final next = [...postsNotifier.value]..removeAt(i);
+        postsNotifier.value = next;
+      },
+      request: () async => _api.socDelete('/post/$postId'),
+      undo: () {
+        final next = [...postsNotifier.value];
+        next.insert(i.clamp(0, next.length), removed);
+        postsNotifier.value = next;
+      },
+      failureMessage: 'Не удалилось',
+    );
   }
 
-  /// Редактировать пост (только свой, окно времени).
+  /// Редактировать пост (только свой, окно времени). Оптимистично.
   Future<void> editPost(int postId, {String? text, bool? isNsfw}) async {
-    await _api.socPatch('/post/$postId', {
-      if (text != null) 'text': text,
-      if (isNsfw != null) 'is_nsfw': isNsfw,
-    });
-    // Не делаем refresh — обновим только этот пост из локального состояния.
     final list = [...postsNotifier.value];
     final i = list.indexWhere((p) => p.id == postId);
-    if (i >= 0 && text != null) {
-      // Создаём «обновлённый» FeedPost (FeedPost immutable text/createdAt — пересоздаём).
-      final old = list[i];
-      list[i] = FeedPost(
-        id: old.id, userId: old.userId, content: text,
-        authorUsername: old.authorUsername, authorDisplayName: old.authorDisplayName,
-        createdAt: old.createdAt, editedAt: DateTime.now().toUtc().toIso8601String(),
-        media: old.media, isNsfw: isNsfw ?? old.isNsfw,
-        nsfwSetByAdmin: old.nsfwSetByAdmin,
-        commentsCount: old.commentsCount, viewsCount: old.viewsCount,
-        repostsCount: old.repostsCount, activity: old.activity,
-        reactions: Map<String, int>.from(old.reactions), myReaction: old.myReaction,
-        reposted: old.reposted, followed: old.followed,
-        isRepost: old.isRepost, fromChannel: old.fromChannel,
-      );
-      postsNotifier.value = list;
-    }
+    if (i < 0 || text == null) return;
+    final old = list[i];
+    await optimisticAction(
+      apply: () {
+        list[i] = FeedPost(
+          id: old.id, userId: old.userId, content: text,
+          authorUsername: old.authorUsername, authorDisplayName: old.authorDisplayName,
+          createdAt: old.createdAt, editedAt: DateTime.now().toUtc().toIso8601String(),
+          media: old.media, isNsfw: isNsfw ?? old.isNsfw,
+          nsfwSetByAdmin: old.nsfwSetByAdmin,
+          commentsCount: old.commentsCount, viewsCount: old.viewsCount,
+          repostsCount: old.repostsCount, activity: old.activity,
+          reactions: Map<String, int>.from(old.reactions), myReaction: old.myReaction,
+          reposted: old.reposted, followed: old.followed,
+          isRepost: old.isRepost, fromChannel: old.fromChannel,
+        );
+        postsNotifier.value = list;
+      },
+      request: () async => _api.socPatch('/post/$postId', {
+        'text': text,
+        if (isNsfw != null) 'is_nsfw': isNsfw,
+      }),
+      undo: () {
+        final reverted = [...postsNotifier.value];
+        final j = reverted.indexWhere((p) => p.id == postId);
+        if (j >= 0) reverted[j] = old;
+        postsNotifier.value = reverted;
+      },
+      failureMessage: 'Не сохранилось',
+    );
   }
 
-  /// Подписаться / отписаться от автора. Обновляет followed во всех его постах.
+  /// Подписаться / отписаться от автора. Оптимистично обновляет followed
+  /// во всех его постах в ленте сразу, откатывает при отказе сервера.
   Future<void> toggleFollow(String username) async {
     final list = postsNotifier.value;
     final currentlyFollowing = list
@@ -498,22 +563,32 @@ class FeedRepo {
               createdAt: null,
             ))
         .followed;
-    try {
-      if (currentlyFollowing) {
-        await _api.socDelete('/follow/$username');
-      } else {
-        await _api.socPost('/follow/$username');
-      }
-      final updated = list.map((p) {
-        if (p.authorUsername != username) return p;
-        p.followed = !currentlyFollowing;
-        return p;
-      }).toList();
-      postsNotifier.value = updated;
-    } catch (e) {
-      if (kDebugMode) print('[FeedRepo.toggleFollow] $e');
-      rethrow;
-    }
+    await optimisticAction(
+      apply: () {
+        final updated = postsNotifier.value.map((p) {
+          if (p.authorUsername != username) return p;
+          p.followed = !currentlyFollowing;
+          return p;
+        }).toList();
+        postsNotifier.value = updated;
+      },
+      request: () async {
+        if (currentlyFollowing) {
+          await _api.socDelete('/follow/$username');
+        } else {
+          await _api.socPost('/follow/$username');
+        }
+      },
+      undo: () {
+        final reverted = postsNotifier.value.map((p) {
+          if (p.authorUsername != username) return p;
+          p.followed = currentlyFollowing;
+          return p;
+        }).toList();
+        postsNotifier.value = reverted;
+      },
+      failureMessage: 'Не вышло',
+    );
   }
 
   /// Отметить пост просмотренным (для алгоритмической ленты).

@@ -1003,10 +1003,9 @@ class _PostCardState extends State<_PostCard> {
         // Репост
         InkWell(
           onTap: p.reposted ? null : () async {
-            try {
-              await FeedRepo.instance.repost(p.id);
-              HapticFeedback.lightImpact();
-            } catch (e) { widget.onError('Не репостнулось: $e'); }
+            HapticFeedback.lightImpact();
+            // repost() уже оптимистичен и сам показывает тост на неудачу.
+            await FeedRepo.instance.repost(p.id).catchError((_) {});
           },
           borderRadius: BorderRadius.circular(14),
           child: Padding(
@@ -1029,12 +1028,9 @@ class _PostCardState extends State<_PostCard> {
   }
 
   Future<void> _toggleFollow() async {
-    try {
-      await FeedRepo.instance.toggleFollow(widget.p.authorUsername);
-      HapticFeedback.selectionClick();
-    } catch (e) {
-      widget.onError('Не вышло: $e');
-    }
+    HapticFeedback.selectionClick();
+    // toggleFollow уже оптимистичен, свой тост на неудачу показывает сам.
+    await FeedRepo.instance.toggleFollow(widget.p.authorUsername).catchError((_) {});
   }
 
   Future<void> _openReactionPicker() async {
@@ -1366,11 +1362,12 @@ class _PostCardState extends State<_PostCard> {
       ),
     );
     if (next == null || next.isEmpty) return;
+    // editPost уже оптимистичен, свой тост на неудачу показывает сам.
     try {
       await FeedRepo.instance.editPost(p.id, text: next);
       widget.onError('Сохранено');
-    } catch (e) {
-      widget.onError('Не сохранилось: $e');
+    } catch (_) {
+      // no-op — уже отработано в editPost
     }
   }
 
@@ -1392,11 +1389,12 @@ class _PostCardState extends State<_PostCard> {
       ),
     );
     if (ok != true) return;
+    // deletePost уже оптимистичен, свой тост на неудачу показывает сам.
     try {
       await FeedRepo.instance.deletePost(p.id);
       widget.onError('Удалено');
-    } catch (e) {
-      widget.onError('Не удалилось: $e');
+    } catch (_) {
+      // no-op — уже отработано в deletePost
     }
   }
 }
@@ -1834,10 +1832,12 @@ class _PollWidgetState extends State<_PollWidget> {
     if (poll == null || poll.myVote != null) return;
     setState(() => _busy = true);
     HapticFeedback.selectionClick();
+    // Голос применяется локально сразу внутри votePoll (optimisticAction) —
+    // свой тост на неудачу оно уже показывает, тут дублировать не нужно.
     try {
       await FeedRepo.instance.votePoll(widget.post.id, idx);
-    } catch (e) {
-      toast.show('Не получилось проголосовать: $e');
+    } catch (_) {
+      // no-op — уже отработано в votePoll
     } finally {
       if (mounted) setState(() => _busy = false);
     }

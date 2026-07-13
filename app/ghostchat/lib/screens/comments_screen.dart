@@ -146,28 +146,66 @@ class _CommentsScreenState extends State<CommentsScreen> {
     });
   }
 
+  // Оптимистично: комментарий появляется в списке сразу (плейсхолдер с
+  // отрицательным id, чтобы не столкнуться с настоящими id с сервера).
+  // Успех — последующий reload (_load/_loadReplies) естественно заменяет
+  // весь список настоящими данными, плейсхолдер сам исчезает. Неудача —
+  // убираем плейсхолдер вручную и возвращаем текст в поле.
   Future<void> _send() async {
     final t = _ctrl.text.trim();
     if (t.isEmpty || _sending) return;
     setState(() => _sending = true);
     final replyParent = _replyParentCid;
+    final me = _myUsername ?? '';
+    final placeholderId = -DateTime.now().millisecondsSinceEpoch;
+    final placeholder = _Comment(
+      id: placeholderId,
+      username: me,
+      displayName: me,
+      text: t,
+      createdAt: DateTime.now().toUtc().toIso8601String(),
+      parentId: replyParent,
+      replyToUsername: _replyToUsername,
+      replyToText: _replyToText,
+    );
+    setState(() {
+      if (replyParent == null) {
+        _items.insert(0, placeholder);
+      } else {
+        (_replies[replyParent] ??= []).insert(0, placeholder);
+        final idx = _items.indexWhere((x) => x.id == replyParent);
+        if (idx >= 0) _items[idx].repliesCount += 1;
+      }
+    });
+    _ctrl.clear();
+    _exitReplyMode();
+    HapticFeedback.lightImpact();
     try {
       final body = <String, dynamic>{'text': t};
       if (replyParent != null) body['parent_comment_id'] = replyParent;
-      await _api.socPost('/com/${widget.postId}', body);
-      _ctrl.clear();
-      _exitReplyMode();
-      HapticFeedback.lightImpact();
+      await _api.socPost('/com/${widget.postId}', body)
+          .timeout(const Duration(seconds: 5));
+      if (!mounted) return;
       if (replyParent != null) {
         await _loadReplies(replyParent);
-        final idx = _items.indexWhere((x) => x.id == replyParent);
-        if (idx >= 0) {
-          setState(() => _items[idx].repliesCount = _items[idx].repliesCount + 1);
-        }
       } else {
         await _load(reset: true);
       }
     } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        if (replyParent == null) {
+          _items.removeWhere((c) => c.id == placeholderId);
+        } else {
+          _replies[replyParent]?.removeWhere((c) => c.id == placeholderId);
+          final idx = _items.indexWhere((x) => x.id == replyParent);
+          if (idx >= 0) {
+            _items[idx].repliesCount =
+                (_items[idx].repliesCount - 1).clamp(0, 999999);
+          }
+        }
+      });
+      _ctrl.text = t;
       _snack('Не отправилось: $e');
     } finally {
       if (mounted) setState(() => _sending = false);

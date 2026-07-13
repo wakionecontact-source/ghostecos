@@ -12,6 +12,7 @@ import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../widgets/glass.dart';
 import '../widgets/toast_overlay.dart';
+import '../services/optimistic_action.dart';
 
 class DevicesScreen extends StatefulWidget {
   const DevicesScreen({super.key});
@@ -87,12 +88,17 @@ class _DevicesScreenState extends State<DevicesScreen> {
       ),
     );
     if (ok != true) return;
+    final i = _devices.indexOf(d);
     try {
-      await _api.chatPost('/devices/${d['id']}/revoke');
-      await _load();
+      await optimisticAction(
+        apply: () => setState(() => _devices.removeAt(i)),
+        request: () async => _api.chatPost('/devices/${d['id']}/revoke'),
+        undo: () => setState(() => _devices.insert(i.clamp(0, _devices.length), d)),
+        failureMessage: 'Не удалось отозвать устройство',
+      );
       _snack('Устройство отозвано');
-    } catch (e) {
-      _snack('Не удалось: $e');
+    } catch (_) {
+      // no-op — уже отработано в optimisticAction
     }
   }
 

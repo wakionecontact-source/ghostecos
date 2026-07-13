@@ -14,9 +14,9 @@ import '../theme.dart';
 import '../mesh_background.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
+import '../services/optimistic_action.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
-import '../widgets/toast_overlay.dart';
 import 'chat_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -122,32 +122,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.dispose();
   }
 
+  // Оптимистично — кнопка и счётчик переключаются мгновенно, без спиннера
+  // (сам смысл "механики майнкрафта": ждать нечего, состояние уже верное).
+  // _followBusy остаётся только как защита от дабл-тапа, пока запрос летит.
   Future<void> _toggleFollow() async {
     if (_followBusy || _profile == null) return;
-    setState(() => _followBusy = true);
+    _followBusy = true;
     final wasFollowing = (_profile!['am_following'] as bool?) ?? false;
     try {
-      if (wasFollowing) {
-        await _api.socDelete('/follow/${widget.username}');
-      } else {
-        await _api.socPost('/follow/${widget.username}');
-      }
-      setState(() {
-        _profile!['am_following'] = !wasFollowing;
-        _profile!['followers_count'] =
-            ((_profile!['followers_count'] as num?) ?? 0).toInt() +
-                (wasFollowing ? -1 : 1);
-      });
-      HapticFeedback.selectionClick();
-    } catch (e) {
-      _snack('Не вышло: $e');
+      await optimisticAction(
+        apply: () {
+          HapticFeedback.selectionClick();
+          setState(() {
+            _profile!['am_following'] = !wasFollowing;
+            _profile!['followers_count'] =
+                ((_profile!['followers_count'] as num?) ?? 0).toInt() +
+                    (wasFollowing ? -1 : 1);
+          });
+        },
+        request: () async {
+          if (wasFollowing) {
+            await _api.socDelete('/follow/${widget.username}');
+          } else {
+            await _api.socPost('/follow/${widget.username}');
+          }
+        },
+        undo: () {
+          setState(() {
+            _profile!['am_following'] = wasFollowing;
+            _profile!['followers_count'] =
+                ((_profile!['followers_count'] as num?) ?? 0).toInt() +
+                    (wasFollowing ? 1 : -1);
+          });
+        },
+        failureMessage: 'Не вышло',
+      );
+    } catch (_) {
+      // no-op — уже отработано в optimisticAction
     } finally {
-      if (mounted) setState(() => _followBusy = false);
+      _followBusy = false;
     }
-  }
-
-  void _snack(String msg) {
-    toast.show(msg);
   }
 
   @override
@@ -388,7 +402,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
           label: following ? 'Отписаться' : 'Подписаться',
           icon: following ? Icons.person_remove_outlined : Icons.person_add_outlined,
           primary: !following,
-          loading: _followBusy,
           onTap: _toggleFollow,
         ),
       ),
