@@ -4,11 +4,11 @@
 import 'dart:convert';
 import 'dart:io' show Platform;
 import 'dart:math';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
 import '../theme.dart';
+import '../core/local/app_logger.dart';
 
 class AuthService {
   static const _secureToken = 'gs_token';
@@ -49,7 +49,7 @@ class AuthService {
     try {
       _cachedToken = await _secure.read(key: _secureToken);
     } catch (e) {
-      if (kDebugMode) print('[AuthService] secure read failed: $e');
+      appLog.warn('auth', 'secure read failed: $e');
       // Fallback на SharedPreferences (для совместимости с веб/Mock)
       final p = await SharedPreferences.getInstance();
       _cachedToken = p.getString(_secureToken);
@@ -71,11 +71,14 @@ class AuthService {
     try {
       final existing = await _secure.read(key: _secureDeviceId);
       if (existing != null && existing.isNotEmpty) return existing;
-    } catch (_) {}
+    } catch (e) {
+      appLog.warn('auth', 'device_id secure read failed: $e');
+    }
     final fresh = _randUuidV4();
     try {
       await _secure.write(key: _secureDeviceId, value: fresh);
-    } catch (_) {
+    } catch (e) {
+      appLog.warn('auth', 'device_id secure write failed, falling back to SharedPreferences: $e');
       // Fallback в SharedPrefs если SecureStorage недоступен
       final p = await SharedPreferences.getInstance();
       await p.setString(_secureDeviceId, fresh);
@@ -135,7 +138,9 @@ class AuthService {
     _cacheReady = true;
     try {
       await _secure.delete(key: _secureToken);
-    } catch (_) {}
+    } catch (e) {
+      appLog.warn('auth', 'logout secure delete failed: $e');
+    }
     final p = await SharedPreferences.getInstance();
     await p.remove(_secureToken);
     await p.remove(_kUsername);

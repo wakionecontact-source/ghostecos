@@ -14,11 +14,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/status.dart' as wsstatus;
 import '../theme.dart';
 import 'auth_service.dart';
+import '../core/local/app_logger.dart';
 
 typedef WsHandler = void Function(Map<String, dynamic> data);
 
@@ -64,9 +64,9 @@ class WsClient {
       _connectedCtrl.add(true);
       _ch!.stream.listen(_onMessage, onDone: _onClose, onError: _onError);
       _startHeartbeat();
-      if (kDebugMode) print('[WS] connected');
+      appLog.info('ws', 'connected');
     } catch (e) {
-      if (kDebugMode) print('[WS] connect failed: $e');
+      appLog.warn('ws', 'connect failed: $e');
       _scheduleReconnect();
     }
   }
@@ -80,11 +80,12 @@ class WsClient {
         _pongTimeout?.cancel();
         _pongTimeout = Timer(const Duration(seconds: 10), () {
           if (_lastRecv.isBefore(_lastPing)) {
-            if (kDebugMode) print('[WS] pong timeout → reconnect');
+            appLog.warn('ws', 'pong timeout — reconnecting');
             _kill('pong timeout');
           }
         });
       } catch (e) {
+        appLog.warn('ws', 'ping send failed: $e');
         _kill('ping send failed');
       }
     });
@@ -103,18 +104,18 @@ class WsClient {
       if (list != null) {
         for (final s in List.of(list)) {
           try { s.handler(data); } catch (e) {
-            if (kDebugMode) print('[WS handler $type] $e');
+            appLog.error('ws', 'handler $type failed: $e');
           }
         }
       }
     } catch (e) {
-      if (kDebugMode) print('[WS parse] $e');
+      appLog.warn('ws', 'message parse failed: $e');
     }
   }
 
   void _onClose() {
     final code = _ch?.closeCode;
-    if (kDebugMode) print('[WS] closed code=$code');
+    appLog.info('ws', 'closed code=$code');
     if (code == 1008 || code == 4401 || code == 4403) {
       _authFail = true;
       _connectedCtrl.add(false);
@@ -125,12 +126,12 @@ class WsClient {
   }
 
   void _onError(dynamic e) {
-    if (kDebugMode) print('[WS] error $e');
+    appLog.warn('ws', 'error: $e');
     _kill('error');
   }
 
   void _kill(String reason) {
-    if (kDebugMode) print('[WS] kill: $reason');
+    appLog.warn('ws', 'kill: $reason');
     _cleanup();
     _scheduleReconnect();
   }
@@ -169,7 +170,7 @@ class WsClient {
     try {
       _ch?.sink.add(jsonEncode({'type': type, 'data': data}));
     } catch (e) {
-      if (kDebugMode) print('[WS send] $e');
+      appLog.warn('ws', 'send $type failed: $e');
     }
   }
 

@@ -24,6 +24,7 @@ import 'crypto_v2.dart';
 import 'db_service.dart';
 import 'ws_client.dart';
 import 'triangle_service.dart';
+import '../core/local/app_logger.dart';
 
 /// Итог синхронизации ключей — UI (KeyGate) реагирует:
 ///   ok             — всё синхронизировано, показывать ничего не надо;
@@ -177,7 +178,7 @@ class ChatRepo {
     final chosenMode = prefs.getString('key_storage_mode');
     keySyncNotifier.value = await syncKeys(password: pwd, chosenMode: chosenMode);
     if (keySyncNotifier.value == KeySyncOutcome.ok) AuthService.clearPendingPwd();
-    if (kDebugMode) print('[ChatRepo] init keySync → ${keySyncNotifier.value}');
+    appLog.warn('chat', '[ChatRepo] init keySync → ${keySyncNotifier.value}');
     // НЕ откатываемся в local автоматически — раньше это ЗАТИРАЛО настоящий
     // серверный ключ throwaway-ключом. needPassword / needChooseMode теперь
     // перехватывает KeyGate (в MainShell) и дозапрашивает пароль / режим.
@@ -247,7 +248,7 @@ class ChatRepo {
     try {
       await _api.chatPost('/fcm/register', {'token': token});
     } catch (e) {
-      if (kDebugMode) print('[registerFcmToken] $e');
+      appLog.warn('chat', '[registerFcmToken] $e');
     }
   }
 
@@ -314,7 +315,7 @@ class ChatRepo {
           await _api.chatPost('/keys/storage_mode', {'mode': chosenMode});
           mode = chosenMode;
         } catch (e) {
-          if (kDebugMode) print('[ChatRepo] set storage_mode failed: $e');
+          appLog.warn('chat', '[ChatRepo] set storage_mode failed: $e');
         }
       }
       if (mode == null) return KeySyncOutcome.needChooseMode;
@@ -340,7 +341,7 @@ class ChatRepo {
             )
           : await _syncLocalMode(myPubB64, serverPub);
     } catch (e) {
-      if (kDebugMode) print('[ChatRepo] syncKeys error: $e');
+      appLog.warn('chat', '[ChatRepo] syncKeys error: $e');
       return KeySyncOutcome.error;
     }
   }
@@ -374,16 +375,13 @@ class ChatRepo {
         if (recovered != serverPub) {
           // Восстановленный приватник не даёт серверный pub — битый блоб
           // (например наша же старая заглушка). Нужен ручной перезалив.
-          if (kDebugMode)
-            print('[ChatRepo] recovered pub != server pub (битый блоб?)');
+          appLog.warn('chat', 'recovered pub != server pub (битый блоб?)');
           return KeySyncOutcome.needPassword;
         }
-        if (kDebugMode)
-          print('[ChatRepo] server-режим: приватник восстановлен с сервера');
+        appLog.info('chat', 'server-режим: приватник восстановлен с сервера');
         return KeySyncOutcome.ok;
       } catch (e) {
-        if (kDebugMode)
-          print('[ChatRepo] importServerPriv failed (пароль?): $e');
+        appLog.warn('chat', 'importServerPriv failed (пароль?): $e');
         return KeySyncOutcome.needPassword;
       }
     }
@@ -398,8 +396,7 @@ class ChatRepo {
       'storage_mode': 'server',
     });
     _peerPubCache.clear();
-    if (kDebugMode)
-      print('[ChatRepo] server-режим: приватник опубликован на сервер');
+    appLog.info('chat', 'server-режим: приватник опубликован на сервер');
     return KeySyncOutcome.ok;
   }
 
@@ -416,8 +413,7 @@ class ChatRepo {
       'storage_mode': 'local',
     });
     _peerPubCache.clear();
-    if (kDebugMode)
-      print('[ChatRepo] local-режим: pub опубликован (без приватника)');
+    appLog.info('chat', 'local-режим: pub опубликован (без приватника)');
     return KeySyncOutcome.ok;
   }
 
@@ -433,12 +429,10 @@ class ChatRepo {
       if (pubB64 != null && pubB64.isNotEmpty) {
         await _db.pinPub(username, pubB64, accepted: true);
         _peerPubCache[username] = Uint8List.fromList(base64Decode(pubB64));
-        if (kDebugMode) {
-          print('[ChatRepo] перепиновали ключ @$username (после decrypt fail)');
-        }
+        appLog.info('chat', 'перепиновали ключ @$username (после decrypt fail)');
       }
     } catch (e) {
-      if (kDebugMode) print('[ChatRepo] re-pin failed: $e');
+      appLog.warn('chat', '[ChatRepo] re-pin failed: $e');
     }
   }
 
@@ -513,8 +507,8 @@ class ChatRepo {
       final pinned = await _db.getPinnedPub(username);
       if (pinned == null) {
         await _db.pinPub(username, ownerPubB64, accepted: true);
-      } else if (pinned != ownerPubB64 && kDebugMode) {
-        print('[ChatRepo] pubkey changed for @$username (TOFU)');
+      } else if (pinned != ownerPubB64) {
+        appLog.warn('chat', 'pubkey changed for @$username (TOFU)');
       }
     }
   }
@@ -532,7 +526,7 @@ class ChatRepo {
             .toList();
       }
     } catch (e) {
-      if (kDebugMode) print('[ChatRepo] refresh self-pubs: $e');
+      appLog.warn('chat', '[ChatRepo] refresh self-pubs: $e');
     }
   }
 
@@ -548,18 +542,18 @@ class ChatRepo {
           await _ingestIncoming(m, fromPending: true);
           ackIds.add(m['id'] as int);
         } catch (e) {
-          if (kDebugMode) print('[fetchPending] ingest failed: $e');
+          appLog.warn('chat', '[fetchPending] ingest failed: $e');
         }
       }
       if (ackIds.isNotEmpty) {
         try {
           await _api.chatPost('/ack', {'ids': ackIds});
         } catch (e) {
-          if (kDebugMode) print('[fetchPending] ack failed: $e');
+          appLog.warn('chat', '[fetchPending] ack failed: $e');
         }
       }
     } catch (e) {
-      if (kDebugMode) print('[fetchPending] $e');
+      appLog.warn('chat', '[fetchPending] $e');
     }
   }
 
@@ -570,7 +564,7 @@ class ChatRepo {
     try {
       await CryptoV2.instance.ensureKeys();
     } catch (e) {
-      if (kDebugMode) print('[v2 ensureKeys] $e');
+      appLog.warn('chat', '[v2 ensureKeys] $e');
       return;
     }
     if (_v2Published) return;
@@ -583,7 +577,7 @@ class ChatRepo {
       });
     } catch (e) {
       // 409 = уже опубликован тот же identity → не страшно.
-      if (kDebugMode) print('[v2 identity publish] $e');
+      appLog.warn('chat', '[v2 identity publish] $e');
     }
     try {
       await _api.chatPost('/v2/device/publish', {
@@ -594,7 +588,7 @@ class ChatRepo {
       });
       _v2Published = true;
     } catch (e) {
-      if (kDebugMode) print('[v2 device publish] $e');
+      appLog.warn('chat', '[v2 device publish] $e');
     }
   }
 
@@ -633,9 +627,10 @@ class ChatRepo {
           );
           if (ok) {
             verified.add(dm);
-          } else if (kDebugMode) {
-            print(
-              '[getPeerV2Keys] device ${dm['device_id']} sig INVALID — '
+          } else {
+            appLog.warn(
+              'security',
+              'getPeerV2Keys: device ${dm['device_id']} sig INVALID — '
               'пропуск (возможна подмена сервером)',
             );
           }
@@ -648,7 +643,7 @@ class ChatRepo {
       }
       _v2KeysCache[username] = {}; // нет доверенных v2-устройств → fallback v1
     } catch (e) {
-      if (kDebugMode) print('[getPeerV2Keys] $e');
+      appLog.warn('chat', '[getPeerV2Keys] $e');
     }
     return null;
   }
@@ -670,7 +665,7 @@ class ChatRepo {
       if (u != null) _v2WhoisCache[identityPubB64] = u;
       return u;
     } catch (e) {
-      if (kDebugMode) print('[whoisV2] $e');
+      appLog.warn('chat', '[whoisV2] $e');
       return null;
     }
   }
@@ -768,7 +763,7 @@ class ChatRepo {
       });
       await _refreshMessages(toUsername);
     } catch (e) {
-      if (kDebugMode) print('[sendDmTextV2] $e');
+      appLog.warn('chat', '[sendDmTextV2] $e');
       await _db.updateMessageFlags(toUsername, tempSid, {'pending': 0});
       await _refreshMessages(toUsername);
       rethrow;
@@ -795,7 +790,7 @@ class ChatRepo {
             await _ingestV2(payload, m['created_at']);
           }
         } catch (e) {
-          if (kDebugMode) print('[fetchPendingV2] ingest $e');
+          appLog.warn('chat', '[fetchPendingV2] ingest $e');
         }
         if (id is int) ackIds.add(id);
       }
@@ -805,7 +800,7 @@ class ChatRepo {
         } catch (_) {}
       }
     } catch (e) {
-      if (kDebugMode) print('[fetchPendingV2] $e');
+      appLog.warn('chat', '[fetchPendingV2] $e');
     }
   }
 
@@ -1020,18 +1015,18 @@ class ChatRepo {
           );
           if (ok) ackIds.add(id);
         } catch (e) {
-          if (kDebugMode) print('[fetchPendingSealed] decrypt fail $id: $e');
+          appLog.warn('chat', '[fetchPendingSealed] decrypt fail $id: $e');
         }
       }
       if (ackIds.isNotEmpty) {
         try {
           await _api.chatPost('/ack_sealed', {'ids': ackIds});
         } catch (e) {
-          if (kDebugMode) print('[fetchPendingSealed] ack fail: $e');
+          appLog.warn('chat', '[fetchPendingSealed] ack fail: $e');
         }
       }
     } catch (e) {
-      if (kDebugMode) print('[fetchPendingSealed] $e');
+      appLog.warn('chat', '[fetchPendingSealed] $e');
     }
   }
 
@@ -1045,7 +1040,7 @@ class ChatRepo {
     try {
       env = await _crypto.decryptSealed(cipher);
     } catch (e) {
-      if (kDebugMode) print('[sealed decrypt fail]: $e');
+      appLog.warn('chat', '[sealed decrypt fail]: $e');
       return false;
     }
     final fromUsername = env['from_username'] as String?;
@@ -1213,7 +1208,7 @@ class ChatRepo {
           'ciphertext': reply,
         });
       } catch (e) {
-        if (kDebugMode) print('[sealed delivered echo] $e');
+        appLog.warn('chat', '[sealed delivered echo] $e');
       }
     }
     return true;
@@ -1399,7 +1394,7 @@ class ChatRepo {
         }
       }
     } catch (e) {
-      if (kDebugMode) print('[sendDmFile] $e');
+      appLog.warn('chat', '[sendDmFile] $e');
       rethrow;
     } finally {
       _uploadProgress.remove(tmpKey);
@@ -1443,7 +1438,7 @@ class ChatRepo {
       _plainCachePut(fileId, plain);
       return plain;
     } catch (e) {
-      if (kDebugMode) print('[decryptMediaBlob] $e');
+      appLog.warn('chat', '[decryptMediaBlob] $e');
       return null;
     }
   }
@@ -1619,7 +1614,7 @@ class ChatRepo {
         }
       }
     } catch (e) {
-      if (kDebugMode) print('[sendDmText] $e');
+      appLog.warn('chat', '[sendDmText] $e');
       await _db.updateMessageFlags(toUsername, tempSid, {'pending': 0});
       await _refreshMessages(toUsername);
       rethrow;
@@ -1656,7 +1651,7 @@ class ChatRepo {
         'ciphertext': ct,
       });
     } catch (e) {
-      if (kDebugMode) print('[ChatRepo._fanoutSealed] $e');
+      appLog.warn('chat', '[ChatRepo._fanoutSealed] $e');
     }
   }
 
@@ -1679,7 +1674,7 @@ class ChatRepo {
         'ciphertext': ct,
       });
     } catch (e) {
-      if (kDebugMode) print('[ChatRepo._fanoutSealedPayload] $e');
+      appLog.warn('chat', '[ChatRepo._fanoutSealedPayload] $e');
     }
   }
 
@@ -1755,7 +1750,7 @@ class ChatRepo {
     // пира мы продолжаем слать его СТАРОМУ device → текущее устройство пира не
     // расшифрует («ошибка расшифровки»). Раньше чистили только v1-кэши.
     _v2KeysCache.remove(username);
-    if (kDebugMode) print('[ChatRepo] key-cache (v1+v2) очищен для @$username');
+    appLog.warn('chat', '[ChatRepo] key-cache (v1+v2) очищен для @$username');
   }
 
   Future<void> _onPresence(Map<String, dynamic> d) async {
@@ -1794,11 +1789,10 @@ class ChatRepo {
     if (plain == null) {
       // Шаг 2: ни один известный ключ не подошёл — мог смениться. Перетягиваем
       // свежие device_pubkeys+owner с сервера (+ DB-pin) и пробуем ещё раз.
-      if (kDebugMode) {
-        print(
-          '[ChatRepo._ingestIncoming] decrypt fail (peer=$peerUsername) — refetch keys',
-        );
-      }
+      appLog.warn(
+        'chat',
+        '_ingestIncoming: decrypt fail (peer=$peerUsername) — refetch keys',
+      );
       _peerDevicePubsCache.remove(peerUsername);
       // Чистим и v2-кэш: если мы пропустили событие devices_changed этого пира,
       // наш следующий ОТПРАВ к нему пойдёт по свежим ключам (а не старому device).
@@ -2066,7 +2060,7 @@ class ChatRepo {
         'ciphertext': ciphertext,
       });
     } catch (e) {
-      if (kDebugMode) print('[reactDmMessage] доставка реакции не удалась: $e');
+      appLog.warn('chat', '[reactDmMessage] доставка реакции не удалась: $e');
     }
   }
 
@@ -2240,7 +2234,7 @@ class ChatRepo {
       try {
         await _api.chatPost('/read', {'ids': theirIds, 'from_username': peer});
       } catch (e) {
-        if (kDebugMode) print('[markChatRead] server /read: $e');
+        appLog.warn('chat', '[markChatRead] server /read: $e');
       }
     }
   }

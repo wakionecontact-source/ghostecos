@@ -15,8 +15,8 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import '../core/local/app_logger.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class CryptoV2 {
@@ -173,7 +173,7 @@ class CryptoV2 {
       );
       return Uint8List.fromList(clear);
     } catch (e) {
-      if (kDebugMode) print('[cryptoV2 decrypt] $e');
+      appLog.warn('crypto', 'decrypt failed: $e');
       return null;
     }
   }
@@ -196,7 +196,8 @@ class CryptoV2 {
         publicKey: SimplePublicKey(identityPub, type: KeyPairType.ed25519),
       );
       return await _ed.verify(devicePub, signature: sig);
-    } catch (_) {
+    } catch (e) {
+      appLog.warn('crypto', 'signed_prekey signature verify threw: $e');
       return false;
     }
   }
