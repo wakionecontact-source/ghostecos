@@ -51,6 +51,11 @@ enum Section {
     label: 'Профиль',
     iconOutline: Icons.person_outline,
     iconFilled: Icons.person,
+  ),
+  settings(
+    label: 'Настройки',
+    iconOutline: Icons.settings_outlined,
+    iconFilled: Icons.settings,
   );
 
   final String label;
@@ -498,6 +503,8 @@ class _MainShellState extends State<MainShell> {
           displayName: _displayName ?? '?',
           onLogout: _logout,
         );
+      case Section.settings:
+        return SettingsScreen(isGuest: _isGuest, embedded: true);
     }
   }
 
@@ -862,17 +869,7 @@ class _GuestPane extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            GlassCard(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: _profileRow(
-                Icons.settings_outlined,
-                'Настройки',
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const SettingsScreen(isGuest: true)),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
+            // «Настройки» — теперь отдельный таб в bottom-nav, не строка тут.
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Text(
@@ -973,21 +970,7 @@ class _ProfilePane extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            GlassCard(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Column(
-                children: [
-                  _profileRow(
-                    Icons.settings_outlined,
-                    'Настройки',
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
+            // «Настройки» — теперь отдельный таб в bottom-nav, не строка тут.
             GlassButton(
               label: 'Выйти из аккаунта',
               icon: Icons.logout,
@@ -1036,28 +1019,3 @@ class _ProfilePane extends StatelessWidget {
 
 }
 
-Widget _profileRow(IconData icon, String label, {VoidCallback? onTap}) {
-  return InkWell(
-    onTap: onTap,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: GE.primary),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Text(
-              label,
-              style: TextStyle(
-                color: GE.text,
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-          Icon(Icons.chevron_right, color: GE.sub, size: 18),
-        ],
-      ),
-    ),
-  );
-}

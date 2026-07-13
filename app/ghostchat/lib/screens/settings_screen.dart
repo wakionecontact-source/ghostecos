@@ -25,7 +25,11 @@ import 'lan_settings_screen.dart';
 // ─── Хаб ────────────────────────────────────────────────────────────────────
 class SettingsScreen extends StatefulWidget {
   final bool isGuest;
-  const SettingsScreen({super.key, this.isGuest = false});
+  /// true — экран сидит как таб в bottom-nav (MainShell), не запушен через
+  /// Navigator: тогда "назад" в шапке не нужен (попадёт в корневой Navigator
+  /// и уведёт из MainShell вообще, а не просто закроет вкладку).
+  final bool embedded;
+  const SettingsScreen({super.key, this.isGuest = false, this.embedded = false});
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
@@ -56,7 +60,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return MeshBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: GlassAppBar(showBack: true, titleText: 'Настройки'),
+        appBar: GlassAppBar(showBack: !widget.embedded, titleText: 'Настройки'),
         body: ListView(
           padding: const EdgeInsets.all(12),
           children: [
