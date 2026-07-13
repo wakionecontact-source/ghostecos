@@ -35,6 +35,7 @@ import '../widgets/glass.dart';
 import '../widgets/marquee_text.dart';
 import '../widgets/empty_chat_state.dart';
 import '../widgets/toast_overlay.dart';
+import '../widgets/send_fly_animation.dart';
 import 'profile_screen.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -91,6 +92,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final _recorder = AudioRecorder();
 
   bool _sending = false;
+  final _sendBtnKey = GlobalKey();
   String? _myUsername;
   int? _highlightSid;
   Timer? _highlightTimer;
@@ -592,6 +594,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return;
     }
 
+    flySendAnimation(context, _sendBtnKey);
     // Отправка: оптимистичный пузырь появляется СРАЗУ внутри sendDmText, доставка
     // идёт В ФОНЕ → кнопка и поле свободны мгновенно (не ждём ~5с round-trip,
     // можно слать следующее сразу). Ошибка — пузырь остаётся pending + снэк.
@@ -1834,6 +1837,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 // Право: текст→отправка; запись-hands-free→отправка голосового;
                 // иначе микрофон (тап=hands-free; удержание→отпуск=отправка).
                 Material(
+                  key: hasText ? _sendBtnKey : null,
                   color: Colors.transparent,
                   child: hasText
                       ? InkWell(

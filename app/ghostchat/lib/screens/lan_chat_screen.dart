@@ -19,6 +19,7 @@ import '../widgets/glass.dart';
 import '../widgets/marquee_text.dart';
 import '../widgets/emoji_picker.dart';
 import '../widgets/empty_chat_state.dart';
+import '../widgets/send_fly_animation.dart';
 import '../widgets/toast_overlay.dart';
 import '../services/lan_chat_store.dart';
 import '../core/local/local_hub.dart';
@@ -57,6 +58,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
   late String _name;
   bool _online = false;
   bool _emojiOpen = false;
+  final _sendBtnKey = GlobalKey();
   static const double _emojiPanelH = 300;
 
   bool get _selectionMode => _selectedIds.isNotEmpty;
@@ -158,6 +160,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
   Future<void> _send() async {
     final text = _msgCtrl.text.trim();
     if (text.isEmpty || _sending) return;
+    flySendAnimation(context, _sendBtnKey);
 
     setState(() => _sending = true);
     try {
@@ -742,6 +745,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
           ),
           const SizedBox(width: 8),
           IconButton(
+            key: _sendBtnKey,
             icon: Icon(Icons.send_rounded, color: GE.primary),
             onPressed: _send,
           ),

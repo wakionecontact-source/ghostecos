@@ -13,6 +13,7 @@ import '../mesh_background.dart';
 import '../widgets/glass.dart';
 import '../widgets/emoji_picker.dart';
 import '../widgets/empty_chat_state.dart';
+import '../widgets/send_fly_animation.dart';
 import '../widgets/toast_overlay.dart';
 import '../services/bookmark_store.dart';
 
@@ -38,6 +39,7 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
   late String _name;
   bool _sending = false;
   bool _emojiOpen = false;
+  final _sendBtnKey = GlobalKey();
   static const double _emojiPanelH = 300;
 
   @override
@@ -68,6 +70,7 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
   Future<void> _sendText() async {
     final text = _msgCtrl.text.trim();
     if (text.isEmpty || _sending) return;
+    flySendAnimation(context, _sendBtnKey);
     setState(() => _sending = true);
     try {
       await BookmarkStore.instance.addMessage(bookmarkId: widget.bookmarkId, text: text);
@@ -320,6 +323,7 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
           ),
           const SizedBox(width: 8),
           IconButton(
+            key: _sendBtnKey,
             icon: Icon(Icons.send_rounded, color: GE.primary),
             onPressed: _sendText,
           ),
