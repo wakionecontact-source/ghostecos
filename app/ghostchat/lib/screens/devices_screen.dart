@@ -2,15 +2,18 @@
 // Показывает: имя, платформу, last_seen, owner-флаг, кнопку Revoke.
 // «Это устройство» помечено отдельно.
 //
-// Endpoints: GET /api/chat/devices, POST /api/chat/devices/{device_pk}/revoke
+// ПИЛОТ WS-RPC: весь экран говорит с сервером через WsClient.call(...)
+// (devices.list/rename/revoke, tda.get/set, tda.pending.list/approve/deny),
+// без единого HTTP-запроса. Сокет подключается лениво — первый .call()
+// сам его откроет, если ещё не открыт.
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
-import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/theme_service.dart';
+import '../services/ws_client.dart';
 import '../widgets/glass.dart';
 import '../widgets/toast_overlay.dart';
 import '../services/optimistic_action.dart';
@@ -22,11 +25,14 @@ class DevicesScreen extends StatefulWidget {
 }
 
 class _DevicesScreenState extends State<DevicesScreen> {
-  final _api = ApiClient();
+  final _ws = WsClient.instance;
   List<Map<String, dynamic>> _devices = [];
+  List<Map<String, dynamic>> _pending = [];
   String? _myDeviceId;
   bool _loading = true;
   String? _error;
+  bool _tdaEnabled = false;
+  bool _tdaBusy = false;
 
   @override
   void initState() {
@@ -38,17 +44,33 @@ class _DevicesScreenState extends State<DevicesScreen> {
     setState(() => _loading = true);
     try {
       _myDeviceId = await AuthService.deviceId();
-      final r = await _api.chatGet('/devices');
+      final results = await Future.wait([
+        _ws.call('devices.list'),
+        _ws.call('tda.pending.list'),
+        _ws.call('tda.get'),
+      ]);
       if (!mounted) return;
+      final r = results[0];
+      final rp = results[1];
+      final rt = results[2];
       List<Map<String, dynamic>> list = [];
-      if (r is Map && r['devices'] is List) {
+      if (r['devices'] is List) {
         list = (r['devices'] as List)
+            .whereType<Map>()
+            .map((m) => Map<String, dynamic>.from(m))
+            .toList();
+      }
+      List<Map<String, dynamic>> pending = [];
+      if (rp['pending'] is List) {
+        pending = (rp['pending'] as List)
             .whereType<Map>()
             .map((m) => Map<String, dynamic>.from(m))
             .toList();
       }
       setState(() {
         _devices = list;
+        _pending = pending;
+        _tdaEnabled = rt['enabled'] == true;
         _loading = false;
         _error = null;
       });
@@ -59,6 +81,75 @@ class _DevicesScreenState extends State<DevicesScreen> {
         _error = e.toString();
       });
     }
+  }
+
+  Future<void> _toggleTda(bool v) async {
+    setState(() => _tdaBusy = true);
+    try {
+      await _ws.call('tda.set', {'enabled': v});
+      if (!mounted) return;
+      setState(() => _tdaEnabled = v);
+      _snack(v
+          ? 'Теперь новые устройства нужно подтверждать'
+          : 'Подтверждение новых устройств выключено');
+    } catch (e) {
+      _snack('Не удалось изменить: $e');
+    } finally {
+      if (mounted) setState(() => _tdaBusy = false);
+    }
+  }
+
+  Future<void> _approvePending(Map<String, dynamic> p) async {
+    final code = await _promptCode(p['device_name'] as String? ?? 'устройство');
+    if (code == null || code.length != 6) return;
+    try {
+      await _ws.call('tda.approve', {
+        'login_request_id': p['request_id'],
+        'code': code,
+      });
+      _snack('Устройство подтверждено');
+      _load();
+    } catch (e) {
+      _snack('Не подошло: $e');
+    }
+  }
+
+  Future<void> _denyPending(Map<String, dynamic> p) async {
+    try {
+      await _ws.call('tda.deny', {'login_request_id': p['request_id']});
+      _snack('Вход отклонён');
+      _load();
+    } catch (e) {
+      _snack('Ошибка: $e');
+    }
+  }
+
+  Future<String?> _promptCode(String deviceName) async {
+    final ctrl = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: GE.bgDeep,
+        title: Text('Код с «$deviceName»', style: TextStyle(color: GE.text)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          maxLength: 6,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: GE.text, fontSize: 22, letterSpacing: 6),
+          decoration: const InputDecoration(counterText: '', hintText: '••••••'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Отмена')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+              child: Text('Подтвердить', style: TextStyle(color: GE.primary))),
+        ],
+      ),
+    );
   }
 
   Future<void> _revoke(Map<String, dynamic> d) async {
@@ -93,7 +184,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
     try {
       await optimisticAction(
         apply: () => setState(() => _devices.removeAt(i)),
-        request: () async => _api.chatPost('/devices/${d['id']}/revoke'),
+        request: () async => _ws.call('devices.revoke', {'device_pk': d['id']}),
         undo: () => setState(() => _devices.insert(i.clamp(0, _devices.length), d)),
         failureMessage: 'Не удалось отозвать устройство',
       );
@@ -142,19 +233,77 @@ class _DevicesScreenState extends State<DevicesScreen> {
                       ),
                     ],
                   )
-                : ListView.separated(
+                : ListView(
                     padding: const EdgeInsets.fromLTRB(10, 12, 10, 80),
-                    itemCount: _devices.length + 1,
-                    separatorBuilder: (_, _) => const SizedBox(height: 6),
-                    itemBuilder: (_, i) {
-                      if (i == 0) return _info();
-                      return _DeviceTile(
-                        d: _devices[i - 1],
-                        isMe: _devices[i - 1]['device_id'] == _myDeviceId,
-                        onRevoke: () => _revoke(_devices[i - 1]),
-                      );
-                    },
+                    children: [
+                      _tdaCard(),
+                      const SizedBox(height: 10),
+                      if (_pending.isNotEmpty) ...[
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+                          child: Text('ОЖИДАЮТ ПОДТВЕРЖДЕНИЯ',
+                              style: TextStyle(
+                                  color: GE.yellow,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.5)),
+                        ),
+                        for (final p in _pending) ...[
+                          _PendingTile(
+                            p: p,
+                            onApprove: () => _approvePending(p),
+                            onDeny: () => _denyPending(p),
+                          ),
+                          const SizedBox(height: 6),
+                        ],
+                        const SizedBox(height: 8),
+                      ],
+                      _info(),
+                      for (final d in _devices) ...[
+                        _DeviceTile(
+                          d: d,
+                          isMe: d['device_id'] == _myDeviceId,
+                          onRevoke: () => _revoke(d),
+                        ),
+                        const SizedBox(height: 6),
+                      ],
+                    ],
                   ),
+      ),
+    );
+  }
+
+  Widget _tdaCard() {
+    return GlassCard(
+      lite: true,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: Row(
+        children: [
+          Icon(Icons.verified_user_outlined, color: GE.primary, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Подтверждать новые устройства',
+                    style: TextStyle(
+                        color: GE.text, fontSize: 13, fontWeight: FontWeight.w600)),
+                Text('Вход с незнакомого устройства потребует код с доверенного',
+                    style: TextStyle(color: GE.sub, fontSize: 10.5, height: 1.3)),
+              ],
+            ),
+          ),
+          _tdaBusy
+              ? SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: GE.primary))
+              : GhostSwitch(
+                  value: _tdaEnabled,
+                  activeColor: GE.primary,
+                  onChanged: _toggleTda,
+                ),
+        ],
       ),
     );
   }
@@ -166,6 +315,43 @@ class _DevicesScreenState extends State<DevicesScreen> {
         'Каждое устройство получает свой токен. Создатель аккаунта не может '
         'быть отозван и помечен сверху списка.',
         style: TextStyle(color: GE.sub, fontSize: 11, height: 1.4),
+      ),
+    );
+  }
+}
+
+class _PendingTile extends StatelessWidget {
+  final Map<String, dynamic> p;
+  final VoidCallback onApprove;
+  final VoidCallback onDeny;
+  const _PendingTile({required this.p, required this.onApprove, required this.onDeny});
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassCard(
+      lite: true,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Row(
+        children: [
+          Icon(Icons.devices_other, color: GE.yellow, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text((p['device_name'] as String?) ?? 'Устройство',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: GE.text, fontSize: 13, fontWeight: FontWeight.w600)),
+          ),
+          IconButton(
+            icon: Icon(Icons.close, color: GE.red, size: 20),
+            tooltip: 'Отклонить',
+            onPressed: onDeny,
+          ),
+          IconButton(
+            icon: Icon(Icons.check, color: GE.green, size: 20),
+            tooltip: 'Подтвердить',
+            onPressed: onApprove,
+          ),
+        ],
       ),
     );
   }
@@ -268,7 +454,11 @@ class _DeviceTile extends StatelessWidget {
                 ]),
                 const SizedBox(height: 2),
                 Text(
-                  'Уровень $level · ${_fmtLastSeen(d['last_seen'])}'
+                  // Создателю не показываем «Уровень 999999» — сервер хранит
+                  // для него sentinel-значение, но бейдж «Создатель» и так
+                  // говорит о максимальных правах (см. 1.19.3: trust_type==
+                  // 'creator' ? 999 : trust_level — там тоже был спец-кейс).
+                  '${isOwner ? '' : 'Уровень $level · '}${_fmtLastSeen(d['last_seen'])}'
                   '${vpn ? ' · VPN' : ''}'
                   '${!isActive ? ' · отозвано' : ''}',
                   style: TextStyle(color: GE.sub, fontSize: 11),

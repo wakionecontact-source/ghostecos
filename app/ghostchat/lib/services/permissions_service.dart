@@ -31,9 +31,11 @@ String permLabel(Permission p) {
   if (p == Permission.photos) return 'Фото';
   if (p == Permission.videos) return 'Видео';
   if (p == Permission.ignoreBatteryOptimizations) return 'Работа в фоне';
-  if (p == Permission.bluetoothScan ||
-      p == Permission.bluetoothConnect ||
-      p == Permission.bluetoothAdvertise) return 'Bluetooth';
+  // Три РАЗНЫХ Android-разрешения — если подписать одинаково («Bluetooth»
+  // x3), список выглядит как баг-дубль (перенос лейблов из 1.19.3).
+  if (p == Permission.bluetoothScan) return 'Bluetooth (поиск)';
+  if (p == Permission.bluetoothConnect) return 'Bluetooth (подключение)';
+  if (p == Permission.bluetoothAdvertise) return 'Bluetooth (видимость)';
   if (p == Permission.nearbyWifiDevices) return 'Устройства поблизости';
   if (p == Permission.locationWhenInUse) return 'Геолокация';
   return p.toString();

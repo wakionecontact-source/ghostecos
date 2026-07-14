@@ -156,6 +156,13 @@ class AuthService {
     validateStatus: (s) => s != null && s < 500,
   ));
 
+  /// Логин. Если аккаунт включил TDA (подтверждение новых устройств) и это
+  /// устройство ещё не доверено — сервер НЕ выдаёт токен сразу, а возвращает
+  /// {requires_approval: true, request_id, code, ...}. Код виден ЗДЕСЬ (на
+  /// новом устройстве) — юзер вводит его на уже доверенном устройстве
+  /// (Настройки → Устройства → Ожидают подтверждения), после чего это
+  /// устройство поллит /devices/pending/{request_id}/status до token.
+  /// НЕ сохраняем сессию в этом случае — только после подтверждения.
   static Future<Map<String, dynamic>> login(String username, String password) async {
     final did = await deviceId();
     final dname = await deviceName();
@@ -169,8 +176,15 @@ class AuthService {
         }));
     if (r.statusCode != 200) throw _err(r.data, r.statusCode!);
     final d = Map<String, dynamic>.from(r.data);
+    if (d['requires_approval'] == true) return d;
     await _saveAuth(d, password: password);
     return d;
+  }
+
+  /// Сохранить сессию после того, как pending-логин подтверждён на другом
+  /// устройстве (вызывается из DeviceApprovalWaitScreen с полученным токеном).
+  static Future<void> saveApprovedSession(String token, String username) async {
+    await _saveAuth({'token': token, 'username': username});
   }
 
   static Future<Map<String, dynamic>> register({

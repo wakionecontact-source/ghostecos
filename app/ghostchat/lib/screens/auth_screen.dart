@@ -8,6 +8,7 @@ import '../mesh_background.dart';
 import '../auth_service.dart';
 import '../services/theme_service.dart';
 import '../widgets/glass.dart';
+import 'device_approval_wait_screen.dart';
 
 // ── Лимиты регистрации — ЗЕРКАЛО серверных (social_router.py: _NAME_MIN/MAX,
 // _USER_MIN/MAX/TOTAL, _PASS_MIN/MAX). Если сервер поменяет — поменять и тут,
@@ -103,7 +104,28 @@ class _AuthScreenState extends State<AuthScreen> {
         if (_userCtrl.text.trim().isEmpty || _pwdCtrl.text.isEmpty) {
           throw 'Заполните логин и пароль';
         }
-        await AuthService.login(_userCtrl.text.trim().toLowerCase(), _pwdCtrl.text);
+        final uname = _userCtrl.text.trim().toLowerCase();
+        final r = await AuthService.login(uname, _pwdCtrl.text);
+        if (r['requires_approval'] == true) {
+          // TDA: аккаунт требует подтверждения с доверенного устройства —
+          // не логинимся сразу, ждём на отдельном экране.
+          if (!mounted) return;
+          setState(() => _busy = false);
+          await Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => DeviceApprovalWaitScreen(
+                requestId: r['request_id'] as String,
+                code: r['code'] as String,
+                username: (r['username'] as String?) ?? uname,
+                onApproved: () {
+                  Navigator.of(context).pop();
+                  widget.onLoggedIn();
+                },
+              ),
+            ),
+          );
+          return;
+        }
       } else {
         if (_userCtrl.text.trim().isEmpty ||
             _nameCtrl.text.trim().isEmpty ||

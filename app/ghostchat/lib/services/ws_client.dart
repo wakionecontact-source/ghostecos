@@ -14,11 +14,20 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/status.dart' as wsstatus;
 import '../theme.dart';
 import 'auth_service.dart';
 import '../core/local/app_logger.dart';
+
+/// Ошибка RPC-вызова (сервер ответил `<type>.err`).
+class WsRpcException implements Exception {
+  final String message;
+  WsRpcException(this.message);
+  @override
+  String toString() => message;
+}
 
 typedef WsHandler = void Function(Map<String, dynamic> data);
 
@@ -46,6 +55,10 @@ class WsClient {
   final Map<String, List<_Subscription>> _subs = {};
   final StreamController<bool> _connectedCtrl = StreamController.broadcast();
   Stream<bool> get onConnectionChange => _connectedCtrl.stream;
+
+  // ── RPC (call/response по request_id) ──────────────────────────────────
+  final Map<String, Completer<Map<String, dynamic>>> _pendingRpc = {};
+  final _rng = Random.secure();
 
   bool get isConnected => _ch != null && !_authFail;
 
@@ -100,6 +113,21 @@ class WsClient {
       final type = ev['type'] as String?;
       final data = (ev['data'] as Map?)?.cast<String, dynamic>() ?? {};
       if (type == null) return;
+      // RPC-ответ: <type>.ok / <type>.err с тем же request_id, что мы слали.
+      if (type.endsWith('.ok') || type.endsWith('.err')) {
+        final rid = data['request_id'] as String?;
+        final completer = rid != null ? _pendingRpc.remove(rid) : null;
+        if (completer != null && !completer.isCompleted) {
+          if (type.endsWith('.ok')) {
+            completer.complete(data);
+          } else {
+            completer.completeError(
+              WsRpcException((data['error'] as String?) ?? 'Ошибка сервера'),
+            );
+          }
+          return; // RPC-ответы не дублируем в обычные .on()-подписки
+        }
+      }
       final list = _subs[type];
       if (list != null) {
         for (final s in List.of(list)) {
@@ -142,6 +170,14 @@ class WsClient {
     try { _ch?.sink.close(wsstatus.normalClosure); } catch (_) {}
     _ch = null;
     _connectedCtrl.add(false);
+    // Не оставляем RPC висеть до таймаута — соединение уже мертво, дальше
+    // reconnect может занять секунды, а caller ждёт ответ прямо сейчас.
+    for (final c in _pendingRpc.values) {
+      if (!c.isCompleted) {
+        c.completeError(WsRpcException('Соединение разорвано'));
+      }
+    }
+    _pendingRpc.clear();
   }
 
   void _scheduleReconnect() {
@@ -171,6 +207,39 @@ class WsClient {
       _ch?.sink.add(jsonEncode({'type': type, 'data': data}));
     } catch (e) {
       appLog.warn('ws', 'send $type failed: $e');
+    }
+  }
+
+  String _reqId() {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    return List.generate(16, (_) => chars[_rng.nextInt(chars.length)]).join();
+  }
+
+  /// RPC-вызов: шлёт {type, data: {...data, request_id}}, ждёт ответ
+  /// `<type>.ok`/`<type>.err` с тем же request_id. Подключается лениво —
+  /// первый .call() в приложении сам открывает сокет (см. WsClient docs).
+  /// Бросает [WsRpcException] на `.err`, [TimeoutException] если сервер
+  /// не ответил за [timeout].
+  Future<Map<String, dynamic>> call(
+    String type, [
+    Map<String, dynamic> data = const {},
+    Duration timeout = const Duration(seconds: 12),
+  ]) async {
+    if (!isConnected) await connect();
+    if (!isConnected) {
+      throw WsRpcException('Нет соединения с сервером');
+    }
+    final rid = _reqId();
+    final completer = Completer<Map<String, dynamic>>();
+    _pendingRpc[rid] = completer;
+    send(type, {...data, 'request_id': rid});
+    try {
+      return await completer.future.timeout(timeout, onTimeout: () {
+        _pendingRpc.remove(rid);
+        throw WsRpcException('Сервер не ответил вовремя ($type)');
+      });
+    } finally {
+      _pendingRpc.remove(rid);
     }
   }
 
