@@ -49,6 +49,9 @@ class LanChatMessage {
   final bool queued;
   final bool delivered; // пришёл __ack__ от пира
   final bool read; // пришёл __seen__ от пира
+  /// Своя реакция на сообщение (Twemoji-набор, как в ЛС) — ЛОКАЛЬНАЯ, по
+  /// проводу пиру пока не уходит (нет отдельного wire-события для неё).
+  final String? reaction;
 
   LanChatMessage({
     required this.msgId,
@@ -62,6 +65,7 @@ class LanChatMessage {
     this.queued = false,
     this.delivered = false,
     this.read = false,
+    this.reaction,
   });
 
   bool get hasFile => fileName != null && fileBytes != null;
@@ -81,6 +85,7 @@ class LanChatMessage {
         'queued': queued ? 1 : 0,
         'is_delivered': delivered ? 1 : 0,
         'is_read': read ? 1 : 0,
+        'reaction': reaction,
       };
 
   static LanChatMessage fromMap(Map<String, dynamic> m) => LanChatMessage(
@@ -95,6 +100,7 @@ class LanChatMessage {
         queued: (m['queued'] as int? ?? 0) == 1,
         delivered: (m['is_delivered'] as int? ?? 0) == 1,
         read: (m['is_read'] as int? ?? 0) == 1,
+        reaction: m['reaction'] as String?,
       );
 }
 
@@ -118,7 +124,7 @@ class LanChatStore {
     final path = p.join(dir.path, 'lan_chats.db');
     _db = await openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: (db, v) async {
         await db.execute('''
           CREATE TABLE lan_dialogs (
@@ -146,7 +152,8 @@ class LanChatStore {
             file_bytes    BLOB,
             queued        INTEGER NOT NULL DEFAULT 0,
             is_delivered  INTEGER NOT NULL DEFAULT 0,
-            is_read       INTEGER NOT NULL DEFAULT 0
+            is_read       INTEGER NOT NULL DEFAULT 0,
+            reaction      TEXT
           )
         ''');
         await db.execute(
@@ -176,6 +183,9 @@ class LanChatStore {
           // их доставленными (не будем задним числом гонять статус по немым
           // историческим строкам).
           await db.execute('UPDATE lan_messages SET is_delivered = 1 WHERE from_me = 1');
+        }
+        if (oldV < 6) {
+          await db.execute('ALTER TABLE lan_messages ADD COLUMN reaction TEXT');
         }
       },
     );
@@ -365,6 +375,15 @@ class LanChatStore {
       [deviceId, ...msgIds],
     );
     await _reloadDialogs();
+  }
+
+  /// Тап тем же эмодзи повторно — снимает реакцию (toggle), как в ЛС.
+  Future<void> setReaction(String deviceId, String msgId, String emoji) async {
+    final rows = await _safeDb.query('lan_messages',
+        columns: ['reaction'], where: 'msg_id = ?', whereArgs: [msgId], limit: 1);
+    final current = rows.isNotEmpty ? rows.first['reaction'] as String? : null;
+    await _safeDb.update('lan_messages', {'reaction': current == emoji ? null : emoji},
+        where: 'device_id = ? AND msg_id = ?', whereArgs: [deviceId, msgId]);
   }
 
   Future<void> deleteMessages(String deviceId, List<String> msgIds) async {

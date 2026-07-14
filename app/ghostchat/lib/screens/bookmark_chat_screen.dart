@@ -12,7 +12,9 @@ import '../theme.dart';
 import '../mesh_background.dart';
 import '../widgets/glass.dart';
 import '../widgets/emoji_picker.dart';
+import '../widgets/emoji_text.dart';
 import '../widgets/empty_chat_state.dart';
+import '../widgets/reactions_bar.dart';
 import '../widgets/send_fly_animation.dart';
 import '../widgets/toast_overlay.dart';
 import '../services/bookmark_store.dart';
@@ -233,46 +235,73 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
     );
   }
 
+  Future<void> _react(BookmarkMessage m) async {
+    final emoji = await showReactionPalette(context);
+    if (emoji == null) return;
+    await BookmarkStore.instance.setReaction(m.id, emoji);
+    final msgs = await BookmarkStore.instance.getMessages(widget.bookmarkId);
+    if (!mounted) return;
+    setState(() {
+      _messages
+        ..clear()
+        ..addAll(msgs);
+    });
+  }
+
   Widget _bubble(BookmarkMessage m) {
     final time = DateTime.fromMillisecondsSinceEpoch(m.createdAt * 1000);
     final hh = time.hour.toString().padLeft(2, '0');
     final mm = time.minute.toString().padLeft(2, '0');
     return Align(
       alignment: Alignment.centerRight,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 3),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        constraints: const BoxConstraints(maxWidth: 280),
-        decoration: BoxDecoration(
-          color: GE.primary.withValues(alpha: 0.85),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (m.hasFile)
-              InkWell(
-                onTap: () => _openBookmarkFile(m),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.insert_drive_file_outlined, color: Colors.white, size: 18),
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(m.fileName!,
-                          style: const TextStyle(color: Colors.white, fontSize: 13, decoration: TextDecoration.underline)),
-                    ),
-                  ],
+      child: GestureDetector(
+        onLongPress: () => _react(m),
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 3),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          constraints: const BoxConstraints(maxWidth: 280),
+          decoration: BoxDecoration(
+            color: GE.primary.withValues(alpha: 0.85),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (m.hasFile)
+                InkWell(
+                  onTap: () => _openBookmarkFile(m),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.insert_drive_file_outlined, color: Colors.white, size: 18),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(m.fileName!,
+                            style: const TextStyle(color: Colors.white, fontSize: 13, decoration: TextDecoration.underline)),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            if (m.text.isNotEmpty) ...[
-              if (m.hasFile) const SizedBox(height: 4),
-              Text(m.text, style: const TextStyle(color: Colors.white, fontSize: 14)),
+              if (m.text.isNotEmpty) ...[
+                if (m.hasFile) const SizedBox(height: 4),
+                EmojiText(m.text, style: const TextStyle(color: Colors.white, fontSize: 14)),
+              ],
+              if (m.reaction != null) ...[
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: EmojiText(m.reaction!, style: const TextStyle(fontSize: 13)),
+                ),
+              ],
+              const SizedBox(height: 2),
+              Text('$hh:$mm', style: const TextStyle(color: Colors.white70, fontSize: 10)),
             ],
-            const SizedBox(height: 2),
-            Text('$hh:$mm', style: const TextStyle(color: Colors.white70, fontSize: 10)),
-          ],
+          ),
         ),
       ),
     );

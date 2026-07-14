@@ -25,6 +25,7 @@ import '../theme.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/feed_repo.dart';
+import '../services/theme_service.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
 import '../widgets/toast_overlay.dart';
@@ -164,10 +165,12 @@ class _FeedScreenState extends State<FeedScreen> {
               decoration: BoxDecoration(
                 color: active ? GE.primary.withValues(alpha: 0.18) : GE.glassFill,
                 borderRadius: BorderRadius.circular(18),
-                border: Border.all(
-                  color: active ? GE.primary : GE.glassBorder,
-                  width: active ? 1.2 : 0.6,
-                ),
+                border: ThemeService.isMinimal
+                    ? null
+                    : Border.all(
+                        color: active ? GE.primary : GE.glassBorder,
+                        width: active ? 1.2 : 0.6,
+                      ),
               ),
               alignment: Alignment.center,
               child: Text(label,
@@ -193,7 +196,9 @@ class _FeedScreenState extends State<FeedScreen> {
         decoration: BoxDecoration(
           color: GE.primary.withValues(alpha: 0.15),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: GE.primary.withValues(alpha: 0.4)),
+          border: ThemeService.isMinimal
+              ? null
+              : Border.all(color: GE.primary.withValues(alpha: 0.4)),
         ),
         child: Row(
           children: [
@@ -376,7 +381,7 @@ class _FeedScreenState extends State<FeedScreen> {
                       hintText: 'Что нового?',
                       hintStyle: TextStyle(color: GE.sub),
                       filled: true,
-                      fillColor: Colors.black26,
+                      fillColor: GE.glassFill,
                       counterStyle: TextStyle(color: GE.sub, fontSize: 10),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -677,7 +682,9 @@ class _PostCardState extends State<_PostCard> {
       decoration: BoxDecoration(
         color: GE.primary.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: GE.primary.withValues(alpha: 0.3)),
+        border: ThemeService.isMinimal
+            ? null
+            : Border.all(color: GE.primary.withValues(alpha: 0.3)),
       ),
       child: Row(children: [
         Icon(Icons.campaign_outlined, size: 12, color: GE.primary),
@@ -770,7 +777,9 @@ class _PostCardState extends State<_PostCard> {
               decoration: BoxDecoration(
                 color: GE.primary.withValues(alpha: 0.18),
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: GE.primary.withValues(alpha: 0.5)),
+                border: ThemeService.isMinimal
+                    ? null
+                    : Border.all(color: GE.primary.withValues(alpha: 0.5)),
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(Icons.add, size: 12, color: GE.primary),
@@ -797,8 +806,10 @@ class _PostCardState extends State<_PostCard> {
       decoration: BoxDecoration(
         color: GE.red.withValues(alpha: 0.22),
         borderRadius: BorderRadius.circular(5),
-        border: Border.all(
-            color: byAdmin ? GE.red : GE.red.withValues(alpha: 0.5), width: 0.6),
+        border: ThemeService.isMinimal
+            ? null
+            : Border.all(
+                color: byAdmin ? GE.red : GE.red.withValues(alpha: 0.5), width: 0.6),
       ),
       child: Text('18+',
           style: TextStyle(color: GE.red, fontSize: 9, fontWeight: FontWeight.w800)),
@@ -924,7 +935,9 @@ class _PostCardState extends State<_PostCard> {
             decoration: BoxDecoration(
               color: hasMine ? GE.red.withValues(alpha: 0.18) : null,
               borderRadius: BorderRadius.circular(20),
-              border: hasMine ? Border.all(color: GE.red.withValues(alpha: 0.5)) : null,
+              border: ThemeService.isMinimal
+                  ? null
+                  : (hasMine ? Border.all(color: GE.red.withValues(alpha: 0.5)) : null),
             ),
             child: hasMine
                 ? reactionDisplay(p.myReaction!, size: 20)
@@ -956,10 +969,12 @@ class _PostCardState extends State<_PostCard> {
                               ? GE.primary.withValues(alpha: 0.18)
                               : GE.glassFill,
                           borderRadius: BorderRadius.circular(99),
-                          border: p.myReaction == e.key
-                              ? Border.all(
-                                  color: GE.primary.withValues(alpha: 0.6))
-                              : null,
+                          border: ThemeService.isMinimal
+                              ? null
+                              : (p.myReaction == e.key
+                                  ? Border.all(
+                                      color: GE.primary.withValues(alpha: 0.6))
+                                  : null),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
@@ -1276,10 +1291,12 @@ class _PostCardState extends State<_PostCard> {
                                 ? GE.red.withValues(alpha: 0.18)
                                 : GE.glassFill,
                             borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: active ? GE.red : GE.glassBorder,
-                              width: active ? 1.2 : 0.6,
-                            ),
+                            border: ThemeService.isMinimal
+                                ? null
+                                : Border.all(
+                                    color: active ? GE.red : GE.glassBorder,
+                                    width: active ? 1.2 : 0.6,
+                                  ),
                           ),
                           child: Text(label,
                               style: TextStyle(
@@ -1912,15 +1929,15 @@ class _PollWidgetState extends State<_PollWidget> {
             Color? badgeColor;
             if (voted) {
               if (isCorrect) {
-                fill = const Color(0xFF22c55e).withValues(alpha: 0.22);
-                border = const Color(0xFF22c55e);
+                fill = GE.green.withValues(alpha: 0.22);
+                border = GE.green;
                 badge = Icons.check_circle;
-                badgeColor = const Color(0xFF22c55e);
+                badgeColor = GE.green;
               } else if (isWrongMine) {
-                fill = const Color(0xFFef4444).withValues(alpha: 0.22);
-                border = const Color(0xFFef4444);
+                fill = GE.red.withValues(alpha: 0.22);
+                border = GE.red;
                 badge = Icons.cancel;
-                badgeColor = const Color(0xFFef4444);
+                badgeColor = GE.red;
               } else if (isMine) {
                 fill = GE.primary.withValues(alpha: 0.28);
                 border = GE.primary;
@@ -1936,7 +1953,9 @@ class _PollWidgetState extends State<_PollWidget> {
                   children: [
                     Container(
                       decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.3),
+                        // GE.bg вместо чёрного — на светлой "Слоновой кости"
+                        // чёрная плашка смотрелась пятном.
+                        color: GE.bg.withValues(alpha: 0.3),
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(color: border),
                       ),

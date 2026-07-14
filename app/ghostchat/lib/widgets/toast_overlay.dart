@@ -10,6 +10,8 @@ import 'dart:collection';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../theme.dart';
+import '../services/theme_service.dart';
+import 'glass.dart';
 
 enum ToastLevel { info, warn, error }
 
@@ -84,11 +86,15 @@ class ToastOverlay extends StatefulWidget {
 }
 
 class _ToastOverlayState extends State<ToastOverlay>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   StreamSubscription? _sub;
   late final AnimationController _anim;
   late final Animation<Offset> _slide;
   late final Animation<double> _fade;
+  // Второй, отдельный контроллер добавляет squash-and-stretch поверх
+  // обычных slide+fade — только на появлении ("enter=pop/spring"), скрытие
+  // (_anim.reverse()) остаётся простым, без пружины.
+  late final AnimationController _springCtrl;
   _ToastEntry? _showing;
   Timer? _autoHide;
 
@@ -104,6 +110,7 @@ class _ToastOverlayState extends State<ToastOverlay>
       end: Offset.zero,
     ).animate(CurvedAnimation(parent: _anim, curve: Curves.easeOutCubic));
     _fade = CurvedAnimation(parent: _anim, curve: Curves.easeOut);
+    _springCtrl = AnimationController.unbounded(vsync: this);
     _sub = toast.onChange.listen((_) => _onChange());
   }
 
@@ -112,7 +119,13 @@ class _ToastOverlayState extends State<ToastOverlay>
     _sub?.cancel();
     _autoHide?.cancel();
     _anim.dispose();
+    _springCtrl.dispose();
     super.dispose();
+  }
+
+  void _playPop() {
+    _springCtrl.stop();
+    _springCtrl.animateWith(GhostSpring.run());
   }
 
   void _onChange() {
@@ -127,13 +140,29 @@ class _ToastOverlayState extends State<ToastOverlay>
       _autoHide?.cancel();
       setState(() => _showing = next);
       _anim.forward(from: 0);
+      _playPop();
       if (next.action == null) {
         _autoHide = Timer(const Duration(seconds: 6), () {
           if (mounted && _showing != null) toast.dismiss();
         });
       }
     } else {
-      setState(() {});
+      // Тот же тост уже показан (совпал key) — раньше тут был голый
+      // setState(() {}), который ничего не меняет: повторный тап по
+      // источнику (напр. бейдж связи) выглядел так, будто вообще ничего не
+      // произошло. Теперь продлеваем автоскрытие и коротко "подпрыгиваем"
+      // анимацией — видимый отклик на каждый тап, а не только на первый.
+      setState(() => _showing = next);
+      _anim.stop();
+      _anim.value = 0.85;
+      _anim.forward();
+      _playPop();
+      if (next.action == null) {
+        _autoHide?.cancel();
+        _autoHide = Timer(const Duration(seconds: 6), () {
+          if (mounted && _showing != null) toast.dismiss();
+        });
+      }
     }
   }
 
@@ -152,17 +181,39 @@ class _ToastOverlayState extends State<ToastOverlay>
               position: _slide,
               child: FadeTransition(
                 opacity: _fade,
-                child: Dismissible(
-                  key: ValueKey(_showing!.key),
-                  direction: DismissDirection.up,
-                  onDismissed: (_) => toast.dismiss(),
-                  child: Material(
-                    type: MaterialType.transparency,
-                    child: _ToastCard(
-                      entry: _showing!,
-                      queue: toast.length,
-                      onClose: toast.dismiss,
-                      onLogs: toast.onNavigateToLogs,
+                child: AnimatedBuilder(
+                  animation: _springCtrl,
+                  builder: (_, child) {
+                    double sx = 1, sy = 1;
+                    if (_springCtrl.isAnimating) {
+                      final v = _springCtrl.velocity;
+                      final speed = (v.abs() / GhostSpring.maxAbsV).clamp(
+                        0.0,
+                        1.0,
+                      );
+                      // Появление идёт по Y — растяжение вдоль движения,
+                      // сжатие поперёк, та же формула, что у PressScale.
+                      sy = 1 + speed * 0.16 * GhostSpring.squashStrong * 0.33;
+                      sx = 1 - speed * 0.10 * GhostSpring.squashStrong * 0.33;
+                    }
+                    return Transform(
+                      alignment: Alignment.center,
+                      transform: Matrix4.diagonal3Values(sx, sy, 1),
+                      child: child,
+                    );
+                  },
+                  child: Dismissible(
+                    key: ValueKey(_showing!.key),
+                    direction: DismissDirection.up,
+                    onDismissed: (_) => toast.dismiss(),
+                    child: Material(
+                      type: MaterialType.transparency,
+                      child: _ToastCard(
+                        entry: _showing!,
+                        queue: toast.length,
+                        onClose: toast.dismiss,
+                        onLogs: toast.onNavigateToLogs,
+                      ),
                     ),
                   ),
                 ),
@@ -218,7 +269,9 @@ class _ToastCard extends StatelessWidget {
               GE.bg,
             ).withValues(alpha: 0.92),
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: _accent.withValues(alpha: 0.45)),
+            border: ThemeService.isMinimal
+                ? null
+                : Border.all(color: _accent.withValues(alpha: 0.45)),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.32),

@@ -138,7 +138,7 @@ class _EmojiPickerState extends State<EmojiPicker> {
                 hintStyle: TextStyle(color: GE.sub, fontSize: 14),
                 prefixIcon: Icon(Icons.search, color: GE.sub, size: 20),
                 filled: true,
-                fillColor: Colors.white.withValues(alpha: 0.05),
+                fillColor: GE.glassFill,
                 contentPadding: const EdgeInsets.symmetric(vertical: 10),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),

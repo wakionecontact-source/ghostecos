@@ -13,18 +13,64 @@
 import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
+import '../services/theme_service.dart';
 import '../theme.dart';
 
-/// Пружинное нажатие (лёгкое сжатие + возврат) + лёгкая хаптика — единый
-/// "эпловский" отклик на тап вместо голого Material-ripple. Оборачивает
-/// кнопки/карточки/строки списков. onLongPress получает свою (более сильную)
-/// хаптику — так на ощупь отличимо "тап" от "долгое нажатие → меню/выделение".
+/// true в ThemeStyle.minimal — карточки/кнопки/поля ниже рисуются плоско
+/// (без BackdropFilter, без градиентов и glow), см. project memory
+/// «минималистичный режим». Все виджеты этого файла читают этот флаг
+/// напрямую при каждом build(), рёбилд обеспечивает вызывающий экран,
+/// который уже слушает ThemeService.instance.notifier (стиль меняет
+/// палитру-«близнеца», см. ThemeService.setStyle).
+bool get _flat => ThemeService.instance.styleNotifier.value == ThemeStyle.minimal;
+
+/// Общая "живая" пружинная физика для тапов/тумблеров/появления элементов —
+/// один набор параметров (перенесён из утверждённого HTML-прототипа), чтобы
+/// моторика ощущалась одинаково по всему приложению: реальная пружина
+/// (mass-spring-damper) с перелётом ×1.6 и сильным squash-and-stretch ×3.2.
+class GhostSpring {
+  GhostSpring._();
+
+  static const double ampMul = 1.6;
+  static const double squashStrong = 3.2;
+
+  static final SpringDescription desc = SpringDescription(
+    mass: 1,
+    stiffness: 180,
+    damping: 12,
+  );
+
+  /// Пик скорости на пути -1→0 — нормирует squash/stretch по текущей
+  /// скорости пружины (как в JS-прототипе), считается один раз лениво.
+  static final double maxAbsV = _computeMaxAbsV();
+
+  static double _computeMaxAbsV() {
+    final sim = SpringSimulation(desc, -1, 0, 0);
+    double maxV = 0;
+    double t = 0;
+    const dt = 1 / 120;
+    while (!sim.isDone(t) && t < 3) {
+      final v = sim.dx(t).abs();
+      if (v > maxV) maxV = v;
+      t += dt;
+    }
+    return maxV == 0 ? 1 : maxV;
+  }
+
+  static SpringSimulation run() => SpringSimulation(desc, -1, 0, 0);
+}
+
+/// Пружинное нажатие: "взвод" (сжатие) пока держат палец, и пружинный
+/// возврат с перелётом + squash-and-stretch при отпускании — та же физика,
+/// что в утверждённом демо кнопки. Оборачивает кнопки/карточки/строки
+/// списков. onLongPress получает свою (более сильную) хаптику — так на
+/// ощупь отличимо "тап" от "долгое нажатие → меню/выделение".
 class PressScale extends StatefulWidget {
   final Widget child;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
-  final double scaleDown;
   final bool haptic;
 
   const PressScale({
@@ -32,7 +78,6 @@ class PressScale extends StatefulWidget {
     required this.child,
     this.onTap,
     this.onLongPress,
-    this.scaleDown = 0.96,
     this.haptic = true,
   });
 
@@ -40,11 +85,52 @@ class PressScale extends StatefulWidget {
   State<PressScale> createState() => _PressScaleState();
 }
 
-class _PressScaleState extends State<PressScale> {
-  bool _pressed = false;
+class _PressScaleState extends State<PressScale>
+    with TickerProviderStateMixin {
+  // Целевая деформация во "взведённом" состоянии (палец держит) — та же
+  // формула, что squash/stretch в основной пружине, на пике STRONG-сжатия.
+  static final double _squeezeX =
+      1 + 0.05 * GhostSpring.squashStrong * 0.33;
+  static final double _squeezeY =
+      1 - 0.08 * GhostSpring.squashStrong * 0.33;
 
-  void _setPressed(bool v) {
-    if (mounted && _pressed != v) setState(() => _pressed = v);
+  late final AnimationController _pressCtrl; // 0..1, взвод при удержании
+  late final AnimationController _springCtrl; // unbounded, отпускание пружиной
+  double _releaseFromX = 1, _releaseFromY = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    _pressCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 110),
+    );
+    _springCtrl = AnimationController.unbounded(vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _pressCtrl.dispose();
+    _springCtrl.dispose();
+    super.dispose();
+  }
+
+  void _down() {
+    _springCtrl.stop();
+    _pressCtrl.forward(from: _pressCtrl.value);
+  }
+
+  void _release() {
+    // Стартуем пружину РОВНО с текущей деформации, даже если взвод не успел
+    // доиграть до конца — иначе будет прыжок (тот самый баг, что чинили у
+    // тумблера).
+    final p = Curves.easeOut.transform(_pressCtrl.value);
+    _releaseFromX = 1 + (_squeezeX - 1) * p;
+    _releaseFromY = 1 + (_squeezeY - 1) * p;
+    _pressCtrl.stop();
+    _pressCtrl.value = 0;
+    _springCtrl.stop();
+    _springCtrl.animateWith(GhostSpring.run());
   }
 
   @override
@@ -52,9 +138,9 @@ class _PressScaleState extends State<PressScale> {
     final tappable = widget.onTap != null;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTapDown: tappable ? (_) => _setPressed(true) : null,
-      onTapUp: tappable ? (_) => _setPressed(false) : null,
-      onTapCancel: tappable ? () => _setPressed(false) : null,
+      onTapDown: tappable ? (_) => _down() : null,
+      onTapUp: tappable ? (_) => _release() : null,
+      onTapCancel: tappable ? _release : null,
       onTap: tappable
           ? () {
               if (widget.haptic) HapticFeedback.lightImpact();
@@ -67,11 +153,170 @@ class _PressScaleState extends State<PressScale> {
               if (widget.haptic) HapticFeedback.mediumImpact();
               widget.onLongPress!();
             },
-      child: AnimatedScale(
-        scale: _pressed ? widget.scaleDown : 1.0,
-        duration: const Duration(milliseconds: 120),
-        curve: Curves.easeOut,
+      child: AnimatedBuilder(
+        animation: Listenable.merge([_pressCtrl, _springCtrl]),
+        builder: (_, child) {
+          double sx, sy;
+          if (_springCtrl.isAnimating) {
+            final x = _springCtrl.value;
+            final mul = x < 0 ? 1.0 : GhostSpring.ampMul;
+            sx = 1 + x * (1 - _releaseFromX) * mul;
+            sy = 1 + x * (1 - _releaseFromY) * mul;
+          } else {
+            final p = Curves.easeOut.transform(_pressCtrl.value);
+            sx = 1 + (_squeezeX - 1) * p;
+            sy = 1 + (_squeezeY - 1) * p;
+          }
+          return Transform(
+            alignment: Alignment.center,
+            transform: Matrix4.diagonal3Values(sx, sy, 1),
+            child: child,
+          );
+        },
         child: widget.child,
+      ),
+    );
+  }
+}
+
+/// Тумблер: та же пружинная физика, что в PressScale/утверждённом демо —
+/// перед основным ходом точка на 90мс "отъезжает" назад, в сторону,
+/// противоположную переключению (как взведённая пружина), затем летит к
+/// цели с перелётом и squash-and-stretch. Прямая замена стокового
+/// Material Switch (тот же набор параметров: value/onChanged/activeColor).
+class GhostSwitch extends StatefulWidget {
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  final Color? activeColor;
+
+  const GhostSwitch({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    this.activeColor,
+  });
+
+  @override
+  State<GhostSwitch> createState() => _GhostSwitchState();
+}
+
+class _GhostSwitchState extends State<GhostSwitch>
+    with TickerProviderStateMixin {
+  static const double _trackW = 52, _trackH = 30, _knob = 24, _pad = 3;
+  static const double _travel = _trackW - _pad * 2 - _knob; // 22
+  static const double _anticipDist = 4.5;
+
+  late final AnimationController _anticipCtrl;
+  late final AnimationController _springCtrl;
+  double _from = 0, _to = 0, _pulledBack = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _from = _to = widget.value ? _travel : 0;
+    _anticipCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 90),
+    );
+    _springCtrl = AnimationController.unbounded(vsync: this);
+  }
+
+  @override
+  void didUpdateWidget(covariant GhostSwitch old) {
+    super.didUpdateWidget(old);
+    if (old.value != widget.value) _run(old.value, widget.value);
+  }
+
+  @override
+  void dispose() {
+    _anticipCtrl.dispose();
+    _springCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _run(bool wasOn, bool nowOn) async {
+    _from = wasOn ? _travel : 0;
+    _to = nowOn ? _travel : 0;
+    final dir = (_to - _from) == 0 ? 1.0 : (_to - _from).sign;
+    _pulledBack = _from - dir * _anticipDist;
+    _springCtrl.stop();
+    _anticipCtrl.stop();
+    _anticipCtrl.value = 0;
+    await _anticipCtrl.forward();
+    if (!mounted) return;
+    _springCtrl.animateWith(GhostSpring.run());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final active = widget.activeColor ?? GE.primary;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        HapticFeedback.lightImpact();
+        widget.onChanged(!widget.value);
+      },
+      child: AnimatedBuilder(
+        animation: Listenable.merge([_anticipCtrl, _springCtrl]),
+        builder: (_, __) {
+          double knobX;
+          double scaleX = 1, scaleY = 1;
+          if (_springCtrl.isAnimating) {
+            final x = _springCtrl.value;
+            final v = _springCtrl.velocity;
+            final mul = x < 0 ? 1.0 : GhostSpring.ampMul;
+            knobX = _to + x * (_to - _pulledBack) * mul;
+            final speed = (v.abs() / GhostSpring.maxAbsV).clamp(0.0, 1.0);
+            scaleX = 1 + speed * 0.16 * GhostSpring.squashStrong * 0.33;
+            scaleY = 1 - speed * 0.10 * GhostSpring.squashStrong * 0.33;
+          } else if (_anticipCtrl.isAnimating) {
+            final p = _anticipCtrl.value;
+            final rem = 1 - p;
+            final eased = 1 - rem * rem; // easeOutQuad
+            knobX = _from + (_pulledBack - _from) * eased;
+            final squeeze = 1 - 0.06 * eased;
+            scaleX = squeeze;
+            scaleY = 1 / squeeze;
+          } else {
+            knobX = widget.value ? _travel : 0;
+          }
+          final colorT = (knobX / _travel).clamp(0.0, 1.0);
+          final trackColor = Color.lerp(
+            Colors.white.withValues(alpha: 0.10),
+            active,
+            colorT,
+          )!;
+          return Container(
+            width: _trackW,
+            height: _trackH,
+            padding: const EdgeInsets.all(_pad),
+            decoration: BoxDecoration(
+              color: trackColor,
+              borderRadius: BorderRadius.circular(_trackH / 2),
+            ),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Positioned(
+                  left: knobX,
+                  top: 0,
+                  child: Transform(
+                    alignment: Alignment.center,
+                    transform: Matrix4.diagonal3Values(scaleX, scaleY, 1),
+                    child: Container(
+                      width: _knob,
+                      height: _knob,
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -137,19 +382,21 @@ class _GlassDotsState extends State<GlassDots> with SingleTickerProviderStateMix
 // не умеет CSS inset-shadow напрямую — этим и эмулируем: светлый верх/лево,
 // тёмный низ/право, как будто стекло вдавлено).
 class _GlassTokens {
+  // Приглушено (было 0.12/0.075 у первого стопа) — на полной яркости блик
+  // читался как типовой "AI-сгенерированный" глянец; сдержаннее = дороже.
   static LinearGradient sheen({bool strong = false}) => LinearGradient(
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
         colors: strong
             ? [
-                Colors.white.withValues(alpha: 0.12),
-                Colors.white.withValues(alpha: 0.03),
-                Colors.white.withValues(alpha: 0.015),
+                Colors.white.withValues(alpha: 0.07),
+                Colors.white.withValues(alpha: 0.02),
+                Colors.white.withValues(alpha: 0.01),
               ]
             : [
-                Colors.white.withValues(alpha: 0.075),
-                Colors.white.withValues(alpha: 0.020),
-                Colors.white.withValues(alpha: 0.010),
+                Colors.white.withValues(alpha: 0.045),
+                Colors.white.withValues(alpha: 0.014),
+                Colors.white.withValues(alpha: 0.008),
               ],
         stops: const [0.0, 0.55, 1.0],
       );
@@ -170,7 +417,7 @@ class _GlassTokens {
 class GlassCard extends StatelessWidget {
   final Widget child;
   final EdgeInsets padding;
-  final double radius;
+  final double? radius;
   final bool glow;
   final bool strong;
   final VoidCallback? onTap;
@@ -186,7 +433,7 @@ class GlassCard extends StatelessWidget {
     super.key,
     required this.child,
     this.padding = const EdgeInsets.all(16),
-    this.radius = GE.radiusMd,
+    this.radius,
     this.glow = false,
     this.strong = false,
     this.onTap,
@@ -197,7 +444,22 @@ class GlassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final radiusObj = BorderRadius.circular(radius);
+    final radiusObj = BorderRadius.circular(radius ?? GE.radiusMd);
+    if (_flat) {
+      // Минимализм: сплошная заливка + тонкая рамка, без blur/градиента/тени.
+      Widget flatCard = DecoratedBox(
+        decoration: BoxDecoration(
+          color: fillOverride ?? GE.surface,
+          borderRadius: radiusObj,
+          border: Border.all(color: GE.border, width: 1),
+        ),
+        child: Padding(padding: padding, child: child),
+      );
+      if (onTap != null) {
+        flatCard = PressScale(onTap: onTap, child: flatCard);
+      }
+      return ClipRRect(borderRadius: radiusObj, child: flatCard);
+    }
     final base =
         fillOverride ??
         (strong
@@ -250,7 +512,7 @@ class GlassCard extends StatelessWidget {
       );
     }
     if (onTap != null) {
-      fill = PressScale(onTap: onTap, scaleDown: 0.98, child: fill);
+      fill = PressScale(onTap: onTap, child: fill);
     }
     // Тень — СНАРУЖИ ClipRRect (иначе блюр её срезает). Отрывает карточку от
     // фона → объём вместо «плоско».
@@ -259,8 +521,7 @@ class GlassCard extends StatelessWidget {
         borderRadius: radiusObj,
         boxShadow: [
           ..._GlassTokens.shadow(strong: strong),
-          if (glow)
-            BoxShadow(color: GE.glowFill, blurRadius: 30, spreadRadius: 1),
+          if (glow) BoxShadow(color: GE.glowFill, blurRadius: 20),
         ],
       ),
       child: fill,
@@ -301,54 +562,71 @@ class GlassButton extends StatelessWidget {
     final radius = BorderRadius.circular(GE.radiusSm);
     final clipper = squircle ? ContinuousRectangleBorder(borderRadius: radius) : null;
     final isCta = primary || danger;
-    final gradient = primary
-        ? LinearGradient(
+    final flat = _flat;
+    final gradient = (flat || !primary)
+        ? null
+        : LinearGradient(
             colors: [GE.primary2, GE.primary],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-          )
-        : danger
-        ? const LinearGradient(
-            colors: [Color(0xFFE11D48), Color(0xFFEC4899)],
+          );
+    // GE.red (не хардкод-розовый) — иначе кнопка "Выйти"/удалить не меняла
+    // тон на других 11 темах.
+    final gradient2 = (flat || !danger)
+        ? null
+        : LinearGradient(
+            colors: [
+              GE.red,
+              Color.alphaBlend(Colors.black.withValues(alpha: 0.18), GE.red),
+            ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-          )
-        : null;
+          );
+    // Минимализм: сплошной цвет вместо градиента, без blur/glow-тени.
+    final flatColor = !flat
+        ? null
+        : (primary ? GE.primary : (danger ? GE.red : GE.glassFill));
     Widget content = AnimatedContainer(
       duration: const Duration(milliseconds: 140),
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
       decoration: BoxDecoration(
+        color: flatColor,
         // Не-CTA получает sheen-градиент стекла вместо плоской заливки.
-        gradient:
-            gradient ??
-            LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Color.alphaBlend(
-                  Colors.white.withValues(alpha: 0.10),
-                  GE.glassFill,
-                ),
-                GE.glassFill,
-              ],
-            ),
+        gradient: flat
+            ? null
+            : (gradient ??
+                  gradient2 ??
+                  LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Color.alphaBlend(
+                        Colors.white.withValues(alpha: 0.10),
+                        GE.glassFill,
+                      ),
+                      GE.glassFill,
+                    ],
+                  )),
         borderRadius: radius,
         // CTA — uniform specular-кромка на цветном градиенте. Не-CTA — без
         // border (см. GlassCard.fillDeco про несовместимость borderRadius
         // с не-uniform-цветным Border — та же ловушка была и тут).
-        border: isCta
-            ? Border.all(
-                color: Colors.white.withValues(alpha: 0.24),
-                width: GE.glassStroke,
-              )
-            : null,
-        boxShadow: isCta
+        border: flat
+            ? (isCta ? null : Border.all(color: GE.border, width: 1))
+            : (isCta
+                  ? Border.all(
+                      color: Colors.white.withValues(alpha: 0.24),
+                      width: GE.glassStroke,
+                    )
+                  : null),
+        // Приглушённое CTA-свечение (было alpha 0.38/blur 20 — читалось как
+        // типовой "неоновый" AI-глянец); теперь тише и плотнее — дороже.
+        boxShadow: (!flat && isCta)
             ? [
                 BoxShadow(
-                  color: (primary ? GE.primary : const Color(0xFFE11D48))
-                      .withValues(alpha: 0.38),
-                  blurRadius: 20,
-                  offset: const Offset(0, 7),
+                  color: (primary ? GE.primary : GE.red).withValues(alpha: 0.22),
+                  blurRadius: 14,
+                  offset: const Offset(0, 5),
                 ),
               ]
             : null,
@@ -376,8 +654,9 @@ class GlassButton extends StatelessWidget {
         ],
       ),
     );
-    if (!isCta) {
-      // Для non-CTA добавляем backdrop blur — реальное «стекло»
+    if (!isCta && !flat) {
+      // Для non-CTA добавляем backdrop blur — реальное «стекло» (пропускаем
+      // в минимализме — там и так сплошная заливка, blur не нужен).
       content = clipper != null
           ? ClipPath(
               clipper: ShapeBorderClipper(shape: clipper),
@@ -437,45 +716,45 @@ class GlassInput extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final radius = BorderRadius.circular(GE.radiusSm);
-    return ClipRRect(
-      borderRadius: radius,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: GE.glassBlur, sigmaY: GE.glassBlur),
-        child: Container(
-          decoration: BoxDecoration(
-            color: GE.glassFill,
-            border: Border.all(color: GE.glassBorder, width: GE.glassStroke),
-            borderRadius: radius,
-          ),
-          child: TextFormField(
-            controller: controller,
-            obscureText: obscure,
-            keyboardType: keyboardType,
-            validator: validator,
-            onChanged: onChanged,
-            onFieldSubmitted: onSubmitted,
-            onTap: onTap,
-            autofocus: autofocus,
-            maxLines: obscure ? 1 : maxLines,
-            style: TextStyle(color: GE.text, fontSize: 14),
-            cursorColor: GE.primary,
-            decoration: InputDecoration(
-              hintText: hint,
-              hintStyle: TextStyle(color: GE.sub, fontSize: 14),
-              prefixIcon: icon != null
-                  ? Icon(icon, size: 18, color: GE.sub)
-                  : null,
-              suffixIcon: suffix,
-              border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 13,
-              ),
-            ),
-          ),
+    final flat = _flat;
+    Widget field = Container(
+      decoration: BoxDecoration(
+        color: GE.glassFill,
+        border: Border.all(
+          color: flat ? GE.border : GE.glassBorder,
+          width: GE.glassStroke,
+        ),
+        borderRadius: radius,
+      ),
+      child: TextFormField(
+        controller: controller,
+        obscureText: obscure,
+        keyboardType: keyboardType,
+        validator: validator,
+        onChanged: onChanged,
+        onFieldSubmitted: onSubmitted,
+        onTap: onTap,
+        autofocus: autofocus,
+        maxLines: obscure ? 1 : maxLines,
+        style: TextStyle(color: GE.text, fontSize: 14),
+        cursorColor: GE.primary,
+        decoration: InputDecoration(
+          hintText: hint,
+          hintStyle: TextStyle(color: GE.sub, fontSize: 14),
+          prefixIcon: icon != null ? Icon(icon, size: 18, color: GE.sub) : null,
+          suffixIcon: suffix,
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
         ),
       ),
     );
+    if (!flat) {
+      field = BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: GE.glassBlur, sigmaY: GE.glassBlur),
+        child: field,
+      );
+    }
+    return ClipRRect(borderRadius: radius, child: field);
   }
 }
 
@@ -501,19 +780,23 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bar = AppBar(
+      backgroundColor: GE.glassFill,
+      surfaceTintColor: Colors.transparent,
+      shape: Border(
+        bottom: BorderSide(color: _flat ? GE.border : GE.glassBorder, width: 0.5),
+      ),
+      title: title ?? (titleText != null ? Text(titleText!) : null),
+      leading: leading ?? (showBack ? BackButton(color: GE.text) : null),
+      actions: actions,
+    );
+    if (_flat) return bar;
     // Тот же рецепт стекла, что и у GlassCard (blur+fill), чтобы шапка не
     // выглядела отдельным слоем — только edge-to-edge вместо скруглений.
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: GE.glassBlur, sigmaY: GE.glassBlur),
-        child: AppBar(
-          backgroundColor: GE.glassFill,
-          surfaceTintColor: Colors.transparent,
-          shape: Border(bottom: BorderSide(color: GE.glassBorder, width: 0.5)),
-          title: title ?? (titleText != null ? Text(titleText!) : null),
-          leading: leading ?? (showBack ? BackButton(color: GE.text) : null),
-          actions: actions,
-        ),
+        child: bar,
       ),
     );
   }
@@ -531,58 +814,67 @@ Future<T?> showGlassSheet<T>(
     isScrollControlled: isScrollControlled,
     backgroundColor: Colors.transparent,
     barrierColor: const Color(0xCC020617),
-    builder: (ctx) => ClipRRect(
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-        child: DecoratedBox(
-          // Шит поднят над контентом — "strong"-глубина, как модалки на сайте
-          // (--gl-bg-deep + border-strong + shadow-deep).
-          decoration: BoxDecoration(
-            color: Color.alphaBlend(
-              GE.bgDeep.withValues(alpha: 0.85),
-              GE.glassFill,
-            ),
-            border: Border(
-              top: BorderSide(
-                color: Colors.white.withValues(alpha: 0.22),
-                width: 1,
-              ),
-            ),
-            boxShadow: _GlassTokens.shadow(strong: true),
-          ),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: _GlassTokens.sheen(strong: true),
-            ),
-            child: Padding(
-              padding: EdgeInsets.only(
-                top: 12,
-                bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
-              ),
-              child: SizedBox(
-                height: height,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Grab handle сверху
-                    Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: GE.borderStrong,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    Flexible(child: child),
-                  ],
+    builder: (ctx) {
+      final flat = _flat;
+      Widget sheetBody = DecoratedBox(
+        // Шит поднят над контентом — "strong"-глубина, как модалки на сайте
+        // (--gl-bg-deep + border-strong + shadow-deep). В минимализме —
+        // сплошная заливка без blur/sheen/тени.
+        decoration: BoxDecoration(
+          color: flat
+              ? GE.surface
+              : Color.alphaBlend(
+                  GE.bgDeep.withValues(alpha: 0.85),
+                  GE.glassFill,
                 ),
+          border: Border(
+            top: BorderSide(
+              color: flat ? GE.border : Colors.white.withValues(alpha: 0.22),
+              width: 1,
+            ),
+          ),
+          boxShadow: flat ? null : _GlassTokens.shadow(strong: true),
+        ),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: flat ? null : _GlassTokens.sheen(strong: true),
+          ),
+          child: Padding(
+            padding: EdgeInsets.only(
+              top: 12,
+              bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+            ),
+            child: SizedBox(
+              height: height,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Grab handle сверху
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: GE.borderStrong,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Flexible(child: child),
+                ],
               ),
             ),
           ),
         ),
-      ),
-    ),
+      );
+      return ClipRRect(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        child: flat
+            ? sheetBody
+            : BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+                child: sheetBody,
+              ),
+      );
+    },
   );
 }

@@ -7,6 +7,10 @@ class GE {
   static const baseUrl = 'https://ghostecos.duckdns.org';
   static const apiChat = '$baseUrl/api/chat';
   static const apiSoc = '$baseUrl/api/soc';
+  // Профиль/контакты "core"-идентичности (display_name, about, avatar_bg_color,
+  // glow_color) живут на bare /api (backchat/routers/users.py), отдельно от
+  // /api/chat и /api/soc.
+  static const apiCore = '$baseUrl/api';
   static const wsUrl = 'wss://ghostecos.duckdns.org/api/soc/ws';
   static const appName = 'GhostChat';
 

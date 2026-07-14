@@ -48,16 +48,10 @@ void main() async {
   await FcmService.instance.init();
   // Прозрачные status/nav bar — mesh должен просвечивать через них (Android 15+
   // и так включает edge-to-edge, но без этого system bars будут с дефолтным
-  // тёмным фоном поверх mesh).
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-      systemNavigationBarColor: Colors.transparent,
-      systemNavigationBarIconBrightness: Brightness.light,
-      systemNavigationBarContrastEnforced: false,
-    ),
-  );
+  // тёмным фоном поверх mesh). Яркость иконок пересчитывается на каждую смену
+  // темы в GhostApp.build() (см. _applySystemBarStyle) — на светлой "Слоновой
+  // кости" светлые иконки на светлом фоне были бы невидимы.
+  _applySystemBarStyle();
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
     await windowManager.ensureInitialized();
     await windowManager.waitUntilReadyToShow(
@@ -77,6 +71,23 @@ void main() async {
   runApp(const GhostApp());
 }
 
+/// Иконки статус-бара/навигации подстраиваются под яркость активной темы —
+/// на тёмных темах светлые (видны на тёмном фоне), на светлой "Слоновой
+/// кости" тёмные (иначе светлые иконки пропадают на светлом фоне и верхняя
+/// строка выглядит "не дизайненной", будто чужеродной системной полосой).
+void _applySystemBarStyle() {
+  final light = GE.currentBrightness == Brightness.light;
+  SystemChrome.setSystemUIOverlayStyle(
+    SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: light ? Brightness.dark : Brightness.light,
+      systemNavigationBarColor: Colors.transparent,
+      systemNavigationBarIconBrightness: light ? Brightness.dark : Brightness.light,
+      systemNavigationBarContrastEnforced: false,
+    ),
+  );
+}
+
 class GhostApp extends StatelessWidget {
   const GhostApp({super.key});
   @override
@@ -88,18 +99,21 @@ class GhostApp extends StatelessWidget {
       listenable: Listenable.merge(
         [ThemeService.instance.notifier, ThemeService.instance.cornerNotifier],
       ),
-      builder: (_, _) => MaterialApp(
-        title: GE.appName,
-        debugShowCheckedModeBanner: false,
-        navigatorKey: NotificationService.navigatorKey,
-        theme: GE.theme(),
-        // Оверлей внутренних уведомлений (тосты) — поверх всех экранов.
-        builder: (context, child) =>
-            ToastOverlay(child: child ?? const SizedBox.shrink()),
-        // НЕ const — иначе при смене темы home-поддерево не перерисовывается
-        // и тема меняется только внутри настроек, а не во всём приложении.
-        home: _Root(),
-      ),
+      builder: (_, _) {
+        _applySystemBarStyle();
+        return MaterialApp(
+          title: GE.appName,
+          debugShowCheckedModeBanner: false,
+          navigatorKey: NotificationService.navigatorKey,
+          theme: GE.theme(),
+          // Оверлей внутренних уведомлений (тосты) — поверх всех экранов.
+          builder: (context, child) =>
+              ToastOverlay(child: child ?? const SizedBox.shrink()),
+          // НЕ const — иначе при смене темы home-поддерево не перерисовывается
+          // и тема меняется только внутри настроек, а не во всём приложении.
+          home: _Root(),
+        );
+      },
     );
   }
 }

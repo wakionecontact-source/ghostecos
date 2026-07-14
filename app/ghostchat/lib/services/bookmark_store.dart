@@ -35,6 +35,7 @@ class BookmarkMessage {
   final String? fileMime;
   final Uint8List? fileBytes;
   final int createdAt; // unix seconds
+  final String? reaction; // как в ЛС/LAN — свой Twemoji-маркер на заметке
 
   BookmarkMessage({
     required this.id,
@@ -44,6 +45,7 @@ class BookmarkMessage {
     this.fileMime,
     this.fileBytes,
     required this.createdAt,
+    this.reaction,
   });
 
   bool get hasFile => fileName != null && fileBytes != null;
@@ -56,6 +58,7 @@ class BookmarkMessage {
         fileMime: m['file_mime'] as String?,
         fileBytes: m['file_bytes'] as Uint8List?,
         createdAt: m['created_at'] as int,
+        reaction: m['reaction'] as String?,
       );
 }
 
@@ -80,7 +83,7 @@ class BookmarkStore {
     final path = p.join(dir.path, 'bookmarks_$scopeKey.db');
     _db = await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, v) async {
         await db.execute('''
           CREATE TABLE bookmarks (
@@ -100,11 +103,17 @@ class BookmarkStore {
             file_name    TEXT,
             file_mime    TEXT,
             file_bytes   BLOB,
-            created_at   INTEGER NOT NULL
+            created_at   INTEGER NOT NULL,
+            reaction     TEXT
           )
         ''');
         await db.execute(
             'CREATE INDEX idx_bm_msg ON bookmark_messages(bookmark_id, created_at)');
+      },
+      onUpgrade: (db, oldV, newV) async {
+        if (oldV < 2) {
+          await db.execute('ALTER TABLE bookmark_messages ADD COLUMN reaction TEXT');
+        }
       },
     );
     await _ensureDefault();
@@ -232,5 +241,14 @@ class BookmarkStore {
   Future<void> deleteMessage(String messageId, String bookmarkId) async {
     await _safeDb.delete('bookmark_messages', where: 'id = ?', whereArgs: [messageId]);
     await _reloadDialogs();
+  }
+
+  /// Тап тем же эмодзи повторно — снимает реакцию (toggle), как в ЛС/LAN.
+  Future<void> setReaction(String messageId, String emoji) async {
+    final rows = await _safeDb.query('bookmark_messages',
+        columns: ['reaction'], where: 'id = ?', whereArgs: [messageId], limit: 1);
+    final current = rows.isNotEmpty ? rows.first['reaction'] as String? : null;
+    await _safeDb.update('bookmark_messages', {'reaction': current == emoji ? null : emoji},
+        where: 'id = ?', whereArgs: [messageId]);
   }
 }

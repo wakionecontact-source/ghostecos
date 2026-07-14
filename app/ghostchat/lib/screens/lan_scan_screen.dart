@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../theme.dart';
+import '../services/theme_service.dart';
 import '../mesh_background.dart';
 import '../widgets/glass.dart';
 import '../widgets/toast_overlay.dart';
@@ -486,6 +487,7 @@ class _LanScanScreenState extends State<LanScanScreen>
                       progress: _ctrl.value,
                       color: GE.primary,
                       scanning: _scanning,
+                      flat: ThemeService.isMinimal,
                     ),
                     child: Center(
                       child: GestureDetector(
@@ -496,7 +498,9 @@ class _LanScanScreenState extends State<LanScanScreen>
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             color: GE.primary.withValues(alpha: _scanning ? 0.24 : 0.55),
-                            border: Border.all(color: GE.primary, width: 1.4),
+                            border: ThemeService.isMinimal
+                                ? null
+                                : Border.all(color: GE.primary, width: 1.4),
                           ),
                           child: Icon(
                             _starting
@@ -540,7 +544,9 @@ class _LanScanScreenState extends State<LanScanScreen>
       decoration: BoxDecoration(
         color: c.withValues(alpha: active ? 0.14 : 0.06),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: c.withValues(alpha: active ? 0.4 : 0.2)),
+        border: ThemeService.isMinimal
+            ? null
+            : Border.all(color: c.withValues(alpha: active ? 0.4 : 0.2)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -773,11 +779,15 @@ class _RadarPainter extends CustomPainter {
   final double progress; // 0..1
   final Color color;
   final bool scanning;
+  // Минимализм: без пульсирующих "волн"-glow и без sweep-градиента — только
+  // статичные тонкие кольца-сетка (структура, не свечение).
+  final bool flat;
 
   _RadarPainter({
     required this.progress,
     required this.color,
     required this.scanning,
+    this.flat = false,
   });
 
   @override
@@ -792,6 +802,8 @@ class _RadarPainter extends CustomPainter {
     for (var i = 1; i <= 3; i++) {
       canvas.drawCircle(center, maxR * i / 3, ring);
     }
+
+    if (flat) return;
 
     const waves = 3;
     for (var i = 0; i < waves; i++) {

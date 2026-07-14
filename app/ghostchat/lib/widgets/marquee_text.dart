@@ -95,8 +95,15 @@ class _MarqueeTextState extends State<MarqueeText>
         }
         final w = constraints.maxWidth;
         final stopFrac = w > 0 ? (_fade / w).clamp(0.0, 0.5) : 0.0;
+        // OverflowBox без явной высоты наследует constraints родителя — в
+        // AppBar.title это (в отдельных версиях Flutter) незакреплённая
+        // высота внутри intrinsic-прохода layout'а, и RenderBox падает с
+        // "given an infinite size during layout". Высоту строки фиксируем
+        // явно (по fontSize), чтобы OverflowBox не зависел от родителя.
+        final lineH = (widget.style.fontSize ?? 14) * 1.3;
         return SizedBox(
           width: w,
+          height: lineH,
           child: ClipRect(
             child: ShaderMask(
               shaderCallback: (rect) => LinearGradient(
@@ -113,6 +120,8 @@ class _MarqueeTextState extends State<MarqueeText>
               blendMode: BlendMode.dstIn,
               child: OverflowBox(
                 maxWidth: double.infinity,
+                minHeight: lineH,
+                maxHeight: lineH,
                 alignment: Alignment.centerLeft,
                 child: AnimatedBuilder(
                   animation: _ctrl,

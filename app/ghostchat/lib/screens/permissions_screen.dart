@@ -226,9 +226,9 @@ class _PermissionsScreenState extends State<PermissionsScreen>
                       style: TextStyle(color: GE.sub, fontSize: 13),
                     ),
                   ),
-                  Switch(
+                  GhostSwitch(
                     value: _acknowledged,
-                    activeThumbColor: GE.primary,
+                    activeColor: GE.primary,
                     onChanged: (v) => setState(() => _acknowledged = v),
                   ),
                 ],

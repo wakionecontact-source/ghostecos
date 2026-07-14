@@ -372,23 +372,21 @@ class _AttachSheetState extends State<AttachSheet> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
-            _shortcut(Icons.photo_library_rounded, 'Галерея',
-                const Color(0xFF4A90E2), () {
+            // GE.* вместо хардкод-хексов — иначе иконки не меняли тон между
+            // темами (были одинаковые на всех 12 пресетах).
+            _shortcut(Icons.photo_library_rounded, 'Галерея', GE.blue, () {
               Navigator.of(context).maybePop();
               widget.onGallery();
             }),
-            _shortcut(Icons.account_balance_wallet_rounded, 'Кошелёк',
-                const Color(0xFF22D3EE), () {
+            _shortcut(Icons.account_balance_wallet_rounded, 'Кошелёк', GE.primary, () {
               Navigator.of(context).maybePop();
               widget.onWallet();
             }),
-            _shortcut(Icons.insert_drive_file_rounded, 'Файл',
-                const Color(0xFF4A6CF7), () {
+            _shortcut(Icons.insert_drive_file_rounded, 'Файл', GE.primary2, () {
               Navigator.of(context).maybePop();
               widget.onFile();
             }),
-            _shortcut(Icons.location_on_rounded, 'Геопозиция',
-                const Color(0xFF34C759), () {
+            _shortcut(Icons.location_on_rounded, 'Геопозиция', GE.green, () {
               Navigator.of(context).maybePop();
               widget.onGeo();
             }),

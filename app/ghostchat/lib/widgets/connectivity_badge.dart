@@ -64,16 +64,27 @@ class _ConnectivityBadgeState extends State<ConnectivityBadge> {
     if (!noInternet && !noServer) return const SizedBox.shrink();
     final color = noInternet ? GE.yellow : GE.red;
     final icon = noInternet ? Icons.wifi_off_rounded : Icons.cloud_off_outlined;
-    final text = noInternet
-        ? 'Нет интернета — сообщения не отправятся'
-        : 'Нет связи с сервером — переподключаемся';
     return Positioned(
       left: 10,
       top: 0,
       bottom: 0,
       child: Center(
         child: GestureDetector(
-          onTap: () => toast.show(text, level: noInternet ? ToastLevel.warn : ToastLevel.error),
+          // Мгновенно перепроверяем интернет по тапу (не ждём периодический
+          // 8-секундный таймер) — иначе статус на экране мог на пару секунд
+          // отставать от реальности прямо в момент, когда юзер его проверяет.
+          onTap: () async {
+            await _checkInternet();
+            if (!mounted) return;
+            final stillNoInternet = !_hasInternet;
+            final t = stillNoInternet
+                ? 'Нет интернета — сообщения не отправятся'
+                : (widget.isGuest || _serverConnected)
+                    ? null
+                    : 'Нет связи с сервером — переподключаемся';
+            if (t == null) return;
+            toast.show(t, level: stillNoInternet ? ToastLevel.warn : ToastLevel.error);
+          },
           child: Container(
             width: 34,
             height: 34,

@@ -206,7 +206,20 @@ class LocalHub {
     group.peers[peer.transport] = peer;
 
     appLog.debug('lan', 'Запрос от $did (${transportLabel(peer.transport)})');
-    if (isNewGroup) _collectingCtrl.add(peer);
+    if (isNewGroup) {
+      // "Поймали сигнал" — только для НЕзнакомых устройств. Для уже
+      // принятого раньше устройства (переподключение — сессии транспортов
+      // живут только в памяти и пропадают на рестарте) это не открытие
+      // нового контакта, а рутинный реконнект: про него отдельно скажет
+      // _reconnectedCtrl ("снова на связи"), дублировать "новый сигнал" не
+      // нужно (иначе обычный пинг известного устройства выглядит так, будто
+      // кто-то новый пытается подключиться).
+      unawaited(() async {
+        final checker = isKnownPeerChecker;
+        final known = checker != null && await checker(did);
+        if (!known) _collectingCtrl.add(peer);
+      }());
+    }
     // Reset debounce timer
     _debounceTimers[did]?.cancel();
     _debounceTimers[did] = Timer(const Duration(seconds: 5), () async {
@@ -328,15 +341,30 @@ class LocalHub {
   /// Способы связи, которые СЕЙЧАС реально живы у меня (не "транспорт
   /// когда-то стартовал", а "проверили прямо перед отправкой") — кладём в
   /// тело ping/pong, чтобы собеседник знал, чем реально можно достучаться.
+  ///
+  /// Раньше проверки шли ПОСЛЕДОВАТЕЛЬНО await'ом одна за другой, и это
+  /// вызывается на КАЖДОМ ping/pong (и на отправляющей, и на отвечающей
+  /// стороне) — BluetoothTransport.isCurrentlyAvailable() читает
+  /// `FlutterBluePlus.adapterState.first` (ждёт СЛЕДУЮЩЕЕ событие потока, а
+  /// не текущее закэшированное значение) и может реально зависать на пару
+  /// секунд. С двух сторон round-trip это давало пинг в секунды даже между
+  /// двумя телефонами, лежащими рядом на одном Wi-Fi. Теперь — параллельно и
+  /// с таймаутом на каждую проверку, зависший транспорт просто не попадёт
+  /// в список доступных, вместо того чтобы тормозить вообще всё.
   Future<String> _myAvailabilityPayload() async {
-    final available = <String>[];
-    for (final t in _transports) {
-      if (!LanSettings().isLanTransportEnabled(t.type)) continue;
+    final enabled = _transports.where((t) => LanSettings().isLanTransportEnabled(t.type));
+    final results = await Future.wait(enabled.map((t) async {
       try {
-        if (await t.isCurrentlyAvailable()) available.add(t.type.name);
-      } catch (_) {}
-    }
-    return jsonEncode({'t': available});
+        final ok = await t.isCurrentlyAvailable().timeout(
+          const Duration(milliseconds: 500),
+          onTimeout: () => false,
+        );
+        return ok ? t.type.name : null;
+      } catch (_) {
+        return null;
+      }
+    }));
+    return jsonEncode({'t': results.whereType<String>().toList()});
   }
 
   Set<TransportType> _parseAvailability(String payload) {

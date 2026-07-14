@@ -29,7 +29,11 @@ class SettingsScreen extends StatefulWidget {
   /// Navigator: тогда "назад" в шапке не нужен (попадёт в корневой Navigator
   /// и уведёт из MainShell вообще, а не просто закроет вкладку).
   final bool embedded;
-  const SettingsScreen({super.key, this.isGuest = false, this.embedded = false});
+  /// Раньше кнопка "Выйти из аккаунта" жила в мини-профиле (_ProfilePane) —
+  /// после переезда таба "Профиль" на полноценный ProfileScreen (без логаута,
+  /// как у чужих профилей) выход переехал сюда, как в большинстве апп.
+  final VoidCallback? onLogout;
+  const SettingsScreen({super.key, this.isGuest = false, this.embedded = false, this.onLogout});
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
@@ -97,10 +101,51 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ],
               ),
             ),
+            if (widget.onLogout != null) ...[
+              const SizedBox(height: 16),
+              // Стеклянная карточка вокруг кнопки выхода — раньше кнопка лежала
+              // прямо на mesh без подложки, из-за чего низ экрана выглядел
+              // "оборванным" (тот же приём, что и в нижнем навбаре MainShell).
+              GlassCard(
+                padding: const EdgeInsets.all(12),
+                child: GlassButton(
+                  label: 'Выйти из аккаунта',
+                  icon: Icons.logout,
+                  danger: true,
+                  fullWidth: true,
+                  onTap: () => _confirmLogout(context),
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _confirmLogout(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        backgroundColor: GE.bgDeep,
+        title: Text('Выйти из аккаунта?', style: TextStyle(color: GE.text)),
+        content: Text(
+          'Сессия на этом устройстве завершится. Войти снова — по логину/паролю или ключу.',
+          style: TextStyle(color: GE.sub),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: Text('Отмена', style: TextStyle(color: GE.sub)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: Text('Выйти', style: TextStyle(color: GE.red)),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) widget.onLogout?.call();
   }
 
   /// disabled=true — видно, но неактивно (не убираем совсем): для гостя
@@ -222,11 +267,16 @@ class _AppearanceScreenState extends State<_AppearanceScreen> {
   void initState() {
     super.initState();
     ThemeService.instance.notifier.addListener(_onTheme);
+    // Скругление живёт в отдельном notifier (не дублирует palette-рёбилды) —
+    // без этой подписки карточки тем на этом экране не подхватывают новый
+    // радиус, пока слайдер двигают (только его собственный превью-кружок).
+    ThemeService.instance.cornerNotifier.addListener(_onTheme);
   }
 
   @override
   void dispose() {
     ThemeService.instance.notifier.removeListener(_onTheme);
+    ThemeService.instance.cornerNotifier.removeListener(_onTheme);
     super.dispose();
   }
 
@@ -239,12 +289,133 @@ class _AppearanceScreenState extends State<_AppearanceScreen> {
     return _SectionScaffold(
       title: 'Внешний вид',
       children: [
+        _sectionTitle('Стиль'),
+        // Без const: иначе Dart канонизирует виджет в единственный экземпляр,
+        // и при ребилде экрана (напр. смена скругления) Flutter видит
+        // identical-виджет и пропускает build() — стиль обновляется только
+        // сам по себе (через styleNotifier), а не вместе с остальным экраном.
+        _StyleSwitcher(),
+        const SizedBox(height: 20),
         _sectionTitle('Тема'),
         _ThemeGrid(),
         const SizedBox(height: 20),
         _sectionTitle('Скругление'),
-        const _CornerRadiusSlider(),
+        _CornerRadiusSlider(), // без const — та же ловушка identical-виджета
+        const SizedBox(height: 20),
+        _sectionTitle('Mesh-фон'),
+        _MeshToggleRow(), // без const — см. комментарий у _StyleSwitcher выше
       ],
+    );
+  }
+}
+
+/// Переключатель «Сияющий / Минимализм» — независимая от палитры ось стиля
+/// отрисовки (см. ThemeStyle в theme_service.dart). Смена стиля сама
+/// подбирает подходящего «близнеца» текущей палитры (ThemeService.setStyle),
+/// поэтому здесь только два сегмента, без привязки к конкретной теме.
+class _StyleSwitcher extends StatelessWidget {
+  const _StyleSwitcher();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<ThemeStyle>(
+      valueListenable: ThemeService.instance.styleNotifier,
+      builder: (context, style, _) {
+        final flat = ThemeService.isMinimal;
+        Widget segment(String label, ThemeStyle value) {
+          final active = style == value;
+          return Expanded(
+            child: GestureDetector(
+              onTap: () => ThemeService.instance.setStyle(value),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: active
+                      ? GE.primary.withValues(alpha: 0.18)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(GE.radiusSm),
+                  // Контур — только в "Классическом": минимализм отличает
+                  // активный сегмент одной лишь заливкой, без обводки.
+                  border: flat
+                      ? null
+                      : (active
+                            ? Border.all(color: GE.primary, width: 1.5)
+                            : Border.all(color: Colors.transparent, width: 1.5)),
+                ),
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: active ? GE.primary : GE.sub,
+                    fontSize: 13,
+                    fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+
+        return GlassCard(
+          padding: const EdgeInsets.all(6),
+          child: Row(
+            children: [
+              segment('Классический', ThemeStyle.vivid),
+              const SizedBox(width: 6),
+              segment('Минимализм', ThemeStyle.minimal),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Вкл/выкл анимированный mesh-фон (точки+линии+свечение). Меш остаётся
+/// фирменным дефолтом — тумблер только даёт возможность отключить его
+/// ради минимализма, не меняя остальную палитру/тему.
+class _MeshToggleRow extends StatelessWidget {
+  const _MeshToggleRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: ThemeService.instance.meshNotifier,
+      builder: (context, enabled, _) {
+        return GlassCard(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Анимированный фон',
+                      style: TextStyle(
+                        color: GE.text,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Точки, линии и свечение позади экранов',
+                      style: TextStyle(color: GE.sub, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+              GhostSwitch(
+                value: enabled,
+                activeColor: GE.primary,
+                onChanged: (v) => ThemeService.instance.setMeshEnabled(v),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -355,9 +526,9 @@ class _PermissionsManageScreenState extends State<_PermissionsManageScreen>
                                 ],
                               ),
                             ),
-                            Switch(
+                            GhostSwitch(
                               value: _st[p]?.isGranted ?? false,
-                              activeThumbColor: GE.primary,
+                              activeColor: GE.primary,
                               onChanged: (v) =>
                                   _toggle(p, _st[p]?.isGranted ?? false),
                             ),
@@ -630,7 +801,9 @@ class _AboutScreenState extends State<_AboutScreen> {
 class _ThemeGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    final presets = ThemeService.instance.presets;
+    // Только «близнецы» текущего стиля (сияющий/минимализм) — остальные 6
+    // скрыты, чтобы не путать плоскую тему с glass-темой одного цвета.
+    final presets = ThemeService.instance.presetsForCurrentStyle;
     final current = ThemeService.instance.notifier.value;
     return GridView.builder(
       shrinkWrap: true,
@@ -643,9 +816,12 @@ class _ThemeGrid extends StatelessWidget {
       ),
       itemCount: presets.length + 1,
       itemBuilder: (_, i) {
-        if (i == presets.length) return const _CreateThemeCard();
+        // Без const — та же ловушка identical-виджета, что у _StyleSwitcher/
+        // _MeshToggleRow: иначе "Новая тема" не подхватывает новый радиус.
+        if (i == presets.length) return _CreateThemeCard();
         final p = presets[i];
         final active = p.id == current.id;
+        final flat = p.style == ThemeStyle.minimal;
         return InkWell(
           borderRadius: BorderRadius.circular(GE.radiusMd),
           onTap: () => ThemeService.instance.setPreset(p.id),
@@ -658,19 +834,24 @@ class _ThemeGrid extends StatelessWidget {
                 end: Alignment.bottomRight,
               ),
               borderRadius: BorderRadius.circular(GE.radiusMd),
-              // p.borderStrong (не хардкод white) — у каждого пресета свой
-              // адаптивный тон, иначе на светлой "Слоновой кости" рамка
-              // неактивной плитки была не видна на её же светлом фоне.
-              border: Border.all(
-                color: active ? p.primary : p.borderStrong,
-                width: active ? 2 : 1,
-              ),
-              boxShadow: active
+              // Минимализм: без контура и без свечения — выбранную тему
+              // отличает только галочка (см. ниже), не рамка/glow.
+              border: flat
+                  ? null
+                  // p.borderStrong (не хардкод white) — у каждого пресета свой
+                  // адаптивный тон, иначе на светлой "Слоновой кости" рамка
+                  // неактивной плитки была не видна на её же светлом фоне.
+                  : Border.all(
+                      color: active ? p.primary : p.borderStrong,
+                      width: active ? 2 : 1,
+                    ),
+              // Тише, чем раньше (0.4/18) — плотное лёгкое свечение вместо
+              // неонового ореола.
+              boxShadow: (!flat && active)
                   ? [
                       BoxShadow(
-                        color: p.primary.withValues(alpha: 0.4),
-                        blurRadius: 18,
-                        spreadRadius: 1,
+                        color: p.primary.withValues(alpha: 0.22),
+                        blurRadius: 10,
                       ),
                     ]
                   : null,
@@ -794,6 +975,10 @@ class _CornerRadiusSliderState extends State<_CornerRadiusSlider> {
                   value: _factor,
                   onChanged: _onChanged,
                   activeColor: GE.primary,
+                  // Явный inactiveColor — иначе Slider берёт цвет трека из
+                  // ColorScheme темы, который на части палитр почти совпадает
+                  // с фоном карточки (трек "сливается" при смене темы).
+                  inactiveColor: GE.sub.withValues(alpha: 0.35),
                 ),
               ),
               Text('Круглые', style: TextStyle(color: GE.sub, fontSize: 11)),

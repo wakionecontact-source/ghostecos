@@ -24,12 +24,14 @@ import 'package:video_compress/video_compress.dart';
 import '../theme.dart';
 import '../widgets/emoji_picker.dart';
 import '../widgets/emoji_text.dart';
+import '../widgets/reactions_bar.dart';
 import '../mesh_background.dart';
 import '../services/chat_repo.dart';
 import '../services/db_service.dart';
 import '../services/auth_service.dart';
 import '../services/ws_client.dart';
 import '../services/notification_service.dart';
+import '../services/triangle_service.dart';
 import '../widgets/attach_sheet.dart';
 import '../widgets/glass.dart';
 import '../widgets/marquee_text.dart';
@@ -66,6 +68,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String get _draftKey => 'chat_draft_${widget.peer}';
   bool _emojiOpen = false; // инлайн эмодзи-панель снизу (composer над ней)
   static const double _emojiPanelH = 300;
+  // Порог для bottom-anchor короткой ленты (см. итем-билдер ниже) — с запасом
+  // выше любого реального экрана, shrinkWrap такого числа бабблов не тормозит.
+  static const int _bottomAnchorMaxMsgs = 40;
   // Кнопка «вниз» (видна при прокрутке вверх) + замочек авто-скролла на отправке.
   bool _showScrollDown = false;
   bool _scrollLock = false;
@@ -1190,25 +1195,26 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           // отжимал контент вниз ВНУТРИ этой же фиксированной коробки, и низ
           // шапки обрезался вместо того, чтобы коробка выросла на инсет.
           preferredSize: Size.fromHeight(MediaQuery.of(context).padding.top + 64),
-          // Прозрачная фрост-шапка (лакшери): глубокий тинт, тает книзу + тёплый
-          // золотистый разделитель снизу.
+          // Прозрачная фрост-шапка: глубокий тинт, тает книзу + акцентный
+          // разделитель снизу. GE.bgDeep/GE.primary (не хардкод-хексы) —
+          // иначе шапка оставалась одной и той же на всех 12 темах.
           child: ClipRect(
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 9, sigmaY: 9),
               child: DecoratedBox(
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   border: Border(
-                    bottom: BorderSide(color: Color(0x2BD4B88C), width: 0.7),
+                    bottom: BorderSide(color: GE.primary.withValues(alpha: 0.17), width: 0.7),
                   ),
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: [
-                      Color(0xB31C1530),
-                      Color(0x661C1530),
-                      Color(0x001C1530),
+                      GE.bgDeep.withValues(alpha: 0.70),
+                      GE.bgDeep.withValues(alpha: 0.40),
+                      GE.bgDeep.withValues(alpha: 0.0),
                     ],
-                    stops: [0.0, 0.6, 1.0],
+                    stops: const [0.0, 0.6, 1.0],
                   ),
                 ),
                 child: _selectionMode
@@ -1350,7 +1356,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               ),
                               duration: const Duration(milliseconds: 220),
                               curve: Curves.easeOutCubic,
-                              builder: (_, padBottom, __) => ListView.builder(
+                              builder: (_, padBottom, __) {
+                              // Мало сообщений — лента короче экрана: держим у
+                              // низа (как в TG/WA), а не приклеенной к шапке с
+                              // пустотой снизу над композером. shrinkWrap за
+                              // порог НЕ выходит — там опять обычный ленивый
+                              // ListView.builder без единого изменения ниже
+                              // (весь drag-select/scroll-memory код завязан на
+                              // ScrollPosition API, которое одинаково работает
+                              // что в shrinkWrap, что без — просто max=0, когда
+                              // скроллить некуда, все проверки это уже терпят).
+                              final bottomAnchor =
+                                  msgs.length <= _bottomAnchorMaxMsgs;
+                              final list = ListView.builder(
+                              shrinkWrap: bottomAnchor,
                               // physics НЕ переключаем на лету: пересборка
                               // Scrollable посреди long-press сбрасывала жест.
                               // Скролл и так заблокирован (long-press выиграл арену).
@@ -1484,7 +1503,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   ],
                                 );
                               },
-                            ),
+                            );
+                              return bottomAnchor
+                                  ? Align(
+                                      alignment: Alignment.bottomCenter,
+                                      child: list,
+                                    )
+                                  : list;
+                            },
                             ),
                             );
                           },
@@ -1757,16 +1783,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
         child: DecoratedBox(
-          decoration: const BoxDecoration(
-            // Стекло как шапка: тёмный тинт тает кверху + золотистая кромка сверху.
+          decoration: BoxDecoration(
+            // Стекло как шапка: тёмный тинт тает кверху + акцентная кромка
+            // сверху. GE.bgDeep/GE.primary — подхватывает палитру темы.
             border: Border(
-              top: BorderSide(color: Color(0x2BD4B88C), width: 0.7),
+              top: BorderSide(color: GE.primary.withValues(alpha: 0.17), width: 0.7),
             ),
             gradient: LinearGradient(
               begin: Alignment.bottomCenter,
               end: Alignment.topCenter,
-              colors: [Color(0xCC1C1530), Color(0x801C1530), Color(0x141C1530)],
-              stops: [0.0, 0.6, 1.0],
+              colors: [
+                GE.bgDeep.withValues(alpha: 0.80),
+                GE.bgDeep.withValues(alpha: 0.50),
+                GE.bgDeep.withValues(alpha: 0.08),
+              ],
+              stops: const [0.0, 0.6, 1.0],
             ),
           ),
           child: Column(
@@ -1953,54 +1984,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       ),
     );
   }
-}
-
-// ────────────────────────────────────────────────────────────────────────
-class _ReactionsBar extends StatelessWidget {
-  final void Function(String emoji) onPick;
-  const _ReactionsBar({required this.onPick});
-  // Server-сторона хранит raw-emoji строкой — сохраняем совместимость.
-  // Визуально рендерим Material иконку для каждого (одинаково на всех ОС).
-  static const _picks = <_Pick>[
-    _Pick('❤', Icons.favorite, Color(0xFFef4444)),
-    _Pick('👍', Icons.thumb_up, Color(0xFF60a5fa)),
-    _Pick('😂', Icons.sentiment_very_satisfied, Color(0xFFfacc15)),
-    _Pick('😮', Icons.sentiment_neutral, Color(0xFFfb923c)),
-    _Pick('😢', Icons.sentiment_dissatisfied, Color(0xFF60a5fa)),
-    _Pick('🔥', Icons.local_fire_department, Color(0xFFf97316)),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 44,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        itemBuilder: (_, i) => InkWell(
-          onTap: () => onPick(_picks[i].emoji),
-          borderRadius: BorderRadius.circular(20),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            // Twemoji-картинка вместо Material-иконки (тот же набор эмодзи).
-            child: EmojiText(
-              _picks[i].emoji,
-              style: const TextStyle(fontSize: 26),
-            ),
-          ),
-        ),
-        separatorBuilder: (_, _) => const SizedBox(width: 2),
-        itemCount: _picks.length,
-      ),
-    );
-  }
-}
-
-class _Pick {
-  final String emoji;
-  final IconData icon;
-  final Color color;
-  const _Pick(this.emoji, this.icon, this.color);
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -3416,6 +3399,9 @@ class _VoiceTileState extends State<_VoiceTile> {
     return out;
   }
 
+  Color get _iconOnAccent =>
+      widget.textColor.computeLuminance() > 0.5 ? GE.bg : GE.text;
+
   @override
   Widget build(BuildContext context) {
     final total = _audioDur.inMilliseconds > 0
@@ -3446,17 +3432,20 @@ class _VoiceTileState extends State<_VoiceTile> {
                   ),
                 ],
               ),
+              // Иконка контрастна фону кружка (widget.textColor) вместо
+              // фиксированного тёмно-фиолетового — тот терялся, если акцент
+              // темы даёт тёмный/непурпурный textColor.
               child: widget.loading
-                  ? const Padding(
-                      padding: EdgeInsets.all(14),
+                  ? Padding(
+                      padding: const EdgeInsets.all(14),
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Color(0xFF2A1E50),
+                        color: _iconOnAccent,
                       ),
                     )
                   : Icon(
                       _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                      color: const Color(0xFF2A1E50),
+                      color: _iconOnAccent,
                       size: 28,
                     ),
             ),
@@ -3584,7 +3573,7 @@ class _BubbleMenuCard extends StatelessWidget {
               border: Border.all(color: GE.glassBorder),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-            child: _ReactionsBar(onPick: (e) => onPick('react:$e')),
+            child: ReactionsBar(onPick: (e) => onPick('react:$e')),
           ),
           const SizedBox(height: 6),
           // Карточка действий.
@@ -3822,19 +3811,19 @@ class _ChatHeader extends StatelessWidget {
                                     ),
                                   ),
                                   const SizedBox(width: 6),
-                                  const SizedBox(
+                                  SizedBox(
                                     width: 9,
                                     height: 9,
                                     child: CircularProgressIndicator(
                                       strokeWidth: 1.4,
-                                      color: Color(0xFFE5B567),
+                                      color: GE.yellow,
                                     ),
                                   ),
                                   const SizedBox(width: 5),
-                                  const Text(
+                                  Text(
                                     'соединение…',
                                     style: TextStyle(
-                                      color: Color(0xFFE5B567),
+                                      color: GE.yellow,
                                       fontSize: 11,
                                       fontWeight: FontWeight.w600,
                                     ),
@@ -3891,11 +3880,117 @@ class _ChatHeader extends StatelessWidget {
                     ],
                   ),
                 ),
-                Icon(Icons.chevron_right, color: GE.sub, size: 18),
+                // Три точки — как в ТГ: отдельная кнопка со своим тапом,
+                // строка целиком по-прежнему ведёт в профиль (свой InkWell
+                // выше в дереве отдаёт тап дочернему IconButton первым).
+                if (!isGroup)
+                  IconButton(
+                    icon: Icon(Icons.more_vert, color: GE.sub),
+                    tooltip: 'Ещё',
+                    onPressed: () => _openConnectionModeMenu(context, peer),
+                  )
+                else
+                  Icon(Icons.chevron_right, color: GE.sub, size: 18),
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Меню "⋮" шапки чата — пока единственный пункт: режим соединения
+/// (Авто/Через сервер/P2P), см. ConnectionMode в triangle_service.dart.
+/// Сегментированный контрол — тот же визуальный язык, что "Классический/
+/// Минимализм" в Настройках (_StyleSwitcher), не новый элемент, а знакомый
+/// паттерн в новом месте.
+Future<void> _openConnectionModeMenu(BuildContext context, String peer) async {
+  final current = await ConnectionModeStore.get(peer);
+  if (!context.mounted) return;
+  await showGlassSheet<void>(
+    context,
+    height: 168,
+    child: SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Тип соединения',
+                style: TextStyle(color: GE.text, fontSize: 15, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 4),
+            Text('«Авто» рекомендуется — переключает на P2P само, когда это возможно',
+                style: TextStyle(color: GE.sub, fontSize: 11.5)),
+            const SizedBox(height: 14),
+            _ConnectionModeSwitcher(peer: peer, initial: current),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _ConnectionModeSwitcher extends StatefulWidget {
+  final String peer;
+  final ConnectionMode initial;
+  const _ConnectionModeSwitcher({required this.peer, required this.initial});
+  @override
+  State<_ConnectionModeSwitcher> createState() => _ConnectionModeSwitcherState();
+}
+
+class _ConnectionModeSwitcherState extends State<_ConnectionModeSwitcher> {
+  late ConnectionMode _mode = widget.initial;
+
+  Future<void> _select(ConnectionMode m) async {
+    setState(() => _mode = m);
+    await ConnectionModeStore.set(widget.peer, m);
+    if (m == ConnectionMode.server) return;
+    // "Авто" и "P2P" — пробуем коннект сразу, не дожидаясь следующей отправки.
+    final peerKeys = await ChatRepo.instance.triangleKeysFor(widget.peer);
+    if (peerKeys != null) unawaited(triangleService.attemptConnect(peerKeys));
+  }
+
+  Widget _segment(String label, ConnectionMode value) {
+    final active = _mode == value;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => _select(value),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(vertical: 11),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: active ? GE.primary.withValues(alpha: 0.18) : Colors.transparent,
+            borderRadius: BorderRadius.circular(GE.radiusSm),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: active ? GE.primary : GE.sub,
+              fontSize: 12.5,
+              fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassCard(
+      padding: const EdgeInsets.all(6),
+      child: Row(
+        children: [
+          _segment('Авто', ConnectionMode.auto),
+          const SizedBox(width: 6),
+          _segment('Сервер', ConnectionMode.server),
+          const SizedBox(width: 6),
+          _segment('P2P', ConnectionMode.p2p),
+        ],
       ),
     );
   }

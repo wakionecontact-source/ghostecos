@@ -17,6 +17,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'crypto_v2.dart';
 import 'ws_client.dart';
 
@@ -24,6 +25,40 @@ const _stunHost = '155.212.166.221';
 const _stunPort = 47779;
 const _punchWindow = Duration(seconds: 4);
 const _punchInterval = Duration(milliseconds: 250);
+
+/// Предпочтение соединения per-peer (см. UI в _ChatHeader → меню "⋮").
+/// auto (дефолт) — текущее поведение: P2P если сессия уже есть, иначе сервер
+/// + фоновая попытка punch. server — P2P выключен для этого контакта совсем
+/// (ни отправка, ни попытки коннекта). p2p — то же, что auto, но коннект
+/// пробуется СРАЗУ при открытии чата, а не лениво по первой отправке.
+enum ConnectionMode { auto, server, p2p }
+
+/// Хранилище режима per-peer — SharedPreferences, ключ на юзернейм.
+/// Отдельный класс (не поле TriangleService), чтобы UI мог читать/менять
+/// режим, не трогая остальную (сокет/сессии) логику сервиса.
+class ConnectionModeStore {
+  ConnectionModeStore._();
+  static const _prefix = 'gs_conn_mode_';
+
+  static Future<ConnectionMode> get(String peer) async {
+    final p = await SharedPreferences.getInstance();
+    final v = p.getString('$_prefix$peer');
+    return switch (v) {
+      'server' => ConnectionMode.server,
+      'p2p' => ConnectionMode.p2p,
+      _ => ConnectionMode.auto,
+    };
+  }
+
+  static Future<void> set(String peer, ConnectionMode mode) async {
+    final p = await SharedPreferences.getInstance();
+    if (mode == ConnectionMode.auto) {
+      await p.remove('$_prefix$peer');
+    } else {
+      await p.setString('$_prefix$peer', mode.name);
+    }
+  }
+}
 
 class TrianglePeerKeys {
   final String username;

@@ -17,11 +17,19 @@ class LanSettings {
   bool lanPingEnabled      = true;
   String standardIp        = '';
 
-  // Default: bluetooth > wifi_direct > lan
+  // Default: lan > wifi_direct > bluetooth. LAN — самый проработанный и
+  // надёжный транспорт (UDP+TCP, полностью протестирован), BLE/WiFi Direct
+  // заметно менее стабильны. Раньше bluetooth стоял первым: если устройство
+  // видно сразу по нескольким транспортам (обычная ситуация для двух
+  // телефонов рядом на одном Wi-Fi), рукопожатие ВСЕГДА пыталось пройти
+  // через bluetooth первым (см. LocalGroupedRequest.bestPeer/sendAccept в
+  // local_hub.dart) — и если BLE не срабатывал, сессия так и не поднималась,
+  // хотя LAN был рабочим fallback'ом. Отсюда и "вечная дискета"/сообщения и
+  // файлы не уходят, хотя оба устройства реально были в одной Wi-Fi сети.
   List<TransportType> lanTransportPriority = [
-    TransportType.bluetooth,
-    TransportType.wifiDirect,
     TransportType.lan,
+    TransportType.wifiDirect,
+    TransportType.bluetooth,
   ];
 
   List<String> lanBlockedDevices = [];

@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
 import '../theme.dart';
+import '../services/theme_service.dart';
 import '../services/feed_repo.dart';
 import '../services/social_repo.dart';
 import '../widgets/glass.dart';
@@ -124,7 +125,7 @@ class _SocialPaneState extends State<SocialPane> {
                       hintText: 'Что нового?',
                       hintStyle: TextStyle(color: GE.sub),
                       filled: true,
-                      fillColor: Colors.black26,
+                      fillColor: GE.glassFill,
                       counterStyle: TextStyle(color: GE.sub, fontSize: 10),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -143,7 +144,7 @@ class _SocialPaneState extends State<SocialPane> {
                             borderRadius: BorderRadius.circular(8),
                             child: Container(
                               width: 80, height: 80,
-                              color: Colors.black26,
+                              color: GE.glassFill,
                               child: Image.network(
                                 attachments[i].url.startsWith('http')
                                     ? attachments[i].url
@@ -314,25 +315,31 @@ class _SocialPaneState extends State<SocialPane> {
                         ],
                       ),
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: active
-                      ? GE.primary.withValues(alpha: 0.75)
-                      : GE.glassBorder,
-                  width: active ? 1.2 : 0.8,
-                ),
-                boxShadow: [
-                  active
-                      ? BoxShadow(
-                          color: GE.primary.withValues(alpha: 0.32),
-                          blurRadius: 14,
-                          offset: const Offset(0, 4),
-                        )
-                      : BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.20),
-                          blurRadius: 8,
-                          offset: const Offset(0, 3),
-                        ),
-                ],
+                // Минимализм: без контура и без цветного свечения — только
+                // заливка отличает активный сегмент.
+                border: ThemeService.isMinimal
+                    ? null
+                    : Border.all(
+                        color: active
+                            ? GE.primary.withValues(alpha: 0.75)
+                            : GE.glassBorder,
+                        width: active ? 1.2 : 0.8,
+                      ),
+                boxShadow: ThemeService.isMinimal
+                    ? null
+                    : [
+                        active
+                            ? BoxShadow(
+                                color: GE.primary.withValues(alpha: 0.32),
+                                blurRadius: 14,
+                                offset: const Offset(0, 4),
+                              )
+                            : BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.20),
+                                blurRadius: 8,
+                                offset: const Offset(0, 3),
+                              ),
+                      ],
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(active ? iconFill : iconOut,

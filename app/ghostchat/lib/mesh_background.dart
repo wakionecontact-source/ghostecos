@@ -8,6 +8,7 @@
 // Фон-градиент (3 слоя) — как на сайте.
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'services/theme_service.dart';
 import 'theme.dart';
 
 class MeshBackground extends StatefulWidget {
@@ -35,6 +36,13 @@ class _MeshBackgroundState extends State<MeshBackground>
   static const double _touchDist = 150;
   static const double _maxSpeed = 1.6;
 
+  bool get _showParticles => ThemeService.instance.meshNotifier.value;
+  // Градиенты — только в «Классическом» стиле. Минимализм никогда не
+  // показывает свечение/градиенты, даже если анимированный фон включён —
+  // тогда видны только частицы поверх плоской заливки GE.bg.
+  bool get _showGradients =>
+      ThemeService.instance.styleNotifier.value == ThemeStyle.vivid;
+
   @override
   void initState() {
     super.initState();
@@ -42,7 +50,24 @@ class _MeshBackgroundState extends State<MeshBackground>
     _ctrl = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 1),
-    )..repeat();
+    );
+    if (_showParticles) _ctrl.repeat();
+    ThemeService.instance.meshNotifier.addListener(_onMeshToggle);
+    ThemeService.instance.styleNotifier.addListener(_onStyleChange);
+  }
+
+  void _onMeshToggle() {
+    if (!mounted) return;
+    if (_showParticles) {
+      _ctrl.repeat();
+    } else {
+      _ctrl.stop();
+    }
+    setState(() {});
+  }
+
+  void _onStyleChange() {
+    if (mounted) setState(() {});
   }
 
   // mesh.js: ~1 точка на 9000 px², на мобиле скромнее по верхней границе (батарея).
@@ -126,95 +151,114 @@ class _MeshBackgroundState extends State<MeshBackground>
 
   @override
   void dispose() {
+    ThemeService.instance.meshNotifier.removeListener(_onMeshToggle);
+    ThemeService.instance.styleNotifier.removeListener(_onStyleChange);
     _ctrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // Listener — пассивный наблюдатель указателя: ловит позицию пальца/курсора
-    // НЕ перехватывая жесты UI поверх (тапы/скроллы работают как обычно).
+    final showParticles = _showParticles;
+    final showGradients = _showGradients;
+    // Внимание: Listener → Material → Stack должны существовать ВСЕГДА, вне
+    // зависимости от флагов ниже, одним и тем же поддеревом виджетов — иначе
+    // при переключении тумблера/стиля Flutter видит смену типа поддерева в
+    // этом слоте и пересоздаёт widget.child с нуля (сброс скролла/состояния
+    // вложенных экранов). Меняется только состав children внутри Stack, а
+    // child держится под стабильным Key на одной и той же позиции.
     return Listener(
-      onPointerHover: (e) => _touch = e.localPosition,
-      onPointerDown: (e) => _touch = e.localPosition,
-      onPointerMove: (e) => _touch = e.localPosition,
-      onPointerUp: (e) => _touch = null,
-      onPointerCancel: (e) => _touch = null,
+      onPointerHover: showParticles ? (e) => _touch = e.localPosition : null,
+      onPointerDown: showParticles ? (e) => _touch = e.localPosition : null,
+      onPointerMove: showParticles ? (e) => _touch = e.localPosition : null,
+      onPointerUp: showParticles ? (e) => _touch = null : null,
+      onPointerCancel: showParticles ? (e) => _touch = null : null,
       child: Material(
         color: GE.bg,
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // Фон 1-в-1 с сайтом: вертикальный градиент + два радиала.
-            DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [GE.bgDeep, GE.bg],
+            if (showGradients) ...[
+              // Фон 1-в-1 с сайтом: вертикальный градиент + два радиала.
+              // Классический стиль — показывается вне зависимости от
+              // тумблера "Анимированный фон" (тот управляет только точками).
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [GE.bgDeep, GE.bg],
+                  ),
                 ),
               ),
-            ),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: RadialGradient(
-                  center: const Alignment(-0.6, -1.0),
-                  radius: 1.1,
-                  colors: [
-                    GE.primary2.withValues(alpha: 0.18),
-                    Colors.transparent,
-                  ],
-                  stops: const [0, 0.6],
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: const Alignment(-0.6, -1.0),
+                    radius: 1.1,
+                    colors: [
+                      GE.primary2.withValues(alpha: 0.18),
+                      Colors.transparent,
+                    ],
+                    stops: const [0, 0.6],
+                  ),
                 ),
               ),
-            ),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: RadialGradient(
-                  center: const Alignment(1.0, 1.0),
-                  radius: 1.1,
-                  colors: [
-                    GE.primary.withValues(alpha: 0.12),
-                    Colors.transparent,
-                  ],
-                  stops: const [0, 0.6],
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: const Alignment(1.0, 1.0),
+                    radius: 1.1,
+                    colors: [
+                      GE.primary.withValues(alpha: 0.12),
+                      Colors.transparent,
+                    ],
+                    stops: const [0, 0.6],
+                  ),
                 ),
               ),
-            ),
-            // Нижнее свечение-градиент: стекло снизу (нав-бар, композер) садится
-            // на него и выделяется/объёмится.
-            DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.bottomCenter,
-                  end: const Alignment(0, 0.25),
-                  colors: [
-                    GE.primary.withValues(alpha: 0.22),
-                    Colors.transparent,
-                  ],
+              // Нижнее свечение-градиент: стекло снизу (нав-бар, композер)
+              // садится на него и выделяется/объёмится.
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: const Alignment(0, 0.25),
+                    colors: [
+                      GE.primary.withValues(alpha: 0.22),
+                      Colors.transparent,
+                    ],
+                  ),
                 ),
               ),
-            ),
-            // Сетка частиц — изолирована RepaintBoundary от UI поверх.
-            RepaintBoundary(
-              child: LayoutBuilder(
-                builder: (ctx, c) {
-                  final size = Size(c.maxWidth, c.maxHeight);
-                  _initParticles(size);
-                  return AnimatedBuilder(
-                    animation: _ctrl,
-                    builder: (_, __) {
-                      _tick(size);
-                      return CustomPaint(
-                        size: size,
-                        painter: _MeshPainter(_particles, _touch),
-                      );
-                    },
-                  );
-                },
+            ],
+            if (showParticles)
+              // Сетка частиц — изолирована RepaintBoundary от UI поверх.
+              // Показывается независимо от градиентов: в минимализме это
+              // точки на плоском фоне без свечения.
+              RepaintBoundary(
+                child: LayoutBuilder(
+                  builder: (ctx, c) {
+                    final size = Size(c.maxWidth, c.maxHeight);
+                    _initParticles(size);
+                    return AnimatedBuilder(
+                      animation: _ctrl,
+                      builder: (_, __) {
+                        _tick(size);
+                        return CustomPaint(
+                          size: size,
+                          painter: _MeshPainter(_particles, _touch),
+                        );
+                      },
+                    );
+                  },
+                ),
               ),
-            ),
-            if (widget.child != null) widget.child!,
+            if (widget.child != null)
+              KeyedSubtree(
+                key: const ValueKey('mesh_child'),
+                child: widget.child!,
+              ),
           ],
         ),
       ),

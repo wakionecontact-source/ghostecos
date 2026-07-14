@@ -598,6 +598,25 @@ class ChatRepo {
     return CryptoV2.instance.mnemonic;
   }
 
+  /// Ключи пира в формате для Треугольника (см. меню "⋮" шапки чата) — та же
+  /// проверка identity+device, что перед P2P-отправкой в _sendDmTextV2, но
+  /// вызывается сразу по выбору режима, не дожидаясь следующего сообщения.
+  Future<TrianglePeerKeys?> triangleKeysFor(String username) async {
+    final keys = await getPeerV2Keys(username);
+    if (keys == null) return null;
+    final identityPubB64 = keys['identity_pub'] as String?;
+    final devices = (keys['devices'] as List);
+    final firstDevicePubB64 = devices.isNotEmpty
+        ? (Map<String, dynamic>.from(devices.first as Map)['device_pub'] as String?)
+        : null;
+    if (identityPubB64 == null || firstDevicePubB64 == null) return null;
+    return TrianglePeerKeys(
+      username: username,
+      devicePubB64: firstDevicePubB64,
+      identityPubB64: identityPubB64,
+    );
+  }
+
   /// v2-ключи пира (identity + список device-pub). null если пир не на v2.
   Future<Map<String, dynamic>?> getPeerV2Keys(String username) async {
     if (_v2KeysCache.containsKey(username)) {
@@ -701,6 +720,11 @@ class ChatRepo {
         identityPubB64: identityPubB64,
       );
     }
+    // Режим соединения (см. меню "⋮" в шапке чата) — "через сервер" глушит
+    // Треугольник для этого контакта совсем, ни отправки, ни фоновых попыток.
+    final connMode = await ConnectionModeStore.get(toUsername);
+    if (connMode == ConnectionMode.server) peerKeys = null;
+
     if (peerKeys != null && triangleService.hasSession(toUsername)) {
       final sentViaP2p = await triangleService.sendText(toUsername, sid.toString(), text);
       if (sentViaP2p) {

@@ -6,11 +6,12 @@
 // Каждый экран — native, без WebView. Заглушки пока (M5-M7 их наполнят).
 
 import 'dart:async';
-import 'dart:io';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
+import '../services/theme_service.dart';
 import '../mesh_background.dart';
 import '../services/auth_service.dart';
 import '../services/db_service.dart';
@@ -29,6 +30,7 @@ import '../widgets/skeleton.dart';
 import '../widgets/toast_overlay.dart';
 import '../widgets/connectivity_badge.dart';
 import 'settings_screen.dart';
+import 'profile_screen.dart';
 import 'chat_list_screen.dart';
 import 'lan_scan_screen.dart';
 import 'lan_chat_screen.dart';
@@ -452,6 +454,11 @@ class _MainShellState extends State<MainShell> {
     final isWide = MediaQuery.of(context).size.width >= 720;
     return Scaffold(
       backgroundColor: Colors.transparent,
+      // Сайдбар — фиксированная колонка (лого + пункты + футер аккаунта) без
+      // скролла: если Scaffold сжимает body под клавиатуру, она не влезает и
+      // оверфлоится. На wide-раскладке клавиатура просто перекрывает контент
+      // снизу, как на десктопе, сайдбар не должен сжиматься.
+      resizeToAvoidBottomInset: !isWide,
       body: isWide ? _wideLayout() : _mobileLayout(),
     );
   }
@@ -498,13 +505,9 @@ class _MainShellState extends State<MainShell> {
         return ChatListScreen(isGuest: _isGuest);
       case Section.profile:
         if (_isGuest) return _GuestPane(onExit: _logout, onRegister: _goRegister);
-        return _ProfilePane(
-          username: _username ?? '?',
-          displayName: _displayName ?? '?',
-          onLogout: _logout,
-        );
+        return ProfileScreen(username: _username ?? '?', embedded: true);
       case Section.settings:
-        return SettingsScreen(isGuest: _isGuest, embedded: true);
+        return SettingsScreen(isGuest: _isGuest, embedded: true, onLogout: _logout);
     }
   }
 
@@ -560,60 +563,67 @@ class _GlassBottomNavState extends State<_GlassBottomNav> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).padding.bottom;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Стрелка-хэндл: сидит ПРЯМО на верхней границе панели, без чипа-фона.
-        // Кликабельная зона широкая (72×22), сам значок — маленький.
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => setState(() => _collapsed = !_collapsed),
-          child: SizedBox(
-            width: 72,
-            height: 22,
-            child: Center(
-              child: AnimatedRotation(
-                turns: _collapsed ? 0.5 : 0,
-                duration: const Duration(milliseconds: 220),
-                child: Icon(
-                  Icons.keyboard_arrow_down,
-                  size: 20,
-                  color: GE.sub.withValues(alpha: 0.65),
+    // Стрелка и панель — ОДИН общий ClipRect+BackdropFilter, иначе стрелка
+    // (без blur) сидит прямо на блюре панели ниже — виден шов (резкий mesh
+    // сверху, размытый снизу). Блюр общий на всю область; заливка+бордер —
+    // только на панели, так стрелка по-прежнему визуально "плавает".
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: GE.glassBlur, sigmaY: GE.glassBlur),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Стрелка-хэндл: сидит ПРЯМО на верхней границе панели, без
+            // отдельного чипа-фона (только общий блюр выше).
+            // Кликабельная зона широкая (72×22), сам значок — маленький.
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() => _collapsed = !_collapsed),
+              child: SizedBox(
+                width: 72,
+                height: 22,
+                child: Center(
+                  child: AnimatedRotation(
+                    turns: _collapsed ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 220),
+                    child: Icon(
+                      Icons.keyboard_arrow_down,
+                      size: 20,
+                      color: GE.sub.withValues(alpha: 0.65),
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-        ),
-        // Панель — сворачивается анимацией вниз, остаётся только стрелка.
-        AnimatedSize(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeInOut,
-          alignment: Alignment.topCenter,
-          child: _collapsed
-              ? SizedBox(width: double.infinity, height: bottomInset)
-              : Container(
-                  // Чистый лакшери-бар: на всю ширину, тонкий разделитель сверху,
-                  // без плавающего стекла.
-                  padding: EdgeInsets.only(
-                    left: 6,
-                    right: 6,
-                    top: 6,
-                    bottom: 6 + bottomInset,
-                  ),
-                  decoration: BoxDecoration(
-                    // Цвет берём из активной темы (alphaBlend → непрозрачный бар).
-                    color: Color.alphaBlend(GE.surface, GE.bg),
-                    border: Border(
-                      top: BorderSide(color: GE.border, width: 0.6),
+            // Панель — сворачивается анимацией вниз, остаётся только стрелка.
+            AnimatedSize(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeInOut,
+              alignment: Alignment.topCenter,
+              child: _collapsed
+                  ? SizedBox(width: double.infinity, height: bottomInset)
+                  : Container(
+                      padding: EdgeInsets.only(
+                        left: 6,
+                        right: 6,
+                        top: 6,
+                        bottom: 6 + bottomInset,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Color.alphaBlend(GE.surface.withValues(alpha: 0.75), GE.bg),
+                        border: Border(
+                          top: BorderSide(color: GE.border, width: 0.6),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        children: [for (final s in Section.values) _navItem(s)],
+                      ),
                     ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [for (final s in Section.values) _navItem(s)],
-                  ),
-                ),
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 
@@ -798,7 +808,9 @@ class _RailItem extends StatelessWidget {
               ? GE.primary.withValues(alpha: 0.15)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(GE.radiusSm),
-          border: active
+          // Контур активной вкладки — только в "Классическом", минимализм
+          // отличает её одной заливкой.
+          border: (active && !ThemeService.isMinimal)
               ? Border.all(color: GE.primary.withValues(alpha: 0.30))
               : null,
         ),
@@ -880,142 +892,34 @@ class _GuestPane extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            GlassButton(
-              label: 'Зарегистрироваться',
-              icon: Icons.person_add_alt_outlined,
-              primary: true,
-              fullWidth: true,
-              onTap: onRegister,
-            ),
-            const SizedBox(height: 10),
-            GlassButton(
-              label: 'Выйти из гостевого режима',
-              icon: Icons.logout,
-              danger: true,
-              fullWidth: true,
-              onTap: onExit,
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ── Профиль (минимальный — будет наполняться в M5+) ───────────────────
-class _ProfilePane extends StatelessWidget {
-  final String username, displayName;
-  final VoidCallback onLogout;
-  const _ProfilePane({
-    required this.username,
-    required this.displayName,
-    required this.onLogout,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(20),
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+            // Та же стеклянная подложка, что теперь и под "Выйти из аккаунта"
+            // в Настройках — иначе кнопки просто висят голыми на mesh.
             GlassCard(
-              padding: const EdgeInsets.all(20),
-              child: Row(
+              padding: const EdgeInsets.all(12),
+              child: Column(
                 children: [
-                  Container(
-                    width: 56,
-                    height: 56,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: [GE.primary, GE.primary2],
-                      ),
-                    ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      displayName.isNotEmpty
-                          ? displayName[0].toUpperCase()
-                          : '?',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 22,
-                      ),
-                    ),
+                  GlassButton(
+                    label: 'Зарегистрироваться',
+                    icon: Icons.person_add_alt_outlined,
+                    primary: true,
+                    fullWidth: true,
+                    onTap: onRegister,
                   ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          displayName,
-                          style: TextStyle(
-                            color: GE.text,
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        Text(
-                          '@$username',
-                          style: TextStyle(color: GE.sub, fontSize: 13),
-                        ),
-                      ],
-                    ),
+                  const SizedBox(height: 10),
+                  GlassButton(
+                    label: 'Выйти из гостевого режима',
+                    icon: Icons.logout,
+                    danger: true,
+                    fullWidth: true,
+                    onTap: onExit,
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 16),
-            // «Настройки» — теперь отдельный таб в bottom-nav, не строка тут.
-            GlassButton(
-              label: 'Выйти из аккаунта',
-              icon: Icons.logout,
-              danger: true,
-              fullWidth: true,
-              onTap: () => _confirmLogout(context),
-            ),
-            const SizedBox(height: 24),
-            Center(
-              child: Text(
-                '${GE.appName} · v1.1.10 · ${Platform.operatingSystem}',
-                style: TextStyle(color: GE.muted, fontSize: 11),
-              ),
-            ),
-            const SizedBox(height: 8),
           ],
         ),
       ),
     );
   }
-
-  Future<void> _confirmLogout(BuildContext context) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (c) => AlertDialog(
-        backgroundColor: GE.bgDeep,
-        title: Text('Выйти из аккаунта?', style: TextStyle(color: GE.text)),
-        content: Text(
-          'Сессия на этом устройстве завершится. Войти снова — по логину/паролю или ключу.',
-          style: TextStyle(color: GE.sub),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(c, false),
-            child: Text('Отмена', style: TextStyle(color: GE.sub)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(c, true),
-            child: Text('Выйти', style: TextStyle(color: GE.red)),
-          ),
-        ],
-      ),
-    );
-    if (ok == true) onLogout();
-  }
-
 }
 

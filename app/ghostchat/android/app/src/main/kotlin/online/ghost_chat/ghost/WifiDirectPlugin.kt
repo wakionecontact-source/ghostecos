@@ -184,17 +184,30 @@ class WifiDirectPlugin(
     private fun startServer() {
         if (serverSocket != null && !serverSocket!!.isClosed) return
         executor.execute {
-            try {
-                serverSocket = ServerSocket(PORT).apply { reuseAddress = true }
-                Log.d(TAG, "TCP server listening on $PORT")
-                while (!serverSocket!!.isClosed) {
-                    try {
-                        val client = serverSocket!!.accept()
-                        executor.execute { handleClient(client) }
-                    } catch (_: Exception) { break }
+            // Порт может ещё держаться ОС после быстрого stop/restart (TIME_WAIT) —
+            // без ретрая bind падал один раз и сервер молча умирал на весь сеанс
+            // (см. lan_transport.dart._startTcp — тот же приём, 3 попытки).
+            var bound = false
+            for (attempt in 0 until 3) {
+                try {
+                    serverSocket = ServerSocket(PORT).apply { reuseAddress = true }
+                    bound = true
+                    break
+                } catch (e: Exception) {
+                    Log.e(TAG, "Server bind попытка ${attempt + 1}/3 ошибка: ${e.message}")
+                    if (attempt < 2) Thread.sleep(1000L + attempt * 1000L)
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Server error: ${e.message}")
+            }
+            if (!bound) {
+                Log.e(TAG, "Server bind не удался после 3 попыток — Wi-Fi Direct приём не будет работать")
+                return@execute
+            }
+            Log.d(TAG, "TCP server listening on $PORT")
+            while (!serverSocket!!.isClosed) {
+                try {
+                    val client = serverSocket!!.accept()
+                    executor.execute { handleClient(client) }
+                } catch (_: Exception) { break }
             }
         }
     }

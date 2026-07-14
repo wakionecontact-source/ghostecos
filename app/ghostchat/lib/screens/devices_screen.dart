@@ -10,6 +10,7 @@ import '../theme.dart';
 import '../mesh_background.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
+import '../services/theme_service.dart';
 import '../widgets/glass.dart';
 import '../widgets/toast_overlay.dart';
 import '../services/optimistic_action.dart';
@@ -218,8 +219,10 @@ class _DeviceTile extends StatelessWidget {
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: isOwner ? GE.primary.withValues(alpha: 0.22) : GE.glassFill,
-              border: Border.all(
-                color: isOwner ? GE.primary : GE.glassBorder, width: 1),
+              border: ThemeService.isMinimal
+                  ? null
+                  : Border.all(
+                      color: isOwner ? GE.primary : GE.glassBorder, width: 1),
             ),
             child: Icon(_platformIcon(d['platform'] as String?),
                 color: isOwner ? GE.primary : GE.sub, size: 22),

@@ -148,7 +148,10 @@ class BluetoothTransport implements LocalTransport {
         final identityPub = pkt['identity_pub'] as String? ?? '';
         final sig = pkt['signed_prekey_sig'] as String? ?? '';
         appLog.info('bt', '← мы peripheral, получили discover от central device=$deviceId');
-        if (deviceId.isNotEmpty && !isBlocked(deviceId, address)) {
+        // Свой же сигнал (BLE central+peripheral работают на одном радио
+        // одновременно, на части Android-стеков peripheral видит собственную
+        // рекламу/запись) — тот же фильтр, что у LAN (lan_transport.dart).
+        if (deviceId.isNotEmpty && deviceId != _myDeviceId && !isBlocked(deviceId, address)) {
           final verified = await verifyPeerIdentity(
             x25519PubB64: peerX25519Pub,
             identityPubB64: identityPub,
@@ -285,7 +288,7 @@ class BluetoothTransport implements LocalTransport {
       final identityPub = discData['identity_pub'] as String? ?? '';
       final sig = discData['signed_prekey_sig'] as String? ?? '';
 
-      if (deviceId.isEmpty) {
+      if (deviceId.isEmpty || deviceId == _myDeviceId) {
         device.disconnect();
         return;
       }

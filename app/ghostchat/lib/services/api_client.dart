@@ -26,10 +26,12 @@ class ApiClient {
 
   late final Dio _chat;
   late final Dio _soc;
+  late final Dio _core;
 
   ApiClient._internal() {
     _chat = _build(GE.apiChat);
     _soc = _build(GE.apiSoc);
+    _core = _build(GE.apiCore);
   }
 
   Dio _build(String base) {
@@ -123,6 +125,18 @@ class ApiClient {
     return r.data;
   }
 
+  // ─── Core-профиль (display_name/about/avatar_bg_color/glow_color) ───────
+  // Живёт на bare /api (backchat/routers/users.py), не под /chat и не /soc.
+  Future<dynamic> coreGet(String path, [Map<String, dynamic>? query]) async {
+    final r = await _core.get(path, queryParameters: query);
+    return r.data;
+  }
+
+  Future<dynamic> corePost(String path, [dynamic body]) async {
+    final r = await _core.post(path, data: body);
+    return r.data;
+  }
+
   // ─── Чат-ручки ──────────────────────────────────────────────────────────
   Future<dynamic> chatGet(String path, [Map<String, dynamic>? query]) async {
     final r = await _chat.get(path, queryParameters: query);
@@ -181,6 +195,29 @@ class ApiClient {
     });
     final r = await _soc.post('/upload', data: form);
     return Map<String, dynamic>.from(r.data);
+  }
+
+  /// Загрузить свою аватарку (POST /api/soc/me/avatar) — jpeg/png/webp,
+  /// сервер ресайзит до 512×512. Возвращает {avatar_url: "/media/avatars/.."}.
+  Future<String> uploadOwnAvatar({
+    required List<int> bytes,
+    required String filename,
+    String? mime,
+  }) async {
+    final form = FormData.fromMap({
+      'file': MultipartFile.fromBytes(
+        bytes,
+        filename: filename,
+        contentType: mime != null ? DioMediaType.parse(mime) : null,
+      ),
+    });
+    final r = await _soc.post('/me/avatar', data: form);
+    return Map<String, dynamic>.from(r.data)['avatar_url'] as String;
+  }
+
+  /// Снять свою аватарку.
+  Future<void> deleteOwnAvatar() async {
+    await _soc.delete('/me/avatar');
   }
 
   /// Скачать зашифрованный blob по file_id (для receiver, после ack удалится).

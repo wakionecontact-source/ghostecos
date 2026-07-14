@@ -7,8 +7,10 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
+import '../services/theme_service.dart';
 import '../widgets/glass.dart';
 import '../widgets/toast_overlay.dart';
 
@@ -16,7 +18,7 @@ class SupportScreen extends StatelessWidget {
   const SupportScreen({super.key});
 
   // Контакт поддержки. Менять тут, если username сменится.
-  static const _supportHandle = '@ghostchatof';
+  static const _supportHandle = '@waki_one';
 
   // Список вопрос → ответ. Простым языком, термины в скобках.
   static const List<List<String>> _faq = [
@@ -130,7 +132,9 @@ class SupportScreen extends StatelessWidget {
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: GE.primary.withValues(alpha: 0.18),
-                  border: Border.all(color: GE.primary, width: 1),
+                  border: ThemeService.isMinimal
+                      ? null
+                      : Border.all(color: GE.primary, width: 1),
                 ),
                 child: Icon(Icons.alternate_email, color: GE.primary, size: 20),
               ),
@@ -172,7 +176,7 @@ class SupportScreen extends StatelessWidget {
             label: 'Открыть канал',
             icon: Icons.open_in_new,
             fullWidth: true,
-            onTap: () => _snack('Скоро'),
+            onTap: () => _openChannel(),
           ),
         ],
       ),
@@ -193,6 +197,15 @@ class SupportScreen extends StatelessWidget {
       );
 
   void _snack(String msg) => toast.show(msg);
+
+  Future<void> _openChannel() async {
+    final uri = Uri.parse('https://t.me/waki_one');
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      toast.show('Не удалось открыть ссылку');
+    }
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────────

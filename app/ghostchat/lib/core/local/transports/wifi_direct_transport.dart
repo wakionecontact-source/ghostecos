@@ -166,7 +166,7 @@ class WifiDirectTransport implements LocalTransport {
       final type = pkt['type'] as String? ?? '';
       if (type == 'discover') {
         final peerDeviceId = pkt['device_id'] as String? ?? '';
-        if (peerDeviceId.isEmpty) return;
+        if (peerDeviceId.isEmpty || peerDeviceId == _myDeviceId) return;
         if (isBlocked(peerDeviceId, peerId)) return;
         final peerX25519Pub = pkt['x25519_pub'] as String? ?? '';
         final identityPub = pkt['identity_pub'] as String? ?? '';

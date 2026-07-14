@@ -16,6 +16,7 @@ import '../services/lan_chat_store.dart';
 import '../services/bookmark_store.dart';
 import '../core/local/local_hub.dart';
 import '../widgets/glass.dart';
+import '../widgets/emoji_text.dart';
 import '../widgets/skeleton.dart';
 import 'chat_screen.dart';
 import 'profile_screen.dart';
@@ -36,7 +37,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
   final _searchCtrl = TextEditingController();
   final _searchFocus = FocusNode();
   Timer? _debounce;
-  List<SearchHit>? _searchResults;
+  SearchOutcome? _searchResults;
   bool _searching = false;
 
   @override
@@ -330,20 +331,34 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   Widget _buildSearchResults() {
-    if (_searching && (_searchResults?.isEmpty ?? true)) {
+    if (_searching && (_searchResults?.hits.isEmpty ?? true)) {
       return Padding(
         padding: const EdgeInsets.all(40),
         child: Center(child: CircularProgressIndicator(color: GE.primary)),
       );
     }
-    final hits = _searchResults ?? [];
+    final outcome = _searchResults;
+    final hits = outcome?.hits ?? const <SearchHit>[];
     if (hits.isEmpty) {
+      // Различаем "сеть отвалилась" и "юзера правда нет" — раньше оба
+      // случая молча схлопывались в одно и то же сообщение.
+      final remoteFailed = outcome?.remoteFailed ?? false;
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
-          child: Text(
-            'Ничего не найдено',
-            style: TextStyle(color: GE.sub, fontSize: 14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (remoteFailed) ...[
+                Icon(Icons.cloud_off_outlined, color: GE.sub, size: 28),
+                const SizedBox(height: 8),
+              ],
+              Text(
+                remoteFailed ? 'Не удалось выполнить поиск — проверь соединение' : 'Ничего не найдено',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: GE.sub, fontSize: 14),
+              ),
+            ],
           ),
         ),
       );
@@ -557,7 +572,7 @@ class _DialogTile extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
       );
     }
-    return Text(
+    return EmojiText(
       d.lastText.isEmpty ? '—' : d.lastText,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
@@ -719,17 +734,18 @@ class _DialogTile extends StatelessWidget {
                           child: ValueListenableBuilder<bool>(
                             valueListenable:
                                 ChatRepo.instance.watchPresence(d.username),
-                            builder: (_, online, _) => online
-                                ? Container(
-                                    width: 13,
-                                    height: 13,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: GE.green,
-                                      border: Border.all(color: GE.bg, width: 2),
-                                    ),
-                                  )
-                                : const SizedBox.shrink(),
+                            // Кружок всегда виден (не только когда онлайн) —
+                            // офлайн тускло-серый, иначе статус пропадал
+                            // целиком и было непонятно, в сети человек или нет.
+                            builder: (_, online, _) => Container(
+                              width: 13,
+                              height: 13,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: online ? GE.green : GE.sub.withValues(alpha: 0.35),
+                                border: Border.all(color: GE.bg, width: 2),
+                              ),
+                            ),
                           ),
                         ),
                       ],
@@ -895,9 +911,7 @@ class _LanDialogTile extends StatelessWidget {
                   icon: Icons.wifi_tethering_rounded,
                   colors: [GE.green, GE.blue],
                 ),
-                // Бейдж типа — слева-снизу, чтобы справа-снизу было место под
-                // индикатор "в сети" (см. StreamBuilder ниже, живёт в строке
-                // с именем — тут отдельного дублирующего дота не нужно).
+                // Бейдж типа — слева-снизу.
                 Positioned(
                   left: -1,
                   bottom: -1,
@@ -905,6 +919,27 @@ class _LanDialogTile extends StatelessWidget {
                     padding: const EdgeInsets.all(2),
                     decoration: BoxDecoration(color: GE.bg, shape: BoxShape.circle),
                     child: Icon(Icons.wifi_tethering_rounded, size: 13, color: GE.primary),
+                  ),
+                ),
+                // Статус "в сети" — справа-снизу, как у обычных чатов. Кружок
+                // всегда виден (не только при онлайне), офлайн — тускло-серый.
+                Positioned(
+                  right: -1,
+                  bottom: -1,
+                  child: StreamBuilder<MapEntry<String, bool>>(
+                    stream: localHub.onOnlineChanged,
+                    builder: (_, _) {
+                      final online = localHub.isOnline(_deviceId);
+                      return Container(
+                        width: 13,
+                        height: 13,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: online ? GE.green : GE.sub.withValues(alpha: 0.35),
+                          border: Border.all(color: GE.bg, width: 2),
+                        ),
+                      );
+                    },
                   ),
                 ),
               ],
@@ -916,23 +951,8 @@ class _LanDialogTile extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      // Живой индикатор "в сети" — реагирует сразу на
-                      // реконнект/обрыв, не только когда открыт сам чат.
-                      StreamBuilder<MapEntry<String, bool>>(
-                        stream: localHub.onOnlineChanged,
-                        builder: (_, _) {
-                          final online = localHub.isOnline(_deviceId);
-                          return Container(
-                            width: 7,
-                            height: 7,
-                            margin: const EdgeInsets.only(right: 5),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: online ? GE.green : GE.sub.withValues(alpha: 0.3),
-                            ),
-                          );
-                        },
-                      ),
+                      // Статус "в сети" теперь на аватарке (справа-снизу),
+                      // как у обычных чатов — здесь отдельного дота не нужно.
                       Expanded(
                         child: Text(
                           d.displayName,
@@ -948,7 +968,7 @@ class _LanDialogTile extends StatelessWidget {
                   Row(
                     children: [
                       Expanded(
-                        child: Text(
+                        child: EmojiText(
                           d.lastText.isEmpty ? 'Устройство поблизости' : d.lastText,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -1038,7 +1058,7 @@ class _BookmarkDialogTile extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 3),
-                  Text(
+                  EmojiText(
                     d.lastText.isEmpty ? 'Личные заметки' : d.lastText,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

@@ -6,6 +6,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../auth_service.dart';
+import '../services/theme_service.dart';
+import '../widgets/glass.dart';
 
 // ── Лимиты регистрации — ЗЕРКАЛО серверных (social_router.py: _NAME_MIN/MAX,
 // _USER_MIN/MAX/TOTAL, _PASS_MIN/MAX). Если сервер поменяет — поменять и тут,
@@ -257,30 +259,65 @@ class _AuthScreenState extends State<AuthScreen> {
 }
 
 Widget _input(String hint, TextEditingController c, {bool obscure = false}) {
-  return TextField(
-    controller: c,
-    obscureText: obscure,
-    style: TextStyle(color: GE.text, fontSize: 14),
-    decoration: InputDecoration(
-      hintText: hint,
-      hintStyle: TextStyle(color: GE.sub, fontSize: 14),
-      filled: true,
-      fillColor: const Color(0x66000000),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide(color: GE.borderStrong),
+  return _ObscurableField(hint: hint, controller: c, obscure: obscure);
+}
+
+// Поле пароля с глазиком-переключателем видимости (обычные поля тоже через
+// него проходят, просто без иконки — obscure=false).
+class _ObscurableField extends StatefulWidget {
+  final String hint;
+  final TextEditingController controller;
+  final bool obscure;
+  const _ObscurableField({
+    required this.hint,
+    required this.controller,
+    required this.obscure,
+  });
+
+  @override
+  State<_ObscurableField> createState() => _ObscurableFieldState();
+}
+
+class _ObscurableFieldState extends State<_ObscurableField> {
+  bool _visible = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: widget.controller,
+      obscureText: widget.obscure && !_visible,
+      style: TextStyle(color: GE.text, fontSize: 14),
+      decoration: InputDecoration(
+        hintText: widget.hint,
+        hintStyle: TextStyle(color: GE.sub, fontSize: 14),
+        filled: true,
+        fillColor: GE.glassFill,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        suffixIcon: widget.obscure
+            ? IconButton(
+                icon: Icon(
+                  _visible ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                  color: GE.sub,
+                  size: 20,
+                ),
+                onPressed: () => setState(() => _visible = !_visible),
+              )
+            : null,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: GE.borderStrong),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: GE.borderStrong),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: GE.primary, width: 1.5),
+        ),
       ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide(color: GE.borderStrong),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide(color: GE.primary, width: 1.5),
-      ),
-    ),
-  );
+    );
+  }
 }
 
 /// Поле username с "@" внутри текста, пока пусто и не в фокусе — при фокусе
@@ -318,7 +355,7 @@ class _AtPrefixField extends StatelessWidget {
             hintText: hint,
             hintStyle: TextStyle(color: GE.sub, fontSize: 14),
             filled: true,
-            fillColor: const Color(0x66000000),
+            fillColor: GE.glassFill,
             contentPadding:
                 const EdgeInsets.only(left: 28, right: 14, top: 14, bottom: 14),
             border: OutlineInputBorder(
@@ -453,13 +490,13 @@ class _Brand extends StatelessWidget {
       children: [
         ShaderMask(
           shaderCallback: (b) => LinearGradient(
-            colors: [Colors.white, GE.primary],
+            colors: [GE.text, GE.primary],
           ).createShader(b),
-          child: const Text(
+          child: Text(
             'GhostEcos',
             style: TextStyle(
               fontSize: 28, fontWeight: FontWeight.w800,
-              color: Colors.white, letterSpacing: -0.5,
+              color: GE.text, letterSpacing: -0.5,
             ),
           ),
         ),
@@ -480,7 +517,7 @@ class _Tabs extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: const Color(0x66000000),
+        color: GE.glassFill,
         borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
@@ -502,9 +539,11 @@ class _Tabs extends StatelessWidget {
         decoration: BoxDecoration(
           color: active ? GE.primary.withValues(alpha: 0.15) : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
-          border: active
-              ? Border.all(color: GE.primary.withValues(alpha: 0.35))
-              : null,
+          border: ThemeService.isMinimal
+              ? null
+              : (active
+                  ? Border.all(color: GE.primary.withValues(alpha: 0.35))
+                  : null),
         ),
         alignment: Alignment.center,
         child: Text(label,
@@ -532,10 +571,10 @@ class _Age18Checkbox extends StatelessWidget {
             style: TextStyle(color: GE.sub, fontSize: 12, height: 1.5),
           ),
         ),
-        Switch(
+        GhostSwitch(
           value: value,
           onChanged: (v) => onChanged(v),
-          activeThumbColor: GE.primary,
+          activeColor: GE.primary,
         ),
       ],
     );
@@ -557,10 +596,12 @@ class _PrimaryBtn extends StatelessWidget {
         decoration: BoxDecoration(
           gradient: LinearGradient(colors: [GE.primary, GE.primary2]),
           borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(color: GE.primary.withValues(alpha: 0.4),
-                blurRadius: 18, offset: const Offset(0, 6)),
-          ],
+          boxShadow: ThemeService.isMinimal
+              ? null
+              : [
+                  BoxShadow(color: GE.primary.withValues(alpha: 0.4),
+                      blurRadius: 18, offset: const Offset(0, 6)),
+                ],
         ),
         child: Center(
           child: busy
@@ -639,10 +680,10 @@ class _TermsCheckbox extends StatelessWidget {
             ]),
           ),
         ),
-        Switch(
+        GhostSwitch(
           value: value,
           onChanged: (v) => onChanged(v),
-          activeThumbColor: GE.primary,
+          activeColor: GE.primary,
         ),
       ],
     );

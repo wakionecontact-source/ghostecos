@@ -16,6 +16,7 @@ import '../theme.dart';
 import '../mesh_background.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
+import '../services/theme_service.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
 import '../widgets/toast_overlay.dart';
@@ -418,7 +419,9 @@ class _CommentsScreenState extends State<CommentsScreen> {
       child: Container(
         decoration: BoxDecoration(
           color: GE.primary.withValues(alpha: 0.10),
-          border: Border(left: BorderSide(color: GE.primary, width: 3)),
+          border: ThemeService.isMinimal
+              ? null
+              : Border(left: BorderSide(color: GE.primary, width: 3)),
           borderRadius: const BorderRadius.only(
             topRight: Radius.circular(6),
             bottomRight: Radius.circular(6),
@@ -475,10 +478,12 @@ class _SortChip extends StatelessWidget {
         decoration: BoxDecoration(
           color: active ? GE.primary.withValues(alpha: 0.20) : GE.glassFill,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: active ? GE.primary : GE.glassBorder,
-            width: active ? 1.2 : 0.6,
-          ),
+          border: ThemeService.isMinimal
+              ? null
+              : Border.all(
+                  color: active ? GE.primary : GE.glassBorder,
+                  width: active ? 1.2 : 0.6,
+                ),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           Icon(icon, size: 12, color: active ? GE.primary : GE.sub),

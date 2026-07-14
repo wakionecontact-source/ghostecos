@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../services/api_client.dart';
+import '../services/theme_service.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
 import '../widgets/toast_overlay.dart';
@@ -249,7 +250,9 @@ class _WrappedScreenState extends State<WrappedScreen> {
           ],
         ),
         borderRadius: BorderRadius.circular(GE.radiusLg),
-        border: Border.all(color: GE.primary.withValues(alpha: 0.45)),
+        border: ThemeService.isMinimal
+            ? null
+            : Border.all(color: GE.primary.withValues(alpha: 0.45)),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [

@@ -9,6 +9,7 @@
 // (LAN/BLE/Wi-Fi Direct — экран «Устройства поблизости»).
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../widgets/toast_overlay.dart';
 
 /// Разрешения, которые реально нужны приложению (совпадает с AndroidManifest).
 const List<Permission> appPermissions = <Permission>[
@@ -115,6 +116,13 @@ Future<bool> ensurePermission(Permission p) async {
   final status = await p.status;
   if (status.isGranted || status.isLimited) return true;
   if (status.isPermanentlyDenied) {
+    // Android больше не даёт повторно показать системный диалог для
+    // разрешения, отклонённого "не спрашивать снова" — переход в настройки
+    // тут единственный путь. Без этого тоста редирект выглядит как баг
+    // ("почему сразу настройки, а не запрос?"), хотя это ожидаемое поведение
+    // ОС именно для ЭТОГО разрешения (остальные в списке ещё не отклонены
+    // навсегда и покажут обычный диалог).
+    toast.show('«${permLabel(p)}» отклонено ранее — включите в настройках');
     await openAppSettings();
     final after = await p.status;
     return after.isGranted || after.isLimited;

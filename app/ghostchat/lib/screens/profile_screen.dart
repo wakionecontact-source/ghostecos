@@ -7,21 +7,28 @@
 //      /prof/{username}/posts?offset=N → пагинация
 //      POST /follow/{username} / DELETE /follow/{username}
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:image_picker/image_picker.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/optimistic_action.dart';
+import '../services/theme_service.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
+import '../widgets/toast_overlay.dart';
 import 'chat_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String username;
-  const ProfileScreen({super.key, required this.username});
+  /// true — встроен в MainShell (свой профиль в wide-раскладке), без своего
+  /// back-стрелки и без MeshBackground (родитель уже даёт фон).
+  final bool embedded;
+  const ProfileScreen({super.key, required this.username, this.embedded = false});
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
@@ -39,12 +46,98 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _followBusy = false;
 
   bool get _isMe => (_profile?['is_me'] as bool?) == true;
+  bool _avatarBusy = false;
 
   @override
   void initState() {
     super.initState();
     _scroll.addListener(_onScroll);
     _load();
+  }
+
+  Future<void> _pickAndUploadAvatar() async {
+    if (_avatarBusy) return;
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1024,
+      maxHeight: 1024,
+      imageQuality: 90,
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _avatarBusy = true);
+    try {
+      final bytes = await File(picked.path).readAsBytes();
+      final url = await _api.uploadOwnAvatar(bytes: bytes, filename: picked.name);
+      if (!mounted) return;
+      setState(() => _profile!['avatar_url'] = url);
+      toast.show('Аватарка обновлена');
+    } catch (e) {
+      if (mounted) toast.show('Не удалось загрузить: $e');
+    } finally {
+      if (mounted) setState(() => _avatarBusy = false);
+    }
+  }
+
+  Future<void> _editProfileSheet() async {
+    final p = _profile!;
+    final nameCtrl = TextEditingController(text: p['display_name'] as String? ?? '');
+    final aboutCtrl = TextEditingController(text: p['about'] as String? ?? '');
+    var busy = false;
+    await showGlassSheet(
+      context,
+      child: StatefulBuilder(
+        builder: (context, setSheetState) {
+          Future<void> save() async {
+            if (busy) return;
+            setSheetState(() => busy = true);
+            try {
+              await _api.corePost('/profile', {
+                'display_name': nameCtrl.text.trim(),
+                'about': aboutCtrl.text.trim(),
+              });
+              if (!mounted) return;
+              setState(() {
+                p['display_name'] = nameCtrl.text.trim();
+                p['about'] = aboutCtrl.text.trim();
+              });
+              Navigator.of(context).pop();
+              toast.show('Профиль обновлён');
+            } catch (e) {
+              if (context.mounted) toast.show('Ошибка: $e');
+            } finally {
+              setSheetState(() => busy = false);
+            }
+          }
+
+          return Padding(
+            padding: EdgeInsets.only(
+              left: 16, right: 16,
+              bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Редактировать профиль',
+                    style: TextStyle(color: GE.text, fontSize: 17, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 16),
+                GlassInput(controller: nameCtrl, hint: 'Имя', icon: Icons.badge_outlined),
+                const SizedBox(height: 10),
+                GlassInput(controller: aboutCtrl, hint: 'О себе', icon: Icons.info_outline, maxLines: 3),
+                const SizedBox(height: 16),
+                GlassButton(
+                  label: 'Сохранить',
+                  primary: true,
+                  fullWidth: true,
+                  loading: busy,
+                  onTap: save,
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Future<void> _load() async {
@@ -173,7 +266,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: GlassAppBar(
-        showBack: true,
+        showBack: !widget.embedded,
         titleText: _profile?['display_name'] as String? ?? widget.username,
       ),
       body: RefreshIndicator(
@@ -238,7 +331,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final repBand = (p['reputation_band'] as String?) ?? 'mid';
     final dailyStatus = p['daily_status'] as String?;
     final dailyMood = p['daily_status_mood'] as String?;
-    final eternal = (p['daily_status_eternal'] as bool?) ?? false;
     final amFollowing = (p['am_following'] as bool?) ?? false;
     final posts = (p['posts_count'] as num?)?.toInt() ?? 0;
     final followers = (p['followers_count'] as num?)?.toInt() ?? 0;
@@ -249,67 +341,132 @@ class _ProfileScreenState extends State<ProfileScreen> {
       controller: _scroll,
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
       children: [
-        // Шапка
-        GlassCard(
-          padding: const EdgeInsets.all(16),
+        // Шапка в духе карточки контакта Telegram: большой центрированный
+        // аватар + имя + @username, без статов/репутации — тем сюда
+        // спускаются ближе к постам (см. ниже), это не главное о человеке.
+        Center(
           child: Column(
             children: [
-              Row(children: [
-                Container(
-                  width: 64, height: 64,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: LinearGradient(colors: [GE.primary2, GE.primary]),
-                  ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
-                    style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.w800, fontSize: 28),
-                  ),
+              GestureDetector(
+                onTap: _isMe ? _pickAndUploadAvatar : null,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Container(
+                      width: 96, height: 96,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: LinearGradient(colors: [GE.primary2, GE.primary]),
+                        image: (p['avatar_url'] as String?) != null
+                            ? DecorationImage(
+                                image: NetworkImage('${GE.baseUrl}${p['avatar_url']}'),
+                                fit: BoxFit.cover,
+                              )
+                            : null,
+                      ),
+                      alignment: Alignment.center,
+                      child: (p['avatar_url'] as String?) != null
+                          ? null
+                          : Text(
+                              displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
+                              style: const TextStyle(
+                                  color: Colors.white, fontWeight: FontWeight.w800, fontSize: 40),
+                            ),
+                    ),
+                    if (_isMe)
+                      Positioned(
+                        right: -2,
+                        bottom: -2,
+                        child: Container(
+                          width: 28, height: 28,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: GE.primary,
+                            border: Border.all(color: GE.bg, width: 2),
+                          ),
+                          child: _avatarBusy
+                              ? const Padding(
+                                  padding: EdgeInsets.all(6),
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Colors.white),
+                                )
+                              : const Icon(Icons.camera_alt_rounded, size: 14, color: Colors.white),
+                        ),
+                      ),
+                  ],
                 ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(displayName,
-                          maxLines: 1, overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              color: GE.text,
-                              fontSize: 20,
-                              fontWeight: FontWeight.w800)),
-                      const SizedBox(height: 2),
-                      Text('@${widget.username}',
-                          style: TextStyle(color: GE.sub, fontSize: 13)),
-                      const SizedBox(height: 4),
-                      _reputationBadge(repScore, repBand),
-                    ],
-                  ),
+              ),
+              const SizedBox(height: 12),
+              Text(displayName,
+                  textAlign: TextAlign.center,
+                  maxLines: 2, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: GE.text, fontSize: 22, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 2),
+              Text('@${widget.username}',
+                  style: TextStyle(color: GE.sub, fontSize: 14)),
+              if ((p['about'] as String?)?.isNotEmpty ?? false) ...[
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Text(p['about'] as String,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: GE.sub, fontSize: 13)),
                 ),
-              ]),
-              if (dailyStatus != null && dailyStatus.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _statusBadge(dailyStatus, dailyMood, eternal),
               ],
-              const SizedBox(height: 16),
-              if (!_isMe) _actionsRow(amFollowing),
-              if (_isMe)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: GE.primary.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text('Это ваш профиль',
-                      style: TextStyle(
-                          color: GE.primary, fontSize: 12, fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        if (!_isMe) _actionsRow(amFollowing),
+        if (_isMe)
+          Center(
+            child: GlassButton(
+              label: 'Редактировать профиль',
+              icon: Icons.edit_outlined,
+              onTap: _editProfileSheet,
+            ),
+          ),
+        const SizedBox(height: 16),
+        // Инфо-строки: как карточка контакта в Telegram — иконка / значение /
+        // подпись под ней, а не бейджики вразнобой.
+        GlassCard(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Column(
+            children: [
+              _infoRow(
+                Icons.alternate_email,
+                '@${widget.username}',
+                'Имя пользователя',
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: widget.username));
+                  toast.show('Скопировано');
+                },
+              ),
+              if (dailyStatus != null && dailyStatus.isNotEmpty)
+                _infoRow(
+                  Icons.mode_comment_outlined,
+                  dailyMood != null && dailyMood.isNotEmpty
+                      ? '$dailyMood $dailyStatus'
+                      : dailyStatus,
+                  'Статус',
                 ),
             ],
           ),
         ),
-        const SizedBox(height: 12),
-        // Статы
+        const SizedBox(height: 20),
+        // GhostSocial-специфика (репутация + статы) — сюда, ближе к постам,
+        // а не в самой шапке контакта.
+        Row(children: [
+          ShaderMask(
+            shaderCallback: (b) =>
+                LinearGradient(colors: [GE.primary, GE.primary2]).createShader(b),
+            child: const Text('GhostSocial',
+                style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800)),
+          ),
+          const Spacer(),
+          _reputationBadge(repScore, repBand),
+        ]),
+        const SizedBox(height: 10),
         Row(children: [
           Expanded(child: _statCard('Постов', '$posts', Icons.article_outlined)),
           const SizedBox(width: 8),
@@ -346,30 +503,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _statusBadge(String text, String? mood, bool eternal) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: GE.glassFill,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-            color: eternal ? GE.primary : GE.glassBorder,
-            width: eternal ? 1.2 : 0.6),
+  // Telegram-стиль строки контактной инфы: иконка слева, значение сверху,
+  // мелкая подпись снизу.
+  Widget _infoRow(IconData icon, String value, String label, {VoidCallback? onTap}) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(children: [
+          Icon(icon, color: GE.primary, size: 20),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(value,
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: GE.text, fontSize: 15)),
+                const SizedBox(height: 2),
+                Text(label,
+                    style: TextStyle(color: GE.sub, fontSize: 12)),
+              ],
+            ),
+          ),
+        ]),
       ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        if (mood != null && mood.isNotEmpty) ...[
-          Text(mood, style: const TextStyle(fontSize: 14)),
-          const SizedBox(width: 6),
-        ] else
-          Icon(eternal ? Icons.all_inclusive : Icons.mode_comment_outlined,
-              size: 13, color: GE.primary),
-        const SizedBox(width: 2),
-        Flexible(
-          child: Text(text,
-              maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: GE.text, fontSize: 12)),
-        ),
-      ]),
     );
   }
 
@@ -383,7 +541,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.18),
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: color.withValues(alpha: 0.5), width: 0.6),
+        border: ThemeService.isMinimal
+            ? null
+            : Border.all(color: color.withValues(alpha: 0.5), width: 0.6),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(Icons.shield_outlined, size: 11, color: color),
@@ -610,7 +770,7 @@ class _MediaPreview extends StatelessWidget {
       return Container(
         height: 70,
         decoration: BoxDecoration(
-          color: Colors.black26,
+          color: GE.glassFill,
           borderRadius: BorderRadius.circular(8),
         ),
         alignment: Alignment.center,
@@ -624,7 +784,7 @@ class _MediaPreview extends StatelessWidget {
             height: 200, fit: BoxFit.cover,
             errorBuilder: (_, _, _) => Container(
                   height: 80,
-                  color: Colors.black26,
+                  color: GE.glassFill,
                   alignment: Alignment.center,
                   child: Icon(Icons.broken_image, color: GE.sub),
                 )),
@@ -643,7 +803,7 @@ class _MediaPreview extends StatelessWidget {
                 borderRadius: BorderRadius.circular(8),
                 child: Image.network(_abs(visible[i]),
                     fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => Container(color: Colors.black26)),
+                    errorBuilder: (_, _, _) => Container(color: GE.glassFill)),
               ),
             ),
           ],

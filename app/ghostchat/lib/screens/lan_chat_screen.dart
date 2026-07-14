@@ -18,7 +18,9 @@ import '../mesh_background.dart';
 import '../widgets/glass.dart';
 import '../widgets/marquee_text.dart';
 import '../widgets/emoji_picker.dart';
+import '../widgets/emoji_text.dart';
 import '../widgets/empty_chat_state.dart';
+import '../widgets/reactions_bar.dart';
 import '../widgets/send_fly_animation.dart';
 import '../widgets/toast_overlay.dart';
 import '../services/lan_chat_store.dart';
@@ -54,12 +56,17 @@ class _LanChatScreenState extends State<LanChatScreen> {
   final Set<String> _selectedIds = {};
   StreamSubscription? _msgSub;
   StreamSubscription? _onlineSub;
+  StreamSubscription? _ackSub;
+  StreamSubscription? _seenSub;
   bool _sending = false;
   late String _name;
   bool _online = false;
   bool _emojiOpen = false;
   final _sendBtnKey = GlobalKey();
   static const double _emojiPanelH = 300;
+  // Мало сообщений — держим ленту у низа, рядом с полем ввода, а не
+  // приклеенной к шапке с пустотой снизу (см. тот же приём в chat_screen.dart).
+  static const int _bottomAnchorMaxMsgs = 40;
 
   bool get _selectionMode => _selectedIds.isNotEmpty;
 
@@ -83,6 +90,19 @@ class _LanChatScreenState extends State<LanChatScreen> {
         toast.show('Устройство отключилось');
       }
     });
+    // Статусы галочек (delivered/read) пишет в БД глобальный обработчик в
+    // MainShell (_lanAckSub/_lanSeenSub) — сам этот экран о новой записи не
+    // узнаёт (объекты в _messages final, setState никто не звал), поэтому
+    // галочка не появлялась, пока не перезайти в чат. Перечитываем статусы
+    // из БД на каждый ack/seen для ЭТОГО устройства.
+    _ackSub = localHub.onAck.listen((e) {
+      if (e.fromUsername != widget.deviceId) return;
+      _refreshStatuses();
+    });
+    _seenSub = localHub.onSeen.listen((e) {
+      if (e.fromUsername != widget.deviceId) return;
+      _refreshStatuses();
+    });
     // Автопопытка при открытии чата — юзеру не нужно тыкать кнопку самому,
     // если сессия уже потерялась (сессии транспортов живут только в памяти
     // и пропадают при перезапуске приложения).
@@ -101,6 +121,19 @@ class _LanChatScreenState extends State<LanChatScreen> {
     });
     _scrollToBottom();
     _notifySeen(msgs.where((m) => !m.fromMe).map((m) => m.msgId).toList());
+  }
+
+  /// Перечитать статусы (delivered/read) из БД — вызывается на onAck/onSeen,
+  /// т.к. эти события пишут в LanChatStore глобально (MainShell), а не в
+  /// уже загруженные объекты этого экрана.
+  Future<void> _refreshStatuses() async {
+    final msgs = await LanChatStore.instance.getMessages(widget.deviceId);
+    if (!mounted) return;
+    setState(() {
+      _messages
+        ..clear()
+        ..addAll(msgs);
+    });
   }
 
   // Сообщаем собеседнику, что его сообщения прочитаны (двойная галочка у него).
@@ -324,7 +357,8 @@ class _LanChatScreenState extends State<LanChatScreen> {
   Future<void> _openChatMenu() async {
     final action = await showGlassSheet<String>(
       context,
-      height: 140,
+      // Без фиксированной height — 140 не хватало на некоторых устройствах
+      // (RenderFlex overflow), высота меню сама подстраивается под контент.
       child: SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -445,6 +479,8 @@ class _LanChatScreenState extends State<LanChatScreen> {
     }
     _msgSub?.cancel();
     _onlineSub?.cancel();
+    _ackSub?.cancel();
+    _seenSub?.cancel();
     _msgCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
@@ -516,11 +552,24 @@ class _LanChatScreenState extends State<LanChatScreen> {
                       title: 'Сообщений нет',
                       subtitle: 'Видно только вам двоим — сообщения идут напрямую, без сервера',
                     )
-                  : ListView.builder(
-                      controller: _scrollCtrl,
-                      padding: const EdgeInsets.all(12),
-                      itemCount: _messages.length,
-                      itemBuilder: (_, i) => _bubble(_messages[i]),
+                  : Builder(
+                      builder: (_) {
+                        final bottomAnchor =
+                            _messages.length <= _bottomAnchorMaxMsgs;
+                        final list = ListView.builder(
+                          shrinkWrap: bottomAnchor,
+                          controller: _scrollCtrl,
+                          padding: const EdgeInsets.all(12),
+                          itemCount: _messages.length,
+                          itemBuilder: (_, i) => _bubble(_messages[i]),
+                        );
+                        return bottomAnchor
+                            ? Align(
+                                alignment: Alignment.bottomCenter,
+                                child: list,
+                              )
+                            : list;
+                      },
                     ),
             ),
             _inputRow(online),
@@ -646,6 +695,22 @@ class _LanChatScreenState extends State<LanChatScreen> {
     }
   }
 
+  // Долгое нажатие занято выбором сообщений (см. _toggleSelect) — реакция
+  // вешается на двойной тап, чтобы не отбирать жест у уже настроенного
+  // мультивыбора (тот же принцип, что и в ЛС/закладках, просто другой триггер).
+  Future<void> _react(LanChatMessage m) async {
+    final emoji = await showReactionPalette(context);
+    if (emoji == null) return;
+    await LanChatStore.instance.setReaction(widget.deviceId, m.msgId, emoji);
+    final msgs = await LanChatStore.instance.getMessages(widget.deviceId);
+    if (!mounted) return;
+    setState(() {
+      _messages
+        ..clear()
+        ..addAll(msgs);
+    });
+  }
+
   Widget _bubble(LanChatMessage m) {
     final time = DateTime.fromMillisecondsSinceEpoch(m.createdAt * 1000);
     final hh = time.hour.toString().padLeft(2, '0');
@@ -653,6 +718,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
     final selected = _selectedIds.contains(m.msgId);
     return GestureDetector(
       onLongPress: () => _toggleSelect(m.msgId),
+      onDoubleTap: _selectionMode ? null : () => _react(m),
       onTap: _selectionMode ? () => _toggleSelect(m.msgId) : null,
       child: Container(
         color: selected ? GE.primary.withValues(alpha: 0.10) : Colors.transparent,
@@ -695,7 +761,18 @@ class _LanChatScreenState extends State<LanChatScreen> {
                   ),
                 if (m.text.isNotEmpty) ...[
                   if (m.hasFile) const SizedBox(height: 4),
-                  Text(m.text, style: TextStyle(color: m.fromMe ? Colors.white : GE.text, fontSize: 14)),
+                  EmojiText(m.text, style: TextStyle(color: m.fromMe ? Colors.white : GE.text, fontSize: 14)),
+                ],
+                if (m.reaction != null) ...[
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: (m.fromMe ? Colors.white : GE.primary).withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: EmojiText(m.reaction!, style: const TextStyle(fontSize: 13)),
+                  ),
                 ],
                 const SizedBox(height: 2),
                 Row(
