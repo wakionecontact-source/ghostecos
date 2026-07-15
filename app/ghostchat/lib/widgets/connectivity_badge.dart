@@ -39,9 +39,14 @@ class _ConnectivityBadgeState extends State<ConnectivityBadge> {
   Future<void> _checkInternet() async {
     bool ok;
     try {
-      final result = await InternetAddress.lookup('one.one.one.one')
-          .timeout(const Duration(seconds: 4));
-      ok = result.isNotEmpty && result.first.rawAddress.isNotEmpty;
+      // Прямой TCP-коннект по IP, а не DNS-резолв имени — резолв мог
+      // отвечать из кэша ОС/роутера даже когда реального интернета уже нет
+      // (юзер репортил "жёлтого никогда не бывает", хотя реально был офлайн).
+      // 1.1.1.1:443 — сам порт неважен, важно только TCP SYN/ACK по факту.
+      final socket = await Socket.connect('1.1.1.1', 443,
+          timeout: const Duration(seconds: 4));
+      socket.destroy();
+      ok = true;
     } catch (_) {
       ok = false;
     }
