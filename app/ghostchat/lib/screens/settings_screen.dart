@@ -21,6 +21,7 @@ import 'devices_screen.dart';
 import 'support_screen.dart';
 import 'logs_screen.dart';
 import 'lan_settings_screen.dart';
+import 'custom_theme_screen.dart';
 
 // ─── Хаб ────────────────────────────────────────────────────────────────────
 class SettingsScreen extends StatefulWidget {
@@ -271,12 +272,17 @@ class _AppearanceScreenState extends State<_AppearanceScreen> {
     // без этой подписки карточки тем на этом экране не подхватывают новый
     // радиус, пока слайдер двигают (только его собственный превью-кружок).
     ThemeService.instance.cornerNotifier.addListener(_onTheme);
+    // Свои темы — отдельный список, создание/переименование/удаление не
+    // трогает notifier (активная тема может и не меняться), без этой
+    // подписки сетка тем не подхватит новый черновик/удаление.
+    ThemeService.instance.customPresetsNotifier.addListener(_onTheme);
   }
 
   @override
   void dispose() {
     ThemeService.instance.notifier.removeListener(_onTheme);
     ThemeService.instance.cornerNotifier.removeListener(_onTheme);
+    ThemeService.instance.customPresetsNotifier.removeListener(_onTheme);
     super.dispose();
   }
 
@@ -884,12 +890,12 @@ class _ThemeGrid extends StatelessWidget {
                   ],
                 ),
                 const Spacer(),
-                Text(p.name,
+                Text(p.name.isEmpty ? 'Без названия' : p.name,
                     style: TextStyle(
                         color: p.text,
                         fontSize: 14,
                         fontWeight: FontWeight.w700)),
-                Text(p.subtitle,
+                Text(p.isCustom ? 'Своя тема' : p.subtitle,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -995,11 +1001,23 @@ class _CornerRadiusSliderState extends State<_CornerRadiusSlider> {
 class _CreateThemeCard extends StatelessWidget {
   const _CreateThemeCard();
 
+  Future<void> _create(BuildContext context) async {
+    final draft = await ThemeService.instance.createDraftCustomTheme();
+    if (draft == null) {
+      toast.show('Своих тем уже 100 — сначала удалите ненужные');
+      return;
+    }
+    if (!context.mounted) return;
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => CustomThemeScreen(themeId: draft.id),
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
     return InkWell(
       borderRadius: BorderRadius.circular(GE.radiusMd),
-      onTap: () => toast.show('Создание своих тем — скоро'),
+      onTap: () => _create(context),
       child: DottedBorderBox(
         radius: GE.radiusMd,
         color: GE.sub.withValues(alpha: 0.4),
