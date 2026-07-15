@@ -312,8 +312,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _scrollCtrl.addListener(_onScroll);
     // В чате блокируем переворот экрана (только портрет).
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-    // Этот чат открыт → не слать о нём уведомления.
+    // Этот чат открыт → не слать о нём уведомления. Снимаем уже показанное
+    // уведомление по этому чату и забываем накопленную группу сообщений.
     NotificationService.activePeer = widget.peer;
+    NotificationService.instance.clearPeer(widget.peer);
     _init();
   }
 

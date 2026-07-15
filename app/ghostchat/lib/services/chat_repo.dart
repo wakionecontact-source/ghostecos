@@ -305,18 +305,30 @@ class ChatRepo {
 
       // Режим хранения приватника.
       String? mode;
+      bool serverReachable = true;
       try {
         final sm = await _api.chatGet('/keys/storage_mode');
         if (sm is Map) mode = sm['mode'] as String?;
-      } catch (_) {}
+      } catch (_) {
+        serverReachable = false;
+      }
       // Пользователь только что выбрал режим — зафиксировать на сервере.
-      if (chosenMode != null && chosenMode != mode) {
+      if (chosenMode != null && chosenMode != mode && serverReachable) {
         try {
           await _api.chatPost('/keys/storage_mode', {'mode': chosenMode});
           mode = chosenMode;
         } catch (e) {
           appLog.warn('chat', '[ChatRepo] set storage_mode failed: $e');
         }
+      }
+      // БАГ-ФИКС: транзиентная сетевая ошибка (сервер недоступен) — это НЕ то
+      // же самое, что "режим не выбран". Раньше любой сбой GET/POST на этом
+      // шаге заставлял снова показывать KeyChoiceScreen, что на нестабильной
+      // сети превращалось в "спрашивает каждый час". Доверяем локально
+      // сохранённому выбору (SharedPreferences key_storage_mode), пока сервер
+      // не подтвердит/не опровергнет его явно (ответом, а не ошибкой).
+      if (mode == null && !serverReachable && chosenMode != null) {
+        mode = chosenMode;
       }
       if (mode == null) return KeySyncOutcome.needChooseMode;
 

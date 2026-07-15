@@ -29,6 +29,13 @@ class NotificationService {
   bool _ready = false;
   int _idSeq = 1;
 
+  // Группировка по чату: несколько сообщений от ОДНОГО собеседника не
+  // плодят отдельные уведомления, а копятся в ОДНОМ (Inbox-style, как в
+  // Telegram/WhatsApp) — новое перезаписывает существующее по стабильному id.
+  final Map<String, List<String>> _peerMessages = {};
+  static const _peerHistoryCap = 8;
+  int _peerNotifId(String peer) => peer.hashCode & 0x7FFFFFFF;
+
   static const _channel = AndroidNotificationChannel(
     'messages',
     'Сообщения',
@@ -75,14 +82,59 @@ class NotificationService {
   }
 
   /// Входящее сообщение → уведомление, если этот чат сейчас НЕ открыт.
+  /// Несколько подряд — схлопываются в ОДНО уведомление (группа по чату).
   void onIncoming({required String peer, required String preview}) {
     if (!_ready) return;
     if (activePeer == peer) return;
-    _show(
-      title: peer,
-      body: preview.isEmpty ? 'Новое сообщение' : preview,
-      payload: jsonEncode({'peer': peer}),
-    );
+    final list = _peerMessages.putIfAbsent(peer, () => []);
+    list.add(preview.isEmpty ? 'Новое сообщение' : preview);
+    while (list.length > _peerHistoryCap) {
+      list.removeAt(0);
+    }
+    _showGrouped(peer, list);
+  }
+
+  /// Чат открыли — снимаем уведомление по нему и забываем накопленную историю
+  /// (следующие сообщения снова начнут копиться с чистого листа).
+  void clearPeer(String peer) {
+    _peerMessages.remove(peer);
+    try {
+      _plugin.cancel(_peerNotifId(peer));
+    } catch (_) {}
+  }
+
+  Future<void> _showGrouped(String peer, List<String> messages) async {
+    try {
+      final groupKey = 'chat_$peer';
+      final details = NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channel.id,
+          _channel.name,
+          channelDescription: _channel.description,
+          importance: Importance.high,
+          priority: Priority.high,
+          ticker: peer,
+          icon: 'ic_notification',
+          groupKey: groupKey,
+          styleInformation: messages.length > 1
+              ? InboxStyleInformation(
+                  messages,
+                  contentTitle: peer,
+                  summaryText: '${messages.length} сообщений',
+                )
+              : null,
+        ),
+      );
+      await _plugin.show(
+        _peerNotifId(peer),
+        peer,
+        messages.last,
+        details,
+        payload: jsonEncode({'peer': peer}),
+      );
+    } catch (e) {
+      if (kDebugMode) print('[notif] showGrouped: $e');
+    }
   }
 
   /// Кто-то поблизости хочет подключиться по LAN/BLE/Wi-Fi Direct.
