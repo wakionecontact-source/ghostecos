@@ -287,12 +287,21 @@ class LanTransport implements LocalTransport {
       sock.send(pkt, InternetAddress(bcast), 47777);
       appLog.info('lan', '→ discover broadcast на $bcast:47777 (я=$myIp, device=$devId)');
 
-      // 2) Unicast на каждый IP в подсети (0-254) — работает между разными подсетями на одном роутере
+      // 2) Unicast на каждый IP в подсети (0-254) — работает между разными подсетями на одном роутере.
+      // 255 send() подряд в одном синхронном цикле блокировали кадр отрисовки
+      // (юзер репортил лаги UI при любом LAN-действии) — send() сам по себе
+      // неблокирующий, но плотный цикл без единой паузы всё равно не даёт
+      // Flutter отрисовать кадр между вызовами. Отдаём event loop каждые 32
+      // отправки — 255/32 ≈ 8 коротких пауз, коммит всё равно укладывается
+      // в доли секунды, а кадры больше не проседают.
       final prefix = myIp.split('.').take(3).join('.');
+      var sent = 0;
       for (var i = 0; i <= 254; i++) {
         final target = '$prefix.$i';
         if (target == myIp) continue;
         sock.send(pkt, InternetAddress(target), 47777);
+        sent++;
+        if (sent % 32 == 0) await Future.delayed(Duration.zero);
       }
       appLog.info('lan', '→ discover unicast $prefix.0-254 (255 адресов)');
     } catch (e) {
