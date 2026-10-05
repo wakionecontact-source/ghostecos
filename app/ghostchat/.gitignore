@@ -1,0 +1,34 @@
+# Flutter/Dart generated files
+.dart_tool/
+.packages
+.pub-cache/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+coverage/
+
+# Android/IDE generated files
+android/.gradle/
+android/.cxx/
+android/local.properties
+.gradle/
+.idea/
+*.iml
+.vscode/
+
+# Local configuration and credentials
+.env
+.env.*
+**/key.properties
+**/*.jks
+**/*.keystore
+**/*.p12
+**/*.pem
+**/google-services.json
+
+# Build artifacts and local captures
+*.apk
+*.aab
+*.ipa
+*.app
+*.log

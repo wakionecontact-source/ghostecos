@@ -1,12 +1,14 @@
 // KeyGate — оверлей поверх приложения. Реагирует на ChatRepo.keySyncNotifier:
-//   needPassword   → просит пароль аккаунта (восстановить/опубликовать приватник
-//                    в server-режиме), повторяет синхронизацию;
+//   needPassword   → просит пароль аккаунта и повторяет синхронизацию;
+//   serverCopyMissing → предлагает создать отсутствующую серверную копию;
 //   needChooseMode → просит выбрать server/local.
+//   skipped        → пользователь явно продолжил без проверки в этой сессии.
 // При ok оверлей исчезает (ValueListenableBuilder).
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import '../theme.dart';
-import '../services/auth_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/chat_repo.dart';
 import 'glass.dart';
 
@@ -21,7 +23,10 @@ class KeyGate extends StatelessWidget {
       builder: (context, outcome, _) {
         final show =
             outcome == KeySyncOutcome.needPassword ||
-            outcome == KeySyncOutcome.needChooseMode;
+            outcome == KeySyncOutcome.serverCopyMissing ||
+            outcome == KeySyncOutcome.needChooseMode ||
+            outcome == KeySyncOutcome.needUpdateConfirm ||
+            outcome == KeySyncOutcome.keyMismatch;
         return Stack(
           children: [
             child,
@@ -48,26 +53,6 @@ class _GateOverlayState extends State<_GateOverlay> {
   @override
   void initState() {
     super.initState();
-    // Если только что логинились с паролем и первый автосинк в ChatRepo.init()
-    // не долетел (сеть/тайминг) — тихо пробуем ТЕМ ЖЕ паролем ещё раз, прежде
-    // чем заставлять юзера вводить его вручную (см. AuthService.peekPendingPwd).
-    // initState зовётся ровно один раз за жизнь виджета — повторного триггера
-    // не будет, отдельный guard-флаг не нужен.
-    if (widget.outcome == KeySyncOutcome.needPassword) {
-      final pending = AuthService.peekPendingPwd();
-      if (pending != null) _autoRetry(pending);
-    }
-  }
-
-  Future<void> _autoRetry(String pending) async {
-    if (mounted) setState(() => _busy = true);
-    await ChatRepo.instance.retryKeySync(password: pending);
-    AuthService.clearPendingPwd();
-    if (!mounted) return;
-    setState(() => _busy = false);
-    // ok → оверлей скроется сам. Не ok — молча остаёмся на обычной форме,
-    // юзер даже не увидит, что была автопопытка (никакого "не подошло" тут,
-    // это не его ввод).
   }
 
   @override
@@ -90,7 +75,13 @@ class _GateOverlayState extends State<_GateOverlay> {
     setState(() => _busy = false);
     // ok → оверлей скроется сам (keySyncNotifier == ok).
     if (r != KeySyncOutcome.ok && r != KeySyncOutcome.needChooseMode) {
-      setState(() => _err = 'Не подошло. Проверь пароль аккаунта.');
+      setState(() {
+        _err = r == KeySyncOutcome.serverCopyMissing
+            ? 'На сервере нет копии ключа. Проверь состояние аккаунта и повтори.'
+            : r == KeySyncOutcome.keyMismatch
+            ? 'Публичный ключ не совпал с сервером. Автоматическое обновление отменено.'
+            : 'Не подошло. Проверь пароль аккаунта.';
+      });
     }
   }
 
@@ -105,6 +96,11 @@ class _GateOverlayState extends State<_GateOverlay> {
       chosenMode: mode,
       password: mode == 'server' && _pwd.text.isNotEmpty ? _pwd.text : null,
     );
+    if (r == KeySyncOutcome.ok) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('key_storage_mode', mode);
+      await prefs.setBool('keychoice_done', true);
+    }
     if (!mounted) return;
     setState(() => _busy = false);
     if (r == KeySyncOutcome.error) {
@@ -112,9 +108,23 @@ class _GateOverlayState extends State<_GateOverlay> {
     }
   }
 
+  void _acceptUpdatedKey() {
+    ChatRepo.instance.keySyncNotifier.value = KeySyncOutcome.needPassword;
+  }
+
+  void _dismissMismatch() {
+    ChatRepo.instance.keySyncNotifier.value = KeySyncOutcome.error;
+  }
+
+  void _skipKeySetup() {
+    ChatRepo.instance.skipKeySyncForSession();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final isPwd = widget.outcome == KeySyncOutcome.needPassword;
+    final isPwd =
+        widget.outcome == KeySyncOutcome.needPassword ||
+        widget.outcome == KeySyncOutcome.serverCopyMissing;
     // Клавиатура: поднимаем панель над ней плавной анимацией (та же длительность,
     // что и системная анимация клавиатуры на Android). Без этого поле пароля
     // на маленьких экранах уезжает под клавиатуру.
@@ -141,7 +151,27 @@ class _GateOverlayState extends State<_GateOverlay> {
                     padding: const EdgeInsets.all(20),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
-                      children: isPwd ? _pwdBody() : _modeBody(),
+                      children: [
+                        ...(isPwd
+                            ? _pwdBody(
+                                missingCopy:
+                                    widget.outcome ==
+                                    KeySyncOutcome.serverCopyMissing,
+                              )
+                            : widget.outcome == KeySyncOutcome.needUpdateConfirm
+                            ? _updateBody()
+                            : widget.outcome == KeySyncOutcome.keyMismatch
+                            ? _mismatchBody()
+                            : _modeBody()),
+                        const SizedBox(height: 4),
+                        TextButton(
+                          onPressed: _busy ? null : _skipKeySetup,
+                          child: Text(
+                            'Пропустить',
+                            style: TextStyle(color: GE.sub),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -153,11 +183,11 @@ class _GateOverlayState extends State<_GateOverlay> {
     );
   }
 
-  List<Widget> _pwdBody() => [
-    Icon(Icons.lock_outline, color: GE.primary, size: 40),
+  List<Widget> _pwdBody({bool missingCopy = false}) => [
+    Icon(CupertinoIcons.lock, color: GE.primary, size: 40),
     const SizedBox(height: 12),
     Text(
-      'Пароль для ключа',
+      missingCopy ? 'Сохранить копию ключа' : 'Пароль для ключа',
       style: TextStyle(
         color: GE.text,
         fontSize: 18,
@@ -166,7 +196,9 @@ class _GateOverlayState extends State<_GateOverlay> {
     ),
     const SizedBox(height: 8),
     Text(
-      'Чтобы восстановить ключ шифрования с сервера, введи пароль аккаунта.',
+      missingCopy
+          ? 'На сервере нет зашифрованной копии. Введи пароль аккаунта, чтобы сохранить текущий ключ в защищённом виде.'
+          : 'Чтобы восстановить ключ шифрования с сервера, введи пароль аккаунта.',
       textAlign: TextAlign.center,
       style: TextStyle(color: GE.sub, fontSize: 13, height: 1.4),
     ),
@@ -174,7 +206,7 @@ class _GateOverlayState extends State<_GateOverlay> {
     GlassInput(
       controller: _pwd,
       hint: 'Пароль аккаунта',
-      icon: Icons.lock_outline,
+      icon: CupertinoIcons.lock,
       obscure: true,
       onSubmitted: (_) => _submitPwd(),
     ),
@@ -184,8 +216,10 @@ class _GateOverlayState extends State<_GateOverlay> {
     ],
     const SizedBox(height: 14),
     GlassButton(
-      label: 'Восстановить',
-      icon: Icons.cloud_download_outlined,
+      label: missingCopy ? 'Сохранить копию' : 'Восстановить',
+      icon: missingCopy
+          ? CupertinoIcons.cloud_upload
+          : CupertinoIcons.cloud_download,
       primary: true,
       fullWidth: true,
       loading: _busy,
@@ -206,14 +240,14 @@ class _GateOverlayState extends State<_GateOverlay> {
     ),
     const SizedBox(height: 8),
     Text(
-      'Как хранить ключ шифрования? Облачный бэкап переживает переустановку '
-      '(нужен пароль). Локальный — приватнее, но без восстановления.',
+      'Как хранить ключ шифрования? Серверная копия переживает переустановку '
+      '(нужен пароль). Локальный вариант приватнее, но без восстановления.',
       textAlign: TextAlign.center,
       style: TextStyle(color: GE.sub, fontSize: 13, height: 1.4),
     ),
     const SizedBox(height: 16),
     GlassButton(
-      label: 'Облачный бэкап',
+      label: 'Копия на сервере',
       icon: Icons.cloud_done_outlined,
       primary: true,
       fullWidth: true,
@@ -231,5 +265,66 @@ class _GateOverlayState extends State<_GateOverlay> {
       const SizedBox(height: 8),
       Text(_err!, style: TextStyle(color: GE.red, fontSize: 12)),
     ],
+  ];
+
+  List<Widget> _updateBody() => [
+    Icon(Icons.sync_problem_outlined, color: GE.primary, size: 40),
+    const SizedBox(height: 12),
+    Text(
+      'Ключ обновился',
+      style: TextStyle(
+        color: GE.text,
+        fontSize: 18,
+        fontWeight: FontWeight.w800,
+      ),
+    ),
+    const SizedBox(height: 8),
+    Text(
+      'На сервере обнаружена новая публичная версия ключа. Обновить локальный ключ с серверной копии?',
+      textAlign: TextAlign.center,
+      style: TextStyle(color: GE.sub, fontSize: 13, height: 1.4),
+    ),
+    const SizedBox(height: 16),
+    GlassButton(
+      label: 'Обновить ключ',
+      icon: CupertinoIcons.arrow_2_circlepath,
+      primary: true,
+      fullWidth: true,
+      onTap: _acceptUpdatedKey,
+    ),
+    const SizedBox(height: 10),
+    GlassButton(
+      label: 'Позже',
+      icon: CupertinoIcons.clock,
+      fullWidth: true,
+      onTap: _dismissMismatch,
+    ),
+  ];
+
+  List<Widget> _mismatchBody() => [
+    Icon(CupertinoIcons.exclamationmark_triangle, color: GE.red, size: 40),
+    const SizedBox(height: 12),
+    Text(
+      'Ключи не совпадают',
+      style: TextStyle(
+        color: GE.text,
+        fontSize: 18,
+        fontWeight: FontWeight.w800,
+      ),
+    ),
+    const SizedBox(height: 8),
+    Text(
+      'Публичный ключ аккаунта на сервере изменился, но зашифрованной копии для безопасного восстановления нет. Автоматически принимать такой ключ нельзя.',
+      textAlign: TextAlign.center,
+      style: TextStyle(color: GE.sub, fontSize: 13, height: 1.4),
+    ),
+    const SizedBox(height: 16),
+    GlassButton(
+      label: 'Понятно',
+      icon: CupertinoIcons.checkmark,
+      primary: true,
+      fullWidth: true,
+      onTap: _dismissMismatch,
+    ),
   ];
 }

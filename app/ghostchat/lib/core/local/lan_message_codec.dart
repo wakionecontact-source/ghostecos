@@ -6,8 +6,28 @@
 // срабатывании возникала гонка за один и тот же msg_id в БД.
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show compute;
 import '../../services/crypto_v2.dart';
 import 'local_transport.dart';
+
+// ── base64/JSON файловых вложений в отдельном изоляте ──
+// Файл по LAN/BLE/Wi-Fi-Direct едет как base64 внутри JSON-конверта. Для
+// многомегабайтных файлов base64Encode/Decode + jsonEncode — заметная работа на
+// UI-потоке; гоним её через compute(), чтобы не ронять кадры при отправке/приёме
+// вложения (crypto уже уходит в изолят внутри CryptoV2).
+class _FileEnvelopeArgs {
+  final String fileName;
+  final String fileMime;
+  final Uint8List fileBytes;
+  const _FileEnvelopeArgs(this.fileName, this.fileMime, this.fileBytes);
+}
+
+String _buildFileEnvelope(_FileEnvelopeArgs a) => jsonEncode({
+      't': 'file',
+      'n': a.fileName,
+      'm': a.fileMime,
+      'd': base64Encode(a.fileBytes),
+    });
 
 class DecodedLanMessage {
   final String text;
@@ -27,10 +47,12 @@ Future<DecodedLanMessage?> decodeLanMessage(LocalMessageEvent m) async {
     final t = env['t'] as String?;
     if (t == 'file') {
       final dataB64 = env['d'] as String?;
+      final fileBytes =
+          dataB64 != null ? await compute(base64Decode, dataB64) : null;
       return DecodedLanMessage(
         fileName: env['n'] as String?,
         fileMime: (env['m'] as String?)?.isEmpty == true ? null : env['m'] as String?,
-        fileBytes: dataB64 != null ? base64Decode(dataB64) : null,
+        fileBytes: fileBytes,
       );
     }
     return DecodedLanMessage(text: env['v'] as String? ?? '');
@@ -51,7 +73,10 @@ Future<String> encodeLanEnvelope({
   Uint8List? fileBytes,
 }) async {
   final envelope = fileBytes != null && fileName != null
-      ? jsonEncode({'t': 'file', 'n': fileName, 'm': fileMime ?? '', 'd': base64Encode(fileBytes)})
+      ? await compute(
+          _buildFileEnvelope,
+          _FileEnvelopeArgs(fileName, fileMime ?? '', fileBytes),
+        )
       : jsonEncode({'t': 'txt', 'v': text});
   return CryptoV2.instance.encryptV2(base64Decode(peerPubB64), utf8.encode(envelope));
 }

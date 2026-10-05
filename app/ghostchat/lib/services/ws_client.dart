@@ -68,7 +68,10 @@ class WsClient {
     if (_ch != null) return;
     final token = await AuthService.token();
     if (token == null || token.isEmpty) return;
-    final url = '${GE.wsUrl}?token=${Uri.encodeComponent(token)}';
+    final deviceId = await AuthService.deviceId();
+    final url =
+        '${GE.wsUrl}?token=${Uri.encodeComponent(token)}'
+        '&device_id=${Uri.encodeComponent(deviceId)}';
     try {
       final socket = await WebSocket.connect(url);
       _ch = IOWebSocketChannel(socket);
@@ -86,12 +89,12 @@ class WsClient {
 
   void _startHeartbeat() {
     _pingTimer?.cancel();
-    _pingTimer = Timer.periodic(const Duration(seconds: 25), (_) {
+    _pingTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       try {
         _ch?.sink.add('ping');
         _lastPing = DateTime.now();
         _pongTimeout?.cancel();
-        _pongTimeout = Timer(const Duration(seconds: 10), () {
+        _pongTimeout = Timer(const Duration(seconds: 20), () {
           if (_lastRecv.isBefore(_lastPing)) {
             appLog.warn('ws', 'pong timeout — reconnecting');
             _kill('pong timeout');
@@ -131,7 +134,9 @@ class WsClient {
       final list = _subs[type];
       if (list != null) {
         for (final s in List.of(list)) {
-          try { s.handler(data); } catch (e) {
+          try {
+            s.handler(data);
+          } catch (e) {
             appLog.error('ws', 'handler $type failed: $e');
           }
         }
@@ -144,7 +149,17 @@ class WsClient {
   void _onClose() {
     final code = _ch?.closeCode;
     appLog.info('ws', 'closed code=$code');
-    if (code == 1008 || code == 4401 || code == 4403) {
+    if (code == 4401 || code == 4403) {
+      unawaited(
+        AuthService.invalidateSession(
+          reason: code == 4401 ? 'Недействительный токен' : 'Сессия отклонена',
+        ),
+      );
+      _authFail = true;
+      _connectedCtrl.add(false);
+      return;
+    }
+    if (code == 1008) {
       _authFail = true;
       _connectedCtrl.add(false);
       return;
@@ -167,7 +182,9 @@ class WsClient {
   void _cleanup() {
     _pingTimer?.cancel();
     _pongTimeout?.cancel();
-    try { _ch?.sink.close(wsstatus.normalClosure); } catch (_) {}
+    try {
+      _ch?.sink.close(wsstatus.normalClosure);
+    } catch (_) {}
     _ch = null;
     _connectedCtrl.add(false);
     // Не оставляем RPC висеть до таймаута — соединение уже мертво, дальше
@@ -234,10 +251,13 @@ class WsClient {
     _pendingRpc[rid] = completer;
     send(type, {...data, 'request_id': rid});
     try {
-      return await completer.future.timeout(timeout, onTimeout: () {
-        _pendingRpc.remove(rid);
-        throw WsRpcException('Сервер не ответил вовремя ($type)');
-      });
+      return await completer.future.timeout(
+        timeout,
+        onTimeout: () {
+          _pendingRpc.remove(rid);
+          throw WsRpcException('Сервер не ответил вовремя ($type)');
+        },
+      );
     } finally {
       _pendingRpc.remove(rid);
     }

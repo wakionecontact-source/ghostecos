@@ -11,6 +11,7 @@
 //     токена ещё нет) раз в 2с, пока не придёт phase=approved+token.
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
@@ -124,7 +125,7 @@ class _DeviceApprovalWaitScreenState extends State<DeviceApprovalWaitScreen> {
           style: TextStyle(color: GE.sub, fontSize: 13, height: 1.5),
         ),
         const SizedBox(height: 28),
-        GestureDetector(
+        PressScale(
           onTap: () {
             Clipboard.setData(ClipboardData(text: widget.code));
           },
@@ -169,7 +170,7 @@ class _DeviceApprovalWaitScreenState extends State<DeviceApprovalWaitScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(Icons.error_outline, size: 56, color: GE.red),
+        Icon(CupertinoIcons.exclamationmark_circle, size: 56, color: GE.red),
         const SizedBox(height: 16),
         Text(
           _error ?? 'Ошибка',

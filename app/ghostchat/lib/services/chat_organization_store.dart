@@ -1,0 +1,600 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'app_security_store.dart';
+
+/// Account-local organization for the unified chat list.
+///
+/// A chat can belong to several folders. The system folder `main` is always
+/// available and is the safety net that keeps every chat visible somewhere.
+/// LAN dialogs are persisted by device/account storage just like the rest of
+/// the local list; they are never sent to the server.
+class ChatOrganizationFolder {
+  final String id;
+  final String name;
+  final String? parentId;
+  final String? securityScenarioId;
+  final Set<String> chatIds;
+
+  const ChatOrganizationFolder({
+    required this.id,
+    required this.name,
+    this.parentId,
+    this.securityScenarioId,
+    this.chatIds = const {},
+  });
+
+  bool get isSecure => securityScenarioId != null;
+
+  ChatOrganizationFolder copyWith({
+    String? name,
+    String? parentId,
+    String? securityScenarioId,
+    Set<String>? chatIds,
+  }) => ChatOrganizationFolder(
+    id: id,
+    name: name ?? this.name,
+    parentId: parentId ?? this.parentId,
+    securityScenarioId: securityScenarioId ?? this.securityScenarioId,
+    chatIds: chatIds ?? this.chatIds,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'parent_id': parentId,
+    'security_scenario_id': securityScenarioId,
+    'chat_ids': chatIds.toList(),
+  };
+
+  factory ChatOrganizationFolder.fromJson(Map<String, dynamic> json) =>
+      ChatOrganizationFolder(
+        id: json['id']?.toString() ?? '',
+        name: json['name']?.toString() ?? '',
+        parentId: json['parent_id']?.toString(),
+        securityScenarioId: json['security_scenario_id']?.toString(),
+        chatIds: (json['chat_ids'] as List? ?? const [])
+            .whereType<String>()
+            .toSet(),
+      );
+}
+
+class ChatOrganizationHistoryEntry {
+  final String action;
+  final String chatId;
+  final int at;
+
+  const ChatOrganizationHistoryEntry({
+    required this.action,
+    required this.chatId,
+    required this.at,
+  });
+
+  factory ChatOrganizationHistoryEntry.fromJson(Map<String, dynamic> json) =>
+      ChatOrganizationHistoryEntry(
+        action: json['action']?.toString() ?? 'change',
+        chatId: json['chat_id']?.toString() ?? '',
+        at: json['at'] is num
+            ? (json['at'] as num).toInt()
+            : int.tryParse('${json['at']}') ?? 0,
+      );
+
+  Map<String, dynamic> toJson() => {
+    'action': action,
+    'chat_id': chatId,
+    'at': at,
+  };
+}
+
+class ChatOrganizationTemplate {
+  final String mode;
+  final Set<String> types;
+
+  const ChatOrganizationTemplate({required this.mode, required this.types});
+
+  factory ChatOrganizationTemplate.fromJson(Map<String, dynamic> json) =>
+      ChatOrganizationTemplate(
+        mode: json['mode']?.toString() == 'all_except'
+            ? 'all_except'
+            : 'selected',
+        types: (json['types'] as List? ?? const []).whereType<String>().toSet(),
+      );
+
+  Map<String, dynamic> toJson() => {'mode': mode, 'types': types.toList()};
+}
+
+class ChatOrganizationStore {
+  ChatOrganizationStore._();
+  static final ChatOrganizationStore instance = ChatOrganizationStore._();
+
+  final ValueNotifier<int> revision = ValueNotifier(0);
+  final ValueNotifier<String> activeFolder = ValueNotifier('main');
+  final List<ChatOrganizationFolder> _folders = [];
+  final Set<String> _archived = {};
+  final Set<String> _mainHidden = {};
+  final Map<String, int> _archivedAt = {};
+  final Map<String, int> _activityAt = {};
+  final Map<String, List<ChatOrganizationHistoryEntry>> _history = {};
+  final Map<String, ChatOrganizationTemplate> _templates = {};
+  String _storageKey = 'chat_organization_v2_guest';
+  bool _loaded = false;
+  bool archiveAutoDelete = true;
+  int? archiveRetentionDays = 5;
+  String archiveAnchor = 'archived_at';
+  String archiveDeleteMode = 'local';
+
+  List<ChatOrganizationFolder> get folders => List.unmodifiable(_folders);
+  List<ChatOrganizationFolder> get visibleFolders => _folders
+      .where(
+        (folder) => AppSecurityStore.instance.canSeeSecureFolder(
+          folder.securityScenarioId,
+        ),
+      )
+      .toList(growable: false);
+  Set<String> get archived => Set.unmodifiable(_archived);
+  Set<String> get mainHidden => Set.unmodifiable(_mainHidden);
+  ChatOrganizationTemplate? templateFor(String folderId) =>
+      _templates[folderId];
+
+  Future<void> load({String? account}) async {
+    final normalized = (account ?? 'guest').trim().toLowerCase();
+    final key =
+        'chat_organization_v2_${normalized.isEmpty ? 'guest' : normalized}';
+    if (_loaded && key == _storageKey) return;
+    _storageKey = key;
+    _loaded = true;
+    _folders.clear();
+    _archived.clear();
+    _mainHidden.clear();
+    _archivedAt.clear();
+    _activityAt.clear();
+    _history.clear();
+    _templates.clear();
+    archiveAutoDelete = true;
+    archiveRetentionDays = 5;
+    archiveAnchor = 'archived_at';
+    archiveDeleteMode = 'local';
+    activeFolder.value = 'main';
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_storageKey);
+      if (raw != null && raw.isNotEmpty) {
+        final json = jsonDecode(raw);
+        if (json is Map) {
+          final rawFolders = json['folders'];
+          if (rawFolders is List) {
+            _folders.addAll(
+              rawFolders
+                  .whereType<Map>()
+                  .map(
+                    (item) => ChatOrganizationFolder.fromJson(
+                      Map<String, dynamic>.from(item),
+                    ),
+                  )
+                  .where(
+                    (folder) => folder.id.isNotEmpty && folder.name.isNotEmpty,
+                  ),
+            );
+          }
+          _archived.addAll(
+            (json['archived'] as List? ?? const []).whereType<String>(),
+          );
+          _mainHidden.addAll(
+            (json['main_hidden'] as List? ?? const []).whereType<String>(),
+          );
+          final rawHistory = json['history'];
+          if (rawHistory is Map) {
+            for (final entry in rawHistory.entries) {
+              final rows = entry.value;
+              if (rows is! List) continue;
+              _history[entry.key.toString()] = rows
+                  .whereType<Map>()
+                  .map(
+                    (item) => ChatOrganizationHistoryEntry.fromJson(
+                      Map<String, dynamic>.from(item),
+                    ),
+                  )
+                  .where((item) => item.chatId.isNotEmpty)
+                  .take(100)
+                  .toList();
+            }
+          }
+          final rawArchivedAt = json['archived_at'];
+          if (rawArchivedAt is Map) {
+            for (final entry in rawArchivedAt.entries) {
+              final value = entry.value;
+              final timestamp = value is num
+                  ? value.toInt()
+                  : int.tryParse('$value');
+              if (timestamp != null && timestamp > 0) {
+                _archivedAt[entry.key.toString()] = timestamp;
+              }
+            }
+          }
+          final rawActivityAt = json['activity_at'];
+          if (rawActivityAt is Map) {
+            for (final entry in rawActivityAt.entries) {
+              final value = entry.value;
+              final timestamp = value is num
+                  ? value.toInt()
+                  : int.tryParse('$value');
+              if (timestamp != null && timestamp > 0) {
+                _activityAt[entry.key.toString()] = timestamp;
+              }
+            }
+          }
+          final rawTemplates = json['templates'];
+          if (rawTemplates is Map) {
+            for (final entry in rawTemplates.entries) {
+              if (entry.value is Map) {
+                _templates[entry.key
+                    .toString()] = ChatOrganizationTemplate.fromJson(
+                  Map<String, dynamic>.from(entry.value as Map),
+                );
+              }
+            }
+          }
+          archiveAutoDelete = json['archive_auto_delete'] != false;
+          final rawDays = json['archive_retention_days'];
+          archiveRetentionDays = rawDays == null
+              ? null
+              : (rawDays is num ? rawDays.toInt() : int.tryParse('$rawDays'));
+          archiveAnchor = json['archive_anchor']?.toString() == 'activity'
+              ? 'activity'
+              : 'archived_at';
+          archiveDeleteMode =
+              json['archive_delete_mode']?.toString() == 'contact'
+              ? 'contact'
+              : 'local';
+          final selected = json['active_folder']?.toString();
+          if (selected == 'main' ||
+              selected == 'archive' ||
+              _folders.any((folder) => folder.id == selected)) {
+            activeFolder.value = selected!;
+          }
+        }
+      }
+      revision.value++;
+    } catch (_) {
+      // Optional local organization data must never block the chat list.
+    }
+  }
+
+  bool isArchived(String chatId) => _archived.contains(chatId);
+
+  bool isMainHidden(String chatId) => _mainHidden.contains(chatId);
+
+  bool hasCustomFolder(String chatId) =>
+      _folders.any((folder) => folder.chatIds.contains(chatId));
+
+  List<ChatOrganizationHistoryEntry> historyFor(String folderId) =>
+      List.unmodifiable(_history[folderId] ?? const []);
+
+  bool matchesTemplate(String folderId, String chatId, {bool isBot = false}) {
+    final template = _templates[folderId];
+    if (template == null || template.types.isEmpty) return false;
+    final type = isBot ? 'bot' : _chatType(chatId);
+    final selected = template.types.contains(type);
+    return template.mode == 'all_except' ? !selected : selected;
+  }
+
+  String _chatType(String chatId) {
+    if (chatId.startsWith('room:channel:')) return 'channel';
+    if (chatId.startsWith('room:group:')) return 'group';
+    if (chatId.startsWith('bm:')) return 'bookmark';
+    if (chatId.startsWith('lan:')) return 'lan';
+    return 'dm';
+  }
+
+  bool contains(String folderId, String chatId) => _folders
+      .where((folder) => folder.id == folderId)
+      .any((folder) => folder.chatIds.contains(chatId));
+
+  Future<void> select(String folderId) async {
+    if (folderId != 'main' &&
+        folderId != 'archive' &&
+        !visibleFolders.any((folder) => folder.id == folderId)) {
+      return;
+    }
+    activeFolder.value = folderId;
+    revision.value++;
+    await _save();
+  }
+
+  Future<String?> createFolder(
+    String name, {
+    String? parentId,
+    String? securityScenarioId,
+  }) async {
+    final normalized = name.trim();
+    if (normalized.isEmpty || _folders.length >= 50) return null;
+    if (_depth(parentId) >= 5) return null;
+    if (securityScenarioId != null &&
+        !AppSecurityStore.instance.isInSafeMode &&
+        AppSecurityStore.instance.scenarioById(securityScenarioId) == null) {
+      return null;
+    }
+    final id = 'folder_${DateTime.now().microsecondsSinceEpoch}';
+    _folders.add(
+      ChatOrganizationFolder(
+        id: id,
+        name: normalized,
+        parentId: parentId,
+        securityScenarioId: securityScenarioId,
+      ),
+    );
+    revision.value++;
+    await _save();
+    return id;
+  }
+
+  Future<void> renameFolder(String id, String name) async {
+    final normalized = name.trim();
+    if (normalized.isEmpty) return;
+    final index = _folders.indexWhere((folder) => folder.id == id);
+    if (index < 0) return;
+    _folders[index] = _folders[index].copyWith(name: normalized);
+    revision.value++;
+    await _save();
+  }
+
+  Future<void> deleteFolder(String id) async {
+    final descendants = <String>{id};
+    var changed = true;
+    while (changed) {
+      changed = false;
+      for (final folder in _folders) {
+        if (folder.parentId != null && descendants.contains(folder.parentId)) {
+          changed = descendants.add(folder.id) || changed;
+        }
+      }
+    }
+    _folders.removeWhere((folder) => descendants.contains(folder.id));
+    for (final folderId in descendants) {
+      _history.remove(folderId);
+      _templates.remove(folderId);
+    }
+    if (descendants.contains(activeFolder.value)) activeFolder.value = 'main';
+    revision.value++;
+    await _save();
+  }
+
+  Future<void> setArchived(String chatId, bool value) async {
+    if (value) {
+      _archived.add(chatId);
+      _archivedAt[chatId] = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    } else {
+      _archived.remove(chatId);
+      _archivedAt.remove(chatId);
+    }
+    _recordHistory('archive', chatId, value ? 'archived' : 'restored');
+    revision.value++;
+    await _save();
+  }
+
+  /// Remembers the latest known local/server activity for archive expiry.
+  /// This is deliberately best-effort: it never blocks rendering the list.
+  Future<void> noteActivity(String chatId, int seconds) async {
+    if (seconds <= 0 || _activityAt[chatId] == seconds) return;
+    _activityAt[chatId] = seconds;
+    if (archiveAnchor == 'activity' && _archived.contains(chatId)) {
+      await _save();
+    }
+  }
+
+  Future<void> setArchivePolicy({
+    required bool autoDelete,
+    required int? retentionDays,
+    required String anchor,
+    required String deleteMode,
+  }) async {
+    archiveAutoDelete = autoDelete;
+    archiveRetentionDays = retentionDays;
+    archiveAnchor = anchor == 'activity' ? 'activity' : 'archived_at';
+    archiveDeleteMode = deleteMode == 'contact' ? 'contact' : 'local';
+    revision.value++;
+    await _save();
+  }
+
+  Future<List<String>> expireArchived({int? nowSeconds}) async {
+    if (!archiveAutoDelete || archiveRetentionDays == null) return const [];
+    final now = nowSeconds ?? DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final threshold = now - archiveRetentionDays! * 24 * 60 * 60;
+    final expired = _archived
+        .where((chatId) {
+          final anchor = archiveAnchor == 'activity'
+              ? (_activityAt[chatId] ?? _archivedAt[chatId])
+              : _archivedAt[chatId];
+          return (anchor ?? now) <= threshold;
+        })
+        .toList(growable: false);
+    if (expired.isEmpty) return const [];
+    for (final chatId in expired) {
+      _archived.remove(chatId);
+      _archivedAt.remove(chatId);
+      _activityAt.remove(chatId);
+      _mainHidden.remove(chatId);
+      for (var index = 0; index < _folders.length; index++) {
+        final folder = _folders[index];
+        if (!folder.chatIds.contains(chatId)) continue;
+        _folders[index] = folder.copyWith(
+          chatIds: {...folder.chatIds}..remove(chatId),
+        );
+      }
+      _recordHistory('archive', chatId, 'expired');
+    }
+    revision.value++;
+    await _save();
+    return expired;
+  }
+
+  Future<void> setInFolder(String folderId, String chatId, bool value) async {
+    final index = _folders.indexWhere((folder) => folder.id == folderId);
+    if (index < 0) return;
+    final folder = _folders[index];
+    final ids = {..._folders[index].chatIds};
+    if (value) {
+      ids.add(chatId);
+    } else {
+      ids.remove(chatId);
+      if (ids.isEmpty && isMainHidden(chatId)) return;
+    }
+    _folders[index] = _folders[index].copyWith(chatIds: ids);
+    if (value && folder.isSecure) {
+      _mainHidden.add(chatId);
+    } else if (!value && folder.isSecure) {
+      final remainsSecure = _folders.any(
+        (item) =>
+            item.id != folderId &&
+            item.isSecure &&
+            item.chatIds.contains(chatId),
+      );
+      if (!remainsSecure) _mainHidden.remove(chatId);
+    }
+    _recordHistory(folderId, chatId, value ? 'added' : 'removed');
+    revision.value++;
+    await _save();
+  }
+
+  Future<void> removeFoldersForSecurityScenarios(
+    Set<String> scenarioIds,
+  ) async {
+    if (scenarioIds.isEmpty) return;
+    final removed = _folders
+        .where(
+          (folder) =>
+              folder.securityScenarioId != null &&
+              scenarioIds.contains(folder.securityScenarioId),
+        )
+        .map((folder) => folder.id)
+        .toSet();
+    if (removed.isEmpty) return;
+    final affectedChats = _folders
+        .where((folder) => removed.contains(folder.id))
+        .expand((folder) => folder.chatIds)
+        .toSet();
+    _folders.removeWhere((folder) => removed.contains(folder.id));
+    for (final chatId in affectedChats) {
+      final remainsSecure = _folders.any(
+        (folder) => folder.isSecure && folder.chatIds.contains(chatId),
+      );
+      if (!remainsSecure) _mainHidden.remove(chatId);
+    }
+    for (final folderId in removed) {
+      _history.remove(folderId);
+      _templates.remove(folderId);
+    }
+    if (removed.contains(activeFolder.value)) activeFolder.value = 'main';
+    revision.value++;
+    await _save();
+  }
+
+  Future<bool> setMainHidden(String chatId, bool value) async {
+    if (value && !hasCustomFolder(chatId)) return false;
+    if (value) {
+      _mainHidden.add(chatId);
+    } else {
+      _mainHidden.remove(chatId);
+    }
+    _recordHistory('main', chatId, value ? 'hidden' : 'shown');
+    revision.value++;
+    await _save();
+    return true;
+  }
+
+  Future<void> setTemplate(
+    String folderId, {
+    required String mode,
+    required Set<String> types,
+  }) async {
+    if (!_folders.any((folder) => folder.id == folderId)) return;
+    final normalized = types
+        .where(
+          (type) => {
+            'dm',
+            'group',
+            'channel',
+            'bot',
+            'bookmark',
+            'lan',
+          }.contains(type),
+        )
+        .toSet();
+    if (normalized.isEmpty) {
+      _templates.remove(folderId);
+    } else {
+      _templates[folderId] = ChatOrganizationTemplate(
+        mode: mode == 'all_except' ? 'all_except' : 'selected',
+        types: normalized,
+      );
+    }
+    revision.value++;
+    await _save();
+  }
+
+  void _recordHistory(String folderId, String chatId, String action) {
+    final entries = _history.putIfAbsent(
+      folderId,
+      () => <ChatOrganizationHistoryEntry>[],
+    );
+    entries.insert(
+      0,
+      ChatOrganizationHistoryEntry(
+        action: action,
+        chatId: chatId,
+        at: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      ),
+    );
+    if (entries.length > 100) entries.removeRange(100, entries.length);
+  }
+
+  int _depth(String? parentId) {
+    var depth = 0;
+    var current = parentId;
+    final seen = <String>{};
+    while (current != null && seen.add(current)) {
+      depth++;
+      String? next;
+      for (final folder in _folders) {
+        if (folder.id == current) {
+          next = folder.parentId;
+          break;
+        }
+      }
+      current = next;
+    }
+    return depth;
+  }
+
+  Future<void> _save() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _storageKey,
+        jsonEncode({
+          'folders': _folders.map((folder) => folder.toJson()).toList(),
+          'archived': _archived.toList(),
+          'main_hidden': _mainHidden.toList(),
+          'archived_at': _archivedAt,
+          'activity_at': _activityAt,
+          'history': _history.map(
+            (key, value) =>
+                MapEntry(key, value.map((item) => item.toJson()).toList()),
+          ),
+          'templates': _templates.map(
+            (key, value) => MapEntry(key, value.toJson()),
+          ),
+          'archive_auto_delete': archiveAutoDelete,
+          'archive_retention_days': archiveRetentionDays,
+          'archive_anchor': archiveAnchor,
+          'archive_delete_mode': archiveDeleteMode,
+          'active_folder': activeFolder.value,
+        }),
+      );
+    } catch (_) {
+      // The feature is local-only; a storage hiccup must not break navigation.
+    }
+  }
+}

@@ -45,8 +45,9 @@ class K {
   static const int passwordMax = 150;
 
   // ── Файлы ───────────────────────────────────────────────────────────────────
-  static const int fileMaxBytes = 100 * 1024 * 1024; // сервер: GC_FILE_MAX_MB=100
+  static const int fileMaxBytes =
+      100 * 1024 * 1024; // сервер: GC_FILE_MAX_MB=100
 
   // ── Прочее ───────────────────────────────────────────────────────────────────
-  static const String appVersion = '1.0.0';
+  static const String appVersion = '1.2.2';
 }

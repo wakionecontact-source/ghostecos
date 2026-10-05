@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 
 import '../../core/api/ws_client.dart';
 import '../../core/storage/secure_store.dart';
@@ -19,10 +20,10 @@ class _HomeShellState extends State<HomeShell> {
 
   static const _titles = ['Чаты', 'Контакты', 'Каналы', 'Профиль'];
   static const _icons = [
-    Icons.chat_bubble_outline,
-    Icons.people_outline,
-    Icons.tag,
-    Icons.person_outline,
+    CupertinoIcons.chat_bubble,
+    CupertinoIcons.person_2,
+    CupertinoIcons.tag,
+    CupertinoIcons.person,
   ];
 
   @override
@@ -51,7 +52,7 @@ class _HomeShellState extends State<HomeShell> {
           if (_tab == 3)
             IconButton(
               onPressed: _logout,
-              icon: const Icon(Icons.logout, color: AppColors.sub),
+              icon: const Icon(CupertinoIcons.square_arrow_right, color: AppColors.sub),
             ),
         ],
       ),

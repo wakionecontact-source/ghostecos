@@ -60,7 +60,7 @@ class _ColorPickerPanelState extends State<ColorPickerPanel> {
   Color get _color => _hsv.toColor();
 
   String _colorToHex(Color c) =>
-      '#${c.toARGB32().toRadixString(16).substring(2).toUpperCase()}';
+      '#${c.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
 
   void _setHsv(HSVColor v) {
     setState(() => _hsv = v);
@@ -144,12 +144,18 @@ class _ColorPickerPanelState extends State<ColorPickerPanel> {
                 onSubmitted: (v) {
                   _editingHex = false;
                   final hex = v.replaceAll('#', '');
-                  if (hex.length == 6) {
-                    try {
-                      final c = Color(int.parse('FF$hex', radix: 16));
+                  try {
+                    if (hex.length == 6) {
+                      // Без альфы — сохраняем текущую прозрачность поля
+                      // вместо того, чтобы молча делать его непрозрачным.
+                      final rgb = Color(int.parse('FF$hex', radix: 16));
+                      final c = rgb.withValues(alpha: _hsv.alpha);
                       _setHsv(HSVColor.fromColor(c));
-                    } catch (_) {}
-                  }
+                    } else if (hex.length == 8) {
+                      final c = Color(int.parse(hex, radix: 16));
+                      _setHsv(HSVColor.fromColor(c));
+                    }
+                  } catch (_) {}
                 },
                 onEditingComplete: () => _editingHex = false,
               ),

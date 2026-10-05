@@ -1,0 +1,6 @@
+# Copy to android/key.properties and fill with the existing project release key.
+# Never commit key.properties or the keystore.
+storePassword=REPLACE_WITH_STORE_PASSWORD
+keyPassword=REPLACE_WITH_KEY_PASSWORD
+keyAlias=REPLACE_WITH_KEY_ALIAS
+storeFile=REPLACE_WITH_KEYSTORE_PATH

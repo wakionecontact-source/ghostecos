@@ -29,7 +29,11 @@ class AuthApi {
   }
 
   /// Сохранить сессию после успешного входа/регистрации.
-  Future<void> _persist(String token, String username, {bool premium = false}) async {
+  Future<void> _persist(
+    String token,
+    String username, {
+    bool premium = false,
+  }) async {
     await SecureStore.I.setToken(token);
     await SecureStore.I.setUsername(username);
     await SecureStore.I.setPremium(premium);
@@ -44,15 +48,18 @@ class AuthApi {
     final keys = await KeyManager.I.ensureIdentity();
     final deviceId = await KeyManager.I.ensureDeviceId();
 
-    final r = await _http.postJson('/api/register', body: {
-      'username': username,
-      'password': password,
-      'display_name': displayName,
-      'device_id': deviceId,
-      'device_name': _deviceName(),
-      'x25519_pub': keys.x25519PubB64,
-      'ed25519_pub': keys.ed25519PubB64,
-    });
+    final r = await _http.postJson(
+      '/api/register',
+      body: {
+        'username': username,
+        'password': password,
+        'display_name': displayName,
+        'device_id': deviceId,
+        'device_name': _deviceName(),
+        'x25519_pub': keys.x25519PubB64,
+        'ed25519_pub': keys.ed25519PubB64,
+      },
+    );
 
     final token = r['token'] as String;
     final uname = (r['username'] ?? username) as String;
@@ -70,12 +77,15 @@ class AuthApi {
     await KeyManager.I.ensureIdentity();
     final deviceId = await KeyManager.I.ensureDeviceId();
 
-    final r = await _http.postJson('/api/login', body: {
-      'username': username,
-      'password': password,
-      'device_id': deviceId,
-      'device_name': _deviceName(),
-    });
+    final r = await _http.postJson(
+      '/api/login',
+      body: {
+        'username': username,
+        'password': password,
+        'device_id': deviceId,
+        'device_name': _deviceName(),
+      },
+    );
 
     // Новое устройство — нужен device-trust.
     if (r['pending'] == true) {
@@ -86,7 +96,10 @@ class AuthApi {
     final uname = (r['username'] ?? username) as String;
     final premium = r['is_premium'] == true || r['is_premium'] == 1;
     await _persist(token, uname, premium: premium);
-    return LoginSuccess(token, GcUser(username: uname, displayName: uname, isPremium: premium));
+    return LoginSuccess(
+      token,
+      GcUser(username: uname, displayName: uname, isPremium: premium),
+    );
   }
 
   // ── Device trust: поллинг фазы ───────────────────────────────────────────────

@@ -2,8 +2,9 @@
 // быстрые действия. NFT-витрина в отдельном табе.
 
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter/cupertino.dart';
 import '../theme.dart';
+import '../services/public_page_link.dart';
 import '../services/api_client.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
@@ -104,7 +105,7 @@ class _WalletScreenState extends State<WalletScreen> {
             GlassCard(
               child: Column(
                 children: [
-                  Icon(Icons.error_outline, color: GE.red),
+                  Icon(CupertinoIcons.exclamationmark_circle, color: GE.red),
                   const SizedBox(height: 8),
                   Text('Не загрузилось: $_error', style: TextStyle(color: GE.sub)),
                 ],
@@ -114,10 +115,10 @@ class _WalletScreenState extends State<WalletScreen> {
             _balanceRow('Gost', '$_gost', 'G', Icons.toll, GE.blue,
                 'Базовая валюта — за активность'),
             const SizedBox(height: 8),
-            _balanceRow('Soul', _fmt(_soul), 'S', Icons.auto_awesome, GE.primary,
+            _balanceRow('Soul', _fmt(_soul), 'S', CupertinoIcons.sparkles, GE.primary,
                 'Премиум — за реальные деньги или эмиссию'),
             const SizedBox(height: 8),
-            _balanceRow('Prem', _fmt(_prem), 'P', Icons.workspace_premium, GE.yellow,
+            _balanceRow('Prem', _fmt(_prem), 'P', CupertinoIcons.rosette, GE.yellow,
                 'Подписка — даёт привилегии'),
             const SizedBox(height: 16),
             _actionsBar(),
@@ -128,7 +129,7 @@ class _WalletScreenState extends State<WalletScreen> {
                 padding: const EdgeInsets.all(20),
                 child: Column(
                   children: [
-                    Icon(Icons.history, color: GE.sub),
+                    Icon(CupertinoIcons.clock, color: GE.sub),
                     const SizedBox(height: 6),
                     Text('Пока нет операций', style: TextStyle(color: GE.sub)),
                   ],
@@ -210,7 +211,7 @@ class _WalletScreenState extends State<WalletScreen> {
         Expanded(
           child: GlassButton(
             label: 'Перевод',
-            icon: Icons.send,
+            icon: CupertinoIcons.paperplane_fill,
             onTap: _todoTransfer,
           ),
         ),
@@ -235,8 +236,7 @@ class _WalletScreenState extends State<WalletScreen> {
 
   void _todoTransfer() {
     // Open web /bank/ для перевода — там полный поток.
-    launchUrl(Uri.parse('${GE.baseUrl}/bank/'),
-        mode: LaunchMode.externalApplication);
+    PublicPageLink.open('${GE.baseUrl}/bank/');
   }
 
   static const _sourceLabel = {
@@ -287,7 +287,7 @@ class _WalletScreenState extends State<WalletScreen> {
                 color: (positive ? GE.green : GE.red).withValues(alpha: 0.15),
                 shape: BoxShape.circle,
               ),
-              child: Icon(positive ? Icons.arrow_downward : Icons.arrow_upward,
+              child: Icon(positive ? CupertinoIcons.arrow_down : CupertinoIcons.arrow_up,
                   color: positive ? GE.green : GE.red, size: 16),
             ),
             const SizedBox(width: 10),

@@ -13,14 +13,24 @@ class FoundUser {
   final String username;
   final String displayName;
   final bool isGuest;
-  FoundUser({required this.username, required this.displayName, this.isGuest = false});
+  final bool isBot;
+  final String? avatarUrl;
+  FoundUser({
+    required this.username,
+    required this.displayName,
+    this.isGuest = false,
+    this.isBot = false,
+    this.avatarUrl,
+  });
 }
 
 class SearchHit {
   /// Диалог (вверху списка результатов)
   final StoredDialog? dialog;
+
   /// Найденное сообщение (для тапа → открыть чат + scroll к sid)
   final StoredMessage? message;
+
   /// Юзер с сервера (тот с кем ещё нет переписки)
   final FoundUser? user;
   SearchHit.dialog(this.dialog) : message = null, user = null;
@@ -106,12 +116,34 @@ class SearchService {
     final list = (r is Map ? (r['results'] as List?) : null) ?? const [];
     return list
         .whereType<Map>()
-        .map((m) => FoundUser(
-              username: (m['username'] as String?) ?? '',
-              displayName: (m['display_name'] as String?) ?? (m['username'] as String? ?? ''),
-              isGuest: (m['is_guest'] as bool?) ?? false,
-            ))
+        .map(
+          (m) => FoundUser(
+            username: (m['username'] as String?) ?? '',
+            displayName:
+                (m['display_name'] as String?) ??
+                (m['username'] as String? ?? ''),
+            isGuest: (m['is_guest'] as bool?) ?? false,
+            isBot: m['is_bot'] == true || m['is_bot'] == 1,
+            avatarUrl: m['avatar_url'] as String?,
+          ),
+        )
         .where((u) => u.username.isNotEmpty)
         .toList();
+  }
+
+  Future<List<FoundUser>> searchUsers(String query) =>
+      _searchUsersRemote(query.trim().replaceFirst('@', ''));
+
+  Future<List<String>> searchTags(String query) async {
+    final q = query.trim().replaceFirst('#', '');
+    if (q.isEmpty) return const [];
+    final raw = await _api.socGet('/tags/search', {'q': q});
+    final values = raw is Map ? raw['tags'] : null;
+    if (values is! List) return const [];
+    return values
+        .whereType<Map>()
+        .map((item) => item['tag']?.toString().trim().toLowerCase() ?? '')
+        .where((tag) => tag.isNotEmpty)
+        .toList(growable: false);
   }
 }

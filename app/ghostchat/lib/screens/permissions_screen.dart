@@ -4,12 +4,14 @@
 // дальше без запроса; нужные разрешения попросятся лениво при действии
 // (см. ensurePermission в services/permissions_service.dart).
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../widgets/glass.dart';
 import '../services/permissions_service.dart';
+import '../services/theme_service.dart';
 
 class PermissionsScreen extends StatefulWidget {
   final VoidCallback onDone;
@@ -26,7 +28,12 @@ class _PermissionsScreenState extends State<PermissionsScreen>
   bool _acknowledged = false;
   Map<Permission, PermissionStatus> _statuses = {};
   final Map<Permission, bool> _selected = {
-    for (final p in appPermissions) p: true,
+    // Обход Doze нужен только тем, кто осознанно включает постоянную
+    // фоновую локальную связь. По умолчанию не выдаём это тяжёлое
+    // исключение: серверные уведомления работают через foreground-сервис,
+    // а локальные BLE/LAN-транспорты в фоне теперь всё равно остановлены.
+    for (final p in appPermissions)
+      p: p != Permission.ignoreBatteryOptimizations,
   };
 
   @override
@@ -92,9 +99,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
   // Учитываем только те разрешения, которые юзер оставил отмеченными —
   // снятая галочка = осознанный отказ, не считаем это "недостающим".
   bool get _allGranted =>
-      _statuses.entries
-          .where((e) => _wanted.contains(e.key))
-          .isNotEmpty &&
+      _statuses.entries.where((e) => _wanted.contains(e.key)).isNotEmpty &&
       _statuses.entries
           .where((e) => _wanted.contains(e.key))
           .every((e) => e.value.isGranted || e.value.isLimited);
@@ -122,14 +127,12 @@ class _PermissionsScreenState extends State<PermissionsScreen>
             children: [
               _requesting
                   ? _loadingView()
-                  : (_requested && !_allGranted
-                      ? _resultView()
-                      : _introView()),
+                  : (_requested && !_allGranted ? _resultView() : _introView()),
               Positioned(
                 top: 4,
                 right: 4,
                 child: IconButton(
-                  icon: Icon(Icons.settings_outlined, color: GE.sub),
+                  icon: Icon(CupertinoIcons.settings, color: GE.sub),
                   tooltip: 'Настройки приложения',
                   onPressed: openAppSettings,
                 ),
@@ -147,7 +150,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
       child: Column(
         children: [
           const SizedBox(height: 24),
-          Icon(Icons.verified_user_outlined, size: 56, color: GE.primary),
+          Icon(CupertinoIcons.checkmark_shield, size: 56, color: GE.primary),
           const SizedBox(height: 16),
           Text(
             'Разрешения',
@@ -166,6 +169,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
           ),
           const SizedBox(height: 20),
           GlassCard(
+            isListSection: true,
             padding: const EdgeInsets.symmetric(vertical: 6),
             child: ListView.separated(
               shrinkWrap: true,
@@ -200,22 +204,23 @@ class _PermissionsScreenState extends State<PermissionsScreen>
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  subtitle: Text(
-                    permDesc(p),
-                    style: TextStyle(
-                      color: GE.sub,
-                      fontSize: 11.5,
-                      height: 1.3,
-                    ),
-                  ),
+                  subtitle: ThemeService.instance.showDetailedDescriptions
+                      ? Text(
+                          permDesc(p),
+                          style: TextStyle(
+                            color: GE.sub,
+                            fontSize: 11.5,
+                            height: 1.3,
+                          ),
+                        )
+                      : null,
                 );
               },
             ),
           ),
           const SizedBox(height: 12),
-          InkWell(
+          PressScale(
             onTap: () => setState(() => _acknowledged = !_acknowledged),
-            borderRadius: BorderRadius.circular(10),
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 6),
               child: Row(
@@ -242,7 +247,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
               ignoring: !_acknowledged,
               child: GlassButton(
                 label: 'Запросить разрешения',
-                icon: Icons.check_circle_outline,
+                icon: CupertinoIcons.checkmark_circle,
                 primary: true,
                 fullWidth: true,
                 onTap: _doRequest,
@@ -268,7 +273,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.verified_user_outlined, size: 56, color: GE.primary),
+          Icon(CupertinoIcons.checkmark_shield, size: 56, color: GE.primary),
           const SizedBox(height: 20),
           Text(
             'Запрашиваю разрешения…',
@@ -296,7 +301,11 @@ class _PermissionsScreenState extends State<PermissionsScreen>
       child: Column(
         children: [
           const SizedBox(height: 28),
-          Icon(Icons.warning_amber_rounded, size: 56, color: GE.yellow),
+          Icon(
+            CupertinoIcons.exclamationmark_triangle,
+            size: 56,
+            color: GE.yellow,
+          ),
           const SizedBox(height: 16),
           Text(
             'Выданы не все',
@@ -315,6 +324,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
           ),
           const SizedBox(height: 18),
           GlassCard(
+            isListSection: true,
             padding: const EdgeInsets.symmetric(vertical: 6),
             child: ListView.separated(
               shrinkWrap: true,
@@ -343,17 +353,13 @@ class _PermissionsScreenState extends State<PermissionsScreen>
           const SizedBox(height: 16),
           GlassButton(
             label: 'Дать разрешения',
-            icon: Icons.check_circle_outline,
+            icon: CupertinoIcons.checkmark_circle,
             primary: true,
             fullWidth: true,
             onTap: _retryDenied,
           ),
           const SizedBox(height: 10),
-          GlassButton(
-            label: 'Продолжить',
-            fullWidth: true,
-            onTap: _proceed,
-          ),
+          GlassButton(label: 'Продолжить', fullWidth: true, onTap: _proceed),
           const SizedBox(height: 16),
         ],
       ),

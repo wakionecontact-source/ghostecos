@@ -1,30 +1,53 @@
 // Дизайн-система Ghost: «жидкое стекло» (glassmorphism) поверх Mesh-фона.
 //
-// Все карточки/кнопки/поля используют BackdropFilter с blur, полупрозрачную
-// заливку и тонкий бордер — даёт ощущение прозрачного стекла поверх mesh.
+// Карточки используют нативную рефракцию по краям поверх mesh; кнопки и поля
+// сохраняют свои компактные стеклянные поверхности.
 //
 // Использование:
 //   GlassCard(child: Text('...'))
 //   GlassButton(label: 'Войти', onTap: () {...}, primary: true)
-//   GlassInput(controller: ctrl, hint: 'Юзернейм', icon: Icons.person_outline)
+//   GlassInput(controller: ctrl, hint: 'Юзернейм', icon: CupertinoIcons.person)
 //   GlassAppBar(title: 'Чаты', leading: BackButton())
 //   showGlassSheet(context, child: ...)
 
+import 'dart:async';
 import 'dart:math' as math;
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
-import 'package:flutter/services.dart' show HapticFeedback;
+import 'package:flutter/services.dart' show HapticFeedback, TextInputFormatter;
+import '../services/performance_service.dart';
+import '../services/ghost_sound_effects.dart';
 import '../services/theme_service.dart';
 import '../theme.dart';
+import 'liquid_glass.dart';
 
-/// true в ThemeStyle.minimal — карточки/кнопки/поля ниже рисуются плоско
-/// (без BackdropFilter, без градиентов и glow), см. project memory
-/// «минималистичный режим». Все виджеты этого файла читают этот флаг
-/// напрямую при каждом build(), рёбилд обеспечивает вызывающий экран,
-/// который уже слушает ThemeService.instance.notifier (стиль меняет
-/// палитру-«близнеца», см. ThemeService.setStyle).
-bool get _flat => ThemeService.instance.styleNotifier.value == ThemeStyle.minimal;
+/// true в плоских стилях или в низком качестве GUI профиля энергосбережения.
+/// В обоих случаях карточки/кнопки/поля рисуются без BackdropFilter,
+/// градиентов и glow. Все виджеты этого файла читают флаг при каждом build().
+bool get _flat =>
+    ThemeService.instance.styleNotifier.value != ThemeStyle.vivid ||
+    PerformanceService.instance.reducedEffects;
+
+/// true только в ThemeStyle.traditional — тоже плоский (без blur), как
+/// minimal/mono, но карточки/кнопки получают мягкую нейтральную тень вместо
+/// цветного glow (см. _softShadow ниже) — "айфоновский" вид вместо голого
+/// плоского. minimal/mono намеренно остаются совсем без тени.
+bool get _traditional =>
+    ThemeService.instance.styleNotifier.value == ThemeStyle.traditional &&
+    !PerformanceService.instance.reducedEffects;
+
+/// Мягкая нейтральная тень для traditional — на основе GE.bg (не акцента:
+/// в iOS тень нейтральная, не подсвечивается цветом кнопки/карточки).
+List<BoxShadow> _softShadow({double blur = 16, double dy = 4}) => [
+  BoxShadow(
+    color: (GE.currentBrightness == Brightness.dark ? Colors.black : GE.muted)
+        .withValues(
+          alpha: GE.currentBrightness == Brightness.dark ? 0.45 : 0.14,
+        ),
+    blurRadius: blur,
+    offset: Offset(0, dy),
+  ),
+];
 
 /// Общая "живая" пружинная физика для тапов/тумблеров/появления элементов —
 /// один набор параметров (перенесён из утверждённого HTML-прототипа), чтобы
@@ -85,14 +108,11 @@ class PressScale extends StatefulWidget {
   State<PressScale> createState() => _PressScaleState();
 }
 
-class _PressScaleState extends State<PressScale>
-    with TickerProviderStateMixin {
+class _PressScaleState extends State<PressScale> with TickerProviderStateMixin {
   // Целевая деформация во "взведённом" состоянии (палец держит) — та же
   // формула, что squash/stretch в основной пружине, на пике STRONG-сжатия.
-  static final double _squeezeX =
-      1 + 0.05 * GhostSpring.squashStrong * 0.33;
-  static final double _squeezeY =
-      1 - 0.08 * GhostSpring.squashStrong * 0.33;
+  static final double _squeezeX = 1 + 0.05 * GhostSpring.squashStrong * 0.33;
+  static final double _squeezeY = 1 - 0.08 * GhostSpring.squashStrong * 0.33;
 
   late final AnimationController _pressCtrl; // 0..1, взвод при удержании
   late final AnimationController _springCtrl; // unbounded, отпускание пружиной
@@ -103,7 +123,9 @@ class _PressScaleState extends State<PressScale>
     super.initState();
     _pressCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 110),
+      duration: PerformanceService.instance.animationControllerDuration(
+        const Duration(milliseconds: 110),
+      ),
     );
     _springCtrl = AnimationController.unbounded(vsync: this);
   }
@@ -116,11 +138,20 @@ class _PressScaleState extends State<PressScale>
   }
 
   void _down() {
+    if (PerformanceService.instance.animationQuality != AnimationQuality.best) {
+      return;
+    }
     _springCtrl.stop();
     _pressCtrl.forward(from: _pressCtrl.value);
   }
 
   void _release() {
+    if (PerformanceService.instance.animationQuality != AnimationQuality.best) {
+      _pressCtrl.stop();
+      _springCtrl.stop();
+      _pressCtrl.value = 0;
+      return;
+    }
     // Стартуем пружину РОВНО с текущей деформации, даже если взвод не успел
     // доиграть до конца — иначе будет прыжок (тот самый баг, что чинили у
     // тумблера).
@@ -143,6 +174,7 @@ class _PressScaleState extends State<PressScale>
       onTapCancel: tappable ? _release : null,
       onTap: tappable
           ? () {
+              unawaited(GhostSoundEffects.instance.playTap());
               if (widget.haptic) HapticFeedback.lightImpact();
               widget.onTap!();
             }
@@ -186,7 +218,7 @@ class _PressScaleState extends State<PressScale>
 /// Material Switch (тот же набор параметров: value/onChanged/activeColor).
 class GhostSwitch extends StatefulWidget {
   final bool value;
-  final ValueChanged<bool> onChanged;
+  final ValueChanged<bool>? onChanged;
   final Color? activeColor;
 
   const GhostSwitch({
@@ -216,7 +248,9 @@ class _GhostSwitchState extends State<GhostSwitch>
     _from = _to = widget.value ? _travel : 0;
     _anticipCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 90),
+      duration: PerformanceService.instance.animationControllerDuration(
+        const Duration(milliseconds: 90),
+      ),
     );
     _springCtrl = AnimationController.unbounded(vsync: this);
   }
@@ -235,6 +269,12 @@ class _GhostSwitchState extends State<GhostSwitch>
   }
 
   Future<void> _run(bool wasOn, bool nowOn) async {
+    if (PerformanceService.instance.animationQuality != AnimationQuality.best) {
+      _anticipCtrl.stop();
+      _springCtrl.stop();
+      _from = _to = nowOn ? _travel : 0;
+      return;
+    }
     _from = wasOn ? _travel : 0;
     _to = nowOn ? _travel : 0;
     final dir = (_to - _from) == 0 ? 1.0 : (_to - _from).sign;
@@ -252,13 +292,16 @@ class _GhostSwitchState extends State<GhostSwitch>
     final active = widget.activeColor ?? GE.primary;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () {
-        HapticFeedback.lightImpact();
-        widget.onChanged(!widget.value);
-      },
+      onTap: widget.onChanged == null
+          ? null
+          : () {
+              unawaited(GhostSoundEffects.instance.playTap());
+              HapticFeedback.lightImpact();
+              widget.onChanged?.call(!widget.value);
+            },
       child: AnimatedBuilder(
         animation: Listenable.merge([_anticipCtrl, _springCtrl]),
-        builder: (_, __) {
+        builder: (_, _) {
           double knobX;
           double scaleX = 1, scaleY = 1;
           if (_springCtrl.isAnimating) {
@@ -333,13 +376,17 @@ class GlassDots extends StatefulWidget {
   State<GlassDots> createState() => _GlassDotsState();
 }
 
-class _GlassDotsState extends State<GlassDots> with SingleTickerProviderStateMixin {
+class _GlassDotsState extends State<GlassDots>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
 
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))..repeat();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    )..repeat();
   }
 
   @override
@@ -357,7 +404,8 @@ class _GlassDotsState extends State<GlassDots> with SingleTickerProviderStateMix
           mainAxisSize: MainAxisSize.min,
           children: List.generate(3, (i) {
             final phase = (_ctrl.value + i * 0.25) % 1.0;
-            final opacity = 0.25 + 0.75 * (0.5 + 0.5 * math.sin(phase * 2 * math.pi));
+            final opacity =
+                0.25 + 0.75 * (0.5 + 0.5 * math.sin(phase * 2 * math.pi));
             return Padding(
               padding: EdgeInsets.symmetric(horizontal: widget.size * 0.35),
               child: Opacity(
@@ -365,7 +413,10 @@ class _GlassDotsState extends State<GlassDots> with SingleTickerProviderStateMix
                 child: Container(
                   width: widget.size,
                   height: widget.size,
-                  decoration: BoxDecoration(shape: BoxShape.circle, color: widget.color),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: widget.color,
+                  ),
                 ),
               ),
             );
@@ -385,29 +436,29 @@ class _GlassTokens {
   // Приглушено (было 0.12/0.075 у первого стопа) — на полной яркости блик
   // читался как типовой "AI-сгенерированный" глянец; сдержаннее = дороже.
   static LinearGradient sheen({bool strong = false}) => LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: strong
-            ? [
-                Colors.white.withValues(alpha: 0.07),
-                Colors.white.withValues(alpha: 0.02),
-                Colors.white.withValues(alpha: 0.01),
-              ]
-            : [
-                Colors.white.withValues(alpha: 0.045),
-                Colors.white.withValues(alpha: 0.014),
-                Colors.white.withValues(alpha: 0.008),
-              ],
-        stops: const [0.0, 0.55, 1.0],
-      );
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: strong
+        ? [
+            Colors.white.withValues(alpha: 0.07),
+            Colors.white.withValues(alpha: 0.02),
+            Colors.white.withValues(alpha: 0.01),
+          ]
+        : [
+            Colors.white.withValues(alpha: 0.045),
+            Colors.white.withValues(alpha: 0.014),
+            Colors.white.withValues(alpha: 0.008),
+          ],
+    stops: const [0.0, 0.55, 1.0],
+  );
 
   static List<BoxShadow> shadow({bool strong = false}) => [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: strong ? 0.45 : 0.30),
-          blurRadius: strong ? 32 : 18,
-          offset: Offset(0, strong ? 10 : 6),
-        ),
-      ];
+    BoxShadow(
+      color: Colors.black.withValues(alpha: strong ? 0.45 : 0.30),
+      blurRadius: strong ? 32 : 18,
+      offset: Offset(0, strong ? 10 : 6),
+    ),
+  ];
 }
 
 /// Полупрозрачная карточка-стекло. По умолчанию закруглена 16px.
@@ -424,10 +475,21 @@ class GlassCard extends StatelessWidget {
   final Color? fillOverride;
   final double? blurOverride;
 
-  /// lite=true — без BackdropFilter (без blur). На списочных tile это
-  /// единственный способ сохранить 60fps на мобиле — blur на каждом item
-  /// убивает GPU. Визуально почти не отличить, потому что mesh-фон видно.
+  /// lite=true — не добавляет отдельный матовый blur. При включённой
+  /// рефракции жидкого стекла карта lensMap всё равно применяется, иначе на
+  /// списочных карточках оставался бы только нарисованный контур без эффекта.
   final bool lite;
+
+  /// true — эта карточка оборачивает СПИСОК строк (Настройки, Разрешения и
+  /// т.п.), а не одиночный виджет/кнопку/превью. Все поверхности подчиняются
+  /// настройке "Фон карточки" (ThemeService.listPlatesNotifier): когда она
+  /// выключена, заливка/блюр/тень самой карточки убираются одинаково для
+  /// обычных чатов, LAN, закладок, профиля и настроек.
+  final bool isListSection;
+
+  /// Служебные поверхности (например, сама строка переключателя) остаются
+  /// видимыми, даже когда пользователь отключил фон карточек.
+  final bool ignoreSurfaceToggle;
 
   const GlassCard({
     super.key,
@@ -440,12 +502,65 @@ class GlassCard extends StatelessWidget {
     this.fillOverride,
     this.blurOverride,
     this.lite = false,
+    this.isListSection = false,
+    this.ignoreSurfaceToggle = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    // Оба переключателя применяются сразу ко всем уже открытым карточкам:
+    // «Фон списков» управляет только GlassCard(isListSection: true), а
+    // «Жидкое стекло карточек» включает/выключает нативную рефракцию.
+    // Не оборачиваем поверхность в AnimatedSwitcher: каждый элемент списка
+    // получает собственный transition/saveLayer, из-за чего BackdropFilter мог
+    // кратко исчезать при первом касании или во время прокрутки. Настройки
+    // всё равно обновляются реактивно, а сама геометрия поверхности должна
+    // оставаться постоянной.
+    return AnimatedBuilder(
+      animation: Listenable.merge([
+        ThemeService.instance.listPlatesNotifier,
+        ThemeService.instance.liquidGlassNotifier,
+        ThemeService.instance.glassTintNotifier,
+        ThemeService.instance.matteGlassNotifier,
+        LiquidGlassEngine.shaderReadyNotifier,
+        PerformanceService.instance.reducedEffectsNotifier,
+      ]),
+      builder: (context, _) {
+        final showListPlates = ThemeService.instance.listPlatesNotifier.value;
+        final reducedEffects = PerformanceService.instance.reducedEffects;
+        final liquidGlassEnabled =
+            ThemeService.instance.liquidGlassNotifier.value && !reducedEffects;
+        final glassTintEnabled = ThemeService.instance.glassTintNotifier.value;
+        final matteGlassEnabled =
+            ThemeService.instance.matteGlassNotifier.value && !reducedEffects;
+        return _buildCard(
+          context,
+          showListPlates,
+          liquidGlassEnabled,
+          glassTintEnabled,
+          matteGlassEnabled,
+        );
+      },
+    );
+  }
+
+  Widget _buildCard(
+    BuildContext context,
+    bool showListPlates,
+    bool liquidGlassEnabled,
+    bool glassTintEnabled,
+    bool matteGlassEnabled,
+  ) {
     final radiusObj = BorderRadius.circular(radius ?? GE.radiusMd);
-    if (_flat) {
+    if (!showListPlates && !ignoreSurfaceToggle) {
+      // Фон выключен — без заливки/рамки/тени вообще, только сам контент.
+      // Это намеренно действует на все поверхности: LAN, закладки, профиль
+      // и отдельные карточки не должны отличаться от обычных диалогов.
+      Widget bare = Padding(padding: padding, child: child);
+      if (onTap != null) bare = PressScale(onTap: onTap, child: bare);
+      return bare;
+    }
+    if (_flat && !liquidGlassEnabled && !matteGlassEnabled) {
       // Минимализм: сплошная заливка + тонкая рамка, без blur/градиента/тени.
       Widget flatCard = DecoratedBox(
         decoration: BoxDecoration(
@@ -458,13 +573,111 @@ class GlassCard extends StatelessWidget {
       if (onTap != null) {
         flatCard = PressScale(onTap: onTap, child: flatCard);
       }
-      return ClipRRect(borderRadius: radiusObj, child: flatCard);
+      final clipped = ClipRRect(borderRadius: radiusObj, child: flatCard);
+      if (!_traditional) return clipped;
+      // Традиционный — та же плоская заливка, что и в минимализме, плюс
+      // мягкая нейтральная тень СНАРУЖИ клипа (иначе обрежется по границе
+      // карточки) вместо цветного glow/blur — "айфоновский" объём.
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: radiusObj,
+          boxShadow: _softShadow(),
+        ),
+        child: clipped,
+      );
     }
     final base =
         fillOverride ??
         (strong
             ? Color.alphaBlend(GE.bgDeep.withValues(alpha: 0.85), GE.glassFill)
             : (lite ? GE.glassFill.withValues(alpha: 0.55) : GE.glassFill));
+    if (liquidGlassEnabled || matteGlassEnabled) {
+      // Реальное стекло всегда имеет нейтральную полупрозрачную поверхность.
+      // Если оставить её прозрачной при выключенном «цветном фоне», как было
+      // раньше, рефракция на тёмном mesh почти не видна и карточка выглядит
+      // как одна рамка. Переключатель tint теперь отвечает только за более
+      // насыщенную тематическую заливку.
+      final surfaceColor = glassTintEnabled
+          ? (fillOverride ?? base)
+          : (fillOverride ?? base).withValues(alpha: lite ? 0.36 : 0.45);
+      Widget fill = DecoratedBox(
+        decoration: BoxDecoration(
+          color: surfaceColor,
+          borderRadius: radiusObj,
+          border: Border.all(
+            color: Color(
+              LiquidGlassEngine.borderColorValue(GE.borderStrong.toARGB32()),
+            ),
+            width: 1,
+          ),
+        ),
+        child: Padding(padding: padding, child: child),
+      );
+      if (!lite || liquidGlassEnabled) {
+        // Один bounded-клип остаётся СНАРУЖИ фильтра и совпадает с реальными
+        // границами карточки. Важно не вкладывать второй backdrop-фильтр:
+        // несколько saveLayer на scrolling backdrop и давали мигание.
+        final refraction = liquidGlassEnabled
+            ? LiquidGlassEngine.refractionFilter(
+                radius: radiusObj.topLeft.x,
+                devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+              )
+            : null;
+        // Один BackdropFilter на поверхность надёжнее двух вложенных слоёв:
+        // matte остаётся читаемым fallback, а shader не конкурирует с blur за
+        // один и тот же scrolling backdrop.
+        final filter =
+            refraction ??
+            (matteGlassEnabled || liquidGlassEnabled
+                ? LiquidGlassEngine.blurFilter(blurOverride ?? GE.glassBlur)
+                : null);
+        if (filter != null) {
+          fill = ClipRRect(
+            borderRadius: radiusObj,
+            clipBehavior: Clip.antiAlias,
+            child: BackdropFilter(
+              filter: filter,
+              // Page transitions and some gesture animations use a saveLayer;
+              // src avoids the filtered backdrop being multiplied away there.
+              blendMode: BlendMode.src,
+              child: fill,
+            ),
+          );
+        } else {
+          fill = ClipRRect(
+            borderRadius: radiusObj,
+            clipBehavior: Clip.antiAlias,
+            child: fill,
+          );
+        }
+      } else {
+        // Lite surfaces without liquid glass still get an exact rounded clip.
+        fill = ClipRRect(
+          borderRadius: radiusObj,
+          clipBehavior: Clip.antiAlias,
+          child: fill,
+        );
+      }
+      if (onTap != null) {
+        fill = PressScale(onTap: onTap, child: fill);
+      }
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: radiusObj,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(
+                alpha: LiquidGlassEngine.cardShadowOpacity,
+              ),
+              blurRadius: LiquidGlassEngine.cardShadowBlur,
+              offset: const Offset(0, LiquidGlassEngine.cardShadowDy),
+            ),
+            if (glow) BoxShadow(color: GE.glowFill, blurRadius: 20),
+          ],
+        ),
+        child: fill,
+      );
+    }
     // Базовая заливка (тонкий вертикальный градиент глубины) + диагональный
     // блик (сверху-слева) поверх — двухслойная имитация жидкого стекла с сайта.
     final fillDeco = BoxDecoration(
@@ -500,15 +713,17 @@ class GlassCard extends StatelessWidget {
       ),
     );
     if (!lite) {
+      final baseFill = fill;
       fill = ClipRRect(
         borderRadius: radiusObj,
-        child: BackdropFilter(
-          filter: ImageFilter.blur(
-            sigmaX: blurOverride ?? GE.glassBlur,
-            sigmaY: blurOverride ?? GE.glassBlur,
-          ),
-          child: fill,
-        ),
+        child: liquidGlassEnabled
+            ? BackdropFilter(
+                filter: LiquidGlassEngine.blurFilter(
+                  blurOverride ?? GE.glassBlur,
+                ),
+                child: baseFill,
+              )
+            : baseFill,
       );
     }
     if (onTap != null) {
@@ -539,6 +754,7 @@ class GlassButton extends StatelessWidget {
   final bool danger;
   final bool loading;
   final bool fullWidth;
+  final bool ignoreSurfaceToggle;
 
   /// Continuous-corner ("squircle", как у иконок/кнопок iOS) вместо обычного
   /// circular radius — opt-in для сравнения дизайнов, не меняет остальные
@@ -554,16 +770,45 @@ class GlassButton extends StatelessWidget {
     this.danger = false,
     this.loading = false,
     this.fullWidth = false,
+    this.ignoreSurfaceToggle = false,
     this.squircle = false,
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: Listenable.merge([
+      ThemeService.instance.liquidGlassNotifier,
+      ThemeService.instance.glassTintNotifier,
+      ThemeService.instance.matteGlassNotifier,
+      ThemeService.instance.listPlatesNotifier,
+      LiquidGlassEngine.shaderReadyNotifier,
+      PerformanceService.instance.reducedEffectsNotifier,
+    ]),
+    builder: (context, _) => _buildButton(context),
+  );
+
+  Widget _buildButton(BuildContext context) {
     final radius = BorderRadius.circular(GE.radiusSm);
-    final clipper = squircle ? ContinuousRectangleBorder(borderRadius: radius) : null;
+    final clipper = squircle
+        ? ContinuousRectangleBorder(borderRadius: radius)
+        : null;
     final isCta = primary || danger;
-    final flat = _flat;
-    final gradient = (flat || !primary)
+    final reducedEffects = PerformanceService.instance.reducedEffects;
+    final liquid =
+        ThemeService.instance.liquidGlassNotifier.value && !reducedEffects;
+    final matte =
+        ThemeService.instance.matteGlassNotifier.value && !reducedEffects;
+    final tint = ThemeService.instance.glassTintNotifier.value;
+    final showSurface =
+        ignoreSurfaceToggle || ThemeService.instance.listPlatesNotifier.value;
+    final flat = _flat && !liquid && !matte;
+    final hiddenSurface = !showSurface && !isCta;
+    final surfaceFill = !showSurface
+        ? Colors.transparent
+        : (tint || liquid
+              ? GE.glassFill.withValues(alpha: tint ? 0.45 : 0.32)
+              : GE.surface.withValues(alpha: _traditional ? 0.92 : 0.58));
+    final gradient = (flat || !primary || hiddenSurface)
         ? null
         : LinearGradient(
             colors: [GE.primary2, GE.primary],
@@ -572,7 +817,7 @@ class GlassButton extends StatelessWidget {
           );
     // GE.red (не хардкод-розовый) — иначе кнопка "Выйти"/удалить не меняла
     // тон на других 11 темах.
-    final gradient2 = (flat || !danger)
+    final gradient2 = (flat || !danger || hiddenSurface)
         ? null
         : LinearGradient(
             colors: [
@@ -585,14 +830,24 @@ class GlassButton extends StatelessWidget {
     // Минимализм: сплошной цвет вместо градиента, без blur/glow-тени.
     final flatColor = !flat
         ? null
-        : (primary ? GE.primary : (danger ? GE.red : GE.glassFill));
+        : (primary ? GE.primary : (danger ? GE.red : surfaceFill));
+    // GE.text вслепую годился, пока CTA-заливка (primary/red) была
+    // насыщенным акцентом на тёмном/светлом фоне — так совпадало почти
+    // всегда. В монотоне primary/red/text — один и тот же "чернильный"
+    // цвет: подпись сливалась бы с собственной заливкой кнопки (см. onColor
+    // в theme.dart — единственный реальный предохранитель).
+    final labelBg =
+        flatColor ?? (isCta ? (primary ? GE.primary : GE.red) : surfaceFill);
+    final labelColor = onColor(labelBg);
     Widget content = AnimatedContainer(
-      duration: const Duration(milliseconds: 140),
+      duration: PerformanceService.instance.animationDuration(
+        const Duration(milliseconds: 140),
+      ),
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
       decoration: BoxDecoration(
         color: flatColor,
         // Не-CTA получает sheen-градиент стекла вместо плоской заливки.
-        gradient: flat
+        gradient: flat || hiddenSurface
             ? null
             : (gradient ??
                   gradient2 ??
@@ -602,16 +857,18 @@ class GlassButton extends StatelessWidget {
                     colors: [
                       Color.alphaBlend(
                         Colors.white.withValues(alpha: 0.10),
-                        GE.glassFill,
+                        surfaceFill,
                       ),
-                      GE.glassFill,
+                      surfaceFill,
                     ],
                   )),
         borderRadius: radius,
         // CTA — uniform specular-кромка на цветном градиенте. Не-CTA — без
         // border (см. GlassCard.fillDeco про несовместимость borderRadius
         // с не-uniform-цветным Border — та же ловушка была и тут).
-        border: flat
+        border: hiddenSurface
+            ? null
+            : flat
             ? (isCta ? null : Border.all(color: GE.border, width: 1))
             : (isCta
                   ? Border.all(
@@ -624,11 +881,15 @@ class GlassButton extends StatelessWidget {
         boxShadow: (!flat && isCta)
             ? [
                 BoxShadow(
-                  color: (primary ? GE.primary : GE.red).withValues(alpha: 0.22),
+                  color: (primary ? GE.primary : GE.red).withValues(
+                    alpha: 0.22,
+                  ),
                   blurRadius: 14,
                   offset: const Offset(0, 5),
                 ),
               ]
+            : (_traditional && isCta)
+            ? _softShadow(blur: 10, dy: 3)
             : null,
       ),
       child: Row(
@@ -636,16 +897,16 @@ class GlassButton extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           if (loading)
-            const GlassDots(color: Colors.white, size: 5)
+            GlassDots(color: labelColor, size: 5)
           else if (icon != null) ...[
-            Icon(icon, size: 16, color: GE.text),
+            Icon(icon, size: 16, color: labelColor),
             const SizedBox(width: 8),
           ],
           if (!loading)
             Text(
               label,
               style: TextStyle(
-                color: GE.text,
+                color: labelColor,
                 fontSize: 14,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.2,
@@ -654,32 +915,97 @@ class GlassButton extends StatelessWidget {
         ],
       ),
     );
-    if (!isCta && !flat) {
-      // Для non-CTA добавляем backdrop blur — реальное «стекло» (пропускаем
-      // в минимализме — там и так сплошная заливка, blur не нужен).
+    if (!isCta && !flat && !hiddenSurface) {
+      // Для non-CTA используем один bounded-фильтр: нативная линза или
+      // blur-fallback без Impeller. Вложенные BackdropFilter здесь дают
+      // лишний saveLayer и нестабильное поведение на анимациях.
+      final refraction = liquid
+          ? LiquidGlassEngine.refractionFilter(
+              radius: radius.topLeft.x,
+              devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+            )
+          : null;
+      final filter =
+          refraction ??
+          (matte ? LiquidGlassEngine.blurFilter(GE.glassBlur) : null);
+      if (filter != null) {
+        content = BackdropFilter(
+          filter: filter,
+          blendMode: BlendMode.src,
+          child: content,
+        );
+      }
       content = clipper != null
           ? ClipPath(
               clipper: ShapeBorderClipper(shape: clipper),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: GE.glassBlur, sigmaY: GE.glassBlur),
-                child: content,
-              ),
+              child: content,
             )
-          : ClipRRect(
-              borderRadius: radius,
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: GE.glassBlur, sigmaY: GE.glassBlur),
-                child: content,
-              ),
-            );
+          : ClipRRect(borderRadius: radius, child: content);
     } else if (clipper != null) {
-      content = ClipPath(clipper: ShapeBorderClipper(shape: clipper), child: content);
+      content = ClipPath(
+        clipper: ShapeBorderClipper(shape: clipper),
+        child: content,
+      );
     }
     final tappable = PressScale(onTap: loading ? null : onTap, child: content);
     return fullWidth
         ? SizedBox(width: double.infinity, child: tappable)
         : tappable;
   }
+}
+
+/// Компактная иконка действия с управляемой подложкой карточки.
+/// В традиционном стиле фон нейтральный и без цветного glow; при отключении
+/// фона карточек исчезает только подложка, зона нажатия сохраняется.
+class GhostIconButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final String? tooltip;
+  final Color? color;
+
+  const GhostIconButton({
+    super.key,
+    required this.icon,
+    this.onPressed,
+    this.tooltip,
+    this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder<bool>(
+    valueListenable: ThemeService.instance.listPlatesNotifier,
+    builder: (context, showSurface, _) {
+      final traditional =
+          ThemeService.instance.styleNotifier.value == ThemeStyle.traditional;
+      final radius = BorderRadius.circular(GE.radiusSm);
+      final content = Container(
+        width: 40,
+        height: 40,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: showSurface
+              ? GE.surface.withValues(alpha: traditional ? 0.92 : 0.58)
+              : Colors.transparent,
+          borderRadius: radius,
+          border: showSurface ? Border.all(color: GE.border, width: 0.7) : null,
+          boxShadow: showSurface && traditional
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.22),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ]
+              : null,
+        ),
+        child: Icon(icon, color: color ?? GE.sub, size: 20),
+      );
+      final button = PressScale(onTap: onPressed, child: content);
+      return tooltip == null
+          ? button
+          : Tooltip(message: tooltip!, child: button);
+    },
+  );
 }
 
 /// Поле ввода-стекло. С иконкой слева и опциональным suffix.
@@ -695,7 +1021,23 @@ class GlassInput extends StatelessWidget {
   final ValueChanged<String>? onSubmitted;
   final VoidCallback? onTap;
   final bool autofocus;
+  final bool enabled;
+  final int? minLines;
   final int? maxLines;
+  final List<TextInputFormatter>? inputFormatters;
+  final TextCapitalization textCapitalization;
+  final bool autocorrect;
+  final int? maxLength;
+  final bool hideCounter;
+  final TextAlign textAlign;
+  final TextStyle? textStyle;
+  final TextStyle? hintStyle;
+  final EdgeInsetsGeometry? contentPadding;
+
+  /// lite=true — без BackdropFilter (без blur). Для полей внутри уже размытого
+  /// glass-шита: второй blur поверх размывал бы собственную заливку шита
+  /// (двойной blur — дорого и почти без визуальной разницы), см. GlassCard.lite.
+  final bool lite;
 
   const GlassInput({
     super.key,
@@ -710,16 +1052,47 @@ class GlassInput extends StatelessWidget {
     this.onSubmitted,
     this.onTap,
     this.autofocus = false,
+    this.enabled = true,
+    this.minLines,
     this.maxLines = 1,
+    this.inputFormatters,
+    this.textCapitalization = TextCapitalization.none,
+    this.autocorrect = true,
+    this.maxLength,
+    this.hideCounter = false,
+    this.textAlign = TextAlign.start,
+    this.textStyle,
+    this.hintStyle,
+    this.contentPadding,
+    this.lite = false,
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: Listenable.merge([
+      ThemeService.instance.liquidGlassNotifier,
+      ThemeService.instance.glassTintNotifier,
+      ThemeService.instance.matteGlassNotifier,
+      LiquidGlassEngine.shaderReadyNotifier,
+      PerformanceService.instance.reducedEffectsNotifier,
+    ]),
+    builder: (context, _) => _buildField(context),
+  );
+
+  Widget _buildField(BuildContext context) {
     final radius = BorderRadius.circular(GE.radiusSm);
-    final flat = _flat;
+    final reducedEffects = PerformanceService.instance.reducedEffects;
+    final liquid =
+        ThemeService.instance.liquidGlassNotifier.value && !reducedEffects;
+    final matte =
+        ThemeService.instance.matteGlassNotifier.value && !reducedEffects;
+    final tint = ThemeService.instance.glassTintNotifier.value;
+    final flat = _flat && !liquid && !matte;
     Widget field = Container(
       decoration: BoxDecoration(
-        color: GE.glassFill,
+        color: tint || liquid
+            ? GE.glassFill.withValues(alpha: tint ? 0.45 : 0.32)
+            : Colors.transparent,
         border: Border.all(
           color: flat ? GE.border : GE.glassBorder,
           width: GE.glassStroke,
@@ -735,24 +1108,61 @@ class GlassInput extends StatelessWidget {
         onFieldSubmitted: onSubmitted,
         onTap: onTap,
         autofocus: autofocus,
+        enabled: enabled,
+        inputFormatters: inputFormatters,
+        buildCounter: hideCounter
+            ? (
+                _, {
+                required int currentLength,
+                required int? maxLength,
+                required bool isFocused,
+              }) => null
+            : null,
+        textCapitalization: textCapitalization,
+        autocorrect: autocorrect,
+        maxLength: maxLength,
+        textAlign: textAlign,
+        minLines: obscure ? null : minLines,
         maxLines: obscure ? 1 : maxLines,
-        style: TextStyle(color: GE.text, fontSize: 14),
+        style: TextStyle(
+          color: GE.text,
+          fontSize: 14,
+          fontWeight: FontWeight.w400,
+        ).merge(textStyle),
         cursorColor: GE.primary,
         decoration: InputDecoration(
           hintText: hint,
-          hintStyle: TextStyle(color: GE.sub, fontSize: 14),
+          hintStyle: TextStyle(
+            color: GE.sub,
+            fontSize: 14,
+            fontWeight: FontWeight.w400,
+          ).merge(hintStyle),
           prefixIcon: icon != null ? Icon(icon, size: 18, color: GE.sub) : null,
           suffixIcon: suffix,
           border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+          contentPadding:
+              contentPadding ??
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
         ),
       ),
     );
-    if (!flat) {
-      field = BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: GE.glassBlur, sigmaY: GE.glassBlur),
-        child: field,
-      );
+    if (!flat && !lite) {
+      final refraction = liquid
+          ? LiquidGlassEngine.refractionFilter(
+              radius: radius.topLeft.x,
+              devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+            )
+          : null;
+      final filter =
+          refraction ??
+          (matte ? LiquidGlassEngine.blurFilter(GE.glassBlur) : null);
+      if (filter != null) {
+        field = BackdropFilter(
+          filter: filter,
+          blendMode: BlendMode.src,
+          child: field,
+        );
+      }
     }
     return ClipRRect(borderRadius: radius, child: field);
   }
@@ -779,27 +1189,84 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
   Size get preferredSize => const Size.fromHeight(56);
 
   @override
-  Widget build(BuildContext context) {
-    final bar = AppBar(
-      backgroundColor: GE.glassFill,
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: Listenable.merge([
+      ThemeService.instance.liquidGlassNotifier,
+      ThemeService.instance.glassTintNotifier,
+      ThemeService.instance.matteGlassNotifier,
+      LiquidGlassEngine.shaderReadyNotifier,
+      PerformanceService.instance.reducedEffectsNotifier,
+    ]),
+    builder: (context, _) => _buildBar(context),
+  );
+
+  Widget _buildBar(BuildContext context) {
+    final reducedEffects = PerformanceService.instance.reducedEffects;
+    final liquid =
+        ThemeService.instance.liquidGlassNotifier.value && !reducedEffects;
+    final matte =
+        ThemeService.instance.matteGlassNotifier.value && !reducedEffects;
+    final tint = ThemeService.instance.glassTintNotifier.value;
+    Widget bar = AppBar(
+      backgroundColor: tint || liquid
+          ? GE.glassFill.withValues(alpha: tint ? 0.45 : 0.32)
+          : Colors.transparent,
       surfaceTintColor: Colors.transparent,
       shape: Border(
-        bottom: BorderSide(color: _flat ? GE.border : GE.glassBorder, width: 0.5),
+        bottom: BorderSide(
+          color: _flat ? GE.border : GE.glassBorder,
+          width: 0.5,
+        ),
       ),
       title: title ?? (titleText != null ? Text(titleText!) : null),
       leading: leading ?? (showBack ? BackButton(color: GE.text) : null),
       actions: actions,
     );
-    if (_flat) return bar;
-    // Тот же рецепт стекла, что и у GlassCard (blur+fill), чтобы шапка не
-    // выглядела отдельным слоем — только edge-to-edge вместо скруглений.
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: GE.glassBlur, sigmaY: GE.glassBlur),
+    if (_flat && !liquid && !matte) return bar;
+    // Тот же рецепт стекла, что и у GlassCard: сначала нативная рефракция,
+    // затем опциональная матовость. На backend без shader-фильтров остаётся
+    // blur-fallback, чтобы шапка не исчезала.
+    final refraction = liquid
+        ? LiquidGlassEngine.refractionFilter(
+            devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+          )
+        : null;
+    final filter =
+        refraction ??
+        (matte ? LiquidGlassEngine.blurFilter(GE.glassBlur) : null);
+    if (filter != null) {
+      bar = BackdropFilter(
+        filter: filter,
+        blendMode: BlendMode.src,
         child: bar,
-      ),
+      );
+    }
+    return ClipRect(child: bar);
+  }
+}
+
+Widget _filteredSheet(
+  Widget child, {
+  required bool liquid,
+  required bool matte,
+  required double devicePixelRatio,
+}) {
+  final refraction = liquid
+      ? LiquidGlassEngine.refractionFilter(
+          radius: 24,
+          devicePixelRatio: devicePixelRatio,
+        )
+      : null;
+  final filter =
+      refraction ?? (matte ? LiquidGlassEngine.blurFilter(22) : null);
+  if (filter != null) {
+    child = BackdropFilter(
+      filter: filter,
+      blendMode: BlendMode.src,
+      child: child,
     );
   }
+  return child;
 }
 
 /// Показывает bottom-sheet в glass-стиле.
@@ -815,7 +1282,13 @@ Future<T?> showGlassSheet<T>(
     backgroundColor: Colors.transparent,
     barrierColor: const Color(0xCC020617),
     builder: (ctx) {
-      final flat = _flat;
+      final reducedEffects = PerformanceService.instance.reducedEffects;
+      final liquid =
+          ThemeService.instance.liquidGlassNotifier.value && !reducedEffects;
+      final matte =
+          ThemeService.instance.matteGlassNotifier.value && !reducedEffects;
+      final tint = ThemeService.instance.glassTintNotifier.value;
+      final flat = _flat && !liquid && !matte;
       Widget sheetBody = DecoratedBox(
         // Шит поднят над контентом — "strong"-глубина, как модалки на сайте
         // (--gl-bg-deep + border-strong + shadow-deep). В минимализме —
@@ -823,21 +1296,25 @@ Future<T?> showGlassSheet<T>(
         decoration: BoxDecoration(
           color: flat
               ? GE.surface
-              : Color.alphaBlend(
-                  GE.bgDeep.withValues(alpha: 0.85),
-                  GE.glassFill,
-                ),
+              : (tint || liquid
+                    ? Color.alphaBlend(
+                        GE.bgDeep.withValues(alpha: 0.85),
+                        GE.glassFill.withValues(alpha: tint ? 0.45 : 0.32),
+                      )
+                    : Colors.transparent),
           border: Border(
             top: BorderSide(
               color: flat ? GE.border : Colors.white.withValues(alpha: 0.22),
               width: 1,
             ),
           ),
-          boxShadow: flat ? null : _GlassTokens.shadow(strong: true),
+          boxShadow: flat
+              ? (_traditional ? _softShadow(blur: 20, dy: -2) : null)
+              : _GlassTokens.shadow(strong: true),
         ),
         child: DecoratedBox(
           decoration: BoxDecoration(
-            gradient: flat ? null : _GlassTokens.sheen(strong: true),
+            gradient: flat || !tint ? null : _GlassTokens.sheen(strong: true),
           ),
           child: Padding(
             padding: EdgeInsets.only(
@@ -870,9 +1347,11 @@ Future<T?> showGlassSheet<T>(
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         child: flat
             ? sheetBody
-            : BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-                child: sheetBody,
+            : _filteredSheet(
+                sheetBody,
+                liquid: liquid,
+                matte: matte,
+                devicePixelRatio: MediaQuery.devicePixelRatioOf(ctx),
               ),
       );
     },

@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 import '../theme.dart';
 import 'emoji_text.dart';
 
+const quickReactionEmoji = '❤';
+
 class ReactionsBar extends StatelessWidget {
   final void Function(String emoji) onPick;
   const ReactionsBar({super.key, required this.onPick});
 
-  static const _picks = <String>['❤', '👍', '😂', '😮', '😢', '🔥'];
+  static const _picks = <String>[quickReactionEmoji, '👍', '😂', '😢', '🔥'];
 
   @override
   Widget build(BuildContext context) {

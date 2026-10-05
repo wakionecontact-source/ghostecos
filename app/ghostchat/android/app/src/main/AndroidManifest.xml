@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Сеть — обязательно для release-сборки (в debug Flutter добавляет сам) -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
@@ -18,16 +19,22 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE"/>
     <!-- Уведомления (Android 13+ требует runtime permission) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Разрешает открыть системный установщик APK, скачанного из приложения. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <!-- Микрофон для записи голосовых (запросится только когда юзер нажмёт) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.CAMERA"/>
     <!-- Галерея (грид в меню скрепки, photo_manager). Android 13+ — гранулярные. -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"/>
+    <!-- Android 11+: special access for the user's explicit "Все файлы" mode. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <!-- Foreground-сервис: держит процесс живым в фоне → уведомления приходят. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
@@ -40,8 +47,9 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:taskAffinity=""
+            android:screenOrientation="portrait"
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
@@ -55,10 +63,286 @@
               android:resource="@style/NormalTheme"
               />
             <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="ghostchat" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="ghostecos.duckdns.org"
+                    android:pathPrefix="/c/" />
+                <data
+                    android:scheme="https"
+                    android:host="ghostecos.duckdns.org"
+                    android:pathPrefix="/g/" />
+                <data
+                    android:scheme="https"
+                    android:host="ghostecos.duckdns.org"
+                    android:pathPrefix="/invite/" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="ghostchats.duckdns.org"
+                    android:pathPrefix="/c/" />
+                <data
+                    android:scheme="https"
+                    android:host="ghostchats.duckdns.org"
+                    android:pathPrefix="/g/" />
+                <data
+                    android:scheme="https"
+                    android:host="ghostchats.duckdns.org"
+                    android:pathPrefix="/invite/" />
+            </intent-filter>
+        </activity>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias01"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_01"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-        </activity>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias02"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_02"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias03"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_03"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias04"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_04"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias05"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_05"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias06"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_06"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias07"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_07"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias08"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_08"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias09"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_09"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias10"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_10"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias11"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_11"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias12"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_12"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias13"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_13"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias14"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_14"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias15"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_15"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias16"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_16"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias17"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_17"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias18"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_18"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias19"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_19"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="online.ghost_chat.ghost.AppAvatarAlias20"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/app_avatar_20"
+            android:label="GhostChat"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
@@ -68,10 +352,15 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"
             android:resource="@drawable/ic_notification" />
-        <!-- FCM: пуши без своего channel_id кладём в наш 'messages'. -->
+        <!-- FCM fallback channel uses the custom GhostChat notification tone. -->
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
-            android:value="messages" />
+            android:value="messages_ghost_v2" />
+        <!-- Generic FCM-пуш отключён: оставляем одно уведомление от
+             NotificationService, учитывающее настройки пользователя. -->
+        <meta-data
+            android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
         <!-- Иконка для persistent-уведомления foreground-сервиса. -->
         <meta-data
             android:name="online.ghost_chat.fg_notification_icon"
@@ -81,6 +370,22 @@
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="dataSync"
             android:exported="false" />
+        <!-- BootReceiver used to start the plugin before Flutter/auth was
+             ready. Session startup owns the service now; keep boot inert even
+             when an older installed version persisted autoRunOnBoot=true. -->
+        <receiver
+            android:name="com.pravera.flutter_foreground_task.service.RebootReceiver"
+            android:enabled="false"
+            tools:node="replace" />
+        <service
+            android:name="com.ryanheise.audioservice.AudioService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="true"
+            tools:ignore="ExportedService" />
+        <receiver
+            android:name="com.ryanheise.audioservice.MediaButtonReceiver"
+            android:exported="true"
+            tools:ignore="ExportedReceiver" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

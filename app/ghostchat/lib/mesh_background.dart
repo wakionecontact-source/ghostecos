@@ -9,13 +9,30 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'services/theme_service.dart';
+import 'services/performance_service.dart';
 import 'theme.dart';
+
+/// Наблюдатель маршрутов для mesh-фона: когда поверх экрана открывается другой
+/// экран/диалог/боттом-шит, лежащий ниже MeshBackground перестаёт тикать
+/// (см. RouteAware ниже) — иначе он жёг бы кадры под непрозрачным верхним
+/// маршрутом. Регистрируется в MaterialApp.navigatorObservers (см. main.dart).
+final RouteObserver<ModalRoute<dynamic>> meshRouteObserver =
+    RouteObserver<ModalRoute<dynamic>>();
 
 class MeshBackground extends StatefulWidget {
   /// Дочерний виджет поверх фона (необязателен).
   final Widget? child;
   final int? particleCount;
-  const MeshBackground({super.key, this.child, this.particleCount});
+
+  /// Если false, mesh продолжает тикать под лёгкими overlay-маршрутами
+  /// (например, контекстным меню сообщения), где фон всё ещё виден.
+  final bool pauseWhenCovered;
+  const MeshBackground({
+    super.key,
+    this.child,
+    this.particleCount,
+    this.pauseWhenCovered = true,
+  });
   @override
   State<MeshBackground> createState() => _MeshBackgroundState();
 }
@@ -26,48 +43,163 @@ class _Particle {
 }
 
 class _MeshBackgroundState extends State<MeshBackground>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, RouteAware, WidgetsBindingObserver {
   late final AnimationController _ctrl;
   final _rand = Random();
   List<_Particle> _particles = [];
   Size? _lastSize;
   Offset? _touch; // позиция пальца/курсора (mouse в mesh.js)
+  DateTime? _lastFrameAt;
+  int _frameId = 0;
+  // true, когда поверх этого экрана открыт другой маршрут (экран/шит/диалог) —
+  // тикер частиц ставится на паузу, чтобы не жечь кадры под перекрытием.
+  bool _covered = false;
+  bool _backgrounded = false;
 
   static const double _touchDist = 150;
   static const double _maxSpeed = 1.6;
 
-  bool get _showParticles => ThemeService.instance.meshNotifier.value;
+  bool get _showParticles {
+    final performance = PerformanceService.instance;
+    final energyProfile = performance.energySavingActive;
+    final enabledInEnergyProfile =
+        !energyProfile || performance.energyMeshEnabled;
+    // The dedicated energy-profile switch owns mesh visibility. A low GUI
+    // quality profile must not silently hide it when that switch is enabled.
+    return ThemeService.instance.meshNotifier.value &&
+        enabledInEnergyProfile &&
+        (!performance.reducedEffects ||
+            (energyProfile && performance.energyMeshEnabled));
+  }
+
   // Градиенты — только в «Классическом» стиле. Минимализм никогда не
   // показывает свечение/градиенты, даже если анимированный фон включён —
   // тогда видны только частицы поверх плоской заливки GE.bg.
-  bool get _showGradients =>
-      ThemeService.instance.styleNotifier.value == ThemeStyle.vivid;
+  bool get _showGradients {
+    final performance = PerformanceService.instance;
+    final energyProfile = performance.energySavingActive;
+    final enabledInEnergyProfile =
+        !energyProfile || performance.energyMeshEnabled;
+    return ThemeService.instance.styleNotifier.value == ThemeStyle.vivid &&
+        enabledInEnergyProfile &&
+        (!performance.reducedEffects ||
+            (energyProfile && performance.energyMeshEnabled));
+  }
+
+  bool get _touchReactionEnabled =>
+      ThemeService.instance.meshTouchReactionNotifier.value;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _backgrounded =
+        WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed;
     // Тикер: repeat() гонит rebuild каждый кадр (длительность роли не играет).
     _ctrl = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 1),
     );
-    if (_showParticles) _ctrl.repeat();
+    _syncTicker();
     ThemeService.instance.meshNotifier.addListener(_onMeshToggle);
     ThemeService.instance.styleNotifier.addListener(_onStyleChange);
+    ThemeService.instance.meshSpeedNotifier.addListener(_onMeshSpeedChange);
+    ThemeService.instance.meshTouchReactionNotifier.addListener(
+      _onMeshTouchReactionChange,
+    );
+    PerformanceService.instance.reducedEffectsNotifier.addListener(
+      _onPerformanceModeChange,
+    );
+    PerformanceService.instance.backgroundFpsNotifier.addListener(
+      _onPerformanceModeChange,
+    );
+    PerformanceService.instance.appearanceBackgroundFpsNotifier.addListener(
+      _onPerformanceModeChange,
+    );
+    PerformanceService.instance.energySavingActiveNotifier.addListener(
+      _onPerformanceModeChange,
+    );
+    PerformanceService.instance.energyMeshEnabledNotifier.addListener(
+      _onPerformanceModeChange,
+    );
+    PerformanceService.instance.energyMeshSpeedNotifier.addListener(
+      _onPerformanceModeChange,
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Подписываемся на маршрут, в котором живём, чтобы узнавать о перекрытии
+    // сверху (didPushNext) и возврате (didPopNext). unsubscribe перед повторной
+    // подпиской — на случай, если маршрут-предок сменился.
+    meshRouteObserver.unsubscribe(this);
+    final route = ModalRoute.of(context);
+    if (route != null) meshRouteObserver.subscribe(this, route);
+  }
+
+  /// Гоняем тикер когда частицы включены; для обычных экранов паузим его
+  /// при перекрытии, а для лёгких overlay (например, меню чата) продолжаем.
+  void _syncTicker() {
+    if (!_backgrounded &&
+        _showParticles &&
+        (!widget.pauseWhenCovered || !_covered)) {
+      if (!_ctrl.isAnimating) _ctrl.repeat();
+    } else {
+      if (_ctrl.isAnimating) _ctrl.stop();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _backgrounded = false;
+      _syncTicker();
+    } else if (state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _backgrounded = true;
+      _syncTicker();
+    }
+  }
+
+  // Поверх нас открыли другой маршрут — частицы не видны, тикать незачем.
+  @override
+  void didPushNext() {
+    _covered = true;
+    _syncTicker();
+  }
+
+  // Вернулись на этот экран — возобновляем (если частицы включены).
+  @override
+  void didPopNext() {
+    _covered = false;
+    _syncTicker();
   }
 
   void _onMeshToggle() {
     if (!mounted) return;
-    if (_showParticles) {
-      _ctrl.repeat();
-    } else {
-      _ctrl.stop();
-    }
+    _syncTicker();
     setState(() {});
   }
 
   void _onStyleChange() {
     if (mounted) setState(() {});
+  }
+
+  void _onMeshSpeedChange() {
+    if (mounted) setState(() {});
+  }
+
+  void _onMeshTouchReactionChange() {
+    if (!_touchReactionEnabled) _touch = null;
+    if (mounted) setState(() {});
+  }
+
+  void _onPerformanceModeChange() {
+    if (!mounted) return;
+    _syncTicker();
+    setState(() {});
   }
 
   // mesh.js: ~1 точка на 9000 px², на мобиле скромнее по верхней границе (батарея).
@@ -105,6 +237,10 @@ class _MeshBackgroundState extends State<MeshBackground>
 
   void _tick(Size size) {
     final t = _touch;
+    final performance = PerformanceService.instance;
+    final speed = performance.energySavingActive
+        ? performance.energyMeshSpeed
+        : ThemeService.instance.meshSpeedNotifier.value;
     for (final p in _particles) {
       // Отталкивание от касания/курсора.
       if (t != null) {
@@ -133,8 +269,8 @@ class _MeshBackgroundState extends State<MeshBackground>
         p.vx *= k;
         p.vy *= k;
       }
-      p.x += p.vx;
-      p.y += p.vy;
+      p.x += p.vx * speed;
+      p.y += p.vy * speed;
       // Мягкие стены — wrap (как mesh.js), не отскок.
       if (p.x < -20) {
         p.x = size.width + 20;
@@ -151,8 +287,32 @@ class _MeshBackgroundState extends State<MeshBackground>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    meshRouteObserver.unsubscribe(this);
     ThemeService.instance.meshNotifier.removeListener(_onMeshToggle);
     ThemeService.instance.styleNotifier.removeListener(_onStyleChange);
+    ThemeService.instance.meshSpeedNotifier.removeListener(_onMeshSpeedChange);
+    ThemeService.instance.meshTouchReactionNotifier.removeListener(
+      _onMeshTouchReactionChange,
+    );
+    PerformanceService.instance.reducedEffectsNotifier.removeListener(
+      _onPerformanceModeChange,
+    );
+    PerformanceService.instance.backgroundFpsNotifier.removeListener(
+      _onPerformanceModeChange,
+    );
+    PerformanceService.instance.appearanceBackgroundFpsNotifier.removeListener(
+      _onPerformanceModeChange,
+    );
+    PerformanceService.instance.energySavingActiveNotifier.removeListener(
+      _onPerformanceModeChange,
+    );
+    PerformanceService.instance.energyMeshEnabledNotifier.removeListener(
+      _onPerformanceModeChange,
+    );
+    PerformanceService.instance.energyMeshSpeedNotifier.removeListener(
+      _onPerformanceModeChange,
+    );
     _ctrl.dispose();
     super.dispose();
   }
@@ -161,6 +321,7 @@ class _MeshBackgroundState extends State<MeshBackground>
   Widget build(BuildContext context) {
     final showParticles = _showParticles;
     final showGradients = _showGradients;
+    final reactToTouch = showParticles && _touchReactionEnabled;
     // Внимание: Listener → Material → Stack должны существовать ВСЕГДА, вне
     // зависимости от флагов ниже, одним и тем же поддеревом виджетов — иначе
     // при переключении тумблера/стиля Flutter видит смену типа поддерева в
@@ -168,11 +329,11 @@ class _MeshBackgroundState extends State<MeshBackground>
     // вложенных экранов). Меняется только состав children внутри Stack, а
     // child держится под стабильным Key на одной и той же позиции.
     return Listener(
-      onPointerHover: showParticles ? (e) => _touch = e.localPosition : null,
-      onPointerDown: showParticles ? (e) => _touch = e.localPosition : null,
-      onPointerMove: showParticles ? (e) => _touch = e.localPosition : null,
-      onPointerUp: showParticles ? (e) => _touch = null : null,
-      onPointerCancel: showParticles ? (e) => _touch = null : null,
+      onPointerHover: reactToTouch ? (e) => _touch = e.localPosition : null,
+      onPointerDown: reactToTouch ? (e) => _touch = e.localPosition : null,
+      onPointerMove: reactToTouch ? (e) => _touch = e.localPosition : null,
+      onPointerUp: reactToTouch ? (e) => _touch = null : null,
+      onPointerCancel: reactToTouch ? (e) => _touch = null : null,
       child: Material(
         color: GE.bg,
         child: Stack(
@@ -243,11 +404,25 @@ class _MeshBackgroundState extends State<MeshBackground>
                     _initParticles(size);
                     return AnimatedBuilder(
                       animation: _ctrl,
-                      builder: (_, __) {
-                        _tick(size);
+                      builder: (_, _) {
+                        final now = DateTime.now();
+                        final fps = PerformanceService.instance.backgroundFps;
+                        final frameInterval = Duration(
+                          microseconds: (1000000 / fps).round(),
+                        );
+                        if (_lastFrameAt == null ||
+                            now.difference(_lastFrameAt!) >= frameInterval) {
+                          _lastFrameAt = now;
+                          _tick(size);
+                          _frameId++;
+                        }
                         return CustomPaint(
                           size: size,
-                          painter: _MeshPainter(_particles, _touch),
+                          painter: _MeshPainter(
+                            _particles,
+                            _touchReactionEnabled ? _touch : null,
+                            _frameId,
+                          ),
                         );
                       },
                     );
@@ -269,17 +444,24 @@ class _MeshBackgroundState extends State<MeshBackground>
 class _MeshPainter extends CustomPainter {
   final List<_Particle> particles;
   final Offset? touch;
+  final int frameId;
   static const double _linkDistSq = 140 * 140;
   static const double _touchDistSq = 150 * 150;
-  _MeshPainter(this.particles, this.touch);
+  _MeshPainter(this.particles, this.touch, this.frameId);
 
   @override
   void paint(Canvas canvas, Size size) {
+    final accent = GE.primary;
     // Точки.
-    final dot = Paint()..color = GE.primary.withValues(alpha: 0.85);
+    final dot = Paint()..color = accent.withValues(alpha: 0.85);
     for (final p in particles) {
       canvas.drawCircle(Offset(p.x, p.y), p.r, dot);
     }
+    // Один переиспользуемый Paint на все линии — раньше в O(n²)-цикле на КАЖДЫЙ
+    // сегмент аллоцировался новый Paint (до ~тысяч объектов/кадр → мусор и
+    // просадки на слабых устройствах). drawLine читает Paint в момент вызова,
+    // поэтому мутировать цвет между вызовами безопасно.
+    final line = Paint()..strokeWidth = 1;
     // Линии между близкими (видимая сеть — альфа до 0.55, как mesh.js).
     for (var i = 0; i < particles.length; i++) {
       final a = particles[i];
@@ -289,13 +471,8 @@ class _MeshPainter extends CustomPainter {
         final d2 = dx * dx + dy * dy;
         if (d2 < _linkDistSq) {
           final alpha = (1 - d2 / _linkDistSq) * 0.55;
-          canvas.drawLine(
-            Offset(a.x, a.y),
-            Offset(b.x, b.y),
-            Paint()
-              ..color = GE.primary.withValues(alpha: alpha)
-              ..strokeWidth = 1,
-          );
+          line.color = accent.withValues(alpha: alpha);
+          canvas.drawLine(Offset(a.x, a.y), Offset(b.x, b.y), line);
         }
       }
     }
@@ -307,18 +484,14 @@ class _MeshPainter extends CustomPainter {
         final d2 = dx * dx + dy * dy;
         if (d2 < _touchDistSq) {
           final alpha = (1 - d2 / _touchDistSq) * 0.8;
-          canvas.drawLine(
-            t,
-            Offset(p.x, p.y),
-            Paint()
-              ..color = GE.primary.withValues(alpha: alpha)
-              ..strokeWidth = 1,
-          );
+          line.color = accent.withValues(alpha: alpha);
+          canvas.drawLine(t, Offset(p.x, p.y), line);
         }
       }
     }
   }
 
   @override
-  bool shouldRepaint(_MeshPainter old) => true;
+  bool shouldRepaint(_MeshPainter old) =>
+      old.frameId != frameId || old.touch != touch;
 }

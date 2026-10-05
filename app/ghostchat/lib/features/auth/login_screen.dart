@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/api/auth_api.dart';
 import '../../core/api/http_client.dart';
 import '../../core/constants.dart';
 import '../../core/models/user.dart';
+import '../../services/bot_check_service.dart';
 import '../../shared/theme/app_theme.dart';
 import '../../shared/utils/validators.dart';
 import '../home/home_shell.dart';
@@ -35,10 +37,18 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _submit() async {
     FocusScope.of(context).unfocus();
     if (!_form.currentState!.validate()) return;
+    final normalizedUsername = Validators.normalizeUsername(_username.text);
+    if (normalizedUsername != _username.text) {
+      _username.value = TextEditingValue(
+        text: normalizedUsername,
+        selection: TextSelection.collapsed(offset: normalizedUsername.length),
+      );
+    }
     setState(() => _loading = true);
     try {
+      await BotCheckService.instance.ensureToken(context);
       final outcome = await AuthApi.I.login(
-        username: Validators.normalizeUsername(_username.text),
+        username: normalizedUsername,
         password: _password.text,
       );
       if (!mounted) return;
@@ -111,13 +121,16 @@ class _LoginScreenState extends State<LoginScreen> {
                   textInputAction: TextInputAction.next,
                   autocorrect: false,
                   inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9_.]')),
+                    // Краевые пробелы нормализуются при отправке, внутренние
+                    // остаются в поле и отклоняются валидатором.
+                    FilteringTextInputFormatter.allow(
+                      RegExp(r'[a-zA-Z0-9_. ]'),
+                    ),
                     LengthLimitingTextInputFormatter(K.usernameMaxTotal),
                   ],
                   decoration: _dec('username', prefix: '@'),
                   style: const TextStyle(color: AppColors.text),
-                  validator: (v) =>
-                      (v == null || v.trim().isEmpty) ? 'Введите имя пользователя' : null,
+                  validator: (v) => Validators.username(v ?? ''),
                 ),
                 const SizedBox(height: 8),
                 _label('Пароль'),
@@ -151,10 +164,10 @@ class _LoginScreenState extends State<LoginScreen> {
                     onPressed: _loading
                         ? null
                         : () => Navigator.of(context).pushReplacement(
-                              MaterialPageRoute<void>(
-                                builder: (_) => const RegisterScreen(),
-                              ),
+                            MaterialPageRoute<void>(
+                              builder: (_) => const RegisterScreen(),
                             ),
+                          ),
                     child: const Text(
                       'Нет аккаунта? Создать',
                       style: TextStyle(color: AppColors.primary),
@@ -170,9 +183,9 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _label(String t) => Padding(
-        padding: const EdgeInsets.only(bottom: 6, left: 2),
-        child: Text(t, style: const TextStyle(color: AppColors.sub, fontSize: 13)),
-      );
+    padding: const EdgeInsets.only(bottom: 6, left: 2),
+    child: Text(t, style: const TextStyle(color: AppColors.sub, fontSize: 13)),
+  );
 
   InputDecoration _dec(String hint, {String? prefix, bool toggle = false}) {
     return InputDecoration(
@@ -182,7 +195,7 @@ class _LoginScreenState extends State<LoginScreen> {
       suffixIcon: toggle
           ? IconButton(
               icon: Icon(
-                _obscure ? Icons.visibility_off : Icons.visibility,
+                _obscure ? CupertinoIcons.eye_slash : CupertinoIcons.eye_fill,
                 color: AppColors.faint,
                 size: 20,
               ),

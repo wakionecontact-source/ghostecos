@@ -9,8 +9,11 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import '../theme.dart';
 import '../services/theme_service.dart';
+import '../services/notification_settings.dart';
+import '../services/ghost_sound_effects.dart';
 import 'glass.dart';
 
 enum ToastLevel { info, warn, error }
@@ -26,7 +29,8 @@ class _ToastEntry {
   final ToastLevel level;
   final DateTime time;
   final ToastAction? action;
-  _ToastEntry(this.message, this.level, this.time, this.action);
+  final int? logId;
+  _ToastEntry(this.message, this.level, this.time, this.action, this.logId);
   String get key => '$level|$message';
 }
 
@@ -41,9 +45,9 @@ class ToastManager {
 
   /// Открыть экран логов — выставляется один раз в main.dart. Кнопка "Логи"
   /// на тосте видна, только если этот колбэк задан.
-  VoidCallback? onNavigateToLogs;
+  void Function(int? logId)? onNavigateToLogs;
 
-  _ToastEntry? get current => _queue.isNotEmpty ? _queue.first : null;
+  _ToastEntry? get _current => _queue.isNotEmpty ? _queue.first : null;
   int get length => _queue.length;
 
   /// Показать тост. Дедуп: убирает из очереди такие же (тот же уровень+текст).
@@ -51,11 +55,31 @@ class ToastManager {
     String message, {
     ToastLevel level = ToastLevel.info,
     ToastAction? action,
+    int? logId,
   }) {
     if (message.trim().isEmpty) return;
+    // Настройки → Уведомления → "Внутренние уведомления" (перенесено из
+    // 1.19.3) — общий тумблер + по уровню. Гасим централизованно тут, а не
+    // в каждом месте вызова toast.show/toastInfo/toastWarn/toastError.
+    // Тосты с action (кнопка "Повторить"/"Подтвердить" и т.п.) НЕ гасим по
+    // уровню — юзеру реально нужно на них отреагировать, а не просто
+    // уведомление к сведению (найдено ревью 2026-07-20: раньше action-тост
+    // на уровне info тихо пропадал, если юзер выключил именно info-тосты).
+    // Общий тумблер (toastEnabled) всё ещё главный — если тосты выключены
+    // совсем, это применимо и к action-тостам тоже.
+    final ns = NotificationSettings.instance;
+    if (!ns.toastEnabledNotifier.value) return;
+    if (action == null) {
+      final levelAllowed = switch (level) {
+        ToastLevel.error => ns.toastShowErrorsNotifier.value,
+        ToastLevel.warn => ns.toastShowWarningsNotifier.value,
+        ToastLevel.info => ns.toastShowInfoNotifier.value,
+      };
+      if (!levelAllowed) return;
+    }
     final k = '$level|$message';
     _queue.removeWhere((e) => e.key == k);
-    _queue.addLast(_ToastEntry(message, level, DateTime.now(), action));
+    _queue.addLast(_ToastEntry(message, level, DateTime.now(), action, logId));
     _ctrl.add(null);
   }
 
@@ -129,7 +153,7 @@ class _ToastOverlayState extends State<ToastOverlay>
   }
 
   void _onChange() {
-    final next = toast.current;
+    final next = toast._current;
     if (next == null) {
       if (_showing != null) {
         _anim.reverse().then((_) {
@@ -141,6 +165,7 @@ class _ToastOverlayState extends State<ToastOverlay>
       setState(() => _showing = next);
       _anim.forward(from: 0);
       _playPop();
+      _playToastSound(next.level);
       if (next.action == null) {
         _autoHide = Timer(const Duration(seconds: 6), () {
           if (mounted && _showing != null) toast.dismiss();
@@ -157,12 +182,27 @@ class _ToastOverlayState extends State<ToastOverlay>
       _anim.value = 0.85;
       _anim.forward();
       _playPop();
+      _playToastSound(next.level);
       if (next.action == null) {
         _autoHide?.cancel();
         _autoHide = Timer(const Duration(seconds: 6), () {
           if (mounted && _showing != null) toast.dismiss();
         });
       }
+    }
+  }
+
+  void _playToastSound(ToastLevel level) {
+    switch (level) {
+      case ToastLevel.info:
+        unawaited(GhostSoundEffects.instance.playSuccess());
+        break;
+      case ToastLevel.warn:
+        unawaited(GhostSoundEffects.instance.playWarning());
+        break;
+      case ToastLevel.error:
+        unawaited(GhostSoundEffects.instance.playError());
+        break;
     }
   }
 
@@ -229,7 +269,7 @@ class _ToastCard extends StatelessWidget {
   final _ToastEntry entry;
   final int queue;
   final VoidCallback onClose;
-  final VoidCallback? onLogs;
+  final void Function(int? logId)? onLogs;
   const _ToastCard({
     required this.entry,
     required this.queue,
@@ -243,9 +283,9 @@ class _ToastCard extends StatelessWidget {
     ToastLevel.info => GE.primary,
   };
   IconData get _icon => switch (entry.level) {
-    ToastLevel.error => Icons.error_outline_rounded,
-    ToastLevel.warn => Icons.warning_amber_rounded,
-    ToastLevel.info => Icons.info_outline_rounded,
+    ToastLevel.error => CupertinoIcons.exclamationmark_circle,
+    ToastLevel.warn => CupertinoIcons.exclamationmark_triangle,
+    ToastLevel.info => CupertinoIcons.info_circle,
   };
   String get _label => switch (entry.level) {
     ToastLevel.error => 'Ошибка',
@@ -264,10 +304,7 @@ class _ToastCard extends StatelessWidget {
         filter: ImageFilter.blur(sigmaX: GE.glassBlur, sigmaY: GE.glassBlur),
         child: Container(
           decoration: BoxDecoration(
-            color: Color.alphaBlend(
-              GE.surface,
-              GE.bg,
-            ).withValues(alpha: 0.92),
+            color: Color.alphaBlend(GE.surface, GE.bg).withValues(alpha: 0.92),
             borderRadius: BorderRadius.circular(14),
             border: ThemeService.isMinimal
                 ? null
@@ -331,7 +368,7 @@ class _ToastCard extends StatelessWidget {
                       child: IconButton(
                         padding: EdgeInsets.zero,
                         iconSize: 17,
-                        icon: Icon(Icons.close_rounded, color: GE.sub),
+                        icon: Icon(CupertinoIcons.xmark, color: GE.sub),
                         onPressed: onClose,
                       ),
                     ),
@@ -367,7 +404,9 @@ class _ToastCard extends StatelessWidget {
                               entry.action!.onPressed();
                             },
                             style: TextButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                              ),
                               minimumSize: Size.zero,
                               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                               backgroundColor: _accent.withValues(alpha: 0.16),
@@ -391,11 +430,23 @@ class _ToastCard extends StatelessWidget {
                         SizedBox(
                           height: 28,
                           child: TextButton.icon(
-                            onPressed: () { onClose(); onLogs!(); },
-                            icon: Icon(Icons.terminal_rounded, size: 13, color: GE.sub),
-                            label: Text('Логи', style: TextStyle(color: GE.sub, fontSize: 11.5)),
+                            onPressed: () {
+                              onClose();
+                              onLogs!(entry.logId);
+                            },
+                            icon: Icon(
+                              Icons.terminal_rounded,
+                              size: 13,
+                              color: GE.sub,
+                            ),
+                            label: Text(
+                              'Логи',
+                              style: TextStyle(color: GE.sub, fontSize: 11.5),
+                            ),
                             style: TextButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
                               minimumSize: Size.zero,
                               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             ),

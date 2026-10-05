@@ -6,9 +6,12 @@
 // История хранится в LanChatStore — привязана к устройству, не к аккаунту.
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
+import 'package:image_picker/image_picker.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -17,18 +20,24 @@ import '../theme.dart';
 import '../mesh_background.dart';
 import '../widgets/glass.dart';
 import '../widgets/marquee_text.dart';
+import '../widgets/attach_sheet.dart';
+import '../widgets/chat_composer.dart';
 import '../widgets/emoji_picker.dart';
 import '../widgets/emoji_text.dart';
 import '../widgets/empty_chat_state.dart';
 import '../widgets/reactions_bar.dart';
 import '../widgets/send_fly_animation.dart';
 import '../widgets/toast_overlay.dart';
+import '../widgets/video_player_viewer.dart';
 import '../services/lan_chat_store.dart';
+import '../core/local/lan_settings.dart';
 import '../core/local/local_hub.dart';
 import '../core/local/local_transport.dart';
 import '../core/local/lan_message_codec.dart';
+import 'custom_camera_screen.dart';
 
-const _maxLanFileBytes = 10 * 1024 * 1024; // 10MB — best-effort P2P, без прогресс-бара
+const _maxLanFileBytes =
+    10 * 1024 * 1024; // 10MB — best-effort P2P, без прогресс-бара
 
 class LanChatScreen extends StatefulWidget {
   final String deviceId;
@@ -63,6 +72,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
   bool _online = false;
   bool _emojiOpen = false;
   final _sendBtnKey = GlobalKey();
+  final _imagePicker = ImagePicker();
   static const double _emojiPanelH = 300;
   // Мало сообщений — держим ленту у низа, рядом с полем ввода, а не
   // приклеенной к шапке с пустотой снизу (см. тот же приём в chat_screen.dart).
@@ -75,7 +85,9 @@ class _LanChatScreenState extends State<LanChatScreen> {
     super.initState();
     LanChatScreen.currentOpenDeviceId = widget.deviceId;
     _name = widget.displayName;
-    _online = localHub.isOnline(widget.deviceId) || localHub.hasSession(widget.deviceId);
+    _online =
+        localHub.isOnline(widget.deviceId) ||
+        localHub.hasSession(widget.deviceId);
     _load();
     _msgSub = localHub.onMessage.listen(_onIncoming);
     // Событийно, а не поллингом раз в 3с — быстрее реагирует и не крутит
@@ -197,12 +209,17 @@ class _LanChatScreenState extends State<LanChatScreen> {
 
     setState(() => _sending = true);
     try {
-      final peerPubB64 = await LanChatStore.instance.getPeerPub(widget.deviceId);
+      final peerPubB64 = await LanChatStore.instance.getPeerPub(
+        widget.deviceId,
+      );
       if (peerPubB64 == null) throw StateError('Нет ключа собеседника');
 
       final msgId = const Uuid().v4();
       final nowMs = DateTime.now().millisecondsSinceEpoch;
-      final encB64 = await encodeLanEnvelope(peerPubB64: peerPubB64, text: text);
+      final encB64 = await encodeLanEnvelope(
+        peerPubB64: peerPubB64,
+        text: text,
+      );
       // Офлайн — не блокируем отправку: шифруем и кладём в очередь, реально
       // уйдёт при переподключении (см. флаш очереди в MainShell).
       final online = localHub.hasSession(widget.deviceId);
@@ -220,14 +237,16 @@ class _LanChatScreenState extends State<LanChatScreen> {
       if (!mounted) return;
       _seenMsgIds.add(msgId);
       setState(() {
-        _messages.add(LanChatMessage(
-          msgId: msgId,
-          deviceId: widget.deviceId,
-          fromMe: true,
-          text: text,
-          createdAt: nowMs ~/ 1000,
-          queued: !online,
-        ));
+        _messages.add(
+          LanChatMessage(
+            msgId: msgId,
+            deviceId: widget.deviceId,
+            fromMe: true,
+            text: text,
+            createdAt: nowMs ~/ 1000,
+            queued: !online,
+          ),
+        );
         _msgCtrl.clear();
       });
       _scrollToBottom();
@@ -236,59 +255,135 @@ class _LanChatScreenState extends State<LanChatScreen> {
     }
   }
 
-  Future<void> _attachFile() async {
+  // Единый лист вложений (та же «скрепка», что в основном чате). Грид
+  // галереи/фото/видео/файл; гео и кошелёк — заглушки до готового бэкенда
+  // (как в chat_screen). P2P-канал не резиновый — крупные файлы отсекаем в
+  // _sendLanBytes (10MB).
+  Future<void> _openAttachSheet() async {
+    HapticFeedback.selectionClick();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => AttachSheet(
+        onPickedSend: _sendPickedItems,
+        onGallery: () => _pickImageAndSend(ImageSource.gallery),
+        onFile: _pickFileAndSend,
+        onCamera: _openCustomCamera,
+        onGeo: () => toast.show('Геопозиция — скоро'),
+        onWallet: () => toast.show('Кошелёк — после интеграции GhostBank'),
+      ),
+    );
+  }
+
+  Future<void> _sendPickedItems(List<AttachItem> items) async {
+    for (final it in items) {
+      try {
+        final bytes = await it.file.readAsBytes();
+        await _sendLanBytes(
+          bytes,
+          p.basename(it.file.path),
+          it.isVideo ? 'video/mp4' : 'image/jpeg',
+        );
+      } catch (e) {
+        toast.show('Не удалось отправить: $e');
+      }
+    }
+  }
+
+  Future<void> _pickImageAndSend(ImageSource src) async {
+    try {
+      final x = await _imagePicker.pickImage(
+        source: src,
+        imageQuality: 85,
+        maxWidth: 1920,
+        maxHeight: 1920,
+      );
+      if (x == null) return;
+      await _sendLanBytes(await x.readAsBytes(), x.name, 'image/jpeg');
+    } catch (e) {
+      toast.show('Не удалось отправить фото: $e');
+    }
+  }
+
+  Future<void> _openCustomCamera() async {
+    final file = await Navigator.of(
+      context,
+    ).push<File>(MaterialPageRoute(builder: (_) => const GhostCameraScreen()));
+    if (file == null || !mounted) return;
+    try {
+      await _sendLanBytes(
+        await file.readAsBytes(),
+        p.basename(file.path),
+        'image/jpeg',
+      );
+    } catch (e) {
+      toast.show('Фото не отправилось: $e');
+    }
+  }
+
+  Future<void> _pickFileAndSend() async {
     final file = await openFile();
     if (file == null) return;
     try {
-      final bytes = await file.readAsBytes();
-      if (bytes.length > _maxLanFileBytes) {
-        toast.show('Файл больше 10MB — P2P-канал не резиновый');
-        return;
-      }
-      final peerPubB64 = await LanChatStore.instance.getPeerPub(widget.deviceId);
-      if (peerPubB64 == null) throw StateError('Нет ключа собеседника');
+      await _sendLanBytes(await file.readAsBytes(), file.name, file.mimeType);
+    } catch (e) {
+      toast.show('Не удалось отправить файл: $e');
+    }
+  }
 
-      final msgId = const Uuid().v4();
-      final nowMs = DateTime.now().millisecondsSinceEpoch;
-      final encB64 = await encodeLanEnvelope(
-        peerPubB64: peerPubB64,
-        fileName: file.name,
-        fileMime: file.mimeType,
-        fileBytes: bytes,
-      );
-      final online = localHub.hasSession(widget.deviceId);
-      if (online) {
-        await localHub.sendMessage(widget.deviceId, msgId, encB64, nowMs);
-      }
-      await LanChatStore.instance.addMessage(
-        deviceId: widget.deviceId,
-        msgId: msgId,
-        fromMe: true,
-        createdAtSec: nowMs ~/ 1000,
-        fileName: file.name,
-        fileMime: file.mimeType,
-        fileBytes: bytes,
-        queued: !online,
-      );
-      if (!mounted) return;
-      _seenMsgIds.add(msgId);
-      setState(() {
-        _messages.add(LanChatMessage(
+  // Общая отправка байтов файла по P2P (шифрование + очередь + оптимистичный
+  // пузырь) — используется всеми ветками листа вложений.
+  Future<void> _sendLanBytes(Uint8List bytes, String name, String? mime) async {
+    if (bytes.length > _maxLanFileBytes) {
+      toast.show('Файл больше 10MB — P2P-канал не резиновый');
+      return;
+    }
+    final peerPubB64 = await LanChatStore.instance.getPeerPub(widget.deviceId);
+    if (peerPubB64 == null) {
+      toast.show('Нет ключа собеседника');
+      return;
+    }
+    final msgId = const Uuid().v4();
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final encB64 = await encodeLanEnvelope(
+      peerPubB64: peerPubB64,
+      fileName: name,
+      fileMime: mime,
+      fileBytes: bytes,
+    );
+    final online = localHub.hasSession(widget.deviceId);
+    if (online) {
+      await localHub.sendMessage(widget.deviceId, msgId, encB64, nowMs);
+    }
+    await LanChatStore.instance.addMessage(
+      deviceId: widget.deviceId,
+      msgId: msgId,
+      fromMe: true,
+      createdAtSec: nowMs ~/ 1000,
+      fileName: name,
+      fileMime: mime,
+      fileBytes: bytes,
+      queued: !online,
+    );
+    if (!mounted) return;
+    _seenMsgIds.add(msgId);
+    setState(() {
+      _messages.add(
+        LanChatMessage(
           msgId: msgId,
           deviceId: widget.deviceId,
           fromMe: true,
           text: '',
           createdAt: nowMs ~/ 1000,
-          fileName: file.name,
-          fileMime: file.mimeType,
+          fileName: name,
+          fileMime: mime,
           fileBytes: bytes,
           queued: !online,
-        ));
-      });
-      _scrollToBottom();
-    } catch (e) {
-      toast.show('Не удалось отправить файл: $e');
-    }
+        ),
+      );
+    });
+    _scrollToBottom();
   }
 
   Future<void> _openLanFile(LanChatMessage m) async {
@@ -298,6 +393,33 @@ class _LanChatScreenState extends State<LanChatScreen> {
       final path = p.join(dir.path, m.fileName!);
       final f = File(path);
       await f.writeAsBytes(m.fileBytes!, flush: true);
+      final mime = m.fileMime ?? '';
+      if (mime.startsWith('video/')) {
+        if (!mounted) return;
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => GhostVideoViewer(
+              path: path,
+              deleteWhenClosed: true,
+              title: m.fileName,
+            ),
+          ),
+        );
+        return;
+      }
+      if (mime.startsWith('image/')) {
+        if (!mounted) return;
+        await showDialog<void>(
+          context: context,
+          barrierColor: Colors.black87,
+          builder: (_) => Dialog(
+            backgroundColor: Colors.black,
+            insetPadding: EdgeInsets.zero,
+            child: InteractiveViewer(child: Image.file(f, fit: BoxFit.contain)),
+          ),
+        );
+        return;
+      }
       await OpenFilex.open(path);
     } catch (e) {
       toast.show('Не удалось открыть файл: $e');
@@ -317,7 +439,10 @@ class _LanChatScreenState extends State<LanChatScreen> {
           style: TextStyle(color: GE.text),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Отмена'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
             child: const Text('Сохранить'),
@@ -341,7 +466,10 @@ class _LanChatScreenState extends State<LanChatScreen> {
           style: TextStyle(color: GE.sub),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dctx, false), child: const Text('Отмена')),
+          TextButton(
+            onPressed: () => Navigator.pop(dctx, false),
+            child: const Text('Отмена'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(dctx, true),
             child: Text('Удалить', style: TextStyle(color: GE.red)),
@@ -363,8 +491,13 @@ class _LanChatScreenState extends State<LanChatScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _menuRow(Icons.edit_outlined, 'Переименовать', GE.primary, 'rename'),
-            _menuRow(Icons.delete_outline, 'Удалить чат', GE.red, 'delete'),
+            _menuRow(
+              CupertinoIcons.pencil,
+              'Переименовать',
+              GE.primary,
+              'rename',
+            ),
+            _menuRow(CupertinoIcons.trash, 'Удалить чат', GE.red, 'delete'),
             const SizedBox(height: 6),
           ],
         ),
@@ -383,7 +516,13 @@ class _LanChatScreenState extends State<LanChatScreen> {
           children: [
             Icon(icon, size: 20, color: color),
             const SizedBox(width: 14),
-            Text(label, style: TextStyle(color: color == GE.red ? GE.red : GE.text, fontSize: 15)),
+            Text(
+              label,
+              style: TextStyle(
+                color: color == GE.red ? GE.red : GE.text,
+                fontSize: 15,
+              ),
+            ),
           ],
         ),
       ),
@@ -400,6 +539,11 @@ class _LanChatScreenState extends State<LanChatScreen> {
   /// (см. автопереподключение в local_hub.dart), оно само отзовётся.
   Future<void> _manualPing() async {
     if (_pinging) return;
+    await LanSettings().load();
+    if (!LanSettings().lanPingEnabled) {
+      toast.show('LAN-пинг выключен в настройках');
+      return;
+    }
     setState(() => _pinging = true);
     try {
       if (localHub.hasSession(widget.deviceId)) {
@@ -409,9 +553,11 @@ class _LanChatScreenState extends State<LanChatScreen> {
         if (!mounted) return;
         final isOnline = localHub.isOnline(widget.deviceId);
         final pingMs = localHub.getPingMs(widget.deviceId);
-        toast.show(isOnline
-            ? (pingMs != null ? 'Понг получен — $pingMs мс' : 'Понг получен')
-            : 'Нет ответа — устройство недоступно');
+        toast.show(
+          isOnline
+              ? (pingMs != null ? 'Понг получен — $pingMs мс' : 'Понг получен')
+              : 'Нет ответа — устройство недоступно',
+        );
       } else {
         // Событийно ждём accept ИМЕННО от этого устройства, а не фиксированную
         // паузу — на другой стороне окно сбора сигналов 5 сек (см.
@@ -431,9 +577,11 @@ class _LanChatScreenState extends State<LanChatScreen> {
         );
         await sub.cancel();
         if (!mounted) return;
-        toast.show(reconnected
-            ? 'Подключение восстановлено'
-            : 'Устройство не отозвалось — попробуйте ещё раз позже');
+        toast.show(
+          reconnected
+              ? 'Подключение восстановлено'
+              : 'Устройство не отозвалось — попробуйте ещё раз позже',
+        );
       }
     } finally {
       if (mounted) setState(() => _pinging = false);
@@ -488,16 +636,21 @@ class _LanChatScreenState extends State<LanChatScreen> {
 
   IconData _barsIcon(int bars) {
     switch (bars) {
-      case 0: return Icons.signal_cellular_0_bar;
-      case 1: return Icons.signal_cellular_alt_1_bar;
-      case 2: return Icons.signal_cellular_alt_2_bar;
-      default: return Icons.signal_cellular_alt;
+      case 0:
+        return Icons.signal_cellular_0_bar;
+      case 1:
+        return Icons.signal_cellular_alt_1_bar;
+      case 2:
+        return Icons.signal_cellular_alt_2_bar;
+      default:
+        return Icons.signal_cellular_alt;
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final online = localHub.isOnline(widget.deviceId) ||
+    final online =
+        localHub.isOnline(widget.deviceId) ||
         localHub.hasSession(widget.deviceId);
     final pingMs = localHub.getPingMs(widget.deviceId);
     final available = localHub.availableTransportsFor(widget.deviceId);
@@ -505,13 +658,18 @@ class _LanChatScreenState extends State<LanChatScreen> {
     return MeshBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: _selectionMode ? _selectionAppBar() : _normalAppBar(online, pingMs, available, bars),
+        appBar: _selectionMode
+            ? _selectionAppBar()
+            : _normalAppBar(online, pingMs, available, bars),
         body: Column(
           children: [
             if (!online)
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+                padding: const EdgeInsets.symmetric(
+                  vertical: 6,
+                  horizontal: 12,
+                ),
                 color: GE.yellow.withValues(alpha: 0.12),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -548,9 +706,10 @@ class _LanChatScreenState extends State<LanChatScreen> {
             Expanded(
               child: _messages.isEmpty
                   ? const EmptyChatState(
-                      icon: Icons.wifi_tethering,
+                      icon: CupertinoIcons.antenna_radiowaves_left_right,
                       title: 'Сообщений нет',
-                      subtitle: 'Видно только вам двоим — сообщения идут напрямую, без сервера',
+                      subtitle:
+                          'Видно только вам двоим — сообщения идут напрямую, без сервера',
                     )
                   : Builder(
                       builder: (_) {
@@ -572,7 +731,25 @@ class _LanChatScreenState extends State<LanChatScreen> {
                       },
                     ),
             ),
-            _inputRow(online),
+            SafeArea(
+              top: false,
+              bottom: !_emojiOpen,
+              child: ChatComposer(
+                controller: _msgCtrl,
+                emojiOpen: _emojiOpen,
+                sending: _sending,
+                sendKey: _sendBtnKey,
+                hint: online
+                    ? 'Сообщение…'
+                    : 'Сообщение… (уйдёт при подключении)',
+                onAttach: _openAttachSheet,
+                onToggleEmoji: _toggleEmoji,
+                onSend: _send,
+                onFieldTap: () {
+                  if (_emojiOpen) setState(() => _emojiOpen = false);
+                },
+              ),
+            ),
             if (_emojiOpen)
               SizedBox(
                 height: _emojiPanelH,
@@ -587,13 +764,13 @@ class _LanChatScreenState extends State<LanChatScreen> {
   PreferredSizeWidget _selectionAppBar() {
     return GlassAppBar(
       leading: IconButton(
-        icon: Icon(Icons.close, color: GE.text),
+        icon: Icon(CupertinoIcons.xmark, color: GE.text),
         onPressed: () => setState(() => _selectedIds.clear()),
       ),
       titleText: '${_selectedIds.length}',
       actions: [
         IconButton(
-          icon: Icon(Icons.delete_outline, color: GE.red),
+          icon: Icon(CupertinoIcons.trash, color: GE.red),
           onPressed: _deleteSelected,
         ),
       ],
@@ -614,13 +791,20 @@ class _LanChatScreenState extends State<LanChatScreen> {
         children: [
           MarqueeText(
             text: _name,
-            style: TextStyle(color: GE.text, fontSize: 16, fontWeight: FontWeight.w700),
+            style: TextStyle(
+              color: GE.text,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
           ),
           _pinging
               ? Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text('соединение', style: TextStyle(color: GE.sub, fontSize: 11)),
+                    Text(
+                      'соединение',
+                      style: TextStyle(color: GE.sub, fontSize: 11),
+                    ),
                     const SizedBox(width: 3),
                     GlassDots(color: GE.sub),
                   ],
@@ -628,7 +812,11 @@ class _LanChatScreenState extends State<LanChatScreen> {
               : Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(_barsIcon(bars), size: 12, color: online ? GE.green : GE.sub),
+                    Icon(
+                      _barsIcon(bars),
+                      size: 12,
+                      color: online ? GE.green : GE.sub,
+                    ),
                     const SizedBox(width: 4),
                     Text(
                       online
@@ -644,12 +832,16 @@ class _LanChatScreenState extends State<LanChatScreen> {
                           padding: const EdgeInsets.only(left: 2),
                           child: Icon(
                             switch (t) {
-                              TransportType.lan => Icons.wifi,
-                              TransportType.wifiDirect => Icons.wifi_tethering,
-                              TransportType.bluetooth => Icons.bluetooth,
+                              TransportType.lan => CupertinoIcons.wifi,
+                              TransportType.wifiDirect =>
+                                CupertinoIcons.antenna_radiowaves_left_right,
+                              TransportType.bluetooth =>
+                                CupertinoIcons.bluetooth,
                             },
                             size: 12,
-                            color: on ? GE.primary : GE.sub.withValues(alpha: 0.35),
+                            color: on
+                                ? GE.primary
+                                : GE.sub.withValues(alpha: 0.35),
                           ),
                         );
                       }),
@@ -662,15 +854,22 @@ class _LanChatScreenState extends State<LanChatScreen> {
         IconButton(
           icon: _pinging
               ? SizedBox(
-                  width: 18, height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: GE.sub),
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: GE.sub,
+                  ),
                 )
-              : Icon(Icons.wifi_tethering, color: GE.sub),
+              : Icon(
+                  CupertinoIcons.antenna_radiowaves_left_right,
+                  color: GE.sub,
+                ),
           tooltip: 'Пинг / переподключиться',
           onPressed: _pinging ? null : _manualPing,
         ),
         IconButton(
-          icon: Icon(Icons.more_vert, color: GE.sub),
+          icon: Icon(CupertinoIcons.ellipsis_vertical, color: GE.sub),
           tooltip: 'Ещё',
           onPressed: _openChatMenu,
         ),
@@ -687,9 +886,17 @@ class _LanChatScreenState extends State<LanChatScreen> {
       // промежуточный шаг перед доставкой, а сам финальный смысл дискеты —
       // тут нет отдельного "часиков"-состояния.
       case LanMsgStatus.queued:
-        return const Icon(Icons.save_outlined, size: 12, color: Colors.white54);
+        return const Icon(
+          CupertinoIcons.floppy_disk,
+          size: 12,
+          color: Colors.white54,
+        );
       case LanMsgStatus.delivered:
-        return const Icon(Icons.done, size: 13, color: Colors.white70);
+        return const Icon(
+          CupertinoIcons.checkmark,
+          size: 13,
+          color: Colors.white70,
+        );
       case LanMsgStatus.read:
         return Icon(Icons.done_all, size: 14, color: GE.blue);
     }
@@ -721,7 +928,9 @@ class _LanChatScreenState extends State<LanChatScreen> {
       onDoubleTap: _selectionMode ? null : () => _react(m),
       onTap: _selectionMode ? () => _toggleSelect(m.msgId) : null,
       child: Container(
-        color: selected ? GE.primary.withValues(alpha: 0.10) : Colors.transparent,
+        color: selected
+            ? GE.primary.withValues(alpha: 0.10)
+            : Colors.transparent,
         child: Align(
           alignment: m.fromMe ? Alignment.centerRight : Alignment.centerLeft,
           child: Container(
@@ -733,7 +942,9 @@ class _LanChatScreenState extends State<LanChatScreen> {
                   ? GE.primary.withValues(alpha: 0.85)
                   : GE.glassFill,
               borderRadius: BorderRadius.circular(14),
-              border: selected ? Border.all(color: GE.primary, width: 1.4) : null,
+              border: selected
+                  ? Border.all(color: GE.primary, width: 1.4)
+                  : null,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -742,45 +953,48 @@ class _LanChatScreenState extends State<LanChatScreen> {
                 if (m.hasFile)
                   InkWell(
                     onTap: _selectionMode ? null : () => _openLanFile(m),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.insert_drive_file_outlined,
-                            color: m.fromMe ? Colors.white : GE.text, size: 18),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(m.fileName!,
-                              style: TextStyle(
-                                color: m.fromMe ? Colors.white : GE.text,
-                                fontSize: 13,
-                                decoration: TextDecoration.underline,
-                              )),
-                        ),
-                      ],
-                    ),
+                    child: _lanFilePreview(m),
                   ),
                 if (m.text.isNotEmpty) ...[
                   if (m.hasFile) const SizedBox(height: 4),
-                  EmojiText(m.text, style: TextStyle(color: m.fromMe ? Colors.white : GE.text, fontSize: 14)),
+                  EmojiText(
+                    m.text,
+                    style: TextStyle(
+                      color: m.fromMe ? Colors.white : GE.text,
+                      fontSize: 14,
+                    ),
+                  ),
                 ],
                 if (m.reaction != null) ...[
                   const SizedBox(height: 4),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
-                      color: (m.fromMe ? Colors.white : GE.primary).withValues(alpha: 0.18),
+                      color: (m.fromMe ? Colors.white : GE.primary).withValues(
+                        alpha: 0.18,
+                      ),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: EmojiText(m.reaction!, style: const TextStyle(fontSize: 13)),
+                    child: EmojiText(
+                      m.reaction!,
+                      style: const TextStyle(fontSize: 13),
+                    ),
                   ),
                 ],
                 const SizedBox(height: 2),
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text('$hh:$mm',
-                        style: TextStyle(
-                            color: m.fromMe ? Colors.white70 : GE.sub, fontSize: 10)),
+                    Text(
+                      '$hh:$mm',
+                      style: TextStyle(
+                        color: m.fromMe ? Colors.white70 : GE.sub,
+                        fontSize: 10,
+                      ),
+                    ),
                     if (m.fromMe) ...[const SizedBox(width: 4), _ticks(m)],
                   ],
                 ),
@@ -792,43 +1006,74 @@ class _LanChatScreenState extends State<LanChatScreen> {
     );
   }
 
-  Widget _inputRow(bool online) {
-    // Офлайн больше не блокирует отправку — сообщение уходит в очередь и
-    // улетит само при переподключении, поэтому обе кнопки активны всегда.
-    return Padding(
-      padding: const EdgeInsets.all(10),
-      child: Row(
-        children: [
-          IconButton(
-            icon: Icon(Icons.attach_file, color: GE.sub),
-            onPressed: _attachFile,
-          ),
-          IconButton(
-            icon: Icon(
-              _emojiOpen ? Icons.keyboard_outlined : Icons.emoji_emotions_outlined,
-              color: _emojiOpen ? GE.primary : GE.sub,
+  Widget _lanFilePreview(LanChatMessage m) {
+    final mime = m.fileMime ?? '';
+    if (mime.startsWith('image/') && m.fileBytes != null) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(9),
+        child: Image.memory(
+          m.fileBytes!,
+          width: 220,
+          height: 165,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+        ),
+      );
+    }
+    if (mime.startsWith('video/')) {
+      return Container(
+        width: 220,
+        height: 130,
+        decoration: BoxDecoration(
+          color: Colors.black26,
+          borderRadius: BorderRadius.circular(9),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Icon(
+              CupertinoIcons.play_circle_fill,
+              color: m.fromMe ? Colors.white : GE.primary,
+              size: 44,
             ),
-            onPressed: _toggleEmoji,
-          ),
-          Expanded(
-            child: GlassInput(
-              controller: _msgCtrl,
-              hint: online ? 'Сообщение…' : 'Сообщение… (уйдёт при подключении)',
-              onSubmitted: (_) => _send(),
-              onTap: () {
-                if (_emojiOpen) setState(() => _emojiOpen = false);
-              },
+            Positioned(
+              left: 8,
+              right: 8,
+              bottom: 7,
+              child: Text(
+                m.fileName ?? 'Видео',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: m.fromMe ? Colors.white : GE.text,
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          CupertinoIcons.doc,
+          color: m.fromMe ? Colors.white : GE.text,
+          size: 18,
+        ),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            m.fileName ?? 'Файл',
+            style: TextStyle(
+              color: m.fromMe ? Colors.white : GE.text,
+              fontSize: 13,
+              decoration: TextDecoration.underline,
             ),
           ),
-          const SizedBox(width: 8),
-          IconButton(
-            key: _sendBtnKey,
-            icon: Icon(Icons.send_rounded, color: GE.primary),
-            onPressed: _send,
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
-

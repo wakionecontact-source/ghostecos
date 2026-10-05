@@ -5,18 +5,24 @@ class GcUser {
   final String username;
   final String displayName;
   final bool isPremium;
+  final bool isBot;
+  final String? botStatus;
 
   const GcUser({
     required this.username,
     required this.displayName,
     this.isPremium = false,
+    this.isBot = false,
+    this.botStatus,
   });
 
   factory GcUser.fromJson(Map<String, dynamic> j) => GcUser(
-        username: (j['username'] ?? '') as String,
-        displayName: (j['display_name'] ?? j['username'] ?? '') as String,
-        isPremium: j['is_premium'] == true || j['is_premium'] == 1,
-      );
+    username: (j['username'] ?? '') as String,
+    displayName: (j['display_name'] ?? j['username'] ?? '') as String,
+    isPremium: j['is_premium'] == true || j['is_premium'] == 1,
+    isBot: j['is_bot'] == true || j['is_bot'] == 1,
+    botStatus: j['bot_status'] as String?,
+  );
 
   /// Инициал для аватара-заглушки.
   String get initial => displayName.isEmpty

@@ -3,10 +3,12 @@
 // логотип (мягкий bob + пульс свечения). После «Далее» → экран разрешений.
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../widgets/glass.dart';
+import '../services/app_avatar_settings.dart';
 
 class WelcomeScreen extends StatefulWidget {
   final VoidCallback onDone;
@@ -67,10 +69,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
         ).transform(_entrance.value);
         return Opacity(
           opacity: t.clamp(0.0, 1.0),
-          child: Transform.translate(
-            offset: Offset(0, (1 - t) * 22),
-            child: c,
-          ),
+          child: Transform.translate(offset: Offset(0, (1 - t) * 22), child: c),
         );
       },
     );
@@ -172,12 +171,16 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                         width: 1,
                       ),
                     ),
-                    child: ClipOval(
-                      child: Image.asset(
-                        'assets/icon.png',
-                        width: 86,
-                        height: 86,
-                        fit: BoxFit.cover,
+                    child: ValueListenableBuilder<int>(
+                      valueListenable:
+                          AppAvatarSettings.instance.selectedVariantNotifier,
+                      builder: (_, variant, _) => ClipOval(
+                        child: Image.asset(
+                          AppAvatarSettings.instance.assetPathFor(variant),
+                          width: 86,
+                          height: 86,
+                          fit: BoxFit.cover,
+                        ),
                       ),
                     ),
                   ),
@@ -210,105 +213,109 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                   constraints: BoxConstraints(minHeight: constraints.maxHeight),
                   child: IntrinsicHeight(
                     child: Column(
-              children: [
-                const Spacer(flex: 3),
-                _reveal(0.0, 0.5, _animatedLogo()),
-                const SizedBox(height: 26),
-                _reveal(
-                  0.12,
-                  0.55,
-                  ShaderMask(
-                    shaderCallback: (b) =>
-                        LinearGradient(colors: [Colors.white, GE.primary])
-                            .createShader(b),
-                    child: const Text(
-                      'GhostChat',
-                      style: TextStyle(
-                        fontSize: 34,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white,
-                        letterSpacing: -0.5,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _reveal(
-                  0.20,
-                  0.60,
-                  Text(
-                    'Приватный мессенджер',
-                    style: TextStyle(
-                      color: GE.primary,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                const Spacer(flex: 2),
-                GlassCard(
-                  padding:
-                      const EdgeInsets.symmetric(vertical: 18, horizontal: 18),
-                  child: Column(
-                    children: [
-                      _reveal(
-                        0.34,
-                        0.62,
-                        const _Feature(
-                          icon: Icons.lock_outline,
-                          title: 'Сквозное шифрование',
-                          body:
-                              'P-256 + AES-GCM. Сообщения видят только собеседники.',
+                      children: [
+                        const Spacer(flex: 3),
+                        _reveal(0.0, 0.5, _animatedLogo()),
+                        const SizedBox(height: 26),
+                        _reveal(
+                          0.12,
+                          0.55,
+                          ShaderMask(
+                            shaderCallback: (b) => LinearGradient(
+                              colors: [Colors.white, GE.primary],
+                            ).createShader(b),
+                            child: const Text(
+                              'GhostChat',
+                              style: TextStyle(
+                                fontSize: 34,
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white,
+                                letterSpacing: -0.5,
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 16),
-                      _reveal(
-                        0.42,
-                        0.70,
-                        const _Feature(
-                          icon: Icons.visibility_off_outlined,
-                          title: 'Sealed sender',
-                          body:
-                              'Сервер не знает, кто кому пишет — как в Signal.',
+                        const SizedBox(height: 8),
+                        _reveal(
+                          0.20,
+                          0.60,
+                          Text(
+                            'Приватное общение',
+                            style: TextStyle(
+                              color: GE.primary,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 16),
-                      _reveal(
-                        0.50,
-                        0.78,
-                        const _Feature(
-                          icon: Icons.block_outlined,
-                          title: 'Без слежки',
-                          body: 'Никаких логов, рекламы и сбора данных.',
+                        const Spacer(flex: 2),
+                        GlassCard(
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 18,
+                            horizontal: 18,
+                          ),
+                          child: Column(
+                            children: [
+                              _reveal(
+                                0.34,
+                                0.62,
+                                const _Feature(
+                                  icon: CupertinoIcons.lock,
+                                  title: 'Защищённые сообщения',
+                                  body:
+                                      'Содержимое диалогов защищено шифрованием.',
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              _reveal(
+                                0.42,
+                                0.70,
+                                const _Feature(
+                                  icon: CupertinoIcons.eye_slash,
+                                  title: 'Контроль приватности',
+                                  body:
+                                      'Вы сами решаете, чем делиться и какие настройки использовать.',
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              _reveal(
+                                0.50,
+                                0.78,
+                                const _Feature(
+                                  icon: CupertinoIcons.nosign,
+                                  title: 'Без лишнего шума',
+                                  body:
+                                      'Никакой рекламы и навязчивых рекомендаций в общении.',
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              _reveal(
+                                0.58,
+                                0.86,
+                                const _Feature(
+                                  icon: Icons.devices_outlined,
+                                  title: 'На удобных устройствах',
+                                  body:
+                                      'Используйте приложение там, где вам удобно.',
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 16),
-                      _reveal(
-                        0.58,
-                        0.86,
-                        const _Feature(
-                          icon: Icons.devices_outlined,
-                          title: 'Мультиустройство',
-                          body: 'Один аккаунт — телефон, планшет, десктоп.',
+                        const Spacer(flex: 3),
+                        _reveal(
+                          0.74,
+                          1.0,
+                          GlassButton(
+                            label: 'Далее',
+                            icon: CupertinoIcons.arrow_right,
+                            primary: true,
+                            fullWidth: true,
+                            onTap: _finish,
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                ),
-                const Spacer(flex: 3),
-                _reveal(
-                  0.74,
-                  1.0,
-                  GlassButton(
-                    label: 'Далее',
-                    icon: Icons.arrow_forward,
-                    primary: true,
-                    fullWidth: true,
-                    onTap: _finish,
-                  ),
-                ),
-                const SizedBox(height: 28),
-              ],
+                        const SizedBox(height: 28),
+                      ],
                     ),
                   ),
                 ),

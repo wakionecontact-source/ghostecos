@@ -1,6 +1,7 @@
 // MiniskaCreateScreen — записать/выбрать видео + caption + публикация.
 // Endpoints: POST /upload (file → {url, type}), POST /miniska/new {caption, video_url}
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import '../theme.dart';
@@ -107,7 +108,7 @@ class _MiniskaCreateScreenState extends State<MiniskaCreateScreen> {
               child: Column(
                 children: [
                   if (_videoUrl == null) ...[
-                    Icon(Icons.movie_outlined, color: GE.sub, size: 48),
+                    Icon(CupertinoIcons.film, color: GE.sub, size: 48),
                     const SizedBox(height: 8),
                     Text('Видео до 30 секунд',
                         style: TextStyle(
@@ -121,7 +122,7 @@ class _MiniskaCreateScreenState extends State<MiniskaCreateScreen> {
                       Expanded(
                         child: GlassButton(
                           label: 'Камера',
-                          icon: Icons.videocam,
+                          icon: CupertinoIcons.videocam,
                           primary: true,
                           loading: _uploading,
                           onTap: _uploading ? null : _pickFromCamera,
@@ -131,7 +132,7 @@ class _MiniskaCreateScreenState extends State<MiniskaCreateScreen> {
                       Expanded(
                         child: GlassButton(
                           label: 'Галерея',
-                          icon: Icons.photo_library,
+                          icon: CupertinoIcons.photo_on_rectangle,
                           loading: _uploading,
                           onTap: _uploading ? null : _pickFromGallery,
                         ),
@@ -147,7 +148,7 @@ class _MiniskaCreateScreenState extends State<MiniskaCreateScreen> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.play_circle_fill,
+                          Icon(CupertinoIcons.play_circle_fill,
                               color: Colors.white70, size: 56),
                           const SizedBox(height: 6),
                           Text(_videoName ?? 'video',
@@ -157,7 +158,7 @@ class _MiniskaCreateScreenState extends State<MiniskaCreateScreen> {
                     ),
                     const SizedBox(height: 8),
                     TextButton.icon(
-                      icon: Icon(Icons.refresh, color: GE.primary, size: 16),
+                      icon: Icon(CupertinoIcons.refresh, color: GE.primary, size: 16),
                       label: const Text('Выбрать другое'),
                       onPressed: _uploading
                           ? null
@@ -198,7 +199,7 @@ class _MiniskaCreateScreenState extends State<MiniskaCreateScreen> {
                   border: Border.all(color: GE.red.withValues(alpha: 0.4)),
                 ),
                 child: Row(children: [
-                  Icon(Icons.error_outline, color: GE.red, size: 16),
+                  Icon(CupertinoIcons.exclamationmark_circle, color: GE.red, size: 16),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(_error!,
@@ -210,7 +211,7 @@ class _MiniskaCreateScreenState extends State<MiniskaCreateScreen> {
             const SizedBox(height: 16),
             GlassButton(
               label: 'Опубликовать',
-              icon: Icons.send,
+              icon: CupertinoIcons.paperplane_fill,
               primary: true,
               fullWidth: true,
               loading: _publishing,

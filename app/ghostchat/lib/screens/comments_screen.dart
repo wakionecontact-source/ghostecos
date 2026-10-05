@@ -10,6 +10,7 @@
 //   POST /com/{cid}/react   body {emoji}                     → toggle реакция
 //   DELETE /com/{cid}                                        → удалить свой
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../theme.dart';
@@ -18,8 +19,10 @@ import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/theme_service.dart';
 import '../widgets/glass.dart';
+import '../widgets/send_fly_animation.dart';
 import '../widgets/skeleton.dart';
 import '../widgets/toast_overlay.dart';
+import '../widgets/emoji_text.dart';
 import 'profile_screen.dart';
 
 class CommentsScreen extends StatefulWidget {
@@ -34,6 +37,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
   final _api = ApiClient();
   final _ctrl = TextEditingController();
   final _scroll = ScrollController();
+  final _sendBtnKey = GlobalKey();
   List<_Comment> _items = [];
   final Map<int, List<_Comment>> _replies = {};
   final Set<int> _repliesLoading = {};
@@ -53,7 +57,8 @@ class _CommentsScreenState extends State<CommentsScreen> {
     super.initState();
     _init();
     _scroll.addListener(() {
-      if (!_loading && _hasMore &&
+      if (!_loading &&
+          _hasMore &&
           _scroll.position.pixels > _scroll.position.maxScrollExtent - 200) {
         _loadMore();
       }
@@ -81,12 +86,15 @@ class _CommentsScreenState extends State<CommentsScreen> {
   Future<void> _loadMore() async {
     try {
       final r = await _api.socGet('/com/get/${widget.postId}', {
-        'offset': _offset, 'limit': 15, 'sort': _sort,
+        'offset': _offset,
+        'limit': 15,
+        'sort': _sort,
       });
       if (!mounted) return;
       if (r is Map) {
         final list = (r['comments'] as List?) ?? const [];
-        final fresh = list.whereType<Map>()
+        final fresh = list
+            .whereType<Map>()
             .map((m) => _Comment.fromMap(Map<String, dynamic>.from(m)))
             .toList();
         setState(() {
@@ -105,19 +113,22 @@ class _CommentsScreenState extends State<CommentsScreen> {
     if (_repliesLoading.contains(parentCid)) return;
     setState(() => _repliesLoading.add(parentCid));
     try {
-      final r = await _api.socGet('/com/replies/$parentCid',
-          {'offset': 0, 'limit': 20});
+      final r = await _api.socGet('/com/replies/$parentCid', {
+        'offset': 0,
+        'limit': 20,
+      });
       if (!mounted) return;
       if (r is Map) {
         final list = (r['replies'] as List?) ?? const [];
         setState(() {
-          _replies[parentCid] = list.whereType<Map>()
+          _replies[parentCid] = list
+              .whereType<Map>()
               .map((m) => _Comment.fromMap(Map<String, dynamic>.from(m)))
               .toList();
         });
       }
-    } catch (_) {}
-    finally {
+    } catch (_) {
+    } finally {
       if (mounted) setState(() => _repliesLoading.remove(parentCid));
     }
   }
@@ -155,6 +166,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
   Future<void> _send() async {
     final t = _ctrl.text.trim();
     if (t.isEmpty || _sending) return;
+    flySendAnimation(context, _sendBtnKey);
     setState(() => _sending = true);
     final replyParent = _replyParentCid;
     final me = _myUsername ?? '';
@@ -184,7 +196,8 @@ class _CommentsScreenState extends State<CommentsScreen> {
     try {
       final body = <String, dynamic>{'text': t};
       if (replyParent != null) body['parent_comment_id'] = replyParent;
-      await _api.socPost('/com/${widget.postId}', body)
+      await _api
+          .socPost('/com/${widget.postId}', body)
           .timeout(const Duration(seconds: 5));
       if (!mounted) return;
       if (replyParent != null) {
@@ -201,8 +214,10 @@ class _CommentsScreenState extends State<CommentsScreen> {
           _replies[replyParent]?.removeWhere((c) => c.id == placeholderId);
           final idx = _items.indexWhere((x) => x.id == replyParent);
           if (idx >= 0) {
-            _items[idx].repliesCount =
-                (_items[idx].repliesCount - 1).clamp(0, 999999);
+            _items[idx].repliesCount = (_items[idx].repliesCount - 1).clamp(
+              0,
+              999999,
+            );
           }
         }
       });
@@ -246,10 +261,11 @@ class _CommentsScreenState extends State<CommentsScreen> {
         });
       }
     } catch (_) {
-      if (mounted) setState(() {
-        c.yourEmoji = prev;
-        c.counts = prevCounts;
-      });
+      if (mounted)
+        setState(() {
+          c.yourEmoji = prev;
+          c.counts = prevCounts;
+        });
     }
   }
 
@@ -286,75 +302,90 @@ class _CommentsScreenState extends State<CommentsScreen> {
               child: GlassCard(
                 lite: true,
                 padding: const EdgeInsets.all(10),
-                child: Text(widget.postPreview!,
-                    maxLines: 3, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: GE.sub, fontSize: 12, height: 1.35)),
+                child: Text(
+                  widget.postPreview!,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: GE.sub, fontSize: 12, height: 1.35),
+                ),
               ),
             ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-            child: Row(children: [
-              _SortChip(
-                icon: Icons.local_fire_department_outlined,
-                label: 'Топ',
-                active: _sort == 'top',
-                onTap: () => _setSort('top'),
-              ),
-              const SizedBox(width: 6),
-              _SortChip(
-                icon: Icons.schedule,
-                label: 'Новые',
-                active: _sort == 'new',
-                onTap: () => _setSort('new'),
-              ),
-            ]),
+            child: Row(
+              children: [
+                _SortChip(
+                  icon: CupertinoIcons.flame,
+                  label: 'Топ',
+                  active: _sort == 'top',
+                  onTap: () => _setSort('top'),
+                ),
+                const SizedBox(width: 6),
+                _SortChip(
+                  icon: CupertinoIcons.clock,
+                  label: 'Новые',
+                  active: _sort == 'new',
+                  onTap: () => _setSort('new'),
+                ),
+              ],
+            ),
           ),
           Expanded(
             child: _loading
                 ? const SkeletonRowList(count: 6, avatarSize: 32)
                 : _items.isEmpty
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(20),
-                          child: Column(mainAxisSize: MainAxisSize.min, children: [
-                            Icon(Icons.mode_comment_outlined,
-                                color: GE.sub, size: 32),
-                            const SizedBox(height: 8),
-                            Text('Пусто. Будь первым.',
-                                style: TextStyle(color: GE.sub, fontSize: 13)),
-                          ]),
-                        ),
-                      )
-                    : ListView.builder(
-                        controller: _scroll,
-                        padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-                        itemCount: _items.length + 1,
-                        itemBuilder: (_, i) {
-                          if (i == _items.length) {
-                            return _hasMore
-                                ? Padding(
-                                    padding: const EdgeInsets.all(16),
-                                    child: Center(
-                                      child: CircularProgressIndicator(
-                                          color: GE.primary, strokeWidth: 2),
-                                    ),
-                                  )
-                                : const _NoMore();
-                          }
-                          final c = _items[i];
-                          return _CommentTile(
-                            c: c,
-                            myUsername: _myUsername,
-                            onReply: () => _enterReplyMode(c),
-                            onReact: (em) => _toggleReaction(c, em),
-                            onToggleReplies: () => _toggleReplies(c.id),
-                            replies: _replies[c.id],
-                            repliesLoading: _repliesLoading.contains(c.id),
-                            onReactReply: (r, em) => _toggleReaction(r, em),
-                            onReplyToReply: (r) => _enterReplyMode(r),
-                          );
-                        },
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            CupertinoIcons.chat_bubble,
+                            color: GE.sub,
+                            size: 32,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Пусто. Будь первым.',
+                            style: TextStyle(color: GE.sub, fontSize: 13),
+                          ),
+                        ],
                       ),
+                    ),
+                  )
+                : ListView.builder(
+                    controller: _scroll,
+                    padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                    itemCount: _items.length + 1,
+                    itemBuilder: (_, i) {
+                      if (i == _items.length) {
+                        return _hasMore
+                            ? Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Center(
+                                  child: CircularProgressIndicator(
+                                    color: GE.primary,
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                              )
+                            : const _NoMore();
+                      }
+                      final c = _items[i];
+                      return _CommentTile(
+                        c: c,
+                        myUsername: _myUsername,
+                        onReply: () => _enterReplyMode(c),
+                        onReact: (em) => _toggleReaction(c, em),
+                        onToggleReplies: () => _toggleReplies(c.id),
+                        replies: _replies[c.id],
+                        repliesLoading: _repliesLoading.contains(c.id),
+                        onReactReply: (r, em) => _toggleReaction(r, em),
+                        onReplyToReply: (r) => _enterReplyMode(r),
+                      );
+                    },
+                  ),
           ),
           if (_replyParentCid != null) _replyBanner(),
           SafeArea(
@@ -370,7 +401,9 @@ class _CommentsScreenState extends State<CommentsScreen> {
                     Expanded(
                       child: TextField(
                         controller: _ctrl,
-                        minLines: 1, maxLines: 4, maxLength: 500,
+                        minLines: 1,
+                        maxLines: 4,
+                        maxLength: 500,
                         style: TextStyle(color: GE.text, fontSize: 14),
                         cursorColor: GE.primary,
                         decoration: InputDecoration(
@@ -381,26 +414,39 @@ class _CommentsScreenState extends State<CommentsScreen> {
                           border: InputBorder.none,
                           counterText: '',
                           contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 10),
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
                         ),
                       ),
                     ),
-                    InkWell(
-                      customBorder: const CircleBorder(),
+                    PressScale(
+                      key: _sendBtnKey,
                       onTap: _sending ? null : _send,
                       child: Container(
-                        width: 38, height: 38,
+                        width: 38,
+                        height: 38,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          gradient: LinearGradient(colors: [GE.primary2, GE.primary]),
+                          gradient: LinearGradient(
+                            colors: [GE.primary2, GE.primary],
+                          ),
                         ),
                         alignment: Alignment.center,
                         child: _sending
                             ? const SizedBox(
-                                width: 14, height: 14,
+                                width: 14,
+                                height: 14,
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Colors.white))
-                            : const Icon(Icons.send, color: Colors.white, size: 16),
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(
+                                CupertinoIcons.paperplane_fill,
+                                color: Colors.white,
+                                size: 16,
+                              ),
                       ),
                     ),
                   ],
@@ -428,29 +474,39 @@ class _CommentsScreenState extends State<CommentsScreen> {
           ),
         ),
         padding: const EdgeInsets.fromLTRB(8, 6, 6, 6),
-        child: Row(children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('Ответ @${_replyToUsername ?? ''}',
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Ответ @${_replyToUsername ?? ''}',
                     style: TextStyle(
-                        color: GE.primary, fontSize: 11, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 2),
-                Text(_replyToText ?? '',
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: GE.sub, fontSize: 12)),
-              ],
+                      color: GE.primary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _replyToText ?? '',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: GE.sub, fontSize: 12),
+                  ),
+                ],
+              ),
             ),
-          ),
-          IconButton(
-            icon: Icon(Icons.close, color: GE.sub, size: 18),
-            onPressed: _exitReplyMode,
-            tooltip: 'Отменить',
-            visualDensity: VisualDensity.compact,
-          ),
-        ]),
+            IconButton(
+              icon: Icon(CupertinoIcons.xmark, color: GE.sub, size: 18),
+              onPressed: _exitReplyMode,
+              tooltip: 'Отменить',
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -469,9 +525,8 @@ class _SortChip extends StatelessWidget {
   });
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return PressScale(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -485,15 +540,21 @@ class _SortChip extends StatelessWidget {
                   width: active ? 1.2 : 0.6,
                 ),
         ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 12, color: active ? GE.primary : GE.sub),
-          const SizedBox(width: 4),
-          Text(label,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 12, color: active ? GE.primary : GE.sub),
+            const SizedBox(width: 4),
+            Text(
+              label,
               style: TextStyle(
                 color: active ? GE.primary : GE.sub,
-                fontSize: 11, fontWeight: FontWeight.w700,
-              )),
-        ]),
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -506,9 +567,14 @@ class _NoMore extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 18, 12, 8),
       child: Center(
-        child: Text('Комментариев больше нет',
-            style: TextStyle(
-                color: GE.muted, fontSize: 11, fontStyle: FontStyle.italic)),
+        child: Text(
+          'Комментариев больше нет',
+          style: TextStyle(
+            color: GE.muted,
+            fontSize: 11,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
       ),
     );
   }
@@ -545,8 +611,10 @@ class _CommentTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _CommentRow(
-            c: c, myUsername: myUsername,
-            onReply: onReply, onReact: onReact,
+            c: c,
+            myUsername: myUsername,
+            onReply: onReply,
+            onReact: onReact,
           ),
           if (c.repliesCount > 0)
             Padding(
@@ -556,20 +624,29 @@ class _CommentTile extends StatelessWidget {
                 borderRadius: BorderRadius.circular(6),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(expanded ? Icons.expand_less : Icons.expand_more,
-                        size: 14, color: GE.primary),
-                    const SizedBox(width: 4),
-                    Text(
-                      expanded
-                          ? 'Скрыть ответы (${c.repliesCount})'
-                          : 'Показать ответы (${c.repliesCount})',
-                      style: TextStyle(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        expanded
+                            ? CupertinoIcons.chevron_up
+                            : CupertinoIcons.chevron_down,
+                        size: 14,
+                        color: GE.primary,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        expanded
+                            ? 'Скрыть ответы (${c.repliesCount})'
+                            : 'Показать ответы (${c.repliesCount})',
+                        style: TextStyle(
                           color: GE.primary,
                           fontSize: 11,
-                          fontWeight: FontWeight.w600),
-                    ),
-                  ]),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -583,26 +660,33 @@ class _CommentTile extends StatelessWidget {
                     Padding(
                       padding: const EdgeInsets.all(8),
                       child: SizedBox(
-                        width: 14, height: 14,
+                        width: 14,
+                        height: 14,
                         child: CircularProgressIndicator(
-                            color: GE.primary, strokeWidth: 2),
+                          color: GE.primary,
+                          strokeWidth: 2,
+                        ),
                       ),
                     )
                   else if (replies!.isEmpty)
-                    Text('Пусто',
-                        style: TextStyle(color: GE.muted, fontSize: 11))
+                    Text(
+                      'Пусто',
+                      style: TextStyle(color: GE.muted, fontSize: 11),
+                    )
                   else
-                    ...replies!.map((r) => Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: _CommentRow(
-                            c: r,
-                            myUsername: myUsername,
-                            onReply: () => onReplyToReply(r),
-                            onReact: (em) => onReactReply(r, em),
-                            quoteTo: r.replyToUsername,
-                            quoteText: r.replyToText,
-                          ),
-                        )),
+                    ...replies!.map(
+                      (r) => Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: _CommentRow(
+                          c: r,
+                          myUsername: myUsername,
+                          onReply: () => onReplyToReply(r),
+                          onReact: (em) => onReactReply(r, em),
+                          quoteTo: r.replyToUsername,
+                          quoteText: r.replyToText,
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -631,24 +715,24 @@ class _CommentRow extends StatelessWidget {
   // Кастомные иконки реакций — Material с фирменным цветом каждой.
   // Берём заменяемо: на любой платформе одинаково (системные эмодзи на MIUI/iOS отличаются).
   static const _icon = {
-    'heart': Icons.favorite,
-    'fire': Icons.local_fire_department,
-    'laugh': Icons.sentiment_very_satisfied,
+    'heart': CupertinoIcons.heart_fill,
+    'fire': CupertinoIcons.flame_fill,
+    'laugh': CupertinoIcons.smiley_fill,
     'sad': Icons.sentiment_dissatisfied,
-    'clap': Icons.front_hand,
-    'eyes': Icons.visibility,
+    'clap': CupertinoIcons.hand_raised_fill,
+    'eyes': CupertinoIcons.eye_fill,
   };
   static const _iconColor = {
-    'heart': Color(0xFFef4444),   // red
-    'fire': Color(0xFFf97316),    // orange
-    'laugh': Color(0xFFfacc15),   // yellow
-    'sad': Color(0xFF60a5fa),     // blue
-    'clap': Color(0xFFfb923c),    // amber
-    'eyes': Color(0xFFa855f7),    // purple
+    'heart': Color(0xFFef4444), // red
+    'fire': Color(0xFFf97316), // orange
+    'laugh': Color(0xFFfacc15), // yellow
+    'sad': Color(0xFF60a5fa), // blue
+    'clap': Color(0xFFfb923c), // amber
+    'eyes': Color(0xFFa855f7), // purple
   };
   Widget _emojiIcon(String key, {double size = 16, Color? overrideColor}) {
     return Icon(
-      _icon[key] ?? Icons.favorite,
+      _icon[key] ?? CupertinoIcons.heart_fill,
       size: size,
       color: overrideColor ?? _iconColor[key] ?? GE.primary,
     );
@@ -670,7 +754,9 @@ class _CommentRow extends StatelessWidget {
       if (s < 86400) return '${s ~/ 3600} ч';
       if (s < 7 * 86400) return '${s ~/ 86400} д';
       return DateFormat('dd.MM').format(dt.toLocal());
-    } catch (_) { return ''; }
+    } catch (_) {
+      return '';
+    }
   }
 
   Future<void> _openPalette(BuildContext context) async {
@@ -686,21 +772,26 @@ class _CommentRow extends StatelessWidget {
             radius: 999,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: _icon.keys.map((k) => InkWell(
-                customBorder: const CircleBorder(),
-                onTap: () => Navigator.pop(ctx, k),
-                child: Container(
-                  width: 44, height: 44,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: c.yourEmoji == k
-                        ? GE.primary.withValues(alpha: 0.30)
-                        : Colors.transparent,
-                  ),
-                  alignment: Alignment.center,
-                  child: _emojiIcon(k, size: 24),
-                ),
-              )).toList(),
+              children: _icon.keys
+                  .map(
+                    (k) => InkWell(
+                      customBorder: const CircleBorder(),
+                      onTap: () => Navigator.pop(ctx, k),
+                      child: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: c.yourEmoji == k
+                              ? GE.primary.withValues(alpha: 0.30)
+                              : Colors.transparent,
+                        ),
+                        alignment: Alignment.center,
+                        child: _emojiIcon(k, size: 24),
+                      ),
+                    ),
+                  )
+                  .toList(),
             ),
           ),
         ),
@@ -716,11 +807,10 @@ class _CommentRow extends StatelessWidget {
     final hasYour = c.yourEmoji != null;
     final emo = c.yourEmoji ?? 'heart';
     final total = c.counts.values.fold<int>(0, (a, b) => a + b);
-    return InkWell(
-      borderRadius: BorderRadius.circular(GE.radiusMd),
-      onTap: () => Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => ProfileScreen(username: c.username),
-      )),
+    return PressScale(
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => ProfileScreen(username: c.username)),
+      ),
       child: GlassCard(
         lite: true,
         padding: const EdgeInsets.all(10),
@@ -728,7 +818,8 @@ class _CommentRow extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
-              width: 32, height: 32,
+              width: 32,
+              height: 32,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: LinearGradient(colors: [GE.primary2, GE.primary]),
@@ -737,9 +828,10 @@ class _CommentRow extends StatelessWidget {
               child: Text(
                 display.isNotEmpty ? display[0].toUpperCase() : '?',
                 style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 12),
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
               ),
             ),
             const SizedBox(width: 10),
@@ -747,106 +839,155 @@ class _CommentRow extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(children: [
-                    Flexible(
-                      child: Text(display,
-                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          display,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                              color: GE.text,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 13)),
-                    ),
-                    const SizedBox(width: 6),
-                    Text('@${c.username}',
-                        style: TextStyle(color: GE.sub, fontSize: 10)),
-                    const Spacer(),
-                    Text(_ago(c.createdAt),
-                        style: TextStyle(color: GE.muted, fontSize: 10)),
-                  ]),
-                  if (quoteTo != null) Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Container(
-                      padding: const EdgeInsets.fromLTRB(6, 4, 8, 4),
-                      decoration: BoxDecoration(
-                        color: GE.primary.withValues(alpha: 0.10),
-                        borderRadius: const BorderRadius.only(
-                          topRight: Radius.circular(6),
-                          bottomRight: Radius.circular(6),
-                        ),
-                        border: Border(
-                          left: BorderSide(color: GE.primary, width: 2),
-                        ),
-                      ),
-                      child: Row(children: [
-                        Icon(Icons.reply, size: 11, color: GE.primary),
-                        const SizedBox(width: 4),
-                        Text('@$quoteTo',
-                            style: TextStyle(
-                                color: GE.primary,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700)),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            quoteText ?? '',
-                            maxLines: 1, overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: GE.sub, fontSize: 10),
+                            color: GE.text,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
                           ),
                         ),
-                      ]),
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(c.text,
-                      style: TextStyle(
-                          color: GE.text, fontSize: 13, height: 1.35)),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Row(children: [
-                      InkWell(
-                        onTap: onReply,
-                        borderRadius: BorderRadius.circular(4),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 4, vertical: 2),
-                          child: Text('Ответить',
-                              style: TextStyle(color: GE.sub, fontSize: 11)),
-                        ),
                       ),
-                      if (isMine) Padding(
-                        padding: const EdgeInsets.only(left: 6),
-                        child: Text('это вы',
-                            style: TextStyle(
-                                color: GE.muted,
-                                fontSize: 9,
-                                fontStyle: FontStyle.italic)),
+                      const SizedBox(width: 6),
+                      Text(
+                        '@${c.username}',
+                        style: TextStyle(color: GE.sub, fontSize: 10),
                       ),
                       const Spacer(),
-                      GestureDetector(
-                        onLongPress: () => _openPalette(context),
-                        child: InkWell(
-                          onTap: () => onReact('heart'),
-                          borderRadius: BorderRadius.circular(999),
-                          child: Padding(
-                            padding: const EdgeInsets.all(4),
-                            child: Row(mainAxisSize: MainAxisSize.min, children: [
-                              if (hasYour)
-                                _emojiIcon(emo, size: 16)
-                              else
-                                Icon(Icons.favorite_border, color: GE.sub, size: 14),
-                              if (total > 0) Padding(
-                                padding: const EdgeInsets.only(left: 4),
-                                child: Text('$total',
-                                    style: TextStyle(
-                                        color: hasYour ? GE.primary : GE.sub,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w700)),
-                              ),
-                            ]),
+                      Text(
+                        _ago(c.createdAt),
+                        style: TextStyle(color: GE.muted, fontSize: 10),
+                      ),
+                    ],
+                  ),
+                  if (quoteTo != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Container(
+                        padding: const EdgeInsets.fromLTRB(6, 4, 8, 4),
+                        decoration: BoxDecoration(
+                          color: GE.primary.withValues(alpha: 0.10),
+                          borderRadius: const BorderRadius.only(
+                            topRight: Radius.circular(6),
+                            bottomRight: Radius.circular(6),
+                          ),
+                          border: Border(
+                            left: BorderSide(color: GE.primary, width: 2),
                           ),
                         ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              CupertinoIcons.reply,
+                              size: 11,
+                              color: GE.primary,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '@$quoteTo',
+                              style: TextStyle(
+                                color: GE.primary,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: EmojiText(
+                                quoteText ?? '',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(color: GE.sub, fontSize: 10),
+                                allowFormatting: false,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ]),
+                    ),
+                  const SizedBox(height: 3),
+                  EmojiText(
+                    c.text,
+                    style: TextStyle(
+                      color: GE.text,
+                      fontSize: 13,
+                      height: 1.35,
+                    ),
+                    allowFormatting: false,
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Row(
+                      children: [
+                        InkWell(
+                          onTap: onReply,
+                          borderRadius: BorderRadius.circular(4),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 2,
+                            ),
+                            child: Text(
+                              'Ответить',
+                              style: TextStyle(color: GE.sub, fontSize: 11),
+                            ),
+                          ),
+                        ),
+                        if (isMine)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: Text(
+                              'это вы',
+                              style: TextStyle(
+                                color: GE.muted,
+                                fontSize: 9,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ),
+                        const Spacer(),
+                        GestureDetector(
+                          onLongPress: () => _openPalette(context),
+                          child: InkWell(
+                            onTap: () => onReact('heart'),
+                            borderRadius: BorderRadius.circular(999),
+                            child: Padding(
+                              padding: const EdgeInsets.all(4),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (hasYour)
+                                    _emojiIcon(emo, size: 16)
+                                  else
+                                    Icon(
+                                      CupertinoIcons.heart,
+                                      color: GE.sub,
+                                      size: 14,
+                                    ),
+                                  if (total > 0)
+                                    Padding(
+                                      padding: const EdgeInsets.only(left: 4),
+                                      child: Text(
+                                        '$total',
+                                        style: TextStyle(
+                                          color: hasYour ? GE.primary : GE.sub,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -888,7 +1029,8 @@ class _Comment {
 
   static _Comment fromMap(Map<String, dynamic> m) {
     final rx = (m['reactions'] is Map)
-        ? Map<String, dynamic>.from(m['reactions']) : const <String, dynamic>{};
+        ? Map<String, dynamic>.from(m['reactions'])
+        : const <String, dynamic>{};
     final counts = <String, int>{};
     final rc = rx['counts'];
     if (rc is Map) {
@@ -899,7 +1041,9 @@ class _Comment {
     return _Comment(
       id: (m['id'] as num).toInt(),
       parentId: m['parent_id'] is num ? (m['parent_id'] as num).toInt() : null,
-      replyToId: m['reply_to_id'] is num ? (m['reply_to_id'] as num).toInt() : null,
+      replyToId: m['reply_to_id'] is num
+          ? (m['reply_to_id'] as num).toInt()
+          : null,
       username: (m['username'] as String?) ?? 'anon',
       displayName: (m['display_name'] as String?) ?? '',
       text: (m['text'] as String?) ?? '',
@@ -907,7 +1051,8 @@ class _Comment {
       counts: counts,
       yourEmoji: rx['your_emoji'] as String?,
       repliesCount: m['replies_count'] is num
-          ? (m['replies_count'] as num).toInt() : 0,
+          ? (m['replies_count'] as num).toInt()
+          : 0,
       replyToUsername: m['reply_to_username'] as String?,
       replyToText: m['reply_to_text'] as String?,
     );

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/api/auth_api.dart';
 import '../../core/api/http_client.dart';
 import '../../core/constants.dart';
+import '../../services/bot_check_service.dart';
 import '../../shared/theme/app_theme.dart';
 import '../../shared/utils/validators.dart';
 import '../home/home_shell.dart';
@@ -37,10 +39,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _submit() async {
     FocusScope.of(context).unfocus();
     if (!_form.currentState!.validate()) return;
+    final normalizedUsername = Validators.normalizeUsername(_username.text);
+    if (normalizedUsername != _username.text) {
+      _username.value = TextEditingValue(
+        text: normalizedUsername,
+        selection: TextSelection.collapsed(offset: normalizedUsername.length),
+      );
+    }
     setState(() => _loading = true);
     try {
+      await BotCheckService.instance.ensureToken(context);
       await AuthApi.I.register(
-        username: Validators.normalizeUsername(_username.text),
+        username: normalizedUsername,
         password: _password.text,
         displayName: _name.text.trim(),
       );
@@ -95,7 +105,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 const SizedBox(height: 6),
                 const Text(
                   'Ключи шифрования создаются на устройстве и не покидают его.',
-                  style: TextStyle(fontSize: 13, color: AppColors.sub, height: 1.4),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: AppColors.sub,
+                    height: 1.4,
+                  ),
                 ),
                 const SizedBox(height: 28),
                 _label('Имя'),
@@ -114,8 +128,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   textInputAction: TextInputAction.next,
                   autocorrect: false,
                   inputFormatters: [
-                    // Только разрешённые символы — латиница/цифры/_/.
-                    FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9_.]')),
+                    // Пробел разрешён только временно: по краям он будет
+                    // убран при отправке, внутри валидатор покажет ошибку.
+                    FilteringTextInputFormatter.allow(
+                      RegExp(r'[a-zA-Z0-9_. ]'),
+                    ),
                     LengthLimitingTextInputFormatter(K.usernameMaxTotal),
                   ],
                   decoration: _dec('username', prefix: '@'),
@@ -128,7 +145,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   controller: _password,
                   obscureText: _obscure,
                   textInputAction: TextInputAction.next,
-                  decoration: _dec('Минимум ${K.passwordMin} символов', toggle: true),
+                  decoration: _dec(
+                    'Минимум ${K.passwordMin} символов',
+                    toggle: true,
+                  ),
                   style: const TextStyle(color: AppColors.text),
                   validator: (v) => Validators.password(v ?? ''),
                 ),
@@ -164,10 +184,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     onPressed: _loading
                         ? null
                         : () => Navigator.of(context).pushReplacement(
-                              MaterialPageRoute<void>(
-                                builder: (_) => const LoginScreen(),
-                              ),
+                            MaterialPageRoute<void>(
+                              builder: (_) => const LoginScreen(),
                             ),
+                          ),
                     child: const Text(
                       'Уже есть аккаунт? Войти',
                       style: TextStyle(color: AppColors.primary),
@@ -183,9 +203,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Widget _label(String t) => Padding(
-        padding: const EdgeInsets.only(bottom: 6, left: 2),
-        child: Text(t, style: const TextStyle(color: AppColors.sub, fontSize: 13)),
-      );
+    padding: const EdgeInsets.only(bottom: 6, left: 2),
+    child: Text(t, style: const TextStyle(color: AppColors.sub, fontSize: 13)),
+  );
 
   InputDecoration _dec(
     String hint, {
@@ -201,7 +221,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       suffixIcon: toggle
           ? IconButton(
               icon: Icon(
-                _obscure ? Icons.visibility_off : Icons.visibility,
+                _obscure ? CupertinoIcons.eye_slash : CupertinoIcons.eye_fill,
                 color: AppColors.faint,
                 size: 20,
               ),

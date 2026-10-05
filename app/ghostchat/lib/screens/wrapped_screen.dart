@@ -4,9 +4,10 @@
 // top_post:{id,preview,reactions}, gost_earned, bal:{gost,soul,prem}, nft_count,
 // rank, rank_total, days_in, reputation, display_name, username}.
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
+import '../services/public_page_link.dart';
 import '../mesh_background.dart';
 import '../services/api_client.dart';
 import '../services/theme_service.dart';
@@ -69,10 +70,7 @@ class _WrappedScreenState extends State<WrappedScreen> {
   }
 
   Future<void> _openInBrowser() async {
-    await launchUrl(
-      Uri.parse('${GE.baseUrl}/wrapped/${widget.username}'),
-      mode: LaunchMode.externalApplication,
-    );
+    await PublicPageLink.open('${GE.baseUrl}/wrapped/${widget.username}');
   }
 
   @override
@@ -88,7 +86,7 @@ class _WrappedScreenState extends State<WrappedScreen> {
         titleText: 'Wrapped',
         actions: [
           IconButton(
-            icon: Icon(Icons.ios_share, color: GE.primary),
+            icon: Icon(CupertinoIcons.share, color: GE.primary),
             onPressed: _share,
             tooltip: 'Скопировать ссылку',
           ),
@@ -132,7 +130,7 @@ class _WrappedScreenState extends State<WrappedScreen> {
         child: Padding(
           padding: const EdgeInsets.all(32),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.error_outline, color: GE.red, size: 32),
+            Icon(CupertinoIcons.exclamationmark_circle, color: GE.red, size: 32),
             const SizedBox(height: 8),
             Text('Не загрузилось',
                 style: TextStyle(color: GE.text, fontWeight: FontWeight.w700)),
@@ -142,7 +140,7 @@ class _WrappedScreenState extends State<WrappedScreen> {
                 style: TextStyle(color: GE.sub, fontSize: 12)),
             const SizedBox(height: 12),
             GlassButton(
-              label: 'Повторить', icon: Icons.refresh, primary: true,
+              label: 'Повторить', icon: CupertinoIcons.refresh, primary: true,
               onTap: _load,
             ),
           ]),
@@ -175,21 +173,21 @@ class _WrappedScreenState extends State<WrappedScreen> {
       const SizedBox(height: 14),
 
       // 1. Творчество
-      _sectionTitle('Что создал', Icons.brush),
+      _sectionTitle('Что создал', CupertinoIcons.paintbrush),
       const SizedBox(height: 8),
       _statsGrid([
-        ('Постов', posts, Icons.article, GE.primary),
-        ('Минисок', miniska, Icons.movie_outlined, GE.primary2),
-        ('Комментов', comments, Icons.mode_comment, GE.blue),
+        ('Постов', posts, CupertinoIcons.doc_text, GE.primary),
+        ('Минисок', miniska, CupertinoIcons.film, GE.primary2),
+        ('Комментов', comments, CupertinoIcons.chat_bubble_fill, GE.blue),
       ]),
       const SizedBox(height: 14),
 
       // 2. Реакции
-      _sectionTitle('Реакции', Icons.favorite),
+      _sectionTitle('Реакции', CupertinoIcons.heart_fill),
       const SizedBox(height: 8),
       _statsGrid([
-        ('Получил', reactionsReceived, Icons.thumb_up, GE.red),
-        ('Поставил', reactionsGiven, Icons.thumb_up_outlined, GE.sub),
+        ('Получил', reactionsReceived, CupertinoIcons.hand_thumbsup_fill, GE.red),
+        ('Поставил', reactionsGiven, CupertinoIcons.hand_thumbsup, GE.sub),
       ]),
       if (topReactions.isNotEmpty) ...[
         const SizedBox(height: 8),
@@ -198,17 +196,17 @@ class _WrappedScreenState extends State<WrappedScreen> {
       const SizedBox(height: 14),
 
       // 3. Аудитория
-      _sectionTitle('Аудитория', Icons.people_outline),
+      _sectionTitle('Аудитория', CupertinoIcons.person_2),
       const SizedBox(height: 8),
       _statsGrid([
-        ('Подписчиков', followers, Icons.group, GE.primary),
-        ('Подписок', following, Icons.person_add_alt_1, GE.primary2),
+        ('Подписчиков', followers, CupertinoIcons.person_3_fill, GE.primary),
+        ('Подписок', following, CupertinoIcons.person_add, GE.primary2),
       ]),
       const SizedBox(height: 14),
 
       // 4. Топ пост
       if (topPost != null) ...[
-        _sectionTitle('Звёздный пост', Icons.star),
+        _sectionTitle('Звёздный пост', CupertinoIcons.star_fill),
         const SizedBox(height: 8),
         _topPostCard(topPost),
         const SizedBox(height: 14),
@@ -223,7 +221,7 @@ class _WrappedScreenState extends State<WrappedScreen> {
       // 6. CTA — открыть в браузере (там PNG-картинка для шеринга)
       GlassButton(
         label: 'Открыть в браузере',
-        icon: Icons.open_in_browser,
+        icon: CupertinoIcons.globe,
         primary: true,
         fullWidth: true,
         onTap: _openInBrowser,
@@ -231,7 +229,7 @@ class _WrappedScreenState extends State<WrappedScreen> {
       const SizedBox(height: 8),
       GlassButton(
         label: 'Скопировать ссылку',
-        icon: Icons.link,
+        icon: CupertinoIcons.link,
         fullWidth: true,
         onTap: _share,
       ),
@@ -290,8 +288,8 @@ class _WrappedScreenState extends State<WrappedScreen> {
         Wrap(spacing: 8, runSpacing: 8, children: [
           _heroChip('${_daysWord(daysIn)} с нами', Icons.cake),
           if (rankTotal > 0)
-            _heroChip('Ранг $rank из $rankTotal', Icons.leaderboard),
-          _heroChip('Репутация $rep', Icons.verified),
+            _heroChip('Ранг $rank из $rankTotal', CupertinoIcons.chart_bar_fill),
+          _heroChip('Репутация $rep', CupertinoIcons.checkmark_seal_fill),
         ]),
       ]),
     );
@@ -394,7 +392,7 @@ class _WrappedScreenState extends State<WrappedScreen> {
             final cnt = _intOf(r['count']);
             return Column(children: [
               Icon(
-                _glyphIcon[em] ?? Icons.favorite,
+                _glyphIcon[em] ?? CupertinoIcons.heart_fill,
                 size: 28,
                 color: _glyphColor[em] ?? GE.primary,
               ),
@@ -420,7 +418,7 @@ class _WrappedScreenState extends State<WrappedScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(children: [
-            Icon(Icons.local_fire_department, color: GE.red, size: 18),
+            Icon(CupertinoIcons.flame_fill, color: GE.red, size: 18),
             const SizedBox(width: 6),
             Text('$reactions реакций',
                 style: TextStyle(
@@ -503,12 +501,12 @@ class _WrappedScreenState extends State<WrappedScreen> {
 
   // Кастомные иконки для эмодзи реакций.
   static const _glyphIcon = {
-    'heart': Icons.favorite,
-    'fire': Icons.local_fire_department,
-    'laugh': Icons.sentiment_very_satisfied,
+    'heart': CupertinoIcons.heart_fill,
+    'fire': CupertinoIcons.flame_fill,
+    'laugh': CupertinoIcons.smiley_fill,
     'sad': Icons.sentiment_dissatisfied,
-    'clap': Icons.front_hand,
-    'eyes': Icons.visibility,
+    'clap': CupertinoIcons.hand_raised_fill,
+    'eyes': CupertinoIcons.eye_fill,
   };
   static const _glyphColor = {
     'heart': Color(0xFFef4444),

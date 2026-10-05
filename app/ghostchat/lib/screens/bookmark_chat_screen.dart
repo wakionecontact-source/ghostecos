@@ -3,14 +3,20 @@
 // нельзя переименовать/удалить — остальные закладки можно.
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
+import 'package:image_picker/image_picker.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../widgets/glass.dart';
+import '../widgets/attach_sheet.dart';
+import '../widgets/chat_composer.dart';
 import '../widgets/emoji_picker.dart';
 import '../widgets/emoji_text.dart';
 import '../widgets/empty_chat_state.dart';
@@ -42,7 +48,11 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
   bool _sending = false;
   bool _emojiOpen = false;
   final _sendBtnKey = GlobalKey();
+  final _imagePicker = ImagePicker();
   static const double _emojiPanelH = 300;
+  // Мало сообщений — держим ленту у низа, рядом с полем ввода (как в
+  // chat_screen.dart), а не приклеенной к шапке с пустотой снизу.
+  static const int _bottomAnchorMaxMsgs = 40;
 
   @override
   void initState() {
@@ -75,7 +85,10 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
     flySendAnimation(context, _sendBtnKey);
     setState(() => _sending = true);
     try {
-      await BookmarkStore.instance.addMessage(bookmarkId: widget.bookmarkId, text: text);
+      await BookmarkStore.instance.addMessage(
+        bookmarkId: widget.bookmarkId,
+        text: text,
+      );
       final msgs = await BookmarkStore.instance.getMessages(widget.bookmarkId);
       if (!mounted) return;
       setState(() {
@@ -90,28 +103,91 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
     }
   }
 
-  Future<void> _attachFile() async {
+  // Единый лист вложений (та же «скрепка», что в основном чате). Заметки
+  // локальные — гео/кошелёк не имеют смысла здесь, поэтому это заглушки «скоро»
+  // (единый вид листа важнее, чем прятать пункты).
+  Future<void> _openAttachSheet() async {
+    HapticFeedback.selectionClick();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => AttachSheet(
+        onPickedSend: _sendPickedItems,
+        onGallery: () => _pickImageAndSave(ImageSource.gallery),
+        onFile: _pickFileAndSave,
+        onCamera: () => _pickImageAndSave(ImageSource.camera),
+        onGeo: () => toast.show('Геопозиция — скоро'),
+        onWallet: () => toast.show('Кошелёк — после интеграции GhostBank'),
+      ),
+    );
+  }
+
+  Future<void> _sendPickedItems(List<AttachItem> items) async {
+    for (final it in items) {
+      try {
+        final bytes = await it.file.readAsBytes();
+        await _saveBookmarkBytes(
+          bytes,
+          p.basename(it.file.path),
+          it.isVideo ? 'video/mp4' : 'image/jpeg',
+        );
+      } catch (e) {
+        toast.show('Не удалось прикрепить: $e');
+      }
+    }
+  }
+
+  Future<void> _pickImageAndSave(ImageSource src) async {
+    try {
+      final x = await _imagePicker.pickImage(
+        source: src,
+        imageQuality: 85,
+        maxWidth: 1920,
+        maxHeight: 1920,
+      );
+      if (x == null) return;
+      await _saveBookmarkBytes(await x.readAsBytes(), x.name, 'image/jpeg');
+    } catch (e) {
+      toast.show('Не удалось прикрепить фото: $e');
+    }
+  }
+
+  Future<void> _pickFileAndSave() async {
     final file = await openFile();
     if (file == null) return;
     try {
-      final bytes = await file.readAsBytes();
-      await BookmarkStore.instance.addMessage(
-        bookmarkId: widget.bookmarkId,
-        fileName: file.name,
-        fileMime: file.mimeType,
-        fileBytes: bytes,
+      await _saveBookmarkBytes(
+        await file.readAsBytes(),
+        file.name,
+        file.mimeType,
       );
-      final msgs = await BookmarkStore.instance.getMessages(widget.bookmarkId);
-      if (!mounted) return;
-      setState(() {
-        _messages
-          ..clear()
-          ..addAll(msgs);
-      });
-      _scrollToBottom();
     } catch (e) {
       toast.show('Не удалось прикрепить файл: $e');
     }
+  }
+
+  // Общее сохранение байтов файла в закладку (локально) — используется всеми
+  // ветками листа вложений.
+  Future<void> _saveBookmarkBytes(
+    Uint8List bytes,
+    String name,
+    String? mime,
+  ) async {
+    await BookmarkStore.instance.addMessage(
+      bookmarkId: widget.bookmarkId,
+      fileName: name,
+      fileMime: mime,
+      fileBytes: bytes,
+    );
+    final msgs = await BookmarkStore.instance.getMessages(widget.bookmarkId);
+    if (!mounted) return;
+    setState(() {
+      _messages
+        ..clear()
+        ..addAll(msgs);
+    });
+    _scrollToBottom();
   }
 
   Future<void> _openBookmarkFile(BookmarkMessage m) async {
@@ -140,7 +216,10 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
           style: TextStyle(color: GE.text),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Отмена'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
             child: const Text('Сохранить'),
@@ -149,7 +228,10 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
       ),
     );
     if (newName == null || newName.isEmpty) return;
-    final ok = await BookmarkStore.instance.renameBookmark(widget.bookmarkId, newName);
+    final ok = await BookmarkStore.instance.renameBookmark(
+      widget.bookmarkId,
+      newName,
+    );
     if (ok && mounted) setState(() => _name = newName);
   }
 
@@ -159,10 +241,15 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
       builder: (ctx) => AlertDialog(
         backgroundColor: GE.bgDeep,
         title: Text('Удалить закладку?', style: TextStyle(color: GE.text)),
-        content: Text('«$_name» вместе со всем содержимым удалится с этого устройства.',
-            style: TextStyle(color: GE.sub)),
+        content: Text(
+          '«$_name» вместе со всем содержимым удалится с этого устройства.',
+          style: TextStyle(color: GE.sub),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Отмена'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: Text('Удалить', style: TextStyle(color: GE.red)),
@@ -194,15 +281,24 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
               ? null
               : [
                   PopupMenuButton<String>(
-                    icon: Icon(Icons.more_vert, color: GE.sub),
+                    icon: Icon(CupertinoIcons.ellipsis_vertical, color: GE.sub),
                     color: GE.bgDeep,
                     onSelected: (v) {
                       if (v == 'rename') _rename();
                       if (v == 'delete') _delete();
                     },
                     itemBuilder: (_) => [
-                      PopupMenuItem(value: 'rename', child: Text('Переименовать', style: TextStyle(color: GE.text))),
-                      PopupMenuItem(value: 'delete', child: Text('Удалить', style: TextStyle(color: GE.red))),
+                      PopupMenuItem(
+                        value: 'rename',
+                        child: Text(
+                          'Переименовать',
+                          style: TextStyle(color: GE.text),
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: Text('Удалить', style: TextStyle(color: GE.red)),
+                      ),
                     ],
                   ),
                 ],
@@ -212,18 +308,48 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
             Expanded(
               child: _messages.isEmpty
                   ? const EmptyChatState(
-                      icon: Icons.bookmark_outline,
+                      icon: CupertinoIcons.bookmark,
                       title: 'Сообщений нет',
-                      subtitle: 'Заметки и файлы видно только тебе — хранится на этом устройстве',
+                      subtitle:
+                          'Заметки и файлы видно только тебе — хранится на этом устройстве',
                     )
-                  : ListView.builder(
-                      controller: _scrollCtrl,
-                      padding: const EdgeInsets.all(12),
-                      itemCount: _messages.length,
-                      itemBuilder: (_, i) => _bubble(_messages[i]),
+                  : Builder(
+                      builder: (_) {
+                        final bottomAnchor =
+                            _messages.length <= _bottomAnchorMaxMsgs;
+                        final list = ListView.builder(
+                          shrinkWrap: bottomAnchor,
+                          controller: _scrollCtrl,
+                          padding: const EdgeInsets.all(12),
+                          itemCount: _messages.length,
+                          itemBuilder: (_, i) => _bubble(_messages[i]),
+                        );
+                        return bottomAnchor
+                            ? Align(
+                                alignment: Alignment.bottomCenter,
+                                child: list,
+                              )
+                            : list;
+                      },
                     ),
             ),
-            _inputRow(),
+            SafeArea(
+              top: false,
+              bottom: !_emojiOpen,
+              child: ChatComposer(
+                controller: _msgCtrl,
+                emojiOpen: _emojiOpen,
+                sending: _sending,
+                sendKey: _sendBtnKey,
+                hint: 'Заметка себе…',
+                onAttach: _openAttachSheet,
+                onToggleEmoji: _toggleEmoji,
+                onSend: _sendText,
+                onFieldTap: () {
+                  if (_emojiOpen) setState(() => _emojiOpen = false);
+                },
+              ),
+            ),
             if (_emojiOpen)
               SizedBox(
                 height: _emojiPanelH,
@@ -248,6 +374,19 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
     });
   }
 
+  /// Двойной тап — быстрая реакция сердцем; долгое нажатие по-прежнему
+  /// открывает полный список реакций.
+  Future<void> _quickReact(BookmarkMessage m) async {
+    await BookmarkStore.instance.setReaction(m.id, quickReactionEmoji);
+    final msgs = await BookmarkStore.instance.getMessages(widget.bookmarkId);
+    if (!mounted) return;
+    setState(() {
+      _messages
+        ..clear()
+        ..addAll(msgs);
+    });
+  }
+
   Widget _bubble(BookmarkMessage m) {
     final time = DateTime.fromMillisecondsSinceEpoch(m.createdAt * 1000);
     final hh = time.hour.toString().padLeft(2, '0');
@@ -256,6 +395,7 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
       alignment: Alignment.centerRight,
       child: GestureDetector(
         onLongPress: () => _react(m),
+        onDoubleTap: () => _quickReact(m),
         child: Container(
           margin: const EdgeInsets.symmetric(vertical: 3),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -274,32 +414,54 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.insert_drive_file_outlined, color: Colors.white, size: 18),
+                      const Icon(
+                        CupertinoIcons.doc,
+                        color: Colors.white,
+                        size: 18,
+                      ),
                       const SizedBox(width: 6),
                       Flexible(
-                        child: Text(m.fileName!,
-                            style: const TextStyle(color: Colors.white, fontSize: 13, decoration: TextDecoration.underline)),
+                        child: Text(
+                          m.fileName!,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            decoration: TextDecoration.underline,
+                          ),
+                        ),
                       ),
                     ],
                   ),
                 ),
               if (m.text.isNotEmpty) ...[
                 if (m.hasFile) const SizedBox(height: 4),
-                EmojiText(m.text, style: const TextStyle(color: Colors.white, fontSize: 14)),
+                EmojiText(
+                  m.text,
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                ),
               ],
               if (m.reaction != null) ...[
                 const SizedBox(height: 4),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.18),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: EmojiText(m.reaction!, style: const TextStyle(fontSize: 13)),
+                  child: EmojiText(
+                    m.reaction!,
+                    style: const TextStyle(fontSize: 13),
+                  ),
                 ),
               ],
               const SizedBox(height: 2),
-              Text('$hh:$mm', style: const TextStyle(color: Colors.white70, fontSize: 10)),
+              Text(
+                '$hh:$mm',
+                style: const TextStyle(color: Colors.white70, fontSize: 10),
+              ),
             ],
           ),
         ),
@@ -321,43 +483,6 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
     _msgCtrl.value = TextEditingValue(
       text: next,
       selection: TextSelection.collapsed(offset: start + e.length),
-    );
-  }
-
-  Widget _inputRow() {
-    return Padding(
-      padding: const EdgeInsets.all(10),
-      child: Row(
-        children: [
-          IconButton(
-            icon: Icon(Icons.attach_file, color: GE.sub),
-            onPressed: _attachFile,
-          ),
-          IconButton(
-            icon: Icon(
-              _emojiOpen ? Icons.keyboard_outlined : Icons.emoji_emotions_outlined,
-              color: _emojiOpen ? GE.primary : GE.sub,
-            ),
-            onPressed: _toggleEmoji,
-          ),
-          Expanded(
-            child: GlassInput(
-              controller: _msgCtrl,
-              hint: 'Заметка себе…',
-              onSubmitted: (_) => _sendText(),
-              onTap: () {
-                if (_emojiOpen) setState(() => _emojiOpen = false);
-              },
-            ),
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            key: _sendBtnKey,
-            icon: Icon(Icons.send_rounded, color: GE.primary),
-            onPressed: _sendText,
-          ),
-        ],
-      ),
     );
   }
 }

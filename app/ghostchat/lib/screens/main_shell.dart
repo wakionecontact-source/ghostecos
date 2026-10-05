@@ -6,12 +6,16 @@
 // Каждый экран — native, без WebView. Заглушки пока (M5-M7 их наполнят).
 
 import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
-import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
 import '../services/theme_service.dart';
+import '../services/performance_service.dart';
+import '../services/privacy_settings.dart';
 import '../mesh_background.dart';
 import '../services/auth_service.dart';
 import '../services/db_service.dart';
@@ -19,14 +23,18 @@ import '../services/crypto_service.dart';
 import '../services/ws_client.dart';
 import '../services/notification_service.dart';
 import '../services/foreground_service.dart';
-import '../services/fcm_service.dart';
+import '../services/update_service.dart';
 import '../services/lan_chat_store.dart';
 import '../services/bookmark_store.dart';
 import '../services/crypto_v2.dart';
 import '../services/chat_repo.dart';
+import '../services/call_service.dart';
 import '../services/triangle_service.dart';
+import '../services/nav_bar_settings.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
+import '../widgets/avatar.dart';
+import '../services/profile_cache.dart';
 import '../widgets/toast_overlay.dart';
 import '../widgets/connectivity_badge.dart';
 import 'settings_screen.dart';
@@ -34,6 +42,10 @@ import 'profile_screen.dart';
 import 'chat_list_screen.dart';
 import 'lan_scan_screen.dart';
 import 'lan_chat_screen.dart';
+import 'chat_screen.dart';
+import 'contacts_screen.dart';
+import 'custom_camera_screen.dart';
+import 'call_screen.dart';
 import '../core/local/local_hub.dart';
 import '../core/local/local_transport.dart';
 import '../core/local/lan_settings.dart';
@@ -46,18 +58,23 @@ import '../core/local/transports/wifi_direct_transport.dart';
 enum Section {
   chat(
     label: 'Чаты',
-    iconOutline: Icons.chat_bubble_outline,
-    iconFilled: Icons.chat_bubble,
+    iconOutline: CupertinoIcons.chat_bubble,
+    iconFilled: CupertinoIcons.chat_bubble_fill,
+  ),
+  contacts(
+    label: 'Контакты',
+    iconOutline: CupertinoIcons.person_2,
+    iconFilled: CupertinoIcons.person_2_fill,
   ),
   profile(
     label: 'Профиль',
-    iconOutline: Icons.person_outline,
-    iconFilled: Icons.person,
+    iconOutline: CupertinoIcons.person,
+    iconFilled: CupertinoIcons.person,
   ),
   settings(
     label: 'Настройки',
-    iconOutline: Icons.settings_outlined,
-    iconFilled: Icons.settings,
+    iconOutline: CupertinoIcons.settings,
+    iconFilled: CupertinoIcons.settings_solid,
   );
 
   final String label;
@@ -73,15 +90,34 @@ enum Section {
 class MainShell extends StatefulWidget {
   final VoidCallback onLoggedOut;
   final VoidCallback onRegister;
-  const MainShell({super.key, required this.onLoggedOut, required this.onRegister});
+  const MainShell({
+    super.key,
+    required this.onLoggedOut,
+    required this.onRegister,
+  });
   @override
   State<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell> {
+class _MainShellState extends State<MainShell>
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   Section _section = Section.chat;
+  // Ручное "листание" между вкладками — один AnimationController на оба
+  // экрана разом (старый едет в -dir, новый въезжает из +dir), вместо
+  // AnimatedSwitcher: его transitionBuilder различает entering/exiting по
+  // animation.status, а на практике оказалось ненадёжно (оба экрана
+  // разъезжались от центра в стороны вместо того, чтобы один сменял
+  // другого) — с одним контроллером и явным t никакой неоднозначности нет.
+  late final AnimationController _sectionAnimCtrl = AnimationController(
+    vsync: this,
+    duration: PerformanceService.instance.animationControllerDuration(
+      const Duration(milliseconds: 340),
+    ),
+  )..value = 1;
+  Widget? _oldSectionChild;
   bool _bootstrapped = false;
   bool _isGuest = false;
+  bool _sessionExitStarted = false;
   String? _username;
   String? _displayName;
   String? _error;
@@ -94,13 +130,70 @@ class _MainShellState extends State<MainShell> {
   StreamSubscription? _lanSeenSub;
   StreamSubscription? _triangleMsgSub;
   Timer? _lanRetryTimer;
+  // Локальные транспорты нужны для чатов "рядом" только пока приложение
+  // действительно используется. В фоне BLE advertising/scan, Wi-Fi Direct,
+  // UDP keepalive и широковещательные ретраи дают большой расход батареи,
+  // тогда как серверные уведомления продолжают приходить через WS/FGS.
+  bool _appBackgrounded = false;
+  Future<void> _lifecycleTransition = Future<void>.value();
   // Не спамим — раз в сессию приложения на device_id достаточно.
   final Set<String> _notifiedStale = {};
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _appBackgrounded =
+        WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed;
+    AuthService.sessionInvalidNotifier.addListener(_onSessionInvalid);
     _bootstrap();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final backgrounded =
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached;
+    if (state == AppLifecycleState.resumed) {
+      _setAppBackgrounded(false);
+    } else if (backgrounded) {
+      _setAppBackgrounded(true);
+    }
+  }
+
+  void _setAppBackgrounded(bool backgrounded) {
+    if (_appBackgrounded == backgrounded) return;
+    _appBackgrounded = backgrounded;
+    _lifecycleTransition = _lifecycleTransition.then((_) async {
+      if (!mounted) return;
+      if (backgrounded) {
+        _lanRetryTimer?.cancel();
+        _lanRetryTimer = null;
+        await localHub.stopAll();
+        appLog.info(
+          'power',
+          'Фон: локальные транспорты и LAN-ретраи остановлены',
+        );
+      } else {
+        await localHub.startAll();
+        if (!mounted || _appBackgrounded) return;
+        _startLanReconnectRetryLoop();
+        // Однократная попытка восстановить локальные чаты после возврата;
+        // периодический широковещательный цикл в фоне не запускается.
+        unawaited(localHub.discoverAll());
+        appLog.info(
+          'power',
+          'Активный режим: локальные транспорты восстановлены',
+        );
+      }
+    });
+  }
+
+  void _onSessionInvalid() {
+    if (!mounted || _isGuest || !AuthService.sessionInvalidNotifier.value)
+      return;
+    unawaited(_forceLogout());
   }
 
   /// Стартовая инициализация после успешного логина:
@@ -119,11 +212,16 @@ class _MainShellState extends State<MainShell> {
       _isGuest = await AuthService.isGuest();
 
       if (_isGuest) {
+        await PrivacySettings.instance.loadForAccount('guest');
         _username = 'Гость';
         _displayName = 'Гость';
         await BookmarkStore.instance.init('guest');
-        await _startLan();
         if (mounted) setState(() => _bootstrapped = true);
+        unawaited(_startLanInBackground());
+        // Гостевой режим тоже должен видеть совместимые обновления: проверка
+        // версии не требует аккаунта и не трогает серверную сессию.
+        unawaited(NotificationService.instance.ensurePermission());
+        unawaited(UpdateService.instance.start());
         return;
       }
 
@@ -133,30 +231,57 @@ class _MainShellState extends State<MainShell> {
       _username = u;
       _displayName = dn ?? u;
 
+      // Прогреваем тот же in-memory слой, который ProfileScreen читает
+      // синхронно в первом build. После этого SettingsScreen не показывает
+      // загрузчик на первом кадре, если профиль уже был сохранён на диске;
+      // серверная перепроверка всё равно выполняется в фоне самим экраном.
+      try {
+        final cachedProfile = await ProfileCache.instance.getProfile(u);
+        final cachedAvatar = cachedProfile?['avatar_url'];
+        if (cachedAvatar is String && cachedAvatar.trim().isNotEmpty) {
+          // Подгружаем картинку в память, не задерживая открытие приложения.
+          unawaited(AvatarCache.instance.prime(cachedAvatar));
+        }
+      } catch (_) {
+        // A cache read must not block application startup.
+      }
+
+      await PrivacySettings.instance.loadForAccount(u);
+
       await DbService.instance.init(u);
       await BookmarkStore.instance.init(u);
-      await CryptoService.instance.ensureKeys();
+      await CryptoService.instance.ensureKeys(account: u);
       WsClient.instance.connect();
+      unawaited(CallService.instance.initialize());
       // Треугольник (NAT-punch P2P апгрейд существующих серверных чатов) —
       // только для реальных аккаунтов, гостю сервер/контакты не доступны.
       _triangleMsgSub = triangleService.onMessage.listen(_onTriangleMessage);
-      await _startLan();
-
       if (mounted) setState(() => _bootstrapped = true);
+      unawaited(_startLanInBackground());
       // После логина — спросить разрешение на уведомления (если ещё не выдано).
       NotificationService.instance.ensurePermission();
       ForegroundService.instance.start();
-      // FCM: зарегистрировать токен на сервере (push, MIUI-устойчиво).
-      FcmService.instance.registerToken();
+      // Проверка стартует после построения MainShell, чтобы полноэкранный
+      // экран обновления не оказался поверх welcome/auth маршрутов.
+      unawaited(UpdateService.instance.start());
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
+    }
+  }
+
+  Future<void> _startLanInBackground() async {
+    try {
+      await _startLan();
+    } catch (e, stack) {
+      // LAN/BLE/Wi-Fi Direct are optional and must not block the main UI.
+      appLog.warn('lan', 'background startup skipped: $e\n$stack');
     }
   }
 
   Future<void> _startLan() async {
     await LanChatStore.instance.init();
     await LanSettings().load();
-    await CryptoV2.instance.ensureKeys();
+    await CryptoV2.instance.ensureKeys(account: _username ?? 'guest');
 
     localHub.registerDefaults([
       LanTransport(),
@@ -171,17 +296,26 @@ class _MainShellState extends State<MainShell> {
     // уже известного устройства (см. _onRawRequest в local_hub.dart). Сторону
     // "мы сами достучались" покрывает _startLanReconnectRetryLoop ниже —
     // обе стороны реконнекта озвучиваются одинаково через _onLanReconnected.
-    _lanReconnectedSub = localHub.onReconnected.listen((p) => _onLanReconnected(p.deviceId));
+    _lanReconnectedSub = localHub.onReconnected.listen(
+      (p) => _onLanReconnected(p.deviceId),
+    );
     // Статусы галочек для LAN-чата — работают глобально, а не только пока
     // открыт сам LanChatScreen (тот же принцип, что и _onLanMessage ниже).
-    _lanAckSub = localHub.onAck.listen((e) =>
-        LanChatStore.instance.markDelivered(e.fromUsername, e.msgId));
-    _lanSeenSub = localHub.onSeen.listen((e) =>
-        LanChatStore.instance.markMessagesRead(e.fromUsername, e.msgIds));
-    localHub.isKnownPeerChecker =
-        (deviceId) async => (await LanChatStore.instance.getDisplayName(deviceId)) != null;
+    _lanAckSub = localHub.onAck.listen(
+      (e) => LanChatStore.instance.markDelivered(e.fromUsername, e.msgId),
+    );
+    _lanSeenSub = localHub.onSeen.listen(
+      (e) => LanChatStore.instance.markMessagesRead(e.fromUsername, e.msgIds),
+    );
+    localHub.isKnownPeerChecker = (deviceId) async =>
+        (await LanChatStore.instance.getDisplayName(deviceId)) != null;
     await localHub.startAll();
-    _startLanReconnectRetryLoop();
+    if (!_appBackgrounded) {
+      _startLanReconnectRetryLoop();
+    } else {
+      // Lifecycle мог смениться, пока выполнялся bootstrap.
+      await localHub.stopAll();
+    }
   }
 
   /// Идея "фоновый ретрай": пока приложение открыто, раз в 30с тихо
@@ -215,10 +349,15 @@ class _MainShellState extends State<MainShell> {
   /// пакета, никогда не получала запись чата — сообщения приходили, но
   /// showить их было некуда (createOrGetChat ни разу не вызывался).
   Future<void> _onLanAccepted(LocalPeer peer) async {
-    final identityOk = await LanChatStore.instance
-        .checkAndPinIdentity(peer.deviceId, peer.identityPubB64);
+    final identityOk = await LanChatStore.instance.checkAndPinIdentity(
+      peer.deviceId,
+      peer.identityPubB64,
+    );
     if (!identityOk) {
-      appLog.warn('security', 'Identity ${peer.deviceId} изменилась — отклонено');
+      appLog.warn(
+        'security',
+        'Identity ${peer.deviceId} изменилась — отклонено',
+      );
       return;
     }
     await LanChatStore.instance.createOrGetChat(
@@ -251,8 +390,9 @@ class _MainShellState extends State<MainShell> {
       level: ToastLevel.info,
       action: ToastAction(
         label: 'Открыть',
-        onPressed: () => Navigator.of(context)
-            .push(MaterialPageRoute(builder: (_) => const LanScanScreen())),
+        onPressed: () => Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const LanScanScreen())),
       ),
     );
   }
@@ -269,17 +409,23 @@ class _MainShellState extends State<MainShell> {
   Future<void> _onLanReconnected(String deviceId) async {
     _flushLanQueue(deviceId);
     if (LanChatScreen.currentOpenDeviceId == deviceId) return;
-    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
-    final name = await LanChatStore.instance.getDisplayName(deviceId) ?? _shortId(deviceId);
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed)
+      return;
+    final name =
+        await LanChatStore.instance.getDisplayName(deviceId) ??
+        _shortId(deviceId);
     if (!mounted) return;
     toast.show(
       '$name снова на связи',
       level: ToastLevel.info,
       action: ToastAction(
         label: 'Открыть',
-        onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => LanChatScreen(deviceId: deviceId, displayName: name),
-        )),
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) =>
+                LanChatScreen(deviceId: deviceId, displayName: name),
+          ),
+        ),
       ),
     );
   }
@@ -302,7 +448,12 @@ class _MainShellState extends State<MainShell> {
           fileMime: m.fileMime,
           fileBytes: m.fileBytes,
         );
-        await localHub.sendMessage(deviceId, m.msgId, encB64, m.createdAt * 1000);
+        await localHub.sendMessage(
+          deviceId,
+          m.msgId,
+          encB64,
+          m.createdAt * 1000,
+        );
         await LanChatStore.instance.markSent(deviceId, m.msgId);
       } catch (_) {
         // Останется queued — попробуем на следующем реконнекте.
@@ -339,8 +490,9 @@ class _MainShellState extends State<MainShell> {
       level: ToastLevel.warn,
       action: ToastAction(
         label: 'Открыть',
-        onPressed: () => Navigator.of(context)
-            .push(MaterialPageRoute(builder: (_) => const LanScanScreen())),
+        onPressed: () => Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const LanScanScreen())),
       ),
     );
   }
@@ -370,26 +522,63 @@ class _MainShellState extends State<MainShell> {
     } catch (_) {}
   }
 
+  Future<void> _refreshIdentityFromStorage() async {
+    final username = await AuthService.username();
+    final displayName = await AuthService.displayName();
+    if (!mounted || username == null) return;
+    setState(() {
+      _username = username;
+      _displayName = displayName ?? username;
+    });
+  }
+
   Future<void> _logout() async {
+    if (_sessionExitStarted) return;
+    _sessionExitStarted = true;
+    await _closeSession();
+    await AuthService.logout();
+    if (mounted) widget.onLoggedOut();
+  }
+
+  Future<void> _forceLogout() async {
+    if (_sessionExitStarted) return;
+    _sessionExitStarted = true;
+    await _closeSession();
+    // Сервер уже отклонил токен. Полный локальный logout нужен, чтобы
+    // приложение не продолжало считать этот аккаунт активным.
+    await AuthService.logout();
+    if (mounted) widget.onLoggedOut();
+  }
+
+  Future<void> _closeSession() async {
+    appLog.info('auth', 'closing local session state');
+    await CallService.instance.end(notify: false);
+    await UpdateService.instance.stop();
+    // Сначала очищаем account-scoped notifiers. Иначе новый аккаунт успевает
+    // увидеть старый список чатов/закладок, пока SQLite ещё закрывается.
+    await ChatRepo.instance.dispose();
+    await BookmarkStore.instance.dispose();
+    PrivacySettings.instance.reset();
     if (!_isGuest) {
       await ForegroundService.instance.stop();
       await WsClient.instance.disconnect();
       await DbService.instance.close();
       await CryptoService.instance.wipe();
     }
-    await AuthService.logout();
-    widget.onLoggedOut();
   }
 
   /// Гость жмёт "Зарегистрироваться" — та же зачистка гостевой сессии, что и
   /// при обычном выходе, только ведёт на вкладку регистрации, а не логина.
   Future<void> _goRegister() async {
+    await _closeSession();
     await AuthService.logout();
     widget.onRegister();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    AuthService.sessionInvalidNotifier.removeListener(_onSessionInvalid);
     _lanMsgSub?.cancel();
     _lanCollectingSub?.cancel();
     _lanAcceptSub?.cancel();
@@ -400,6 +589,7 @@ class _MainShellState extends State<MainShell> {
     _lanRetryTimer?.cancel();
     _triangleMsgSub?.cancel();
     localHub.stopAll();
+    _sectionAnimCtrl.dispose();
     super.dispose();
   }
 
@@ -412,7 +602,84 @@ class _MainShellState extends State<MainShell> {
         children: [
           _content(context),
           ConnectivityBadge(isGuest: _isGuest),
+          _incomingCallOverlay(context),
         ],
+      ),
+    );
+  }
+
+  Widget _incomingCallOverlay(BuildContext context) {
+    return ValueListenableBuilder<CallInvite?>(
+      valueListenable: CallService.instance.incoming,
+      builder: (context, invite, _) {
+        if (invite == null) return const SizedBox.shrink();
+        return Positioned(
+          top: MediaQuery.of(context).padding.top + 10,
+          left: 12,
+          right: 12,
+          child: GlassCard(
+            padding: const EdgeInsets.fromLTRB(16, 14, 10, 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: GE.primary.withValues(alpha: .16),
+                  ),
+                  child: Icon(
+                    invite.video
+                        ? CupertinoIcons.video_camera_solid
+                        : CupertinoIcons.phone_fill,
+                    color: GE.primary,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        invite.video
+                            ? 'Входящий видеозвонок'
+                            : 'Входящий звонок',
+                        style: TextStyle(
+                          color: GE.text,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text('@${invite.peer}', style: TextStyle(color: GE.sub)),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Отклонить',
+                  onPressed: () =>
+                      unawaited(CallService.instance.rejectIncoming()),
+                  icon: Icon(CupertinoIcons.phone_down_fill, color: GE.red),
+                ),
+                IconButton(
+                  tooltip: 'Принять',
+                  onPressed: () => unawaited(_acceptIncomingCall(invite)),
+                  icon: Icon(CupertinoIcons.phone_fill, color: GE.green),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _acceptIncomingCall(CallInvite invite) async {
+    await CallService.instance.acceptIncoming();
+    if (!mounted || !CallService.instance.isActive) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            CallScreen(peer: invite.peer, displayName: '@${invite.peer}'),
       ),
     );
   }
@@ -429,7 +696,11 @@ class _MainShellState extends State<MainShell> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.error_outline, size: 48, color: GE.red),
+                  Icon(
+                    CupertinoIcons.exclamationmark_circle,
+                    size: 48,
+                    color: GE.red,
+                  ),
                   const SizedBox(height: 12),
                   Text(
                     'Не удалось запустить:\n$_error',
@@ -463,21 +734,61 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
+  // Направление "листания" — куда уехал таб в баре относительно текущего:
+  // +1 = новая вкладка правее (контент въезжает справа), -1 = левее.
+  int _slideDir = 1;
+
   void _switchSection(Section s) {
     if (s == _section) return;
     HapticFeedback.selectionClick();
+    final order = NavBarSettings.instance.orderNotifier.value;
+    final oldIdx = order.indexOf(_section);
+    final newIdx = order.indexOf(s);
+    _slideDir = (newIdx >= oldIdx) ? 1 : -1;
+    _oldSectionChild = RepaintBoundary(
+      child: KeyedSubtree(key: ValueKey(_section), child: _sectionBody()),
+    );
     setState(() => _section = s);
+    _sectionAnimCtrl
+      ..value = 0
+      ..forward().whenCompleteOrCancel(() {
+        if (mounted) setState(() => _oldSectionChild = null);
+      });
   }
 
   // ─── Layout: mobile (≤720) ─────────────────────────────────────────
+  // Нижний бар — ПЛАВАЮЩАЯ плашка НАД контентом (Positioned), а не отдельный
+  // блок в Column: контент занимает весь экран и при скролле проезжает под
+  // баром, а не упирается в его границу (раньше Column+Expanded резервировал
+  // под бар реальное место, из-за чего контент грубо обрывался на голом
+  // mesh-фоне вместо продолжения под плашкой). Каждый таб-экран сам добавляет
+  // себе нижний padding под высоту бара для конечного состояния скролла.
   Widget _mobileLayout() {
-    return Column(
+    return Stack(
       children: [
-        Expanded(child: _sectionBody()),
-        _GlassBottomNav(
-          current: _section,
-          onTap: _switchSection,
+        // Без Positioned.fill Stack брал высоту гостевого ScrollView по его
+        // содержимому. Тогда bottom:0 у навигации означал конец контента, а
+        // не низ экрана — панель визуально уезжала вверх.
+        Positioned.fill(child: _animatedSectionBody()),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: _GlassBottomNav(
+            current: _section,
+            onTap: _switchSection,
+            username: _username,
+            displayName: _displayName,
+          ),
         ),
+        // Плавающие кружки "новый чат"/"камера" — только на вкладке Чатов
+        // (в других вкладках нет смысла: некуда открывать чат/слать фото).
+        if (_section == Section.chat)
+          Positioned(
+            right: 16,
+            bottom: 88 + MediaQuery.of(context).padding.bottom,
+            child: _QuickActionButtons(isGuest: _isGuest),
+          ),
       ],
     );
   }
@@ -493,7 +804,7 @@ class _MainShellState extends State<MainShell> {
           displayName: _displayName ?? _username ?? '?',
           onLogout: _logout,
         ),
-        Expanded(child: _sectionBody()),
+        Expanded(child: _animatedSectionBody()),
       ],
     );
   }
@@ -502,13 +813,66 @@ class _MainShellState extends State<MainShell> {
     // Пока заглушки. M5-M7 их наполнят.
     switch (_section) {
       case Section.chat:
-        return ChatListScreen(isGuest: _isGuest);
+        return ChatListScreen(
+          isGuest: _isGuest,
+          username: _username,
+          displayName: _displayName,
+        );
+      case Section.contacts:
+        return ContactsScreen(
+          isGuest: _isGuest,
+          onRegister: () => unawaited(_goRegister()),
+        );
       case Section.profile:
-        if (_isGuest) return _GuestPane(onExit: _logout, onRegister: _goRegister);
-        return ProfileScreen(username: _username ?? '?', embedded: true);
+        if (_isGuest)
+          return _GuestPane(onExit: _logout, onRegister: _goRegister);
+        return ProfileScreen(
+          username: _username ?? '?',
+          isOwn: true,
+          embedded: true,
+        );
       case Section.settings:
-        return SettingsScreen(isGuest: _isGuest, embedded: true, onLogout: _logout);
+        return SettingsScreen(
+          isGuest: _isGuest,
+          username: _username,
+          embedded: true,
+          onLogout: _logout,
+          onProfileChanged: () => unawaited(_refreshIdentityFromStorage()),
+        );
     }
+  }
+
+  /// Переключение вкладок нижнего бара — горизонтальный слайд + fade, один
+  /// общий AnimationController на оба экрана (см.
+  /// _sectionAnimCtrl/_oldSectionChild/_slideDir).
+  Widget _animatedSectionBody() {
+    final newChild = RepaintBoundary(
+      child: KeyedSubtree(key: ValueKey(_section), child: _sectionBody()),
+    );
+    final oldChild = _oldSectionChild;
+    if (oldChild == null) return newChild;
+    return AnimatedBuilder(
+      animation: _sectionAnimCtrl,
+      builder: (context, _) {
+        final raw = Curves.easeInOutCubic.transform(_sectionAnimCtrl.value);
+        final dir = _slideDir.toDouble();
+        return Stack(
+          children: [
+            FractionalTranslation(
+              translation: Offset(-dir * raw, 0),
+              child: Opacity(
+                opacity: (1 - raw).clamp(0.0, 1.0),
+                child: oldChild,
+              ),
+            ),
+            FractionalTranslation(
+              translation: Offset(dir * (1 - raw), 0),
+              child: Opacity(opacity: raw.clamp(0.0, 1.0), child: newChild),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Widget _placeholder(IconData icon, String title, String body) {
@@ -547,11 +911,224 @@ class _MainShellState extends State<MainShell> {
   }
 }
 
+// ── Кружки "камера"/"новый чат" снизу справа (плавают над нижним баром) ────
+class _QuickActionButtons extends StatelessWidget {
+  final bool isGuest;
+  const _QuickActionButtons({required this.isGuest});
+
+  Future<void> _onCamera(BuildContext context) async {
+    if (isGuest) {
+      toast.show('Недоступно гостю');
+      return;
+    }
+    final File? x;
+    try {
+      x = await Navigator.of(context).push<File>(
+        MaterialPageRoute(builder: (_) => const GhostCameraScreen()),
+      );
+    } catch (e) {
+      toast.show('Камера недоступна: $e');
+      return;
+    }
+    if (x == null || !context.mounted) return;
+    final bytes = await x.readAsBytes();
+    if (!context.mounted) return;
+    await _pickRecipientAndSendPhoto(
+      context,
+      bytes: bytes,
+      fileName: x.path.split(Platform.pathSeparator).last,
+      localPath: x.path,
+    );
+  }
+
+  Future<void> _pickRecipientAndSendPhoto(
+    BuildContext context, {
+    required Uint8List bytes,
+    required String fileName,
+    required String localPath,
+  }) async {
+    final dialogs = ChatRepo.instance.dialogsNotifier.value
+        .where(
+          (d) =>
+              !d.username.startsWith('g:') &&
+              !d.username.startsWith(lanDialogPrefix) &&
+              !d.username.startsWith(bookmarkDialogPrefix),
+        )
+        .toList();
+    final peer = await showGlassSheet<String>(
+      context,
+      child: SafeArea(child: _RecipientPicker(dialogs: dialogs)),
+    );
+    if (peer == null || peer.isEmpty || !context.mounted) return;
+    await ChatRepo.instance.sendDmFile(
+      toUsername: peer,
+      bytes: bytes,
+      mime: 'image/jpeg',
+      fileName: fileName,
+      localPath: localPath,
+    );
+    if (!context.mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChatScreen(peer: peer, displayName: peer),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _circle(
+          icon: CupertinoIcons.camera_fill,
+          color: GE.blue,
+          onTap: () => _onCamera(context),
+        ),
+        const SizedBox(height: 12),
+        _circle(
+          icon: CupertinoIcons.square_pencil_fill,
+          color: GE.primary,
+          onTap: () => showNewChatMenu(context, isGuest: isGuest),
+        ),
+      ],
+    );
+  }
+
+  Widget _circle({
+    required IconData icon,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: ThemeService.instance.listPlatesNotifier,
+      builder: (_, showPlate, _) {
+        final traditional =
+            ThemeService.instance.styleNotifier.value == ThemeStyle.traditional;
+        // Традиционный стиль убирает glow, но не саму поверхность кнопки:
+        // заливку отключает только общий переключатель фона карточек.
+        final filled = showPlate;
+        return PressScale(
+          onTap: onTap,
+          child: Container(
+            width: 48,
+            height: 48,
+            decoration: filled
+                ? BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: color,
+                    boxShadow: traditional
+                        ? [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.22),
+                              blurRadius: 8,
+                              offset: const Offset(0, 3),
+                            ),
+                          ]
+                        : [
+                            BoxShadow(
+                              color: color.withValues(alpha: 0.4),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                  )
+                : null,
+            child: Icon(icon, color: filled ? Colors.white : color, size: 22),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Мини-пикер получателя для быстрого фото с камеры: недавние диалоги +
+/// ручной ввод @username. Не полноценный поиск (SearchService) — MVP.
+class _RecipientPicker extends StatefulWidget {
+  final List<StoredDialog> dialogs;
+  const _RecipientPicker({required this.dialogs});
+  @override
+  State<_RecipientPicker> createState() => _RecipientPickerState();
+}
+
+class _RecipientPickerState extends State<_RecipientPicker> {
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Отправить фото кому?',
+            style: TextStyle(
+              color: GE.text,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _ctrl,
+            autofocus: widget.dialogs.isEmpty,
+            style: TextStyle(color: GE.text),
+            decoration: InputDecoration(
+              hintText: '@username',
+              hintStyle: TextStyle(color: GE.sub),
+            ),
+            onSubmitted: (v) =>
+                Navigator.pop(context, v.trim().replaceFirst('@', '')),
+          ),
+          if (widget.dialogs.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 260),
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: widget.dialogs.length,
+                itemBuilder: (_, i) {
+                  final d = widget.dialogs[i];
+                  return PressScale(
+                    onTap: () => Navigator.pop(context, d.username),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Text(
+                        d.displayName,
+                        style: TextStyle(color: GE.text, fontSize: 14),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 // ── Bottom-nav в glass-стиле (сворачиваемый) ──────────────────────────
 class _GlassBottomNav extends StatefulWidget {
   final Section current;
   final ValueChanged<Section> onTap;
-  const _GlassBottomNav({required this.current, required this.onTap});
+  final String? username;
+  final String? displayName;
+  const _GlassBottomNav({
+    required this.current,
+    required this.onTap,
+    this.username,
+    this.displayName,
+  });
 
   @override
   State<_GlassBottomNav> createState() => _GlassBottomNavState();
@@ -559,67 +1136,306 @@ class _GlassBottomNav extends StatefulWidget {
 
 class _GlassBottomNavState extends State<_GlassBottomNav> {
   bool _collapsed = false;
+  // Режим перестановки табов — включается долгим нажатием на любой таб: над
+  // иконками появляются ручки для драга ПРЯМО в баре (без шторки/меню).
+  // Выход — тап на "Готово", который заменяет шеврон на время режима.
+  bool _reorderMode = false;
+
+  void _enterReorderMode() {
+    if (_reorderMode) return;
+    HapticFeedback.mediumImpact();
+    setState(() => _reorderMode = true);
+  }
+
+  void _exitReorderMode() {
+    HapticFeedback.selectionClick();
+    setState(() => _reorderMode = false);
+  }
+
+  Future<void> _renameSection(Section s) async {
+    final ctrl = TextEditingController(
+      text: NavBarSettings.instance.labelFor(s),
+    );
+    final result = await showDialog<String>(
+      context: context,
+      builder: (c) => AlertDialog(
+        backgroundColor: GE.bgDeep,
+        title: Text('Переименовать вкладку', style: TextStyle(color: GE.text)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          style: TextStyle(color: GE.text),
+          decoration: InputDecoration(
+            hintText: s.label,
+            hintStyle: TextStyle(color: GE.sub),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c),
+            child: Text('Отмена', style: TextStyle(color: GE.sub)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(c, ctrl.text.trim()),
+            child: Text('Сохранить', style: TextStyle(color: GE.primary)),
+          ),
+        ],
+      ),
+    );
+    if (result == null || !mounted) return;
+    final labels = Map.of(NavBarSettings.instance.labelOverridesNotifier.value);
+    if (result.isEmpty || result == s.label) {
+      labels.remove(s.name);
+    } else {
+      labels[s.name] = result;
+    }
+    NavBarSettings.instance.save(
+      order: NavBarSettings.instance.orderNotifier.value,
+      labelOverrides: labels,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).padding.bottom;
-    // Стрелка и панель — ОДИН общий ClipRect+BackdropFilter, иначе стрелка
-    // (без blur) сидит прямо на блюре панели ниже — виден шов (резкий mesh
-    // сверху, размытый снизу). Блюр общий на всю область; заливка+бордер —
-    // только на панели, так стрелка по-прежнему визуально "плавает".
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: GE.glassBlur, sigmaY: GE.glassBlur),
+    // Шеврон — АБСОЛЮТНО прозрачный, без своего blur/фона (раньше сидел под
+    // тем же BackdropFilter, что и панель, и потому выглядел размытым/на
+    // подложке — по факту не отличить от обычного бара). Плавает сам по
+    // себе над таблеткой. В режиме перестановки на его месте — "Готово".
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _reorderMode
+              ? _exitReorderMode
+              : () => setState(() => _collapsed = !_collapsed),
+          child: SizedBox(
+            width: 72,
+            height: 22,
+            child: Center(
+              child: _reorderMode
+                  ? Text(
+                      'Готово',
+                      style: TextStyle(
+                        color: GE.primary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        shadows: const [
+                          Shadow(color: Colors.black87, blurRadius: 10),
+                          Shadow(color: Colors.black54, blurRadius: 3),
+                        ],
+                      ),
+                    )
+                  : AnimatedRotation(
+                      turns: _collapsed ? 0.5 : 0,
+                      duration: const Duration(milliseconds: 220),
+                      child: Icon(
+                        CupertinoIcons.chevron_down,
+                        size: 20,
+                        color: GE.sub.withValues(alpha: 0.65),
+                        shadows: const [
+                          Shadow(color: Colors.black87, blurRadius: 10),
+                          Shadow(color: Colors.black54, blurRadius: 3),
+                        ],
+                      ),
+                    ),
+            ),
+          ),
+        ),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeInOut,
+          alignment: Alignment.topCenter,
+          child: _collapsed
+              ? SizedBox(width: double.infinity, height: bottomInset)
+              : Padding(
+                  padding: EdgeInsets.only(
+                    left: 14,
+                    right: 14,
+                    bottom: 8 + bottomInset,
+                  ),
+                  // Таблетка: фон/блюр/бордер — только если включена настройка
+                  // "Фон карточек-списков" (тот же общий тумблер, что и везде).
+                  child: AnimatedBuilder(
+                    animation: Listenable.merge([
+                      ThemeService.instance.navBarPlateNotifier,
+                      PerformanceService.instance.reducedEffectsNotifier,
+                      NavBarSettings.instance.backgroundNotifier,
+                      NavBarSettings.instance.labelsVisibleNotifier,
+                      NavBarSettings.instance.selectedBackgroundNotifier,
+                      NavBarSettings.instance.selectedScaleNotifier,
+                      NavBarSettings.instance.selectedFlyoutNotifier,
+                    ]),
+                    builder: (_, _) {
+                      final showBg =
+                          NavBarSettings.instance.backgroundNotifier.value;
+                      final reducedEffects =
+                          PerformanceService.instance.reducedEffects;
+                      final radius = BorderRadius.circular(
+                        GE.radiusLg.clamp(0, 32),
+                      );
+                      final row = ValueListenableBuilder<List<Section>>(
+                        valueListenable: NavBarSettings.instance.orderNotifier,
+                        builder: (_, order, _) =>
+                            ValueListenableBuilder<Map<String, String>>(
+                              valueListenable: NavBarSettings
+                                  .instance
+                                  .labelOverridesNotifier,
+                              builder: (_, _, _) => _reorderMode
+                                  ? SizedBox(
+                                      height: 64,
+                                      child: LayoutBuilder(
+                                        builder: (context, constraints) {
+                                          final itemWidth =
+                                              constraints.maxWidth /
+                                              order.length;
+                                          return ReorderableListView(
+                                            scrollDirection: Axis.horizontal,
+                                            buildDefaultDragHandles: false,
+                                            onReorder: (oldIdx, newIdx) {
+                                              final list = List.of(order);
+                                              if (newIdx > oldIdx) newIdx -= 1;
+                                              final s = list.removeAt(oldIdx);
+                                              list.insert(newIdx, s);
+                                              NavBarSettings.instance.save(
+                                                order: list,
+                                                labelOverrides: NavBarSettings
+                                                    .instance
+                                                    .labelOverridesNotifier
+                                                    .value,
+                                              );
+                                            },
+                                            children: [
+                                              for (
+                                                int i = 0;
+                                                i < order.length;
+                                                i++
+                                              )
+                                                _navItemReorder(
+                                                  order[i],
+                                                  i,
+                                                  itemWidth,
+                                                ),
+                                            ],
+                                          );
+                                        },
+                                      ),
+                                    )
+                                  : LayoutBuilder(
+                                      builder: (context, constraints) {
+                                        final emphasis =
+                                            NavBarSettings
+                                                .instance
+                                                .selectedScaleNotifier
+                                                .value ||
+                                            NavBarSettings
+                                                .instance
+                                                .selectedFlyoutNotifier
+                                                .value;
+                                        final activeWeight = emphasis
+                                            ? 1.5
+                                            : 1.0;
+                                        final totalWeight = order.fold<double>(
+                                          0,
+                                          (total, section) =>
+                                              total +
+                                              (section == widget.current
+                                                  ? activeWeight
+                                                  : 1.0),
+                                        );
+                                        final unitWidth = totalWeight == 0
+                                            ? 0.0
+                                            : constraints.maxWidth /
+                                                  totalWeight;
+                                        return Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            for (final s in order)
+                                              _navItem(
+                                                s,
+                                                width:
+                                                    unitWidth *
+                                                    (s == widget.current
+                                                        ? activeWeight
+                                                        : 1.0),
+                                              ),
+                                          ],
+                                        );
+                                      },
+                                    ),
+                            ),
+                      );
+                      final content = Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: row,
+                      );
+                      if (!showBg || reducedEffects) return content;
+                      return ClipRRect(
+                        borderRadius: radius,
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(
+                            sigmaX: GE.glassBlur,
+                            sigmaY: GE.glassBlur,
+                          ),
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: Color.alphaBlend(
+                                GE.surface.withValues(alpha: 0.75),
+                                GE.bg,
+                              ),
+                              borderRadius: radius,
+                              border: Border.all(color: GE.border, width: 0.6),
+                            ),
+                            child: content,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+
+  /// Вариант таба в режиме перестановки: ручка сверху (fade-in), тап по
+  /// подписи — переименование, сам таб не переключает секцию (нет смысла,
+  /// пока идёт драг-режим).
+  Widget _navItemReorder(Section s, int index, double width) {
+    return SizedBox(
+      key: ValueKey(s.name),
+      width: width,
+      child: ReorderableDragStartListener(
+        index: index,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Стрелка-хэндл: сидит ПРЯМО на верхней границе панели, без
-            // отдельного чипа-фона (только общий блюр выше).
-            // Кликабельная зона широкая (72×22), сам значок — маленький.
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => setState(() => _collapsed = !_collapsed),
-              child: SizedBox(
-                width: 72,
-                height: 22,
-                child: Center(
-                  child: AnimatedRotation(
-                    turns: _collapsed ? 0.5 : 0,
-                    duration: const Duration(milliseconds: 220),
-                    child: Icon(
-                      Icons.keyboard_arrow_down,
-                      size: 20,
-                      color: GE.sub.withValues(alpha: 0.65),
-                    ),
-                  ),
+            TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: 1),
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOut,
+              builder: (context, t, _) => Opacity(
+                opacity: t,
+                child: Padding(
+                  padding: EdgeInsets.only(bottom: 4 * t),
+                  child: Icon(Icons.drag_indicator, size: 18, color: GE.sub),
                 ),
               ),
             ),
-            // Панель — сворачивается анимацией вниз, остаётся только стрелка.
-            AnimatedSize(
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeInOut,
-              alignment: Alignment.topCenter,
-              child: _collapsed
-                  ? SizedBox(width: double.infinity, height: bottomInset)
-                  : Container(
-                      padding: EdgeInsets.only(
-                        left: 6,
-                        right: 6,
-                        top: 6,
-                        bottom: 6 + bottomInset,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Color.alphaBlend(GE.surface.withValues(alpha: 0.75), GE.bg),
-                        border: Border(
-                          top: BorderSide(color: GE.border, width: 0.6),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
-                        children: [for (final s in Section.values) _navItem(s)],
-                      ),
-                    ),
+            _navIcon(s, active: false, size: 22),
+            const SizedBox(height: 3),
+            GestureDetector(
+              onTap: () => _renameSection(s),
+              child: Text(
+                NavBarSettings.instance.labelFor(s),
+                style: TextStyle(
+                  color: GE.sub,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ),
           ],
         ),
@@ -627,37 +1443,152 @@ class _GlassBottomNavState extends State<_GlassBottomNav> {
     );
   }
 
-  Widget _navItem(Section s) {
+  Widget _navItem(Section s, {required double width}) {
     final active = s == widget.current;
-    // Без визуального фона у пункта — только иконка+подпись. Подсветка = акцент.
-    return Expanded(
-      child: InkWell(
+    // Общий фон таблетки настраивается отдельно. У пунктов не должно быть
+    // чёрной подложки: она ломала светлые темы и не соответствовала палитре.
+    // Активный пункт получает лёгкий чип из цвета темы, неактивный прозрачен.
+    final settings = NavBarSettings.instance;
+    final showLabels = settings.labelsVisibleNotifier.value;
+    // Вылет активной подписи — отдельная настройка: он должен работать и
+    // при выключенных постоянных подписях под иконками.
+    final flyoutEnabled = settings.selectedFlyoutNotifier.value;
+    final flyout = active && flyoutEnabled;
+    return AnimatedContainer(
+      width: width,
+      duration: PerformanceService.instance.animationDuration(
+        const Duration(milliseconds: 260),
+      ),
+      curve: Curves.easeInOutCubic,
+      child: PressScale(
         onTap: () => widget.onTap(s),
-        splashColor: GE.primary.withValues(alpha: 0.10),
-        highlightColor: Colors.transparent,
+        onLongPress: _enterReorderMode,
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                active ? s.iconFilled : s.iconOutline,
-                size: 24,
-                color: active ? GE.primary : GE.sub,
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          child: AnimatedScale(
+            scale: active && settings.selectedScaleNotifier.value ? 1.1 : 1,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutBack,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: active && settings.selectedBackgroundNotifier.value
+                    ? GE.primary.withValues(alpha: 0.12)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(GE.radiusSm),
+                border: active && settings.selectedBackgroundNotifier.value
+                    ? Border.all(
+                        color: GE.primary.withValues(alpha: 0.28),
+                        width: 0.6,
+                      )
+                    : null,
               ),
-              const SizedBox(height: 3),
-              Text(
-                s.label,
-                style: TextStyle(
-                  color: active ? GE.primary : GE.sub,
-                  fontSize: 11,
-                  fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+              child: SizedBox(
+                width: double.infinity,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 4,
+                  ),
+                  child: flyout
+                      ? LayoutBuilder(
+                          builder: (context, constraints) {
+                            final labelWidth = (constraints.maxWidth - 28)
+                                .clamp(0.0, 70.0)
+                                .toDouble();
+                            return Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                ClipRect(
+                                  child: TweenAnimationBuilder<double>(
+                                    key: ValueKey('flyout:${s.name}'),
+                                    tween: Tween(begin: 0, end: 1),
+                                    duration: const Duration(milliseconds: 260),
+                                    curve: Curves.easeOutCubic,
+                                    builder: (_, t, _) => SizedBox(
+                                      width: labelWidth * t,
+                                      child: Opacity(
+                                        opacity: t,
+                                        child: Text(
+                                          NavBarSettings.instance.labelFor(s),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: GE.primary,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                if (labelWidth > 0) const SizedBox(width: 2),
+                                _navIcon(s, active: active),
+                              ],
+                            );
+                          },
+                        )
+                      : Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _navIcon(s, active: active),
+                            if (showLabels && !flyoutEnabled) ...[
+                              const SizedBox(height: 2),
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  NavBarSettings.instance.labelFor(s),
+                                  maxLines: 1,
+                                  softWrap: false,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: active ? GE.primary : GE.sub,
+                                    fontSize: 10.5,
+                                    fontWeight: active
+                                        ? FontWeight.w700
+                                        : FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
                 ),
               ),
-            ],
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _navIcon(Section section, {required bool active, double size = 24}) {
+    Widget fallback() => Icon(
+      active ? section.iconFilled : section.iconOutline,
+      size: size,
+      color: active ? GE.primary : GE.sub,
+    );
+
+    if (section != Section.profile || widget.username == null) {
+      return fallback();
+    }
+
+    return ValueListenableBuilder<int>(
+      valueListenable: ProfileCache.instance.revision,
+      builder: (_, _, _) {
+        final profile = ProfileCache.instance.getProfileSync(widget.username!);
+        final rawUrl = profile?['avatar_url'];
+        final avatarUrl = rawUrl is String && rawUrl.trim().isNotEmpty
+            ? rawUrl
+            : null;
+        if (avatarUrl == null) return fallback();
+        return GhostAvatar(
+          avatarUrl: avatarUrl,
+          fallbackText: widget.displayName ?? widget.username!,
+          size: size,
+          fallbackColors: [GE.primary, GE.primary2],
+        );
+      },
     );
   }
 }
@@ -726,7 +1657,7 @@ class _SideRail extends StatelessWidget {
           Divider(color: GE.glassBorder, height: 1),
           // Профиль пользователя — тап ведёт во вкладку «Профиль» (НЕ выход;
           // выход — внутри профиля, с подтверждением). Подсвечивается активным.
-          InkWell(
+          PressScale(
             onTap: () => onTap(Section.profile),
             child: Container(
               color: current == Section.profile
@@ -735,25 +1666,15 @@ class _SideRail extends StatelessWidget {
               padding: const EdgeInsets.all(14),
               child: Row(
                 children: [
-                  Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: [GE.primary, GE.primary2],
-                      ),
-                    ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      displayName.isNotEmpty
-                          ? displayName[0].toUpperCase()
-                          : '?',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
+                  GhostAvatar(
+                    avatarUrl:
+                        ProfileCache.instance.getProfileSync(
+                              username,
+                            )?['avatar_url']
+                            as String?,
+                    fallbackText: displayName,
+                    size: 36,
+                    fallbackColors: [GE.primary, GE.primary2],
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -780,7 +1701,7 @@ class _SideRail extends StatelessWidget {
                       ],
                     ),
                   ),
-                  Icon(Icons.chevron_right, color: GE.sub, size: 18),
+                  Icon(CupertinoIcons.chevron_right, color: GE.sub, size: 18),
                 ],
               ),
             ),
@@ -798,7 +1719,7 @@ class _RailItem extends StatelessWidget {
   const _RailItem(this.section, this.active, this.onTap);
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return PressScale(
       onTap: onTap,
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -846,8 +1767,14 @@ class _GuestPane extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
       child: SingleChildScrollView(
+        // Bottom-nav лежит поверх контента в Stack. Запас снизу оставляет
+        // последнюю кнопку полностью доступной и не создаёт впечатления,
+        // будто сама панель «уехала» вверх из-за конца высоты экрана.
+        padding: EdgeInsets.only(
+          bottom: 132 + MediaQuery.of(context).padding.bottom,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -863,17 +1790,29 @@ class _GuestPane extends StatelessWidget {
                       gradient: LinearGradient(colors: [GE.sub, GE.muted]),
                     ),
                     alignment: Alignment.center,
-                    child: Icon(Icons.person_outline, color: Colors.white, size: 26),
+                    child: Icon(
+                      CupertinoIcons.person,
+                      color: Colors.white,
+                      size: 26,
+                    ),
                   ),
                   const SizedBox(width: 14),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Гость',
-                            style: TextStyle(color: GE.text, fontSize: 18, fontWeight: FontWeight.w700)),
-                        Text('Без аккаунта — только LAN-чаты',
-                            style: TextStyle(color: GE.sub, fontSize: 12)),
+                        Text(
+                          'Гость',
+                          style: TextStyle(
+                            color: GE.text,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        Text(
+                          'Без аккаунта — только LAN-чаты',
+                          style: TextStyle(color: GE.sub, fontSize: 12),
+                        ),
                       ],
                     ),
                   ),
@@ -900,7 +1839,7 @@ class _GuestPane extends StatelessWidget {
                 children: [
                   GlassButton(
                     label: 'Зарегистрироваться',
-                    icon: Icons.person_add_alt_outlined,
+                    icon: CupertinoIcons.person_add,
                     primary: true,
                     fullWidth: true,
                     onTap: onRegister,
@@ -908,7 +1847,7 @@ class _GuestPane extends StatelessWidget {
                   const SizedBox(height: 10),
                   GlassButton(
                     label: 'Выйти из гостевого режима',
-                    icon: Icons.logout,
+                    icon: CupertinoIcons.square_arrow_right,
                     danger: true,
                     fullWidth: true,
                     onTap: onExit,
@@ -922,4 +1861,3 @@ class _GuestPane extends StatelessWidget {
     );
   }
 }
-

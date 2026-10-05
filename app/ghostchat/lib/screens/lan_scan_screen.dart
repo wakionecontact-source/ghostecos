@@ -12,6 +12,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../theme.dart';
@@ -76,7 +77,10 @@ class _LanScanScreenState extends State<LanScanScreen>
   void initState() {
     super.initState();
     LanScanScreen.isVisible = true;
-    _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat();
     _bootstrap();
   }
 
@@ -112,7 +116,10 @@ class _LanScanScreenState extends State<LanScanScreen>
     await _requestPermissions();
     await _refreshConnectivity();
 
-    _ipTimer = Timer.periodic(const Duration(seconds: 5), (_) => _refreshConnectivity());
+    _ipTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _refreshConnectivity(),
+    );
 
     if (mounted) setState(() => _starting = false);
   }
@@ -131,22 +138,28 @@ class _LanScanScreenState extends State<LanScanScreen>
   }
 
   Future<void> _requestPermissions() async {
-    await ensurePermission(Permission.bluetoothScan);
-    await ensurePermission(Permission.bluetoothConnect);
-    await ensurePermission(Permission.bluetoothAdvertise);
-    await ensurePermission(Permission.nearbyWifiDevices);
-    await ensurePermission(Permission.locationWhenInUse);
+    await ensurePermission(Permission.bluetoothScan, context: 'lan_scan');
+    await ensurePermission(Permission.bluetoothConnect, context: 'lan_scan');
+    await ensurePermission(Permission.bluetoothAdvertise, context: 'lan_scan');
+    await ensurePermission(Permission.nearbyWifiDevices, context: 'lan_scan');
+    await ensurePermission(Permission.locationWhenInUse, context: 'lan_scan');
   }
 
   Future<void> _refreshConnectivity() async {
     try {
-      final ifaces = await NetworkInterface.list(type: InternetAddressType.IPv4);
+      final ifaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+      );
       String ip = '';
       bool hasWlan = false;
       for (final iface in ifaces) {
         if (iface.name.toLowerCase().startsWith('wlan')) {
           for (final addr in iface.addresses) {
-            if (!addr.isLoopback) { ip = addr.address; hasWlan = true; break; }
+            if (!addr.isLoopback) {
+              ip = addr.address;
+              hasWlan = true;
+              break;
+            }
           }
         }
       }
@@ -154,18 +167,24 @@ class _LanScanScreenState extends State<LanScanScreen>
         for (final iface in ifaces) {
           for (final addr in iface.addresses) {
             if (!addr.isLoopback && addr.address.startsWith('192.168.')) {
-              ip = addr.address; hasWlan = true; break;
+              ip = addr.address;
+              hasWlan = true;
+              break;
             }
           }
           if (hasWlan) break;
         }
       }
       if (!mounted) return;
-      setState(() { _myIp = ip; _wifiConnected = hasWlan; });
+      setState(() {
+        _myIp = ip;
+        _wifiConnected = hasWlan;
+      });
     } catch (_) {}
 
     try {
-      final on = await FlutterBluePlus.adapterState.first == BluetoothAdapterState.on;
+      final on =
+          await FlutterBluePlus.adapterState.first == BluetoothAdapterState.on;
       if (mounted) setState(() => _btOn = on);
     } catch (_) {
       if (mounted) setState(() => _btOn = false);
@@ -177,10 +196,15 @@ class _LanScanScreenState extends State<LanScanScreen>
     // TOFU: если identity этого device_id уже закреплена и НЕ совпадает —
     // это подмена (или переустановка чужого устройства с тем же UUID),
     // отклоняем молча, не показываем как подключённое.
-    final identityOk = await LanChatStore.instance
-        .checkAndPinIdentity(peer.deviceId, peer.identityPubB64);
+    final identityOk = await LanChatStore.instance.checkAndPinIdentity(
+      peer.deviceId,
+      peer.identityPubB64,
+    );
     if (!identityOk) {
-      appLog.warn('security', 'Identity ${peer.deviceId} изменилась — отклонено');
+      appLog.warn(
+        'security',
+        'Identity ${peer.deviceId} изменилась — отклонено',
+      );
       return;
     }
     _seenDeviceIds.add(peer.deviceId);
@@ -235,7 +259,9 @@ class _LanScanScreenState extends State<LanScanScreen>
     _respondedDeviceIds.add(req.deviceId);
     setState(() => _incomingRequest = null);
     if (accept) {
-      _peerTransports.putIfAbsent(req.deviceId, () => {}).addAll(req.transports);
+      _peerTransports
+          .putIfAbsent(req.deviceId, () => {})
+          .addAll(req.transports);
       await localHub.sendAccept(req.bestPeer);
       // sendAccept шлёт наш публичный ключ инициатору, но сами мы видим этот
       // peer только со стороны "кто-то постучался" — покажем его в своём же
@@ -263,19 +289,25 @@ class _LanScanScreenState extends State<LanScanScreen>
     final key = localHub.getKey(deviceId);
     if (key == null) {
       setState(() => _staleContactIds.remove(deviceId));
-      toast.show('Нет активной сессии с этим устройством — дождитесь нового запроса от него');
+      toast.show(
+        'Нет активной сессии с этим устройством — дождитесь нового запроса от него',
+      );
       return;
     }
     await LanChatStore.instance.createOrGetChat(
       deviceId: deviceId,
-      displayName: deviceId.length > 8 ? '${deviceId.substring(0, 8)}…' : deviceId,
+      displayName: deviceId.length > 8
+          ? '${deviceId.substring(0, 8)}…'
+          : deviceId,
       peerPubB64: base64Encode(key),
     );
     setState(() => _staleContactIds.remove(deviceId));
   }
 
   Widget _staleContactCard(String deviceId) {
-    final label = deviceId.length > 8 ? '${deviceId.substring(0, 8)}…' : deviceId;
+    final label = deviceId.length > 8
+        ? '${deviceId.substring(0, 8)}…'
+        : deviceId;
     return GlassCard(
       padding: const EdgeInsets.all(14),
       child: Row(
@@ -286,21 +318,33 @@ class _LanScanScreenState extends State<LanScanScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Сигнал от $label',
-                    style: TextStyle(color: GE.text, fontSize: 13, fontWeight: FontWeight.w700)),
+                Text(
+                  'Сигнал от $label',
+                  style: TextStyle(
+                    color: GE.text,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
                 const SizedBox(height: 2),
-                Text('Чат с этим устройством был удалён, но оно всё ещё на связи',
-                    style: TextStyle(color: GE.sub, fontSize: 11)),
+                Text(
+                  'Чат с этим устройством был удалён, но оно всё ещё на связи',
+                  style: TextStyle(color: GE.sub, fontSize: 11),
+                ),
               ],
             ),
           ),
           IconButton(
-            icon: Icon(Icons.block, color: GE.red, size: 18),
+            icon: Icon(CupertinoIcons.nosign, color: GE.red, size: 18),
             tooltip: 'Заблокировать',
             onPressed: () => _blockStale(deviceId),
           ),
           IconButton(
-            icon: Icon(Icons.restore, color: GE.green, size: 20),
+            icon: Icon(
+              CupertinoIcons.arrow_counterclockwise,
+              color: GE.green,
+              size: 20,
+            ),
             tooltip: 'Восстановить подключение',
             onPressed: () => _restoreStale(deviceId),
           ),
@@ -332,7 +376,7 @@ class _LanScanScreenState extends State<LanScanScreen>
         titleText: 'Устройства поблизости',
         actions: [
           IconButton(
-            icon: Icon(Icons.settings_outlined, color: GE.sub),
+            icon: Icon(CupertinoIcons.settings, color: GE.sub),
             tooltip: 'Настройки приложения',
             onPressed: openAppSettings,
           ),
@@ -380,20 +424,32 @@ class _LanScanScreenState extends State<LanScanScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (!_wifiConnected)
-            Row(children: [
-              Icon(Icons.wifi_off, size: 15, color: GE.yellow),
-              const SizedBox(width: 8),
-              Expanded(child: Text('Wi-Fi не подключён — LAN-поиск недоступен',
-                  style: TextStyle(color: GE.yellow, fontSize: 12))),
-            ]),
+            Row(
+              children: [
+                Icon(CupertinoIcons.wifi_slash, size: 15, color: GE.yellow),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Wi-Fi не подключён — LAN-поиск недоступен',
+                    style: TextStyle(color: GE.yellow, fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
           if (!_wifiConnected && !_btOn) const SizedBox(height: 4),
           if (!_btOn)
-            Row(children: [
-              Icon(Icons.bluetooth_disabled, size: 15, color: GE.yellow),
-              const SizedBox(width: 8),
-              Expanded(child: Text('Bluetooth выключен — BLE-поиск недоступен',
-                  style: TextStyle(color: GE.yellow, fontSize: 12))),
-            ]),
+            Row(
+              children: [
+                Icon(Icons.bluetooth_disabled, size: 15, color: GE.yellow),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Bluetooth выключен — BLE-поиск недоступен',
+                    style: TextStyle(color: GE.yellow, fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
         ],
       ),
     );
@@ -421,7 +477,9 @@ class _LanScanScreenState extends State<LanScanScreen>
           ),
           IconButton(
             icon: Icon(
-              standard.isNotEmpty ? Icons.check_circle : Icons.check_circle_outline,
+              standard.isNotEmpty
+                  ? CupertinoIcons.checkmark_circle_fill
+                  : CupertinoIcons.checkmark_circle,
               size: 18,
               color: standard.isNotEmpty ? GE.green : GE.sub,
             ),
@@ -431,7 +489,11 @@ class _LanScanScreenState extends State<LanScanScreen>
             onPressed: _toggleStandardIp,
           ),
           IconButton(
-            icon: Icon(_showIp ? Icons.visibility : Icons.visibility_off, size: 18, color: GE.sub),
+            icon: Icon(
+              _showIp ? CupertinoIcons.eye_fill : CupertinoIcons.eye_slash,
+              size: 18,
+              color: GE.sub,
+            ),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
             onPressed: () => setState(() => _showIp = !_showIp),
@@ -490,22 +552,27 @@ class _LanScanScreenState extends State<LanScanScreen>
                       flat: ThemeService.isMinimal,
                     ),
                     child: Center(
-                      child: GestureDetector(
+                      child: PressScale(
                         onTap: (_starting || _scanning) ? null : _startScan,
                         child: Container(
                           width: 64,
                           height: 64,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: GE.primary.withValues(alpha: _scanning ? 0.24 : 0.55),
+                            color: GE.primary.withValues(
+                              alpha: _scanning ? 0.24 : 0.55,
+                            ),
                             border: ThemeService.isMinimal
                                 ? null
                                 : Border.all(color: GE.primary, width: 1.4),
                           ),
                           child: Icon(
                             _starting
-                                ? Icons.hourglass_top
-                                : (_scanning ? Icons.wifi_tethering : Icons.search_rounded),
+                                ? CupertinoIcons.hourglass
+                                : (_scanning
+                                      ? CupertinoIcons
+                                            .antenna_radiowaves_left_right
+                                      : CupertinoIcons.search),
                             color: Colors.white,
                             size: 26,
                           ),
@@ -525,14 +592,27 @@ class _LanScanScreenState extends State<LanScanScreen>
   Widget _legend() {
     return Row(
       children: [
-        _legendChip(Icons.wifi, 'LAN',
-            active: localHub.startedTransports.contains(TransportType.lan) && _wifiConnected),
+        _legendChip(
+          CupertinoIcons.wifi,
+          'LAN',
+          active:
+              localHub.startedTransports.contains(TransportType.lan) &&
+              _wifiConnected,
+        ),
         const SizedBox(width: 8),
-        _legendChip(Icons.wifi_tethering, 'Wi-Fi Direct',
-            active: localHub.startedTransports.contains(TransportType.wifiDirect)),
+        _legendChip(
+          CupertinoIcons.antenna_radiowaves_left_right,
+          'Wi-Fi Direct',
+          active: localHub.startedTransports.contains(TransportType.wifiDirect),
+        ),
         const SizedBox(width: 8),
-        _legendChip(Icons.bluetooth, 'Bluetooth',
-            active: localHub.startedTransports.contains(TransportType.bluetooth) && _btOn),
+        _legendChip(
+          CupertinoIcons.bluetooth,
+          'Bluetooth',
+          active:
+              localHub.startedTransports.contains(TransportType.bluetooth) &&
+              _btOn,
+        ),
       ],
     );
   }
@@ -556,7 +636,7 @@ class _LanScanScreenState extends State<LanScanScreen>
           Text(label, style: TextStyle(color: c, fontSize: 11)),
           if (!active) ...[
             const SizedBox(width: 3),
-            Icon(Icons.close, size: 10, color: c),
+            Icon(CupertinoIcons.xmark, size: 10, color: c),
           ],
         ],
       ),
@@ -572,19 +652,31 @@ class _LanScanScreenState extends State<LanScanScreen>
       child: Row(
         children: [
           SizedBox(
-            width: 22, height: 22,
-            child: CircularProgressIndicator(strokeWidth: 2.2, color: GE.primary),
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.2,
+              color: GE.primary,
+            ),
           ),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Подождите…',
-                    style: TextStyle(color: GE.text, fontSize: 13, fontWeight: FontWeight.w700)),
+                Text(
+                  'Подождите…',
+                  style: TextStyle(
+                    color: GE.text,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
                 const SizedBox(height: 2),
-                Text('Собираем способы связи с ${peer.label}',
-                    style: TextStyle(color: GE.sub, fontSize: 11)),
+                Text(
+                  'Собираем способы связи с ${peer.label}',
+                  style: TextStyle(color: GE.sub, fontSize: 11),
+                ),
               ],
             ),
           ),
@@ -600,35 +692,51 @@ class _LanScanScreenState extends State<LanScanScreen>
       child: Row(
         children: [
           Container(
-            width: 40, height: 40,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: GE.primary.withValues(alpha: 0.18)),
-            child: Icon(Icons.person_add_alt_1, color: GE.primary, size: 20),
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: GE.primary.withValues(alpha: 0.18),
+            ),
+            child: Icon(CupertinoIcons.person_add, color: GE.primary, size: 20),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('${req.label} хочет подключиться',
-                    style: TextStyle(color: GE.text, fontSize: 13, fontWeight: FontWeight.w700)),
+                Text(
+                  '${req.label} хочет подключиться',
+                  style: TextStyle(
+                    color: GE.text,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
                 const SizedBox(height: 2),
-                Text(req.transports.map(transportLabel).join(', '),
-                    style: TextStyle(color: GE.sub, fontSize: 11)),
+                Text(
+                  req.transports.map(transportLabel).join(', '),
+                  style: TextStyle(color: GE.sub, fontSize: 11),
+                ),
               ],
             ),
           ),
           const SizedBox(width: 4),
           IconButton(
-            icon: Icon(Icons.block, color: GE.red, size: 18),
+            icon: Icon(CupertinoIcons.nosign, color: GE.red, size: 18),
             tooltip: 'Заблокировать',
             onPressed: _blockRequest,
           ),
           IconButton(
-            icon: Icon(Icons.close, color: GE.sub, size: 20),
+            icon: Icon(CupertinoIcons.xmark, color: GE.sub, size: 20),
             onPressed: () => _respondToRequest(false),
           ),
           IconButton(
-            icon: Icon(Icons.check_circle, color: GE.green, size: 24),
+            icon: Icon(
+              CupertinoIcons.checkmark_circle_fill,
+              color: GE.green,
+              size: 24,
+            ),
             onPressed: () => _respondToRequest(true),
           ),
         ],
@@ -646,7 +754,9 @@ class _LanScanScreenState extends State<LanScanScreen>
         if (known.isEmpty) {
           // Уже показана карточка "Подождите..." или "хочет подключиться"
           // выше — не дублируем "устройства не найдены" одновременно с ней.
-          if (_collectingPeer != null || _incomingRequest != null || _staleContactIds.isNotEmpty) {
+          if (_collectingPeer != null ||
+              _incomingRequest != null ||
+              _staleContactIds.isNotEmpty) {
             return const SizedBox.shrink();
           }
           return GlassCard(
@@ -656,8 +766,14 @@ class _LanScanScreenState extends State<LanScanScreen>
               children: [
                 Icon(Icons.devices_other, color: GE.sub, size: 30),
                 const SizedBox(height: 10),
-                Text('Устройства не найдены',
-                    style: TextStyle(color: GE.text, fontSize: 14, fontWeight: FontWeight.w600)),
+                Text(
+                  'Устройства не найдены',
+                  style: TextStyle(
+                    color: GE.text,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
                 const SizedBox(height: 4),
                 Text(
                   'Нажмите на радар, чтобы начать поиск.\nНайденные устройства появятся здесь.',
@@ -669,10 +785,14 @@ class _LanScanScreenState extends State<LanScanScreen>
           );
         }
         return Column(
-          children: known.map((d) => Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: _peerTile(d),
-          )).toList(),
+          children: known
+              .map(
+                (d) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _peerTile(d),
+                ),
+              )
+              .toList(),
         );
       },
     );
@@ -680,9 +800,12 @@ class _LanScanScreenState extends State<LanScanScreen>
 
   TransportType _parseTransport(String s) {
     switch (s) {
-      case 'wifi_direct': return TransportType.wifiDirect;
-      case 'bluetooth':   return TransportType.bluetooth;
-      default:            return TransportType.lan;
+      case 'wifi_direct':
+        return TransportType.wifiDirect;
+      case 'bluetooth':
+        return TransportType.bluetooth;
+      default:
+        return TransportType.lan;
     }
   }
 
@@ -702,9 +825,15 @@ class _LanScanScreenState extends State<LanScanScreen>
     final baseTransport = _parseTransport(device.transport);
     IconData icon;
     switch (baseTransport) {
-      case TransportType.lan:        icon = Icons.wifi; break;
-      case TransportType.wifiDirect: icon = Icons.wifi_tethering; break;
-      case TransportType.bluetooth:  icon = Icons.bluetooth; break;
+      case TransportType.lan:
+        icon = CupertinoIcons.wifi;
+        break;
+      case TransportType.wifiDirect:
+        icon = CupertinoIcons.antenna_radiowaves_left_right;
+        break;
+      case TransportType.bluetooth:
+        icon = CupertinoIcons.bluetooth;
+        break;
     }
     final name = device.displayName;
     // Живые данные из пинга (если уже были) поверх того, что видели при
@@ -719,9 +848,12 @@ class _LanScanScreenState extends State<LanScanScreen>
     return GlassCard(
       lite: true,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      onTap: () => Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => LanChatScreen(deviceId: device.deviceId, displayName: name),
-      )),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) =>
+              LanChatScreen(deviceId: device.deviceId, displayName: name),
+        ),
+      ),
       child: Row(
         children: [
           Stack(
@@ -731,14 +863,22 @@ class _LanScanScreenState extends State<LanScanScreen>
                 backgroundColor: GE.green.withValues(alpha: 0.16),
                 child: Text(
                   name.isNotEmpty ? name[0].toUpperCase() : '?',
-                  style: TextStyle(color: GE.green, fontSize: 16, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: GE.green,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
               Positioned(
-                right: -2, bottom: -2,
+                right: -2,
+                bottom: -2,
                 child: Container(
                   padding: const EdgeInsets.all(3),
-                  decoration: BoxDecoration(color: GE.bg, shape: BoxShape.circle),
+                  decoration: BoxDecoration(
+                    color: GE.bg,
+                    shape: BoxShape.circle,
+                  ),
                   child: Icon(icon, size: 12, color: GE.primary),
                 ),
               ),
@@ -749,7 +889,14 @@ class _LanScanScreenState extends State<LanScanScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(name, style: TextStyle(color: GE.text, fontWeight: FontWeight.w600, fontSize: 14)),
+                Text(
+                  name,
+                  style: TextStyle(
+                    color: GE.text,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
                 Text(
                   online && pingMs != null
                       ? '${methods.map(transportLabel).join(' · ')} · $pingMs мс'
@@ -765,8 +912,14 @@ class _LanScanScreenState extends State<LanScanScreen>
               color: GE.green.withValues(alpha: 0.16),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Text('Принято ${_relativeAcceptedTime(device.acceptedAt)}',
-                style: TextStyle(color: GE.green, fontSize: 10, fontWeight: FontWeight.w600)),
+            child: Text(
+              'Принято ${_relativeAcceptedTime(device.acceptedAt)}',
+              style: TextStyle(
+                color: GE.green,
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
         ],
       ),
@@ -803,7 +956,10 @@ class _RadarPainter extends CustomPainter {
       canvas.drawCircle(center, maxR * i / 3, ring);
     }
 
-    if (flat) return;
+    // В минималистичном стиле idle-радар остаётся спокойным, но во время
+    // реального поиска волны и sweep обязательны: это визуальный индикатор
+    // отправки discover-запросов, а не декоративное свечение.
+    if (flat && !scanning) return;
 
     const waves = 3;
     for (var i = 0; i < waves; i++) {
@@ -829,10 +985,7 @@ class _RadarPainter extends CustomPainter {
         ..shader = SweepGradient(
           startAngle: sweepStart,
           endAngle: sweepStart + sweepWidth,
-          colors: [
-            color.withValues(alpha: 0.0),
-            color.withValues(alpha: 0.35),
-          ],
+          colors: [color.withValues(alpha: 0.0), color.withValues(alpha: 0.35)],
           stops: const [0.0, 1.0],
           transform: const GradientRotation(0),
         ).createShader(rect);

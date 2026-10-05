@@ -9,10 +9,13 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import 'dart:io';
+import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../constants.dart';
 import '../storage/secure_store.dart';
+import '../../services/proxy_http_client.dart';
 
 enum WsStatus { disconnected, connecting, connected, authenticated }
 
@@ -21,6 +24,7 @@ class WsClient {
   static final WsClient I = WsClient._();
 
   WebSocketChannel? _ch;
+  HttpClient? _wsHttpClient;
   StreamSubscription<dynamic>? _sub;
   Timer? _ping;
   Timer? _pongDeadline;
@@ -50,9 +54,14 @@ class WsClient {
 
   Future<void> _open(String token) async {
     _setStatus(WsStatus.connecting);
+    final httpClient = ProxyHttpClient.create();
     try {
-      _ch = WebSocketChannel.connect(Uri.parse(K.wsUrl));
+      _ch = IOWebSocketChannel.connect(
+        Uri.parse(K.wsUrl),
+        customClient: httpClient,
+      );
       await _ch!.ready;
+      _wsHttpClient = httpClient;
       _setStatus(WsStatus.connected);
       _sub = _ch!.stream.listen(
         _onData,
@@ -64,6 +73,7 @@ class WsClient {
       send({'type': 'auth', 'token': token, 'device_id': deviceId});
       _startPing();
     } catch (_) {
+      httpClient.close(force: true);
       _scheduleReconnect();
     }
   }
@@ -127,6 +137,18 @@ class WsClient {
       _ch?.sink.close();
     } catch (_) {}
     _ch = null;
+    try {
+      _wsHttpClient?.close(force: true);
+    } catch (_) {}
+    _wsHttpClient = null;
+  }
+
+  Future<void> applyProxySettings() async {
+    final wasConnected = _ch != null;
+    if (!wasConnected) return;
+    _reconnect?.cancel();
+    await disconnect();
+    await connect();
   }
 
   Future<void> disconnect() async {

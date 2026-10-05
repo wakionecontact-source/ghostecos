@@ -4,10 +4,12 @@
 // но переустановка = потеря переписки). Сохраняется в pref key_storage_mode и
 // применяется при регистрации/синхронизации (см. ChatRepo.syncKeys).
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../widgets/glass.dart';
+import '../services/chat_repo.dart';
 
 class KeyChoiceScreen extends StatefulWidget {
   final VoidCallback onDone;
@@ -24,6 +26,11 @@ class _KeyChoiceScreenState extends State<KeyChoiceScreen> {
     final p = await SharedPreferences.getInstance();
     await p.setString('key_storage_mode', _mode);
     await p.setBool('keychoice_done', true);
+    widget.onDone();
+  }
+
+  void _skip() {
+    ChatRepo.instance.skipKeySyncForSession();
     widget.onDone();
   }
 
@@ -59,7 +66,7 @@ class _KeyChoiceScreenState extends State<KeyChoiceScreen> {
                 _option(
                   mode: 'server',
                   icon: Icons.cloud_done_outlined,
-                  title: 'Облачный бэкап',
+                  title: 'Копия на сервере',
                   badge: 'Рекомендуется',
                   body:
                       'Ключ, зашифрованный твоим паролем, хранится на сервере. '
@@ -79,10 +86,14 @@ class _KeyChoiceScreenState extends State<KeyChoiceScreen> {
                 const Spacer(),
                 GlassButton(
                   label: 'Далее',
-                  icon: Icons.arrow_forward,
+                  icon: CupertinoIcons.arrow_right,
                   primary: true,
                   fullWidth: true,
                   onTap: _finish,
+                ),
+                TextButton(
+                  onPressed: _skip,
+                  child: Text('Пропустить', style: TextStyle(color: GE.sub)),
                 ),
                 const SizedBox(height: 20),
               ],
@@ -101,7 +112,7 @@ class _KeyChoiceScreenState extends State<KeyChoiceScreen> {
     required String body,
   }) {
     final sel = _mode == mode;
-    return GestureDetector(
+    return PressScale(
       onTap: () => setState(() => _mode = mode),
       child: GlassCard(
         glow: sel,
@@ -153,8 +164,8 @@ class _KeyChoiceScreenState extends State<KeyChoiceScreen> {
                 const SizedBox(width: 8),
                 Icon(
                   sel
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_unchecked,
+                      ? CupertinoIcons.largecircle_fill_circle
+                      : CupertinoIcons.circle,
                   color: sel ? GE.primary : GE.sub,
                   size: 20,
                 ),

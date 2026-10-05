@@ -1,3 +1,6 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // Firebase (FCM): применяем google-services (читает google-services.json).
@@ -5,6 +8,21 @@ plugins {
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// Release builds must use a real private key. Never fall back to the Android
+// debug key: that makes APKs look like development artifacts and can trigger
+// antivirus heuristics. The actual file is ignored by git.
+val releaseKeyPropertiesFile = rootProject.file("key.properties")
+val releaseKeyProperties = Properties()
+if (releaseKeyPropertiesFile.isFile) {
+    FileInputStream(releaseKeyPropertiesFile).use { releaseKeyProperties.load(it) }
+}
+val releaseSigningReady = releaseKeyPropertiesFile.isFile && listOf(
+    "keyAlias",
+    "keyPassword",
+    "storeFile",
+    "storePassword",
+).all { releaseKeyProperties.getProperty(it)?.isNotBlank() == true }
 
 android {
     namespace = "online.ghost_chat.ghost"
@@ -28,11 +46,37 @@ android {
         multiDexEnabled = true
     }
 
+    signingConfigs {
+        create("release") {
+            if (releaseSigningReady) {
+                keyAlias = releaseKeyProperties.getProperty("keyAlias")
+                keyPassword = releaseKeyProperties.getProperty("keyPassword")
+                storeFile = file(releaseKeyProperties.getProperty("storeFile"))
+                storePassword = releaseKeyProperties.getProperty("storePassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            if (releaseSigningReady) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+    }
+}
+
+// Make the failure explicit for every release task while leaving debug builds
+// and local development unaffected.
+if (!releaseSigningReady) {
+    tasks.configureEach {
+        if (name.contains("Release", ignoreCase = true)) {
+            doFirst {
+                throw GradleException(
+                    "Release signing is not configured. Fill android/key.properties " +
+                        "from android/key.properties.example with the project release keystore."
+                )
+            }
         }
     }
 }

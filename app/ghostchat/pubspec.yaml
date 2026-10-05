@@ -1,7 +1,7 @@
 name: ghost
 description: Ghost — приватный мессенджер с экосистемой (чат, лента, банк) на Mesh + жидкое стекло.
 publish_to: 'none'
-version: 0.1.15+20
+version: 1.2.2+4120
 
 environment:
   sdk: ^3.12.0
@@ -49,9 +49,13 @@ dependencies:
 
   # ─── Голосовые ───
   record: ^6.1.1                   # запись аудио, новая версия чтоб обойти record_linux баг
+  flutter_webrtc: ^1.6.1           # P2P аудио/видео звонки через серверную сигнализацию
   audioplayers: ^6.1.0             # воспроизведение
+  audio_service: ^0.18.19          # системный проигрыватель и уведомление
   # ─── Attach (картинки/видео) ───
   image_picker: ^1.1.2
+  image: ^4.8.0                   # ужимаем кадр видео до безопасного E2E-конверта
+  camera: ^0.11.0+2
   # file_picker 11 ломал Android-сборку (broken plugin.xml) → для произвольных
   # файлов используем стабильный file_selector (Flutter team, системный пикер).
   file_selector: ^1.0.3
@@ -116,10 +120,14 @@ flutter_launcher_icons:
 
 flutter:
   uses-material-design: true
+  shaders:
+    - shaders/liquid_glass.frag
   assets:
     - assets/icon.ico
     - assets/icon.png
+    - assets/app_avatars/
     - assets/bip39_en.txt
+    - assets/sounds/
     - assets/twemoji/
 
 # MSIX (Windows installer)

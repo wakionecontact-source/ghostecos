@@ -1,33 +1,37 @@
-// SupportScreen — экран «Поддержка». Простые ответы на частые вопросы
-// (шифрование, seed-фраза, смена телефона, приватность, потеря доступа) +
-// карточка «Связаться» с контактом @ghostchatof.
-//
-// Чистый UI: ничего не грузит с сервера, кнопка «Открыть канал» пока
-// показывает SnackBar «Скоро» (реального перехода нет).
+// SupportScreen — экран «Поддержка». FAQ остаётся как есть, но карточка
+// «Связаться» теперь ведёт в НАСТОЯЩИЙ внутренний чат с системным
+// GhostChat-аккаунтом @support (не внешняя ссылка на Telegram) — сообщения
+// туда идут как боту (plain_text на сервере, см. bot_api.py/chat_router.py),
+// читает и отвечает Waki через support_admin.html (локальная HTML-панель,
+// C:\Users\ilush\GC\support_admin.html, эндпоинты — support_admin_router.py
+// на сервере).
 
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../services/theme_service.dart';
 import '../widgets/glass.dart';
 import '../widgets/toast_overlay.dart';
+import 'chat_screen.dart';
 
 class SupportScreen extends StatelessWidget {
   const SupportScreen({super.key});
 
-  // Контакт поддержки. Менять тут, если username сменится.
-  static const _supportHandle = '@waki_one';
+  // Системный GhostChat-аккаунт поддержки (account_type='bot', провижинен
+  // на сервере, id=116) — НЕ Telegram-хендл, обычный username в GhostChat.
+  static const _supportUsername = 'support';
+  static const _supportHandle = '@support';
 
   // Список вопрос → ответ. Простым языком, термины в скобках.
   static const List<List<String>> _faq = [
     [
       'Как работает шифрование?',
-      'Сообщения шифруются прямо на твоём телефоне и расшифровываются только '
-          'на телефоне собеседника (это называется сквозное шифрование, E2E). '
-          'По дороге, даже на наших серверах, текст выглядит как набор '
-          'нечитаемых символов.',
+      'В личных чатах с людьми сообщения шифруются на устройстве и '
+          'расшифровываются на устройствах собеседников (сквозное шифрование, '
+          'E2EE). Чаты с ботами, включая @support, работают иначе: бот получает '
+          'текст сообщения, поэтому сквозного шифрования там нет.',
     ],
     [
       'Что такое ключ-фраза (seed) и зачем её хранить?',
@@ -45,9 +49,11 @@ class SupportScreen extends StatelessWidget {
     ],
     [
       'Кто видит мои сообщения?',
-      'Только ты и твой собеседник. Мы не можем прочитать переписку, потому '
-          'что у нас нет ключей для расшифровки. Поэтому береги телефон и '
-          'ключ-фразу — это единственный способ попасть в твой аккаунт.',
+      'В E2EE-чате с человеком содержимое могут прочитать только участники '
+          'на своих устройствах. В чатах с ботами, в том числе с @support, '
+          'сообщение передаётся боту как обычный текст и может быть доступно '
+          'операторам поддержки. Не отправляй туда пароли, seed-фразы или '
+          'приватные ключи.',
     ],
     [
       'Что делать если потерял доступ?',
@@ -74,6 +80,7 @@ class SupportScreen extends StatelessWidget {
           const SizedBox(height: 14),
           _sectionTitle('Быстрые ответы'),
           GlassCard(
+            isListSection: true,
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Column(
               children: [
@@ -136,7 +143,7 @@ class SupportScreen extends StatelessWidget {
                       ? null
                       : Border.all(color: GE.primary, width: 1),
                 ),
-                child: Icon(Icons.alternate_email, color: GE.primary, size: 20),
+                child: Icon(CupertinoIcons.at, color: GE.primary, size: 20),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -144,7 +151,7 @@ class SupportScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Канал поддержки',
+                      'Чат поддержки',
                       style: TextStyle(
                         color: GE.text,
                         fontSize: 14,
@@ -160,23 +167,46 @@ class SupportScreen extends StatelessWidget {
                 ),
               ),
               IconButton(
-                icon: Icon(Icons.copy_outlined, color: GE.sub, size: 18),
+                icon: Icon(CupertinoIcons.doc_on_doc, color: GE.sub, size: 18),
                 tooltip: 'Скопировать',
                 onPressed: () {
-                  Clipboard.setData(
-                    const ClipboardData(text: _supportHandle),
-                  );
+                  Clipboard.setData(const ClipboardData(text: _supportHandle));
                   _snack('Скопировано');
                 },
               ),
             ],
           ),
           const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.orange.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.orange.withValues(alpha: 0.30)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.lock_open, color: Colors.orange, size: 18),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    'Чат с @support не защищён сквозным шифрованием: '
+                    'сообщения получает бот и они могут быть доступны '
+                    'операторам поддержки. Не отправляй пароли, seed-фразу '
+                    'или приватные ключи.',
+                    style: TextStyle(color: GE.text, fontSize: 12, height: 1.4),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
           GlassButton(
-            label: 'Открыть канал',
-            icon: Icons.open_in_new,
+            label: 'Написать в поддержку',
+            icon: CupertinoIcons.chat_bubble_2,
             fullWidth: true,
-            onTap: () => _openChannel(),
+            onTap: () => _openChat(context),
           ),
         ],
       ),
@@ -184,27 +214,29 @@ class SupportScreen extends StatelessWidget {
   }
 
   Widget _sectionTitle(String t) => Padding(
-        padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-        child: Text(
-          t.toUpperCase(),
-          style: TextStyle(
-            color: GE.sub,
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.5,
-          ),
-        ),
-      );
+    padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+    child: Text(
+      t.toUpperCase(),
+      style: TextStyle(
+        color: GE.sub,
+        fontSize: 11,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.5,
+      ),
+    ),
+  );
 
   void _snack(String msg) => toast.show(msg);
 
-  Future<void> _openChannel() async {
-    final uri = Uri.parse('https://t.me/waki_one');
-    try {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } catch (_) {
-      toast.show('Не удалось открыть ссылку');
-    }
+  void _openChat(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const ChatScreen(
+          peer: _supportUsername,
+          displayName: 'Поддержка GhostChat',
+        ),
+      ),
+    );
   }
 }
 
@@ -232,7 +264,11 @@ class _FaqTile extends StatelessWidget {
         expandedCrossAxisAlignment: CrossAxisAlignment.start,
         iconColor: GE.primary,
         collapsedIconColor: GE.sub,
-        leading: Icon(Icons.help_outline, color: GE.primary, size: 20),
+        leading: Icon(
+          CupertinoIcons.question_circle,
+          color: GE.primary,
+          size: 20,
+        ),
         title: Text(
           question,
           style: TextStyle(

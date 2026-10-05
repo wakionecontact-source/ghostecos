@@ -1,13 +1,19 @@
 // Login / Register native с дисклеймером ToS+Privacy.
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
+import '../services/public_page_link.dart';
 import '../mesh_background.dart';
 import '../auth_service.dart';
+import '../services/bot_check_service.dart';
 import '../services/theme_service.dart';
 import '../widgets/glass.dart';
+import '../core/local/app_logger.dart';
+import '../widgets/error_panel.dart';
+import '../widgets/toast_overlay.dart';
 import 'device_approval_wait_screen.dart';
 
 // ── Лимиты регистрации — ЗЕРКАЛО серверных (social_router.py: _NAME_MIN/MAX,
@@ -29,15 +35,20 @@ bool _usernameValid(String raw) {
   return noDots.length >= _usernameMin && noDots.length <= _usernameMax;
 }
 
+String _normalizeUsername(String raw) => raw.trim().toLowerCase();
+
 String _usernameHint(String raw) {
   final v = raw.trim();
-  if (v.isEmpty) return 'Латиница, цифры, _ и точка · $_usernameMin–$_usernameMax символов';
+  if (v.isEmpty)
+    return 'Латиница, цифры, _ и точка · $_usernameMin–$_usernameMax символов';
   if (!RegExp(r'^[a-z0-9_.]+$').hasMatch(v.toLowerCase())) {
     return 'Только латиница, цифры, _ и точка';
   }
   final noDots = v.replaceAll('.', '');
-  if (noDots.length < _usernameMin) return 'Ещё ${_usernameMin - noDots.length} симв. (точки не в счёт)';
-  if (noDots.length > _usernameMax) return 'Слишком длинное — максимум $_usernameMax символов';
+  if (noDots.length < _usernameMin)
+    return 'Ещё ${_usernameMin - noDots.length} симв. (точки не в счёт)';
+  if (noDots.length > _usernameMax)
+    return 'Слишком длинное — максимум $_usernameMax символов';
   return 'Похоже на валидное имя пользователя';
 }
 
@@ -50,7 +61,8 @@ String _nameHint(String raw) {
   final v = raw.trim();
   if (v.isEmpty) return '$_nameMin–$_nameMax символов, любые';
   if (v.length < _nameMin) return 'Ещё ${_nameMin - v.length} симв.';
-  if (v.length > _nameMax) return 'Слишком длинное — максимум $_nameMax символов';
+  if (v.length > _nameMax)
+    return 'Слишком длинное — максимум $_nameMax символов';
   return 'Ок';
 }
 
@@ -59,14 +71,19 @@ bool _passValid(String raw) => raw.length >= _passMin && raw.length <= _passMax;
 String _passHint(String raw) {
   if (raw.isEmpty) return '$_passMin–$_passMax символов';
   if (raw.length < _passMin) return 'Ещё ${_passMin - raw.length} симв.';
-  if (raw.length > _passMax) return 'Слишком длинный — максимум $_passMax символов';
+  if (raw.length > _passMax)
+    return 'Слишком длинный — максимум $_passMax символов';
   return 'Ок';
 }
 
 class AuthScreen extends StatefulWidget {
   final VoidCallback onLoggedIn;
   final bool startInRegister;
-  const AuthScreen({super.key, required this.onLoggedIn, this.startInRegister = false});
+  const AuthScreen({
+    super.key,
+    required this.onLoggedIn,
+    this.startInRegister = false,
+  });
   @override
   State<AuthScreen> createState() => _AuthScreenState();
 }
@@ -77,6 +94,14 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _age18 = false;
   bool _agreedTerms = false;
   String? _err;
+  String? _errDetails;
+  int? _errLogId;
+  String? _usernameServerError;
+  String? _usernameCheckError;
+  bool _usernameChecking = false;
+  bool? _usernameAvailable;
+  Timer? _usernameCheckTimer;
+  int _usernameCheckGeneration = 0;
   final _userCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
   final _pwdCtrl = TextEditingController();
@@ -84,31 +109,115 @@ class _AuthScreenState extends State<AuthScreen> {
   final _userFieldKey = GlobalKey<_ValidatedFieldState>();
   final _nameFieldKey = GlobalKey<_ValidatedFieldState>();
   final _pwdFieldKey = GlobalKey<_ValidatedFieldState>();
+  final _loginUserFocusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _userCtrl.addListener(_onUsernameChanged);
+  }
+
+  void _onUsernameChanged() {
+    _usernameCheckTimer?.cancel();
+    final generation = ++_usernameCheckGeneration;
+    final raw = _userCtrl.text;
+    if (mounted) {
+      setState(() {
+        _usernameServerError = null;
+        _usernameCheckError = null;
+        _usernameAvailable = null;
+        _usernameChecking = false;
+      });
+    }
+    if (_isLogin || !_usernameValid(raw)) return;
+    if (mounted) setState(() => _usernameChecking = true);
+    _usernameCheckTimer = Timer(const Duration(milliseconds: 500), () {
+      unawaited(_checkUsernameAvailability(raw, generation));
+    });
+  }
+
+  Future<void> _checkUsernameAvailability(String raw, int generation) async {
+    final username = _normalizeUsername(raw);
+    try {
+      final result = await AuthService.checkUsername(username);
+      if (!mounted || generation != _usernameCheckGeneration) return;
+      if (_normalizeUsername(_userCtrl.text) != username || _isLogin) return;
+      final available = result['available'] == true;
+      setState(() {
+        _usernameChecking = false;
+        _usernameAvailable = available;
+        // The debounced probe is advisory. Only the registration response can
+        // authoritatively mark a name as occupied.
+        _usernameServerError = null;
+      });
+    } catch (e) {
+      if (!mounted || generation != _usernameCheckGeneration) return;
+      appLog.warn('auth', 'username availability check failed: $e');
+      setState(() {
+        _usernameChecking = false;
+        _usernameAvailable = null;
+        _usernameCheckError = 'Не удалось проверить имя';
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _usernameCheckTimer?.cancel();
+    _userCtrl.removeListener(_onUsernameChanged);
+    _loginUserFocusNode.dispose();
+    _userCtrl.dispose();
+    _nameCtrl.dispose();
+    _pwdCtrl.dispose();
+    _pwd2Ctrl.dispose();
+    super.dispose();
+  }
 
   Future<void> _guest() async {
-    setState(() { _err = null; _busy = true; });
+    setState(() {
+      _err = null;
+      _busy = true;
+      _usernameServerError = null;
+    });
     try {
       await AuthService.loginAsGuest();
       widget.onLoggedIn();
     } catch (e) {
-      setState(() => _err = e.toString());
+      _showError(e);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _go() async {
-    setState(() { _err = null; _busy = true; });
+    setState(() {
+      _err = null;
+      _busy = true;
+      _usernameServerError = null;
+    });
     try {
+      // Убираем только пробелы/whitespace по краям, включая несколько подряд.
+      // Внутренний пробел сохраняем, чтобы валидатор показал ошибку, а не
+      // молча превратил невалидный логин в другой.
+      final uname = _normalizeUsername(_userCtrl.text);
+      if (uname != _userCtrl.text) {
+        _userCtrl.value = TextEditingValue(
+          text: uname,
+          selection: TextSelection.collapsed(offset: uname.length),
+        );
+      }
+
       if (_isLogin) {
-        if (_userCtrl.text.trim().isEmpty || _pwdCtrl.text.isEmpty) {
+        if (uname.isEmpty || _pwdCtrl.text.isEmpty) {
           throw 'Заполните логин и пароль';
         }
-        final uname = _userCtrl.text.trim().toLowerCase();
+        if (!_usernameValid(uname)) throw _usernameHint(uname);
+        await BotCheckService.instance.ensureToken(context);
         final r = await AuthService.login(uname, _pwdCtrl.text);
         if (r['requires_approval'] == true) {
           // TDA: аккаунт требует подтверждения с доверенного устройства —
           // не логинимся сразу, ждём на отдельном экране.
+          _pwdCtrl.clear();
           if (!mounted) return;
           setState(() => _busy = false);
           await Navigator.of(context).push(
@@ -127,7 +236,7 @@ class _AuthScreenState extends State<AuthScreen> {
           return;
         }
       } else {
-        if (_userCtrl.text.trim().isEmpty ||
+        if (uname.isEmpty ||
             _nameCtrl.text.trim().isEmpty ||
             _pwdCtrl.text.isEmpty ||
             _pwd2Ctrl.text.isEmpty) {
@@ -136,26 +245,89 @@ class _AuthScreenState extends State<AuthScreen> {
         // Бьём тревогу локально по тем же лимитам, что и сервер — не гоняем
         // запрос впустую, и сразу видно КАКОЕ поле не так (тряска).
         var bad = false;
-        if (!_usernameValid(_userCtrl.text)) { _userFieldKey.currentState?.shake(); bad = true; }
-        if (!_nameValid(_nameCtrl.text)) { _nameFieldKey.currentState?.shake(); bad = true; }
-        if (!_passValid(_pwdCtrl.text)) { _pwdFieldKey.currentState?.shake(); bad = true; }
+        if (!_usernameValid(uname)) {
+          _userFieldKey.currentState?.shake();
+          bad = true;
+        }
+        if (_usernameChecking)
+          throw 'Подождите, идёт проверка имени пользователя';
+        // Availability is only an advisory/debounced hint. The registration
+        // endpoint is authoritative; a stale or misrouted probe must not
+        // block every otherwise valid username.
+        if (!_nameValid(_nameCtrl.text)) {
+          _nameFieldKey.currentState?.shake();
+          bad = true;
+        }
+        if (!_passValid(_pwdCtrl.text)) {
+          _pwdFieldKey.currentState?.shake();
+          bad = true;
+        }
         if (bad) throw 'Проверьте подсвеченные поля';
         if (_pwdCtrl.text != _pwd2Ctrl.text) throw 'Пароли не совпадают';
         if (!_age18) throw 'Подтвердите 18+';
-        if (!_agreedTerms) throw 'Примите условия использования и политику приватности';
+        if (!_agreedTerms)
+          throw 'Примите условия использования и политику приватности';
+        await BotCheckService.instance.ensureToken(context);
         await AuthService.register(
-          username: _userCtrl.text.trim().toLowerCase(),
+          username: uname,
           displayName: _nameCtrl.text.trim(),
           password: _pwdCtrl.text,
           age18: true,
         );
       }
+      _pwdCtrl.clear();
+      _pwd2Ctrl.clear();
       widget.onLoggedIn();
     } catch (e) {
-      setState(() => _err = e.toString());
+      if (!_isLogin && _isUsernameTakenError(e)) {
+        _showUsernameTakenError(e);
+      } else {
+        _showError(e);
+      }
     } finally {
       setState(() => _busy = false);
     }
+  }
+
+  void _showError(Object error) {
+    final details = errorDetails(error);
+    final entry = appLog.error('auth', 'Authentication failed: $details');
+    if (!mounted) return;
+    final summary = errorSummary(error, fallback: 'Не удалось выполнить вход');
+    setState(() {
+      _err = summary;
+      _errDetails = details;
+      _errLogId = entry.id;
+    });
+    toast.show(summary, level: ToastLevel.error, logId: entry.id);
+  }
+
+  bool _isUsernameTakenError(Object error) {
+    final raw = error.toString().toLowerCase();
+    return raw.contains('имя пользователя уже занято') ||
+        raw.contains('username already') ||
+        (raw.contains('409') && raw.contains('занят'));
+  }
+
+  void _showUsernameTakenError(Object error) {
+    final details = errorDetails(error);
+    final entry = appLog.error(
+      'auth',
+      'Registration username conflict: $details',
+    );
+    if (!mounted) return;
+    setState(() {
+      _err = null;
+      _errDetails = null;
+      _errLogId = null;
+      _usernameServerError = 'Имя пользователя уже занято';
+    });
+    _userFieldKey.currentState?.shake();
+    toast.show(
+      'Имя пользователя уже занято',
+      level: ToastLevel.error,
+      logId: entry.id,
+    );
   }
 
   @override
@@ -182,73 +354,144 @@ class _AuthScreenState extends State<AuthScreen> {
                   const SizedBox(height: 20),
                   _Tabs(
                     isLogin: _isLogin,
-                    onChange: (login) => setState(() {
-                      _isLogin = login; _err = null;
-                    }),
+                    onChange: (login) {
+                      if (login == _isLogin) return;
+                      FocusManager.instance.primaryFocus?.unfocus();
+                      _loginUserFocusNode.unfocus();
+                      setState(() {
+                        _isLogin = login;
+                        _err = null;
+                        _errDetails = null;
+                        _errLogId = null;
+                        _usernameServerError = null;
+                      });
+                    },
                   ),
                   const SizedBox(height: 20),
-                  _isLogin
-                      ? _input('Имя пользователя', _userCtrl)
-                      : _ValidatedField(
-                          key: _userFieldKey,
-                          hint: 'Имя пользователя',
-                          controller: _userCtrl,
-                          isValid: _usernameValid,
-                          hintText: _usernameHint,
-                          atPrefix: true,
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 340),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    layoutBuilder: (currentChild, previousChildren) => Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        ...previousChildren,
+                        if (currentChild != null) currentChild,
+                      ],
+                    ),
+                    transitionBuilder: (child, animation) {
+                      final slide =
+                          Tween<Offset>(
+                            begin: const Offset(0, 0.025),
+                            end: Offset.zero,
+                          ).animate(
+                            CurvedAnimation(
+                              parent: animation,
+                              curve: Curves.easeOutCubic,
+                            ),
+                          );
+                      return FadeTransition(
+                        opacity: animation,
+                        child: SizeTransition(
+                          sizeFactor: animation,
+                          alignment: Alignment.topCenter,
+                          child: SlideTransition(position: slide, child: child),
                         ),
-                  if (!_isLogin) ...[
-                    const SizedBox(height: 10),
-                    _ValidatedField(
-                      key: _nameFieldKey,
-                      hint: 'Отображаемое имя',
-                      controller: _nameCtrl,
-                      isValid: _nameValid,
-                      hintText: _nameHint,
-                    ),
-                  ],
-                  const SizedBox(height: 10),
-                  _isLogin
-                      ? _input('Пароль', _pwdCtrl, obscure: true)
-                      : _ValidatedField(
-                          key: _pwdFieldKey,
-                          hint: 'Пароль',
-                          controller: _pwdCtrl,
-                          obscure: true,
-                          isValid: _passValid,
-                          hintText: _passHint,
-                        ),
-                  if (!_isLogin) ...[
-                    const SizedBox(height: 10),
-                    _input('Повторите пароль', _pwd2Ctrl, obscure: true),
-                    const SizedBox(height: 14),
-                    _Age18Checkbox(
-                      value: _age18,
-                      onChanged: (v) => setState(() => _age18 = v ?? false),
-                    ),
-                    _TermsCheckbox(
-                      value: _agreedTerms,
-                      onChanged: (v) =>
-                          setState(() => _agreedTerms = v ?? false),
-                    ),
-                  ],
+                      );
+                    },
+                    child: _isLogin
+                        ? Column(
+                            key: const ValueKey('login-fields'),
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _AtPrefixField(
+                                controller: _userCtrl,
+                                focusNode: _loginUserFocusNode,
+                                hint: 'Юзернейм',
+                              ),
+                              const SizedBox(height: 10),
+                              _input('Пароль', _pwdCtrl, obscure: true),
+                            ],
+                          )
+                        : Column(
+                            key: const ValueKey('register-fields'),
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _ValidatedField(
+                                key: _nameFieldKey,
+                                hint: 'Имя',
+                                controller: _nameCtrl,
+                                isValid: _nameValid,
+                                hintText: _nameHint,
+                              ),
+                              const SizedBox(height: 10),
+                              _ValidatedField(
+                                key: _userFieldKey,
+                                hint: 'Юзернейм',
+                                controller: _userCtrl,
+                                isValid: _usernameValid,
+                                hintText: (raw) {
+                                  if (_usernameChecking) return 'Проверка…';
+                                  if (_usernameServerError != null) {
+                                    return _usernameServerError!;
+                                  }
+                                  if (_usernameCheckError != null) {
+                                    return _usernameCheckError!;
+                                  }
+                                  if (_usernameAvailable == true) {
+                                    return 'Имя пользователя свободно';
+                                  }
+                                  return _usernameHint(raw);
+                                },
+                                serverError: _usernameServerError,
+                                serverChecking: _usernameChecking,
+                                serverAvailable: _usernameAvailable,
+                                atPrefix: true,
+                              ),
+                              const SizedBox(height: 10),
+                              _ValidatedField(
+                                key: _pwdFieldKey,
+                                hint: 'Пароль',
+                                controller: _pwdCtrl,
+                                obscure: true,
+                                isValid: _passValid,
+                                hintText: _passHint,
+                              ),
+                              const SizedBox(height: 10),
+                              _input(
+                                'Повторите пароль',
+                                _pwd2Ctrl,
+                                obscure: true,
+                              ),
+                              const SizedBox(height: 14),
+                              _Age18Checkbox(
+                                value: _age18,
+                                onChanged: (v) =>
+                                    setState(() => _age18 = v ?? false),
+                              ),
+                              _TermsCheckbox(
+                                value: _agreedTerms,
+                                onChanged: (v) =>
+                                    setState(() => _agreedTerms = v ?? false),
+                              ),
+                            ],
+                          ),
+                  ),
                   if (_err != null) ...[
                     const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: GE.red.withValues(alpha: 0.10),
-                        border: Border.all(color: GE.red.withValues(alpha: 0.30)),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(_err!,
-                          style: TextStyle(color: GE.red, fontSize: 13)),
+                    AppErrorPanel(
+                      title: 'Ошибка авторизации',
+                      message: _err!,
+                      details: _errDetails,
+                      logId: _errLogId,
                     ),
                   ],
                   const SizedBox(height: 16),
                   _PrimaryBtn(
                     label: _isLogin ? 'Войти' : 'Зарегистрироваться',
-                    busy: _busy, onTap: _go,
+                    busy: _busy,
+                    onTap: _go,
                   ),
                   const SizedBox(height: 12),
                   TextButton(
@@ -264,7 +507,11 @@ class _AuthScreenState extends State<AuthScreen> {
                       'Только чаты с устройствами поблизости (LAN/BLE/Wi-Fi Direct). '
                       'Без аккаунта — сервер вообще не используется.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: GE.sub, fontSize: 10.5, height: 1.4),
+                      style: TextStyle(
+                        color: GE.sub,
+                        fontSize: 10.5,
+                        height: 1.4,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -277,7 +524,6 @@ class _AuthScreenState extends State<AuthScreen> {
       ),
     );
   }
-
 }
 
 Widget _input(String hint, TextEditingController c, {bool obscure = false}) {
@@ -314,11 +560,14 @@ class _ObscurableFieldState extends State<_ObscurableField> {
         hintStyle: TextStyle(color: GE.sub, fontSize: 14),
         filled: true,
         fillColor: GE.glassFill,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 14,
+        ),
         suffixIcon: widget.obscure
             ? IconButton(
                 icon: Icon(
-                  _visible ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                  _visible ? CupertinoIcons.eye_slash : CupertinoIcons.eye,
                   color: GE.sub,
                   size: 20,
                 ),
@@ -342,10 +591,8 @@ class _ObscurableFieldState extends State<_ObscurableField> {
   }
 }
 
-/// Поле username с "@" внутри текста, пока пусто и не в фокусе — при фокусе
-/// или вводе символ реально уезжает влево, наружу за левый край поля (тем же
-/// цветом, что обычный текст, без затухания). "@" не часть значения
-/// контроллера — чисто визуальная накладка поверх обычного _input.
+/// Поле username с постоянной визуальной "@". Символ не входит в значение
+/// контроллера и всегда остаётся серым префиксом внутри поля.
 class _AtPrefixField extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
@@ -358,43 +605,34 @@ class _AtPrefixField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final flown = focusNode.hasFocus || controller.text.isNotEmpty;
-    return Stack(
-      clipBehavior: Clip.none,
-      alignment: Alignment.centerLeft,
-      children: [
-        AnimatedPositioned(
-          duration: const Duration(milliseconds: 280),
-          curve: Curves.easeOutCubic,
-          left: flown ? -18 : 14,
-          child: Text('@', style: TextStyle(color: GE.text, fontSize: 14)),
+    return TextField(
+      controller: controller,
+      focusNode: focusNode,
+      style: TextStyle(color: GE.text, fontSize: 14),
+      decoration: InputDecoration(
+        prefixText: '@',
+        prefixStyle: TextStyle(color: GE.sub, fontSize: 14),
+        hintText: hint,
+        hintStyle: TextStyle(color: GE.sub, fontSize: 14),
+        filled: true,
+        fillColor: GE.glassFill,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 14,
         ),
-        TextField(
-          controller: controller,
-          focusNode: focusNode,
-          style: TextStyle(color: GE.text, fontSize: 14),
-          decoration: InputDecoration(
-            hintText: hint,
-            hintStyle: TextStyle(color: GE.sub, fontSize: 14),
-            filled: true,
-            fillColor: GE.glassFill,
-            contentPadding:
-                const EdgeInsets.only(left: 28, right: 14, top: 14, bottom: 14),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: BorderSide(color: GE.borderStrong),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: BorderSide(color: GE.borderStrong),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: BorderSide(color: GE.primary, width: 1.5),
-            ),
-          ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: GE.borderStrong),
         ),
-      ],
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: GE.borderStrong),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: GE.primary, width: 1.5),
+        ),
+      ),
     );
   }
 }
@@ -409,6 +647,9 @@ class _ValidatedField extends StatefulWidget {
   final bool obscure;
   final bool Function(String) isValid;
   final String Function(String) hintText;
+  final String? serverError;
+  final bool serverChecking;
+  final bool? serverAvailable;
   final bool atPrefix;
   const _ValidatedField({
     super.key,
@@ -416,6 +657,9 @@ class _ValidatedField extends StatefulWidget {
     required this.controller,
     required this.isValid,
     required this.hintText,
+    this.serverError,
+    this.serverChecking = false,
+    this.serverAvailable,
     this.obscure = false,
     this.atPrefix = false,
   });
@@ -462,12 +706,22 @@ class _ValidatedFieldState extends State<_ValidatedField>
     final text = widget.controller.text;
     final touched = text.trim().isNotEmpty;
     final valid = widget.isValid(text);
-    final color = !touched ? GE.sub : (valid ? GE.green : GE.red);
+    final color = widget.serverError != null
+        ? GE.red
+        : widget.serverChecking
+        ? GE.sub
+        : widget.serverAvailable == true
+        ? GE.green
+        : (!touched ? GE.sub : (valid ? GE.green : GE.red));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         widget.atPrefix
-            ? _AtPrefixField(controller: widget.controller, focusNode: _focusNode!, hint: widget.hint)
+            ? _AtPrefixField(
+                controller: widget.controller,
+                focusNode: _focusNode!,
+                hint: widget.hint,
+              )
             : _input(widget.hint, widget.controller, obscure: widget.obscure),
         const SizedBox(height: 4),
         AnimatedBuilder(
@@ -481,13 +735,26 @@ class _ValidatedFieldState extends State<_ValidatedField>
             padding: const EdgeInsets.only(left: 4),
             child: Row(
               children: [
-                Icon(
-                  !touched
-                      ? Icons.info_outline
-                      : (valid ? Icons.check_circle : Icons.error_outline),
-                  size: 12,
-                  color: color,
-                ),
+                widget.serverChecking
+                    ? SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 1.5,
+                          color: GE.sub,
+                        ),
+                      )
+                    : Icon(
+                        widget.serverError != null
+                            ? CupertinoIcons.exclamationmark_circle
+                            : !touched
+                            ? CupertinoIcons.info_circle
+                            : (valid
+                                  ? CupertinoIcons.checkmark_circle_fill
+                                  : CupertinoIcons.exclamationmark_circle),
+                        size: 12,
+                        color: color,
+                      ),
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text(
@@ -511,20 +778,23 @@ class _Brand extends StatelessWidget {
     return Column(
       children: [
         ShaderMask(
-          shaderCallback: (b) => LinearGradient(
-            colors: [GE.text, GE.primary],
-          ).createShader(b),
+          shaderCallback: (b) =>
+              LinearGradient(colors: [GE.text, GE.primary]).createShader(b),
           child: Text(
             'GhostEcos',
             style: TextStyle(
-              fontSize: 28, fontWeight: FontWeight.w800,
-              color: GE.text, letterSpacing: -0.5,
+              fontSize: 28,
+              fontWeight: FontWeight.w800,
+              color: GE.text,
+              letterSpacing: -0.5,
             ),
           ),
         ),
         const SizedBox(height: 4),
-        Text('Один аккаунт — вся экосистема',
-            style: TextStyle(color: GE.sub, fontSize: 12)),
+        Text(
+          'Приватное общение',
+          style: TextStyle(color: GE.sub, fontSize: 12),
+        ),
       ],
     );
   }
@@ -552,27 +822,31 @@ class _Tabs extends StatelessWidget {
   }
 
   Widget _tab(String label, bool active, VoidCallback onTap) {
-    return InkWell(
+    return PressScale(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: BoxDecoration(
-          color: active ? GE.primary.withValues(alpha: 0.15) : Colors.transparent,
+          color: active
+              ? GE.primary.withValues(alpha: 0.15)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
           border: ThemeService.isMinimal
               ? null
               : (active
-                  ? Border.all(color: GE.primary.withValues(alpha: 0.35))
-                  : null),
+                    ? Border.all(color: GE.primary.withValues(alpha: 0.35))
+                    : null),
         ),
         alignment: Alignment.center,
-        child: Text(label,
-            style: TextStyle(
-              color: active ? GE.primary : GE.sub,
-              fontWeight: FontWeight.w600, fontSize: 13,
-            )),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: active ? GE.primary : GE.sub,
+            fontWeight: FontWeight.w600,
+            fontSize: 13,
+          ),
+        ),
       ),
     );
   }
@@ -607,12 +881,15 @@ class _PrimaryBtn extends StatelessWidget {
   final String label;
   final bool busy;
   final VoidCallback onTap;
-  const _PrimaryBtn({required this.label, required this.busy, required this.onTap});
+  const _PrimaryBtn({
+    required this.label,
+    required this.busy,
+    required this.onTap,
+  });
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return PressScale(
       onTap: busy ? null : onTap,
-      borderRadius: BorderRadius.circular(12),
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 14),
         decoration: BoxDecoration(
@@ -621,18 +898,31 @@ class _PrimaryBtn extends StatelessWidget {
           boxShadow: ThemeService.isMinimal
               ? null
               : [
-                  BoxShadow(color: GE.primary.withValues(alpha: 0.4),
-                      blurRadius: 18, offset: const Offset(0, 6)),
+                  BoxShadow(
+                    color: GE.primary.withValues(alpha: 0.4),
+                    blurRadius: 18,
+                    offset: const Offset(0, 6),
+                  ),
                 ],
         ),
         child: Center(
           child: busy
               ? const SizedBox(
-                  height: 18, width: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : Text(label,
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : Text(
+                  label,
                   style: const TextStyle(
-                      color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
         ),
       ),
     );
@@ -640,8 +930,7 @@ class _PrimaryBtn extends StatelessWidget {
 }
 
 Future<void> _openLegalPage(String path) async {
-  final url = Uri.parse('${GE.baseUrl}$path');
-  await launchUrl(url, mode: LaunchMode.externalApplication);
+  await PublicPageLink.open('${GE.baseUrl}$path');
 }
 
 TapGestureRecognizer _tapRec(VoidCallback cb) =>
@@ -654,20 +943,25 @@ class _Disclaimer extends StatelessWidget {
     final base = TextStyle(color: GE.sub, fontSize: 11, height: 1.55);
     final link = TextStyle(color: GE.primary, fontSize: 11, height: 1.55);
     return Text.rich(
-      TextSpan(style: base, children: [
-        const TextSpan(text: 'Входя или регистрируя аккаунт вы соглашаетесь с '),
-        TextSpan(
-          text: 'Условиями пользования',
-          style: link,
-          recognizer: _tapRec(() => _openLegalPage('/terms')),
-        ),
-        const TextSpan(text: ' и '),
-        TextSpan(
-          text: 'Политикой приватности',
-          style: link,
-          recognizer: _tapRec(() => _openLegalPage('/privacy')),
-        ),
-      ]),
+      TextSpan(
+        style: base,
+        children: [
+          const TextSpan(
+            text: 'Входя или регистрируя аккаунт вы соглашаетесь с ',
+          ),
+          TextSpan(
+            text: 'Условиями пользования',
+            style: link,
+            recognizer: _tapRec(() => _openLegalPage('/terms')),
+          ),
+          const TextSpan(text: ' и '),
+          TextSpan(
+            text: 'Политикой приватности',
+            style: link,
+            recognizer: _tapRec(() => _openLegalPage('/privacy')),
+          ),
+        ],
+      ),
       textAlign: TextAlign.center,
     );
   }
@@ -686,20 +980,23 @@ class _TermsCheckbox extends StatelessWidget {
       children: [
         Expanded(
           child: Text.rich(
-            TextSpan(style: base, children: [
-              const TextSpan(text: 'Принимаю '),
-              TextSpan(
-                text: 'Условия использования',
-                style: link,
-                recognizer: _tapRec(() => _openLegalPage('/terms')),
-              ),
-              const TextSpan(text: ' и '),
-              TextSpan(
-                text: 'Политику приватности',
-                style: link,
-                recognizer: _tapRec(() => _openLegalPage('/privacy')),
-              ),
-            ]),
+            TextSpan(
+              style: base,
+              children: [
+                const TextSpan(text: 'Принимаю '),
+                TextSpan(
+                  text: 'Условия использования',
+                  style: link,
+                  recognizer: _tapRec(() => _openLegalPage('/terms')),
+                ),
+                const TextSpan(text: ' и '),
+                TextSpan(
+                  text: 'Политику приватности',
+                  style: link,
+                  recognizer: _tapRec(() => _openLegalPage('/privacy')),
+                ),
+              ],
+            ),
           ),
         ),
         GhostSwitch(

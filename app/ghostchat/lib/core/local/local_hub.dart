@@ -11,9 +11,7 @@ class LocalGroupedRequest {
   final Map<TransportType, LocalPeer> peers; // one per transport
   int? pingMs; // latency from best transport
 
-  LocalGroupedRequest({required this.deviceId})
-      : transports = {},
-        peers = {};
+  LocalGroupedRequest({required this.deviceId}) : transports = {}, peers = {};
 
   /// Best peer based on transport priority
   LocalPeer get bestPeer {
@@ -24,7 +22,8 @@ class LocalGroupedRequest {
     return peers.values.first;
   }
 
-  String get label => deviceId.length > 8 ? '${deviceId.substring(0, 8)}...' : deviceId;
+  String get label =>
+      deviceId.length > 8 ? '${deviceId.substring(0, 8)}...' : deviceId;
 }
 
 /// Aggregates all local transports (LAN, WiFi Direct, Bluetooth)
@@ -38,7 +37,8 @@ class LocalHub {
 
   // Track which transports actually started successfully
   final Set<TransportType> _startedTransports = {};
-  Set<TransportType> get startedTransports => Set.unmodifiable(_startedTransports);
+  Set<TransportType> get startedTransports =>
+      Set.unmodifiable(_startedTransports);
 
   // Debounce: collect requests for 2 sec, then emit grouped
   final Map<String, LocalGroupedRequest> _pendingRequests = {};
@@ -48,20 +48,22 @@ class LocalHub {
   final _groupedRequestCtrl = StreamController<LocalGroupedRequest>.broadcast();
   final _collectingCtrl = StreamController<LocalPeer>.broadcast();
   final _requestCtrl = StreamController<LocalPeer>.broadcast();
-  final _acceptCtrl  = StreamController<LocalPeer>.broadcast();
-  final _msgCtrl     = StreamController<LocalMessageEvent>.broadcast();
-  final _ackCtrl     = StreamController<LocalAckEvent>.broadcast();
-  final _seenCtrl    = StreamController<LocalSeenEvent>.broadcast();
+  final _acceptCtrl = StreamController<LocalPeer>.broadcast();
+  final _msgCtrl = StreamController<LocalMessageEvent>.broadcast();
+  final _ackCtrl = StreamController<LocalAckEvent>.broadcast();
+  final _seenCtrl = StreamController<LocalSeenEvent>.broadcast();
 
-  Stream<LocalGroupedRequest> get onGroupedRequest => _groupedRequestCtrl.stream;
+  Stream<LocalGroupedRequest> get onGroupedRequest =>
+      _groupedRequestCtrl.stream;
+
   /// Первый сигнал от нового device_id — ДО того, как окно сбора (5 сек)
   /// закроется. UI показывает "Подождите..." с этим UUID сразу же.
-  Stream<LocalPeer>         get onCollecting => _collectingCtrl.stream;
-  Stream<LocalPeer>         get onRequest => _requestCtrl.stream;
-  Stream<LocalPeer>         get onAccept  => _acceptCtrl.stream;
+  Stream<LocalPeer> get onCollecting => _collectingCtrl.stream;
+  Stream<LocalPeer> get onRequest => _requestCtrl.stream;
+  Stream<LocalPeer> get onAccept => _acceptCtrl.stream;
   Stream<LocalMessageEvent> get onMessage => _msgCtrl.stream;
-  Stream<LocalAckEvent>     get onAck     => _ackCtrl.stream;
-  Stream<LocalSeenEvent>    get onSeen    => _seenCtrl.stream;
+  Stream<LocalAckEvent> get onAck => _ackCtrl.stream;
+  Stream<LocalSeenEvent> get onSeen => _seenCtrl.stream;
 
   final List<StreamSubscription> _subs = [];
 
@@ -75,12 +77,19 @@ class LocalHub {
   // Способы связи, которые СЕЙЧАС реально доступны у пира (пришло в
   // последнем ping/pong, а не "транспорт когда-то стартовал").
   final Map<String, Set<TransportType>> _peerAvailable = {};
-  Set<TransportType>? availableTransportsFor(String username) => _peerAvailable[username];
+  Set<TransportType>? availableTransportsFor(String username) =>
+      _peerAvailable[username];
 
   // Keepalive timers
   final Map<String, Timer> _keepaliveTimers = {};
   final Map<String, DateTime> _lastPingSent = {};
   final Map<String, DateTime> _lastPongRecv = {};
+  bool _pingSettingListenerAttached = false;
+  // Invalidates in-flight ping futures when all transports are stopped (for
+  // example, when the app is sent to the background). Without a generation,
+  // a ping that was already awaiting a transport could recreate its timer
+  // after stopAll() had cleared the maps.
+  int _transportGeneration = 0;
 
   // Online status
   final Map<String, bool> _onlineStatus = {};
@@ -95,11 +104,13 @@ class LocalHub {
   // подставляет реальную проверку по БД.
   Future<bool> Function(String deviceId)? isKnownPeerChecker;
   final _staleContactCtrl = StreamController<String>.broadcast();
+
   /// Пришёл пинг от устройства, с которым чата уже нет (удалён локально) —
   /// понг ему НЕ уходит молча, вместо этого сюда прилетает device_id.
   Stream<String> get onStaleContact => _staleContactCtrl.stream;
 
   final _reconnectedCtrl = StreamController<LocalPeer>.broadcast();
+
   /// Отдельно от onAccept — конкретно момент, когда УЖЕ известное устройство
   /// (был чат раньше) само восстановило сессию автопринятием (см.
   /// _onRawRequest). UI может показать мягкое "снова на связи" вместо
@@ -123,8 +134,15 @@ class LocalHub {
   }
 
   Future<void> startAll() async {
+    final generation = ++_transportGeneration;
     await LanSettings().load();
-    for (final s in _subs) { s.cancel(); }
+    if (!_pingSettingListenerAttached) {
+      LanSettings().pingEnabledNotifier.addListener(_onPingSettingChanged);
+      _pingSettingListenerAttached = true;
+    }
+    for (final s in _subs) {
+      s.cancel();
+    }
     _subs.clear();
     _startedTransports.clear();
 
@@ -138,48 +156,77 @@ class LocalHub {
 
       try {
         await t.start();
+        if (generation != _transportGeneration) {
+          await t.stop();
+          return;
+        }
         _startedTransports.add(t.type);
         appLog.info('lan', '${transportLabel(t.type)} запущен');
       } catch (e) {
-        appLog.error('lan', '${transportLabel(t.type)} не удалось запустить: $e');
+        appLog.error(
+          'lan',
+          '${transportLabel(t.type)} не удалось запустить: $e',
+        );
         continue;
       }
       _subs.add(t.onRequest.listen(_onRawRequest));
-      _subs.add(t.onAccept.listen((p) {
-        appLog.info('lan', 'Accept от device=${p.deviceId} (${transportLabel(p.transport)})');
-        _sessionMap[p.deviceId] = p.transport;
-        _acceptCtrl.add(p);
-        _startKeepalive(p.deviceId);
-      }));
-      _subs.add(t.onMessage.listen((m) {
-        // Handle keepalive pong
-        if (m.msgId == '__pong__') {
-          _handlePong(m.fromUsername, m.encB64);
-          return;
-        }
-        if (m.msgId == '__ping__') {
-          _handlePingReceived(m.fromUsername, m.encB64);
-          return;
-        }
-        _msgCtrl.add(m);
-      }));
+      _subs.add(
+        t.onAccept.listen((p) {
+          appLog.info(
+            'lan',
+            'Accept от device=${p.deviceId} (${transportLabel(p.transport)})',
+          );
+          _sessionMap[p.deviceId] = p.transport;
+          _acceptCtrl.add(p);
+          _startKeepalive(p.deviceId);
+        }),
+      );
+      _subs.add(
+        t.onMessage.listen((m) {
+          // Handle keepalive pong
+          if (m.msgId == '__pong__') {
+            _handlePong(m.fromUsername, m.encB64);
+            return;
+          }
+          if (m.msgId == '__ping__') {
+            _handlePingReceived(m.fromUsername, m.encB64);
+            return;
+          }
+          _msgCtrl.add(m);
+        }),
+      );
       _subs.add(t.onAck.listen((a) => _ackCtrl.add(a)));
       _subs.add(t.onSeen.listen((s) => _seenCtrl.add(s)));
     }
   }
 
   Future<void> stopAll() async {
-    for (final s in _subs) { s.cancel(); }
+    _transportGeneration++;
+    if (_pingSettingListenerAttached) {
+      LanSettings().pingEnabledNotifier.removeListener(_onPingSettingChanged);
+      _pingSettingListenerAttached = false;
+    }
+    for (final s in _subs) {
+      s.cancel();
+    }
     _subs.clear();
-    for (final t in _transports) { await t.stop(); }
+    for (final t in _transports) {
+      await t.stop();
+    }
     _startedTransports.clear();
     _sessionMap.clear();
     _pendingRequests.clear();
-    for (final t in _debounceTimers.values) { t.cancel(); }
+    for (final t in _debounceTimers.values) {
+      t.cancel();
+    }
     _debounceTimers.clear();
-    for (final t in _keepaliveTimers.values) { t.cancel(); }
+    for (final t in _keepaliveTimers.values) {
+      t.cancel();
+    }
     _keepaliveTimers.clear();
     _pingLatency.clear();
+    _lastPingSent.clear();
+    _lastPongRecv.clear();
     _onlineStatus.clear();
     _missedPongs.clear();
     _keepaliveStartedAt.clear();
@@ -200,7 +247,8 @@ class LocalHub {
 
     final isNewGroup = !_pendingRequests.containsKey(did);
     final group = _pendingRequests.putIfAbsent(
-      did, () => LocalGroupedRequest(deviceId: did),
+      did,
+      () => LocalGroupedRequest(deviceId: did),
     );
     group.transports.add(peer.transport);
     group.peers[peer.transport] = peer;
@@ -244,7 +292,10 @@ class LocalHub {
         return;
       }
 
-      appLog.info('lan', 'Grouped request: ${req.deviceId} (${req.transports.map(transportLabel).join(", ")})');
+      appLog.info(
+        'lan',
+        'Grouped request: ${req.deviceId} (${req.transports.map(transportLabel).join(", ")})',
+      );
       _groupedRequestCtrl.add(req);
     });
 
@@ -255,8 +306,8 @@ class LocalHub {
   // ── Keepalive (базовый интервал 5 сек + бэкофф при потере понгов) ──────
 
   static const _basePingInterval = Duration(seconds: 5);
-  static const _pongTimeout      = Duration(seconds: 4);
-  static const _maxPingInterval  = Duration(seconds: 60);
+  static const _pongTimeout = Duration(seconds: 4);
+  static const _maxPingInterval = Duration(seconds: 60);
 
   // Подряд пропущенных понгов на этого пира — после 3-х подряд начинаем
   // увеличивать интервал между пингами (незачем долбить эфир в пустоту),
@@ -270,14 +321,36 @@ class LocalHub {
   final Map<String, DateTime> _keepaliveStartedAt = {};
   static const _staleCheckGrace = Duration(seconds: 15);
 
+  /// The settings screen can change this while the app is already running.
+  /// The old implementation only consulted the flag when a session started,
+  /// so existing timers kept sending pings forever after the switch was off.
+  void _onPingSettingChanged() {
+    if (LanSettings().lanPingEnabled) {
+      for (final username in _sessionMap.keys) {
+        _startKeepalive(username);
+      }
+      appLog.info('lan', 'LAN-пинг включён: keepalive восстановлен');
+      return;
+    }
+
+    for (final username in List<String>.of(_keepaliveTimers.keys)) {
+      _stopKeepalive(username);
+    }
+    _lastPingSent.clear();
+    _lastPongRecv.clear();
+    _pingLatency.clear();
+    appLog.info('lan', 'LAN-пинг выключен: keepalive остановлен');
+  }
+
   void _startKeepalive(String username) {
     if (!LanSettings().lanPingEnabled) return;
+    final generation = _transportGeneration;
     _keepaliveTimers[username]?.cancel();
     _missedPongs[username] = 0;
     _keepaliveStartedAt[username] = DateTime.now();
     _onlineStatus[username] = true;
     _onlineCtrl.add(MapEntry(username, true));
-    _pingCycle(username);
+    _pingCycle(username, generation);
   }
 
   void _stopKeepalive(String username) {
@@ -292,7 +365,12 @@ class LocalHub {
   /// Шлёт пинг, ждёт _pongTimeout на ответ, затем сам планирует следующий
   /// цикл — с базовым интервалом, если понг пришёл, или с растущим
   /// (бэкофф), если несколько подряд не пришло.
-  Future<void> _pingCycle(String username) async {
+  Future<void> _pingCycle(String username, int generation) async {
+    if (generation != _transportGeneration) return;
+    if (!LanSettings().lanPingEnabled) {
+      _stopKeepalive(username);
+      return;
+    }
     final t = transportFor(username);
     if (t == null) {
       _stopKeepalive(username);
@@ -301,6 +379,11 @@ class LocalHub {
     _lastPingSent[username] = DateTime.now();
     try {
       final payload = await _myAvailabilityPayload();
+      if (generation != _transportGeneration) return;
+      if (!LanSettings().lanPingEnabled) {
+        _stopKeepalive(username);
+        return;
+      }
       await t.sendMessage(username, '__ping__', payload, 0);
     } catch (_) {
       _stopKeepalive(username);
@@ -308,6 +391,11 @@ class LocalHub {
     }
     final sentAt = _lastPingSent[username]!;
     _keepaliveTimers[username] = Timer(_pongTimeout, () {
+      if (generation != _transportGeneration) return;
+      if (!LanSettings().lanPingEnabled) {
+        _stopKeepalive(username);
+        return;
+      }
       final lastPong = _lastPongRecv[username];
       final gotPong = lastPong != null && !lastPong.isBefore(sentAt);
       Duration nextDelay;
@@ -328,13 +416,19 @@ class LocalHub {
         if (missed >= 3) {
           final extraSteps = (missed - 2).clamp(0, 4);
           final ms = (_basePingInterval.inMilliseconds * (1 << extraSteps))
-              .clamp(_basePingInterval.inMilliseconds, _maxPingInterval.inMilliseconds);
+              .clamp(
+                _basePingInterval.inMilliseconds,
+                _maxPingInterval.inMilliseconds,
+              );
           nextDelay = Duration(milliseconds: ms);
         } else {
           nextDelay = _basePingInterval;
         }
       }
-      _keepaliveTimers[username] = Timer(nextDelay, () => _pingCycle(username));
+      _keepaliveTimers[username] = Timer(
+        nextDelay,
+        () => _pingCycle(username, generation),
+      );
     });
   }
 
@@ -352,18 +446,22 @@ class LocalHub {
   /// с таймаутом на каждую проверку, зависший транспорт просто не попадёт
   /// в список доступных, вместо того чтобы тормозить вообще всё.
   Future<String> _myAvailabilityPayload() async {
-    final enabled = _transports.where((t) => LanSettings().isLanTransportEnabled(t.type));
-    final results = await Future.wait(enabled.map((t) async {
-      try {
-        final ok = await t.isCurrentlyAvailable().timeout(
-          const Duration(milliseconds: 500),
-          onTimeout: () => false,
-        );
-        return ok ? t.type.name : null;
-      } catch (_) {
-        return null;
-      }
-    }));
+    final enabled = _transports.where(
+      (t) => LanSettings().isLanTransportEnabled(t.type),
+    );
+    final results = await Future.wait(
+      enabled.map((t) async {
+        try {
+          final ok = await t.isCurrentlyAvailable().timeout(
+            const Duration(milliseconds: 500),
+            onTimeout: () => false,
+          );
+          return ok ? t.type.name : null;
+        } catch (_) {
+          return null;
+        }
+      }),
+    );
     return jsonEncode({'t': results.whereType<String>().toList()});
   }
 
@@ -384,12 +482,15 @@ class LocalHub {
   }
 
   Future<void> _handlePingReceived(String fromUsername, String payload) async {
-    if (payload.isNotEmpty) _peerAvailable[fromUsername] = _parseAvailability(payload);
+    if (!LanSettings().lanPingEnabled) return;
+    if (payload.isNotEmpty)
+      _peerAvailable[fromUsername] = _parseAvailability(payload);
 
     final checker = isKnownPeerChecker;
     if (checker != null) {
       final startedAt = _keepaliveStartedAt[fromUsername];
-      final withinGrace = startedAt != null &&
+      final withinGrace =
+          startedAt != null &&
           DateTime.now().difference(startedAt) < _staleCheckGrace;
       if (!withinGrace && !(await checker(fromUsername))) {
         // Чат с этим устройством удалён локально (или никогда не
@@ -405,12 +506,19 @@ class LocalHub {
     final t = transportFor(fromUsername);
     if (t != null) {
       final myPayload = await _myAvailabilityPayload();
-      t.sendMessage(fromUsername, '__pong__', myPayload, DateTime.now().millisecondsSinceEpoch);
+      t.sendMessage(
+        fromUsername,
+        '__pong__',
+        myPayload,
+        DateTime.now().millisecondsSinceEpoch,
+      );
     }
   }
 
   void _handlePong(String fromUsername, String payload) {
-    if (payload.isNotEmpty) _peerAvailable[fromUsername] = _parseAvailability(payload);
+    if (!LanSettings().lanPingEnabled) return;
+    if (payload.isNotEmpty)
+      _peerAvailable[fromUsername] = _parseAvailability(payload);
     _lastPongRecv[fromUsername] = DateTime.now();
     final sent = _lastPingSent[fromUsername];
     if (sent != null) {
@@ -428,9 +536,9 @@ class LocalHub {
   /// не дожидаясь очередного цикла (и не ломает бэкофф-состояние — если
   /// понг придёт, missedPongs сам сбросится в _pingCycle как обычно).
   Future<void> pingNow(String username) async {
-    if (!hasSession(username)) return;
+    if (!LanSettings().lanPingEnabled || !hasSession(username)) return;
     _keepaliveTimers[username]?.cancel();
-    await _pingCycle(username);
+    await _pingCycle(username, _transportGeneration);
   }
 
   // ── Transport priority ─────────────────────────────────────────────────
@@ -475,12 +583,25 @@ class LocalHub {
 
   bool hasSession(String username) => transportFor(username) != null;
 
-  List<int>? getKey(String username) => transportFor(username)?.getKey(username);
+  List<int>? getKey(String username) =>
+      transportFor(username)?.getKey(username);
 
-  Future<void> sendMessage(String toUsername, String msgId, String encB64, int sentAt, {String replyToMsgId = ''}) async {
+  Future<void> sendMessage(
+    String toUsername,
+    String msgId,
+    String encB64,
+    int sentAt, {
+    String replyToMsgId = '',
+  }) async {
     final t = transportFor(toUsername);
     if (t == null) return;
-    await t.sendMessage(toUsername, msgId, encB64, sentAt, replyToMsgId: replyToMsgId);
+    await t.sendMessage(
+      toUsername,
+      msgId,
+      encB64,
+      sentAt,
+      replyToMsgId: replyToMsgId,
+    );
   }
 
   Future<void> sendSeen(String toUsername, List<String> msgIds) async {
@@ -532,7 +653,8 @@ class LocalHub {
   }
 
   /// Get list of registered transport types
-  List<TransportType> get availableTransports => _transports.map((t) => t.type).toList();
+  List<TransportType> get availableTransports =>
+      _transports.map((t) => t.type).toList();
 }
 
 final localHub = LocalHub();

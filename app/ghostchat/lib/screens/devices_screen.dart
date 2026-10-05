@@ -8,6 +8,7 @@
 // сам его откроет, если ещё не открыт.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:intl/intl.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
@@ -16,6 +17,7 @@ import '../services/theme_service.dart';
 import '../services/ws_client.dart';
 import '../widgets/glass.dart';
 import '../widgets/toast_overlay.dart';
+import '../widgets/skeleton.dart';
 import '../services/optimistic_action.dart';
 
 class DevicesScreen extends StatefulWidget {
@@ -25,6 +27,7 @@ class DevicesScreen extends StatefulWidget {
 }
 
 class _DevicesScreenState extends State<DevicesScreen> {
+  static const _tdaAvailable = false;
   final _ws = WsClient.instance;
   List<Map<String, dynamic>> _devices = [];
   List<Map<String, dynamic>> _pending = [];
@@ -44,15 +47,8 @@ class _DevicesScreenState extends State<DevicesScreen> {
     setState(() => _loading = true);
     try {
       _myDeviceId = await AuthService.deviceId();
-      final results = await Future.wait([
-        _ws.call('devices.list'),
-        _ws.call('tda.pending.list'),
-        _ws.call('tda.get'),
-      ]);
+      final r = await _ws.call('devices.list');
       if (!mounted) return;
-      final r = results[0];
-      final rp = results[1];
-      final rt = results[2];
       List<Map<String, dynamic>> list = [];
       if (r['devices'] is List) {
         list = (r['devices'] as List)
@@ -60,17 +56,10 @@ class _DevicesScreenState extends State<DevicesScreen> {
             .map((m) => Map<String, dynamic>.from(m))
             .toList();
       }
-      List<Map<String, dynamic>> pending = [];
-      if (rp['pending'] is List) {
-        pending = (rp['pending'] as List)
-            .whereType<Map>()
-            .map((m) => Map<String, dynamic>.from(m))
-            .toList();
-      }
       setState(() {
         _devices = list;
-        _pending = pending;
-        _tdaEnabled = rt['enabled'] == true;
+        _pending = [];
+        _tdaEnabled = false;
         _loading = false;
         _error = null;
       });
@@ -89,9 +78,11 @@ class _DevicesScreenState extends State<DevicesScreen> {
       await _ws.call('tda.set', {'enabled': v});
       if (!mounted) return;
       setState(() => _tdaEnabled = v);
-      _snack(v
-          ? 'Теперь новые устройства нужно подтверждать'
-          : 'Подтверждение новых устройств выключено');
+      _snack(
+        v
+            ? 'Теперь новые устройства нужно подтверждать'
+            : 'Подтверждение новых устройств выключено',
+      );
     } catch (e) {
       _snack('Не удалось изменить: $e');
     } finally {
@@ -138,15 +129,20 @@ class _DevicesScreenState extends State<DevicesScreen> {
           maxLength: 6,
           textAlign: TextAlign.center,
           style: TextStyle(color: GE.text, fontSize: 22, letterSpacing: 6),
-          decoration: const InputDecoration(counterText: '', hintText: '••••••'),
+          decoration: const InputDecoration(
+            counterText: '',
+            hintText: '••••••',
+          ),
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Отмена')),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Отмена'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-              child: Text('Подтвердить', style: TextStyle(color: GE.primary))),
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: Text('Подтвердить', style: TextStyle(color: GE.primary)),
+          ),
         ],
       ),
     );
@@ -162,8 +158,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: GE.bgDeep,
-        title: Text('Отозвать устройство?',
-            style: TextStyle(color: GE.text)),
+        title: Text('Отозвать устройство?', style: TextStyle(color: GE.text)),
         content: Text(
           'Устройство "${d['device_name']}" больше не сможет работать с аккаунтом. '
           'Если потребуется — нужно будет заново войти.',
@@ -171,11 +166,13 @@ class _DevicesScreenState extends State<DevicesScreen> {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Отмена')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Отмена'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text('Отозвать', style: TextStyle(color: GE.red))),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Отозвать', style: TextStyle(color: GE.red)),
+          ),
         ],
       ),
     );
@@ -185,7 +182,8 @@ class _DevicesScreenState extends State<DevicesScreen> {
       await optimisticAction(
         apply: () => setState(() => _devices.removeAt(i)),
         request: () async => _ws.call('devices.revoke', {'device_pk': d['id']}),
-        undo: () => setState(() => _devices.insert(i.clamp(0, _devices.length), d)),
+        undo: () =>
+            setState(() => _devices.insert(i.clamp(0, _devices.length), d)),
         failureMessage: 'Не удалось отозвать устройство',
       );
       _snack('Устройство отозвано');
@@ -209,66 +207,87 @@ class _DevicesScreenState extends State<DevicesScreen> {
         color: GE.primary,
         onRefresh: _load,
         child: _loading
-            ? Center(child: CircularProgressIndicator(color: GE.primary))
+            ? ListView(
+                padding: const EdgeInsets.fromLTRB(10, 12, 10, 80),
+                physics: const NeverScrollableScrollPhysics(),
+                children: const [SkeletonRowList(count: 6, avatarSize: 36)],
+              )
             : _error != null
-                ? ListView(
-                    padding: const EdgeInsets.all(20),
-                    children: [
-                      const SizedBox(height: 60),
-                      Center(
-                        child: GlassCard(
-                          lite: true,
-                          padding: const EdgeInsets.all(20),
-                          child: Column(mainAxisSize: MainAxisSize.min, children: [
-                            Icon(Icons.error_outline, color: GE.red, size: 32),
-                            const SizedBox(height: 8),
-                            Text('Не загрузилось',
-                                style: TextStyle(color: GE.text, fontWeight: FontWeight.w600)),
-                            const SizedBox(height: 6),
-                            Text(_error!,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(color: GE.sub, fontSize: 11)),
-                          ]),
-                        ),
-                      ),
-                    ],
-                  )
-                : ListView(
-                    padding: const EdgeInsets.fromLTRB(10, 12, 10, 80),
-                    children: [
-                      _tdaCard(),
-                      const SizedBox(height: 10),
-                      if (_pending.isNotEmpty) ...[
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
-                          child: Text('ОЖИДАЮТ ПОДТВЕРЖДЕНИЯ',
-                              style: TextStyle(
-                                  color: GE.yellow,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 0.5)),
-                        ),
-                        for (final p in _pending) ...[
-                          _PendingTile(
-                            p: p,
-                            onApprove: () => _approvePending(p),
-                            onDeny: () => _denyPending(p),
+            ? ListView(
+                padding: const EdgeInsets.all(20),
+                children: [
+                  const SizedBox(height: 60),
+                  Center(
+                    child: GlassCard(
+                      lite: true,
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            CupertinoIcons.exclamationmark_circle,
+                            color: GE.red,
+                            size: 32,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Не загрузилось',
+                            style: TextStyle(
+                              color: GE.text,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                           const SizedBox(height: 6),
+                          Text(
+                            _error!,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: GE.sub, fontSize: 11),
+                          ),
                         ],
-                        const SizedBox(height: 8),
-                      ],
-                      _info(),
-                      for (final d in _devices) ...[
-                        _DeviceTile(
-                          d: d,
-                          isMe: d['device_id'] == _myDeviceId,
-                          onRevoke: () => _revoke(d),
-                        ),
-                        const SizedBox(height: 6),
-                      ],
-                    ],
+                      ),
+                    ),
                   ),
+                ],
+              )
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(10, 12, 10, 80),
+                children: [
+                  _tdaCard(),
+                  const SizedBox(height: 10),
+                  if (_tdaAvailable && _pending.isNotEmpty) ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+                      child: Text(
+                        'ОЖИДАЮТ ПОДТВЕРЖДЕНИЯ',
+                        style: TextStyle(
+                          color: GE.yellow,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                    for (final p in _pending) ...[
+                      _PendingTile(
+                        p: p,
+                        onApprove: () => _approvePending(p),
+                        onDeny: () => _denyPending(p),
+                      ),
+                      const SizedBox(height: 6),
+                    ],
+                    const SizedBox(height: 8),
+                  ],
+                  _info(),
+                  for (final d in _devices) ...[
+                    _DeviceTile(
+                      d: d,
+                      isMe: d['device_id'] == _myDeviceId,
+                      onRevoke: () => _revoke(d),
+                    ),
+                    const SizedBox(height: 6),
+                  ],
+                ],
+              ),
       ),
     );
   }
@@ -279,17 +298,25 @@ class _DevicesScreenState extends State<DevicesScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       child: Row(
         children: [
-          Icon(Icons.verified_user_outlined, color: GE.primary, size: 20),
+          Icon(CupertinoIcons.checkmark_shield, color: GE.primary, size: 20),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Подтверждать новые устройства',
-                    style: TextStyle(
-                        color: GE.text, fontSize: 13, fontWeight: FontWeight.w600)),
-                Text('Вход с незнакомого устройства потребует код с доверенного',
-                    style: TextStyle(color: GE.sub, fontSize: 10.5, height: 1.3)),
+                Text(
+                  'Подтверждать новые устройства',
+                  style: TextStyle(
+                    color: GE.text,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  'Вход с незнакомого устройства потребует код с доверенного',
+                  style: TextStyle(color: GE.sub, fontSize: 10.5, height: 1.3),
+                ),
+                Text('Скоро', style: TextStyle(color: GE.yellow, fontSize: 10)),
               ],
             ),
           ),
@@ -297,11 +324,15 @@ class _DevicesScreenState extends State<DevicesScreen> {
               ? SizedBox(
                   width: 20,
                   height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: GE.primary))
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: GE.primary,
+                  ),
+                )
               : GhostSwitch(
-                  value: _tdaEnabled,
+                  value: false,
                   activeColor: GE.primary,
-                  onChanged: _toggleTda,
+                  onChanged: null,
                 ),
         ],
       ),
@@ -324,7 +355,11 @@ class _PendingTile extends StatelessWidget {
   final Map<String, dynamic> p;
   final VoidCallback onApprove;
   final VoidCallback onDeny;
-  const _PendingTile({required this.p, required this.onApprove, required this.onDeny});
+  const _PendingTile({
+    required this.p,
+    required this.onApprove,
+    required this.onDeny,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -336,18 +371,24 @@ class _PendingTile extends StatelessWidget {
           Icon(Icons.devices_other, color: GE.yellow, size: 22),
           const SizedBox(width: 10),
           Expanded(
-            child: Text((p['device_name'] as String?) ?? 'Устройство',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: GE.text, fontSize: 13, fontWeight: FontWeight.w600)),
+            child: Text(
+              (p['device_name'] as String?) ?? 'Устройство',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: GE.text,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
           IconButton(
-            icon: Icon(Icons.close, color: GE.red, size: 20),
+            icon: Icon(CupertinoIcons.xmark, color: GE.red, size: 20),
             tooltip: 'Отклонить',
             onPressed: onDeny,
           ),
           IconButton(
-            icon: Icon(Icons.check, color: GE.green, size: 20),
+            icon: Icon(CupertinoIcons.checkmark, color: GE.green, size: 20),
             tooltip: 'Подтвердить',
             onPressed: onApprove,
           ),
@@ -361,17 +402,28 @@ class _DeviceTile extends StatelessWidget {
   final Map<String, dynamic> d;
   final bool isMe;
   final VoidCallback onRevoke;
-  const _DeviceTile({required this.d, required this.isMe, required this.onRevoke});
+  const _DeviceTile({
+    required this.d,
+    required this.isMe,
+    required this.onRevoke,
+  });
 
   IconData _platformIcon(String? p) {
     switch (p) {
-      case 'android': return Icons.android;
-      case 'ios': return Icons.phone_iphone;
-      case 'windows': return Icons.laptop_windows;
-      case 'macos': return Icons.laptop_mac;
-      case 'linux': return Icons.laptop_chromebook;
-      case 'web': return Icons.public;
-      default: return Icons.devices_other;
+      case 'android':
+        return Icons.android;
+      case 'ios':
+        return CupertinoIcons.device_phone_portrait;
+      case 'windows':
+        return CupertinoIcons.device_laptop;
+      case 'macos':
+        return CupertinoIcons.device_laptop;
+      case 'linux':
+        return CupertinoIcons.device_laptop;
+      case 'web':
+        return CupertinoIcons.globe;
+      default:
+        return Icons.devices_other;
     }
   }
 
@@ -379,14 +431,18 @@ class _DeviceTile extends StatelessWidget {
     if (ts == null) return '';
     try {
       final dt = DateTime.fromMillisecondsSinceEpoch(
-          ((ts as num).toInt()) * 1000, isUtc: true);
+        ((ts as num).toInt()) * 1000,
+        isUtc: true,
+      );
       final s = DateTime.now().toUtc().difference(dt).inSeconds;
       if (s < 60) return 'только что';
       if (s < 3600) return '${s ~/ 60} мин назад';
       if (s < 86400) return '${s ~/ 3600} ч назад';
       if (s < 7 * 86400) return '${s ~/ 86400} д назад';
       return DateFormat('dd.MM.yyyy').format(dt.toLocal());
-    } catch (_) { return ''; }
+    } catch (_) {
+      return '';
+    }
   }
 
   @override
@@ -401,57 +457,89 @@ class _DeviceTile extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 42, height: 42,
+            width: 42,
+            height: 42,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: isOwner ? GE.primary.withValues(alpha: 0.22) : GE.glassFill,
+              color: isOwner
+                  ? GE.primary.withValues(alpha: 0.22)
+                  : GE.glassFill,
               border: ThemeService.isMinimal
                   ? null
                   : Border.all(
-                      color: isOwner ? GE.primary : GE.glassBorder, width: 1),
+                      color: isOwner ? GE.primary : GE.glassBorder,
+                      width: 1,
+                    ),
             ),
-            child: Icon(_platformIcon(d['platform'] as String?),
-                color: isOwner ? GE.primary : GE.sub, size: 22),
+            child: Icon(
+              _platformIcon(d['platform'] as String?),
+              color: isOwner ? GE.primary : GE.sub,
+              size: 22,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(children: [
-                  Flexible(
-                    child: Text((d['device_name'] as String?) ?? '?',
-                        maxLines: 1, overflow: TextOverflow.ellipsis,
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        (d['device_name'] as String?) ?? '?',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            color: GE.text,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700)),
-                  ),
-                  if (isMe) ...[
-                    const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                      decoration: BoxDecoration(
-                        color: GE.green.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(5),
+                          color: GE.text,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
-                      child: Text('Это устройство',
-                          style: TextStyle(color: GE.green, fontSize: 9, fontWeight: FontWeight.w700)),
                     ),
-                  ],
-                  if (isOwner) ...[
-                    const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                      decoration: BoxDecoration(
-                        color: GE.primary.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(5),
+                    if (isMe) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: GE.green.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: Text(
+                          'Это устройство',
+                          style: TextStyle(
+                            color: GE.green,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
                       ),
-                      child: Text('Создатель',
-                          style: TextStyle(color: GE.primary, fontSize: 9, fontWeight: FontWeight.w700)),
-                    ),
+                    ],
+                    if (isOwner) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: GE.primary.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: Text(
+                          'Создатель',
+                          style: TextStyle(
+                            color: GE.primary,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
-                ]),
+                ),
                 const SizedBox(height: 2),
                 Text(
                   // Создателю не показываем «Уровень 999999» — сервер хранит
@@ -468,7 +556,11 @@ class _DeviceTile extends StatelessWidget {
           ),
           if (isActive && !isOwner && !isMe)
             IconButton(
-              icon: Icon(Icons.logout, color: GE.red, size: 18),
+              icon: Icon(
+                CupertinoIcons.square_arrow_right,
+                color: GE.red,
+                size: 18,
+              ),
               tooltip: 'Отозвать',
               onPressed: onRevoke,
             ),

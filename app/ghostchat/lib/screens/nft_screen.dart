@@ -9,9 +9,10 @@
 //   POST /nft/buy/{nft_id}           → купить с маркета
 //   POST /nft/list {nft_id,price_soul} → выставить на продажу
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
+import '../services/public_page_link.dart';
 import '../mesh_background.dart';
 import '../services/api_client.dart';
 import '../widgets/glass.dart';
@@ -131,11 +132,9 @@ class _NftScreenState extends State<NftScreen> with TickerProviderStateMixin {
         titleText: 'NFT',
         actions: [
           IconButton(
-            icon: Icon(Icons.open_in_browser, color: GE.primary),
+            icon: Icon(CupertinoIcons.globe, color: GE.primary),
             tooltip: 'Открыть полный банк в браузере',
-            onPressed: () => launchUrl(
-                Uri.parse('${GE.baseUrl}/bank/'),
-                mode: LaunchMode.externalApplication),
+            onPressed: () => PublicPageLink.open('${GE.baseUrl}/bank/'),
           ),
         ],
       ),
@@ -283,11 +282,10 @@ class _NftScreenState extends State<NftScreen> with TickerProviderStateMixin {
             maxLines: 1, overflow: TextOverflow.ellipsis,
             style: TextStyle(color: GE.text, fontSize: 13, fontWeight: FontWeight.w700)),
         const SizedBox(height: 4),
-        InkWell(
+        PressScale(
           onTap: nftId > 0 && price is num
               ? () => _buy(nftId, price.toInt(), currency)
               : null,
-          borderRadius: BorderRadius.circular(8),
           child: Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 7),

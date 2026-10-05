@@ -3,9 +3,12 @@
 library;
 
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 
 import '../constants.dart';
 import '../storage/secure_store.dart';
+import '../../services/bot_check_service.dart';
+import '../../services/proxy_http_client.dart';
 
 class ApiException implements Exception {
   final int statusCode;
@@ -30,12 +33,27 @@ class HttpClient {
         validateStatus: (s) => s != null && s < 500,
       ),
     );
+    dio.httpClientAdapter = IOHttpClientAdapter(
+      createHttpClient: ProxyHttpClient.create,
+    );
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
+          // Public update metadata/APK requests still use the configured
+          // transport (including SOCKS5), but must not inherit account or
+          // auth-CAPTCHA headers.  The update download supplies its own
+          // purpose-scoped CAPTCHA token.
+          if (options.extra['skipAuth'] == true) {
+            handler.next(options);
+            return;
+          }
           final token = await SecureStore.I.token;
           if (token != null && token.isNotEmpty) {
             options.headers['Authorization'] = 'Bearer $token';
+          }
+          final botToken = BotCheckService.instance.cachedToken('auth');
+          if (botToken != null && botToken.isNotEmpty) {
+            options.headers['X-Ghost-Bot-Token'] = botToken;
           }
           handler.next(options);
         },

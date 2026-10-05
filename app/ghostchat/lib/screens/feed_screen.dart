@@ -17,11 +17,12 @@ import 'dart:async';
 import 'dart:ui' show ImageFilter, FontFeature;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
+import '../services/public_page_link.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/feed_repo.dart';
@@ -29,6 +30,7 @@ import '../services/theme_service.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
 import '../widgets/toast_overlay.dart';
+import '../widgets/emoji_text.dart';
 import 'comments_screen.dart';
 import 'profile_screen.dart';
 
@@ -130,14 +132,19 @@ class _FeedScreenState extends State<FeedScreen> {
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
       child: Row(
         children: [
-          Icon(Icons.public, color: GE.primary, size: 22),
+          Icon(CupertinoIcons.globe, color: GE.primary, size: 22),
           const SizedBox(width: 8),
-          Text('Лента',
-              style: TextStyle(
-                  color: GE.text, fontSize: 20, fontWeight: FontWeight.w800)),
+          Text(
+            'Лента',
+            style: TextStyle(
+              color: GE.text,
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
           const Spacer(),
           IconButton(
-            icon: Icon(Icons.edit_outlined, color: GE.primary),
+            icon: Icon(CupertinoIcons.pencil, color: GE.primary),
             tooltip: 'Новый пост',
             onPressed: _openComposer,
           ),
@@ -156,14 +163,15 @@ class _FeedScreenState extends State<FeedScreen> {
         itemBuilder: (_, i) {
           final (id, label) = _sorts[i];
           final active = current == id;
-          return InkWell(
+          return PressScale(
             onTap: () => _switchSort(id),
-            borderRadius: BorderRadius.circular(18),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
               decoration: BoxDecoration(
-                color: active ? GE.primary.withValues(alpha: 0.18) : GE.glassFill,
+                color: active
+                    ? GE.primary.withValues(alpha: 0.18)
+                    : GE.glassFill,
                 borderRadius: BorderRadius.circular(18),
                 border: ThemeService.isMinimal
                     ? null
@@ -173,12 +181,14 @@ class _FeedScreenState extends State<FeedScreen> {
                       ),
               ),
               alignment: Alignment.center,
-              child: Text(label,
-                  style: TextStyle(
-                    color: active ? GE.primary : GE.sub,
-                    fontSize: 12,
-                    fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-                  )),
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: active ? GE.primary : GE.sub,
+                  fontSize: 12,
+                  fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                ),
+              ),
             ),
           );
         },
@@ -202,16 +212,21 @@ class _FeedScreenState extends State<FeedScreen> {
         ),
         child: Row(
           children: [
-            Icon(Icons.tag, size: 14, color: GE.primary),
+            Icon(CupertinoIcons.tag, size: 14, color: GE.primary),
             const SizedBox(width: 6),
             Expanded(
-              child: Text('#$_activeTag',
-                  style: TextStyle(
-                      color: GE.primary, fontSize: 12, fontWeight: FontWeight.w700)),
+              child: Text(
+                '#$_activeTag',
+                style: TextStyle(
+                  color: GE.primary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
             InkWell(
               onTap: _clearTag,
-              child: Icon(Icons.close, size: 16, color: GE.primary),
+              child: Icon(CupertinoIcons.xmark, size: 16, color: GE.primary),
             ),
           ],
         ),
@@ -243,21 +258,37 @@ class _FeedScreenState extends State<FeedScreen> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(err != null ? Icons.error_outline : Icons.public_off,
-                              color: err != null ? GE.red : GE.sub, size: 32),
+                          Icon(
+                            err != null
+                                ? CupertinoIcons.exclamationmark_circle
+                                : Icons.public_off,
+                            color: err != null ? GE.red : GE.sub,
+                            size: 32,
+                          ),
                           const SizedBox(height: 8),
-                          Text(err != null ? 'Не загрузилось' : 'Лента пуста — будь первым',
-                              style: TextStyle(color: GE.text, fontWeight: FontWeight.w600)),
+                          Text(
+                            err != null
+                                ? 'Не загрузилось'
+                                : 'Лента пуста — будь первым',
+                            style: TextStyle(
+                              color: GE.text,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                           if (err != null) ...[
                             const SizedBox(height: 6),
-                            Text(err, textAlign: TextAlign.center, maxLines: 4,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(color: GE.sub, fontSize: 11)),
+                            Text(
+                              err,
+                              textAlign: TextAlign.center,
+                              maxLines: 4,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(color: GE.sub, fontSize: 11),
+                            ),
                           ],
                           const SizedBox(height: 12),
                           GlassButton(
                             label: 'Обновить',
-                            icon: Icons.refresh,
+                            icon: CupertinoIcons.refresh,
                             primary: true,
                             onTap: () => FeedRepo.instance.refresh(),
                           ),
@@ -283,7 +314,10 @@ class _FeedScreenState extends State<FeedScreen> {
                 return Padding(
                   padding: const EdgeInsets.all(20),
                   child: Center(
-                    child: CircularProgressIndicator(color: GE.primary, strokeWidth: 2),
+                    child: CircularProgressIndicator(
+                      color: GE.primary,
+                      strokeWidth: 2,
+                    ),
                   ),
                 );
               }
@@ -293,9 +327,9 @@ class _FeedScreenState extends State<FeedScreen> {
                 p: p,
                 myUsername: _myUsername,
                 onOpenTag: _openTag,
-                onOpenUser: (u) => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => ProfileScreen(username: u),
-                )),
+                onOpenUser: (u) => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => ProfileScreen(username: u)),
+                ),
                 onError: _snack,
               );
             },
@@ -317,170 +351,231 @@ class _FeedScreenState extends State<FeedScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetCtx) {
-        return StatefulBuilder(builder: (innerCtx, setSheet) {
-          final bottom = MediaQuery.of(innerCtx).viewInsets.bottom;
-          Future<void> pickImage() async {
-            try {
-              final x = await picker.pickImage(source: ImageSource.gallery, imageQuality: 88);
-              if (x == null) return;
-              final bytes = await x.readAsBytes();
+        return StatefulBuilder(
+          builder: (innerCtx, setSheet) {
+            final bottom = MediaQuery.of(innerCtx).viewInsets.bottom;
+            Future<void> pickImage() async {
+              try {
+                final x = await picker.pickImage(
+                  source: ImageSource.gallery,
+                  imageQuality: 88,
+                );
+                if (x == null) return;
+                final bytes = await x.readAsBytes();
+                setSheet(() => publishing = true);
+                try {
+                  final m = await FeedRepo.instance.uploadMedia(
+                    bytes,
+                    x.name,
+                    'image/jpeg',
+                  );
+                  attachments.add(m);
+                } finally {
+                  setSheet(() => publishing = false);
+                }
+              } catch (e) {
+                _snack('Не загрузилось: $e');
+              }
+            }
+
+            Future<void> publish() async {
+              final text = ctrl.text.trim();
+              if (text.isEmpty && attachments.isEmpty) return;
               setSheet(() => publishing = true);
               try {
-                final m = await FeedRepo.instance.uploadMedia(
-                  bytes, x.name, 'image/jpeg');
-                attachments.add(m);
+                await FeedRepo.instance.publish(
+                  text,
+                  media: attachments,
+                  isNsfw: nsfw,
+                );
+                if (!mounted) return;
+                Navigator.pop(sheetCtx);
+                _snack('Опубликовано');
+              } catch (e) {
+                _snack('Не опубликовалось: $e');
               } finally {
                 setSheet(() => publishing = false);
               }
-            } catch (e) {
-              _snack('Не загрузилось: $e');
             }
-          }
 
-          Future<void> publish() async {
-            final text = ctrl.text.trim();
-            if (text.isEmpty && attachments.isEmpty) return;
-            setSheet(() => publishing = true);
-            try {
-              await FeedRepo.instance.publish(
-                text, media: attachments, isNsfw: nsfw);
-              if (!mounted) return;
-              Navigator.pop(sheetCtx);
-              _snack('Опубликовано');
-            } catch (e) {
-              _snack('Не опубликовалось: $e');
-            } finally {
-              setSheet(() => publishing = false);
-            }
-          }
-
-          return Padding(
-            padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + bottom),
-            child: GlassCard(
-              padding: const EdgeInsets.all(12),
-              radius: GE.radiusLg,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(children: [
-                    Icon(Icons.edit_outlined, color: GE.primary, size: 18),
-                    const SizedBox(width: 8),
-                    Text('Новый пост',
-                        style: TextStyle(color: GE.text, fontWeight: FontWeight.w700)),
-                  ]),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: ctrl,
-                    autofocus: true,
-                    maxLines: 7,
-                    minLines: 3,
-                    maxLength: 1000,
-                    style: TextStyle(color: GE.text),
-                    cursorColor: GE.primary,
-                    decoration: InputDecoration(
-                      hintText: 'Что нового?',
-                      hintStyle: TextStyle(color: GE.sub),
-                      filled: true,
-                      fillColor: GE.glassFill,
-                      counterStyle: TextStyle(color: GE.sub, fontSize: 10),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
+            return Padding(
+              padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + bottom),
+              child: GlassCard(
+                padding: const EdgeInsets.all(12),
+                radius: GE.radiusLg,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          CupertinoIcons.pencil,
+                          color: GE.primary,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Новый пост',
+                          style: TextStyle(
+                            color: GE.text,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: ctrl,
+                      autofocus: true,
+                      maxLines: 7,
+                      minLines: 3,
+                      maxLength: 1000,
+                      style: TextStyle(color: GE.text),
+                      cursorColor: GE.primary,
+                      decoration: InputDecoration(
+                        hintText: 'Что нового?',
+                        hintStyle: TextStyle(color: GE.sub),
+                        filled: true,
+                        fillColor: GE.glassFill,
+                        counterStyle: TextStyle(color: GE.sub, fontSize: 10),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
                       ),
                     ),
-                  ),
-                  if (attachments.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      height: 80,
-                      child: ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        itemBuilder: (_, i) {
-                          final m = attachments[i];
-                          return Stack(children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: Container(
-                                width: 80, height: 80,
-                                color: Colors.black26,
-                                child: m.type == 'image'
-                                    ? Image.network(_absUrl(m.url), fit: BoxFit.cover,
-                                        errorBuilder: (_, _, _) =>
-                                            Icon(Icons.image, color: GE.sub))
-                                    : Center(
-                                        child: Icon(Icons.play_circle_fill,
-                                            color: Colors.white70, size: 32)),
-                              ),
-                            ),
-                            Positioned(
-                              right: 2, top: 2,
-                              child: InkWell(
-                                onTap: () => setSheet(() => attachments.removeAt(i)),
-                                child: Container(
-                                  decoration: const BoxDecoration(
-                                      color: Colors.black54, shape: BoxShape.circle),
-                                  child: const Icon(Icons.close, color: Colors.white, size: 16),
+                    if (attachments.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        height: 80,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemBuilder: (_, i) {
+                            final m = attachments[i];
+                            return Stack(
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Container(
+                                    width: 80,
+                                    height: 80,
+                                    color: Colors.black26,
+                                    child: m.type == 'image'
+                                        ? Image.network(
+                                            _absUrl(m.url),
+                                            fit: BoxFit.cover,
+                                            errorBuilder: (_, _, _) => Icon(
+                                              CupertinoIcons.photo,
+                                              color: GE.sub,
+                                            ),
+                                          )
+                                        : Center(
+                                            child: Icon(
+                                              CupertinoIcons.play_circle_fill,
+                                              color: Colors.white70,
+                                              size: 32,
+                                            ),
+                                          ),
+                                  ),
                                 ),
-                              ),
-                            ),
-                          ]);
-                        },
-                        separatorBuilder: (_, _) => const SizedBox(width: 6),
-                        itemCount: attachments.length,
+                                Positioned(
+                                  right: 2,
+                                  top: 2,
+                                  child: InkWell(
+                                    onTap: () =>
+                                        setSheet(() => attachments.removeAt(i)),
+                                    child: Container(
+                                      decoration: const BoxDecoration(
+                                        color: Colors.black54,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(
+                                        CupertinoIcons.xmark,
+                                        color: Colors.white,
+                                        size: 16,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                          separatorBuilder: (_, _) => const SizedBox(width: 6),
+                          itemCount: attachments.length,
+                        ),
                       ),
+                    ],
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: Icon(CupertinoIcons.photo, color: GE.primary),
+                          tooltip: 'Картинка',
+                          onPressed: publishing ? null : pickImage,
+                        ),
+                        PressScale(
+                          onTap: () => setSheet(() => nsfw = !nsfw),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: nsfw
+                                  ? GE.red.withValues(alpha: 0.2)
+                                  : null,
+                              border: Border.all(
+                                color: nsfw ? GE.red : GE.glassBorder,
+                                width: nsfw ? 1.2 : 0.6,
+                              ),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  nsfw
+                                      ? CupertinoIcons.checkmark_square_fill
+                                      : CupertinoIcons.square,
+                                  size: 16,
+                                  color: nsfw ? GE.red : GE.sub,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '18+',
+                                  style: TextStyle(
+                                    color: nsfw ? GE.red : GE.sub,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        TextButton(
+                          onPressed: publishing
+                              ? null
+                              : () => Navigator.pop(sheetCtx),
+                          child: const Text('Отмена'),
+                        ),
+                        const SizedBox(width: 6),
+                        GlassButton(
+                          label: 'Опубликовать',
+                          icon: CupertinoIcons.paperplane_fill,
+                          primary: true,
+                          loading: publishing,
+                          onTap: publishing ? null : publish,
+                        ),
+                      ],
                     ),
                   ],
-                  const SizedBox(height: 10),
-                  Row(children: [
-                    IconButton(
-                      icon: Icon(Icons.image_outlined, color: GE.primary),
-                      tooltip: 'Картинка',
-                      onPressed: publishing ? null : pickImage,
-                    ),
-                    InkWell(
-                      onTap: () => setSheet(() => nsfw = !nsfw),
-                      borderRadius: BorderRadius.circular(8),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: nsfw ? GE.red.withValues(alpha: 0.2) : null,
-                          border: Border.all(
-                            color: nsfw ? GE.red : GE.glassBorder,
-                            width: nsfw ? 1.2 : 0.6,
-                          ),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(mainAxisSize: MainAxisSize.min, children: [
-                          Icon(nsfw ? Icons.check_box : Icons.check_box_outline_blank,
-                              size: 16, color: nsfw ? GE.red : GE.sub),
-                          const SizedBox(width: 4),
-                          Text('18+',
-                              style: TextStyle(
-                                color: nsfw ? GE.red : GE.sub,
-                                fontSize: 12, fontWeight: FontWeight.w700,
-                              )),
-                        ]),
-                      ),
-                    ),
-                    const Spacer(),
-                    TextButton(
-                      onPressed: publishing ? null : () => Navigator.pop(sheetCtx),
-                      child: const Text('Отмена'),
-                    ),
-                    const SizedBox(width: 6),
-                    GlassButton(
-                      label: 'Опубликовать',
-                      icon: Icons.send,
-                      primary: true,
-                      loading: publishing,
-                      onTap: publishing ? null : publish,
-                    ),
-                  ]),
-                ],
+                ),
               ),
-            ),
-          );
-        });
+            );
+          },
+        );
       },
     );
   }
@@ -511,15 +606,22 @@ class _PostCard extends StatefulWidget {
 }
 
 /// Реакции в Ghost: ключи, как в вебе (NOT raw-эмодзи). EMOJI_ORDER + glyph-map.
-const List<String> _reactionKeys = ['heart', 'fire', 'laugh', 'sad', 'clap', 'eyes'];
+const List<String> _reactionKeys = [
+  'heart',
+  'fire',
+  'laugh',
+  'sad',
+  'clap',
+  'eyes',
+];
 // Кастомные Material иконки для каждого ключа (вместо unicode-эмодзи).
 const Map<String, IconData> _reactionIcon = {
-  'heart': Icons.favorite,
-  'fire': Icons.local_fire_department,
-  'laugh': Icons.sentiment_very_satisfied,
+  'heart': CupertinoIcons.heart_fill,
+  'fire': CupertinoIcons.flame_fill,
+  'laugh': CupertinoIcons.smiley_fill,
   'sad': Icons.sentiment_dissatisfied,
-  'clap': Icons.front_hand,
-  'eyes': Icons.visibility,
+  'clap': CupertinoIcons.hand_raised_fill,
+  'eyes': CupertinoIcons.eye_fill,
 };
 const Map<String, Color> _reactionColor = {
   'heart': Color(0xFFef4444),
@@ -539,14 +641,23 @@ const Map<String, String> _reactionLabel = {
 };
 
 /// Виджет одной реакции — Material-иконка с фирменным цветом.
-/// Для legacy raw-эмодзи (приходящих с сервера через chat) возвращает Text.
+/// Для legacy raw-эмодзи (приходящих с сервера через chat) использует общий
+/// рендерер локального emoji-пака.
 Widget reactionDisplay(String key, {double size = 14, Color? overrideColor}) {
   final icon = _reactionIcon[key];
   if (icon != null) {
-    return Icon(icon, size: size,
-        color: overrideColor ?? _reactionColor[key] ?? const Color(0xFFa855f7));
+    return Icon(
+      icon,
+      size: size,
+      color: overrideColor ?? _reactionColor[key] ?? const Color(0xFFa855f7),
+    );
   }
-  return Text(key, style: TextStyle(fontSize: size));
+  return EmojiText(
+    key,
+    style: TextStyle(fontSize: size),
+    allowFormatting: false,
+    scale: 1.0,
+  );
 }
 
 /// Сортирует counts по EMOJI_ORDER, оставляя legacy-ключи в конце.
@@ -585,7 +696,9 @@ class _PostCardState extends State<_PostCard> {
           try {
             await FeedRepo.instance.react(p.id, 'heart');
             HapticFeedback.lightImpact();
-          } catch (e) { widget.onError('Не вышло: $e'); }
+          } catch (e) {
+            widget.onError('Не вышло: $e');
+          }
         },
         child: GlassCard(
           lite: true,
@@ -623,7 +736,9 @@ class _PostCardState extends State<_PostCard> {
                         child: ClipRect(
                           child: BackdropFilter(
                             filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-                            child: Container(color: Colors.black.withValues(alpha: 0.35)),
+                            child: Container(
+                              color: Colors.black.withValues(alpha: 0.35),
+                            ),
                           ),
                         ),
                       ),
@@ -665,14 +780,22 @@ class _PostCardState extends State<_PostCard> {
   }
 
   Widget _repostBadge() => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Row(children: [
-          Icon(Icons.repeat, size: 12, color: GE.sub),
-          const SizedBox(width: 4),
-          Text('репост',
-              style: TextStyle(color: GE.sub, fontSize: 11, fontWeight: FontWeight.w600)),
-        ]),
-      );
+    padding: const EdgeInsets.only(bottom: 6),
+    child: Row(
+      children: [
+        Icon(CupertinoIcons.repeat, size: 12, color: GE.sub),
+        const SizedBox(width: 4),
+        Text(
+          'репост',
+          style: TextStyle(
+            color: GE.sub,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _fromChannelBadge(FromChannel ch) {
     final isClickable = ch.username != null;
@@ -686,30 +809,36 @@ class _PostCardState extends State<_PostCard> {
             ? null
             : Border.all(color: GE.primary.withValues(alpha: 0.3)),
       ),
-      child: Row(children: [
-        Icon(Icons.campaign_outlined, size: 12, color: GE.primary),
-        const SizedBox(width: 6),
-        Expanded(
-          child: Text(
-            ch.username != null
-                ? 'Канал · ${ch.name} · @${ch.username}'
-                : 'Канал · ${ch.name}',
-            maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-                color: GE.primary, fontSize: 11, fontWeight: FontWeight.w600),
+      child: Row(
+        children: [
+          Icon(Icons.campaign_outlined, size: 12, color: GE.primary),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              ch.username != null
+                  ? 'Канал · ${ch.name} · @${ch.username}'
+                  : 'Канал · ${ch.name}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: GE.primary,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
-        ),
-        if (isClickable)
-          Icon(Icons.open_in_new, size: 11, color: GE.primary),
-      ]),
+          if (isClickable)
+            Icon(
+              CupertinoIcons.arrow_up_right_square,
+              size: 11,
+              color: GE.primary,
+            ),
+        ],
+      ),
     );
     if (!isClickable) return tile;
-    return InkWell(
-      borderRadius: BorderRadius.circular(8),
-      onTap: () => launchUrl(
-        Uri.parse('${GE.baseUrl}/c/${ch.username}'),
-        mode: LaunchMode.externalApplication,
-      ),
+    return PressScale(
+      onTap: () => PublicPageLink.open('${GE.baseUrl}/c/${ch.username}'),
       child: tile,
     );
   }
@@ -718,7 +847,8 @@ class _PostCardState extends State<_PostCard> {
     return Row(
       children: [
         Container(
-          width: 38, height: 38,
+          width: 38,
+          height: 38,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             gradient: LinearGradient(colors: [GE.primary2, GE.primary]),
@@ -726,13 +856,17 @@ class _PostCardState extends State<_PostCard> {
           alignment: Alignment.center,
           child: Text(
             p.authorDisplayName.isNotEmpty
-                ? p.authorDisplayName[0].toUpperCase() : '?',
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+                ? p.authorDisplayName[0].toUpperCase()
+                : '?',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+            ),
           ),
         ),
         const SizedBox(width: 10),
         Expanded(
-          child: InkWell(
+          child: PressScale(
             onTap: () => widget.onOpenUser(p.authorUsername),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -741,10 +875,16 @@ class _PostCardState extends State<_PostCard> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Flexible(
-                      child: Text(p.authorDisplayName,
-                          maxLines: 1, overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              color: GE.text, fontSize: 14, fontWeight: FontWeight.w700)),
+                      child: Text(
+                        p.authorDisplayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: GE.text,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                     ),
                     if (p.isNsfw) ...[
                       const SizedBox(width: 6),
@@ -755,7 +895,8 @@ class _PostCardState extends State<_PostCard> {
                 Text(
                   '@${p.authorUsername} · ${_ago(p.createdAt)}'
                   '${p.editedAt != null ? ' · ред.' : ''}',
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: GE.sub, fontSize: 11),
                 ),
               ],
@@ -765,13 +906,18 @@ class _PostCardState extends State<_PostCard> {
         if (_isMine)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6),
-            child: Text('это вы',
-                style: TextStyle(color: GE.sub, fontSize: 10, fontStyle: FontStyle.italic)),
+            child: Text(
+              'это вы',
+              style: TextStyle(
+                color: GE.sub,
+                fontSize: 10,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
           )
         else if (!p.followed && widget.myUsername != null)
-          InkWell(
+          PressScale(
             onTap: _toggleFollow,
-            borderRadius: BorderRadius.circular(14),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
@@ -781,17 +927,25 @@ class _PostCardState extends State<_PostCard> {
                     ? null
                     : Border.all(color: GE.primary.withValues(alpha: 0.5)),
               ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.add, size: 12, color: GE.primary),
-                const SizedBox(width: 3),
-                Text('Подписаться',
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(CupertinoIcons.add, size: 12, color: GE.primary),
+                  const SizedBox(width: 3),
+                  Text(
+                    'Подписаться',
                     style: TextStyle(
-                        color: GE.primary, fontSize: 10, fontWeight: FontWeight.w700)),
-              ]),
+                      color: GE.primary,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         IconButton(
-          icon: Icon(Icons.more_horiz, color: GE.sub, size: 18),
+          icon: Icon(CupertinoIcons.ellipsis, color: GE.sub, size: 18),
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(),
           onPressed: () => _openPostMenu(p),
@@ -809,10 +963,18 @@ class _PostCardState extends State<_PostCard> {
         border: ThemeService.isMinimal
             ? null
             : Border.all(
-                color: byAdmin ? GE.red : GE.red.withValues(alpha: 0.5), width: 0.6),
+                color: byAdmin ? GE.red : GE.red.withValues(alpha: 0.5),
+                width: 0.6,
+              ),
       ),
-      child: Text('18+',
-          style: TextStyle(color: GE.red, fontSize: 9, fontWeight: FontWeight.w800)),
+      child: Text(
+        '18+',
+        style: TextStyle(
+          color: GE.red,
+          fontSize: 9,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
     );
   }
 
@@ -829,14 +991,21 @@ class _PostCardState extends State<_PostCard> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.visibility_off, color: GE.red, size: 22),
+          Icon(CupertinoIcons.eye_slash, color: GE.red, size: 22),
           const SizedBox(height: 4),
-          Text(byAdmin ? 'Помечено модерацией' : 'Контент 18+',
-              style: TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+          Text(
+            byAdmin ? 'Помечено модерацией' : 'Контент 18+',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+            ),
+          ),
           const SizedBox(height: 2),
-          Text(byAdmin ? 'Автор не указал NSFW' : 'Автор пометил как взрослый',
-              style: TextStyle(color: Colors.white70, fontSize: 11)),
+          Text(
+            byAdmin ? 'Автор не указал NSFW' : 'Автор пометил как взрослый',
+            style: TextStyle(color: Colors.white70, fontSize: 11),
+          ),
           const SizedBox(height: 8),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
@@ -845,8 +1014,14 @@ class _PostCardState extends State<_PostCard> {
               borderRadius: BorderRadius.circular(8),
               border: Border.all(color: GE.red),
             ),
-            child: Text('Показать',
-                style: TextStyle(color: GE.red, fontWeight: FontWeight.w700, fontSize: 12)),
+            child: Text(
+              'Показать',
+              style: TextStyle(
+                color: GE.red,
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
+              ),
+            ),
           ),
         ],
       ),
@@ -856,61 +1031,80 @@ class _PostCardState extends State<_PostCard> {
   Widget _contentText(String content) {
     // linkify: #tag и @username превращаем в кликабельные spans.
     final spans = _linkify(content);
+    final style = TextStyle(color: GE.text, fontSize: 14, height: 1.4);
     return SelectableText.rich(
-      TextSpan(children: spans),
-      style: TextStyle(color: GE.text, fontSize: 14, height: 1.4),
+      TextSpan(style: style, children: spans),
+      style: style,
     );
   }
 
   List<InlineSpan> _linkify(String raw) {
     // Сначала режем по любому из шаблонов: #tag или @username.
-    final re = RegExp(r'(#[0-9A-Za-zА-Яа-яЁё_]{1,30})|(@[a-zA-Z0-9._]{3,64})', unicode: true);
+    final re = RegExp(
+      r'(#[0-9A-Za-zА-Яа-яЁё_]{1,30})|(@[a-zA-Z0-9._]{3,64})',
+      unicode: true,
+    );
     final out = <InlineSpan>[];
+    final style = TextStyle(color: GE.text, fontSize: 14, height: 1.4);
+    final emojiSize = (style.fontSize ?? 14) * 1.2;
     int last = 0;
     for (final m in re.allMatches(raw)) {
       if (m.start > last) {
-        out.add(TextSpan(text: raw.substring(last, m.start)));
+        out.addAll(
+          EmojiText.packSpans(raw.substring(last, m.start), style, emojiSize),
+        );
       }
       final hit = m.group(0)!;
       if (hit.startsWith('#')) {
         final tag = hit.substring(1).toLowerCase();
-        out.add(TextSpan(
-          text: hit,
-          style: TextStyle(color: GE.primary, fontWeight: FontWeight.w600),
-          recognizer: TapGestureRecognizer()..onTap = () => widget.onOpenTag(tag),
-        ));
+        out.add(
+          TextSpan(
+            text: hit,
+            style: TextStyle(color: GE.primary, fontWeight: FontWeight.w600),
+            recognizer: TapGestureRecognizer()
+              ..onTap = () => widget.onOpenTag(tag),
+          ),
+        );
       } else if (hit.startsWith('@')) {
         final u = hit.substring(1);
-        out.add(TextSpan(
-          text: hit,
-          style: TextStyle(color: GE.blue, fontWeight: FontWeight.w600),
-          recognizer: TapGestureRecognizer()..onTap = () => widget.onOpenUser(u),
-        ));
+        out.add(
+          TextSpan(
+            text: hit,
+            style: TextStyle(color: GE.blue, fontWeight: FontWeight.w600),
+            recognizer: TapGestureRecognizer()
+              ..onTap = () => widget.onOpenUser(u),
+          ),
+        );
       }
       last = m.end;
     }
     if (last < raw.length) {
-      out.add(TextSpan(text: raw.substring(last)));
+      out.addAll(EmojiText.packSpans(raw.substring(last), style, emojiSize));
     }
     return out;
   }
 
   Widget _stats(FeedPost p) {
-    if (p.viewsCount == 0 && p.repostsCount == 0) return const SizedBox.shrink();
+    if (p.viewsCount == 0 && p.repostsCount == 0)
+      return const SizedBox.shrink();
     return Row(
       children: [
         if (p.viewsCount > 0) ...[
-          Icon(Icons.visibility_outlined, size: 12, color: GE.sub),
+          Icon(CupertinoIcons.eye, size: 12, color: GE.sub),
           const SizedBox(width: 4),
-          Text('${_fmtCount(p.viewsCount)}',
-              style: TextStyle(color: GE.sub, fontSize: 11)),
+          Text(
+            '${_fmtCount(p.viewsCount)}',
+            style: TextStyle(color: GE.sub, fontSize: 11),
+          ),
           const SizedBox(width: 14),
         ],
         if (p.repostsCount > 0) ...[
-          Icon(Icons.repeat, size: 12, color: GE.sub),
+          Icon(CupertinoIcons.repeat, size: 12, color: GE.sub),
           const SizedBox(width: 4),
-          Text('${_fmtCount(p.repostsCount)}',
-              style: TextStyle(color: GE.sub, fontSize: 11)),
+          Text(
+            '${_fmtCount(p.repostsCount)}',
+            style: TextStyle(color: GE.sub, fontSize: 11),
+          ),
         ],
       ],
     );
@@ -924,9 +1118,14 @@ class _PostCardState extends State<_PostCard> {
         InkWell(
           onTap: () async {
             try {
-              await FeedRepo.instance.react(p.id, hasMine ? p.myReaction! : 'heart');
+              await FeedRepo.instance.react(
+                p.id,
+                hasMine ? p.myReaction! : 'heart',
+              );
               HapticFeedback.selectionClick();
-            } catch (e) { widget.onError('Не вышло: $e'); }
+            } catch (e) {
+              widget.onError('Не вышло: $e');
+            }
           },
           borderRadius: BorderRadius.circular(20),
           child: AnimatedContainer(
@@ -937,11 +1136,13 @@ class _PostCardState extends State<_PostCard> {
               borderRadius: BorderRadius.circular(20),
               border: ThemeService.isMinimal
                   ? null
-                  : (hasMine ? Border.all(color: GE.red.withValues(alpha: 0.5)) : null),
+                  : (hasMine
+                        ? Border.all(color: GE.red.withValues(alpha: 0.5))
+                        : null),
             ),
             child: hasMine
                 ? reactionDisplay(p.myReaction!, size: 20)
-                : Icon(Icons.favorite_border, size: 20, color: GE.sub),
+                : Icon(CupertinoIcons.heart, size: 20, color: GE.sub),
           ),
         ),
         const SizedBox(width: 4),
@@ -960,10 +1161,15 @@ class _PostCardState extends State<_PostCard> {
                       onTap: () async {
                         try {
                           await FeedRepo.instance.react(p.id, e.key);
-                        } catch (er) { widget.onError('$er'); }
+                        } catch (er) {
+                          widget.onError('$er');
+                        }
                       },
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: p.myReaction == e.key
                               ? GE.primary.withValues(alpha: 0.18)
@@ -972,21 +1178,28 @@ class _PostCardState extends State<_PostCard> {
                           border: ThemeService.isMinimal
                               ? null
                               : (p.myReaction == e.key
-                                  ? Border.all(
-                                      color: GE.primary.withValues(alpha: 0.6))
-                                  : null),
+                                    ? Border.all(
+                                        color: GE.primary.withValues(
+                                          alpha: 0.6,
+                                        ),
+                                      )
+                                    : null),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             reactionDisplay(e.key, size: 13),
                             const SizedBox(width: 3),
-                            Text('${e.value}',
-                                style: TextStyle(
-                                    color: p.myReaction == e.key
-                                        ? GE.primary : GE.sub,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600)),
+                            Text(
+                              '${e.value}',
+                              style: TextStyle(
+                                color: p.myReaction == e.key
+                                    ? GE.primary
+                                    : GE.sub,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -998,35 +1211,45 @@ class _PostCardState extends State<_PostCard> {
         ),
         // Комментарии
         InkWell(
-          onTap: () => Navigator.of(context).push(MaterialPageRoute(
-            builder: (_) => CommentsScreen(
-              postId: p.id,
-              postPreview: p.content,
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) =>
+                  CommentsScreen(postId: p.id, postPreview: p.content),
             ),
-          )),
+          ),
           borderRadius: BorderRadius.circular(14),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.mode_comment_outlined, color: GE.sub, size: 16),
-              const SizedBox(width: 3),
-              Text('${p.commentsCount}',
-                  style: TextStyle(color: GE.sub, fontSize: 11)),
-            ]),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(CupertinoIcons.chat_bubble, color: GE.sub, size: 16),
+                const SizedBox(width: 3),
+                Text(
+                  '${p.commentsCount}',
+                  style: TextStyle(color: GE.sub, fontSize: 11),
+                ),
+              ],
+            ),
           ),
         ),
         // Репост
         InkWell(
-          onTap: p.reposted ? null : () async {
-            HapticFeedback.lightImpact();
-            // repost() уже оптимистичен и сам показывает тост на неудачу.
-            await FeedRepo.instance.repost(p.id).catchError((_) {});
-          },
+          onTap: p.reposted
+              ? null
+              : () async {
+                  HapticFeedback.lightImpact();
+                  // repost() уже оптимистичен и сам показывает тост на неудачу.
+                  await FeedRepo.instance.repost(p.id).catchError((_) {});
+                },
           borderRadius: BorderRadius.circular(14),
           child: Padding(
             padding: const EdgeInsets.all(6),
-            child: Icon(Icons.repeat,
-                size: 16, color: p.reposted ? GE.green : GE.sub),
+            child: Icon(
+              CupertinoIcons.repeat,
+              size: 16,
+              color: p.reposted ? GE.green : GE.sub,
+            ),
           ),
         ),
         // Share
@@ -1035,7 +1258,7 @@ class _PostCardState extends State<_PostCard> {
           borderRadius: BorderRadius.circular(14),
           child: Padding(
             padding: const EdgeInsets.all(6),
-            child: Icon(Icons.share_outlined, color: GE.sub, size: 16),
+            child: Icon(CupertinoIcons.share, color: GE.sub, size: 16),
           ),
         ),
       ],
@@ -1045,7 +1268,9 @@ class _PostCardState extends State<_PostCard> {
   Future<void> _toggleFollow() async {
     HapticFeedback.selectionClick();
     // toggleFollow уже оптимистичен, свой тост на неудачу показывает сам.
-    await FeedRepo.instance.toggleFollow(widget.p.authorUsername).catchError((_) {});
+    await FeedRepo.instance
+        .toggleFollow(widget.p.authorUsername)
+        .catchError((_) {});
   }
 
   Future<void> _openReactionPicker() async {
@@ -1072,9 +1297,14 @@ class _PostCardState extends State<_PostCard> {
                     child: Tooltip(
                       message: _reactionLabel[k] ?? k,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
                         decoration: BoxDecoration(
-                          color: mine ? GE.primary.withValues(alpha: 0.2) : null,
+                          color: mine
+                              ? GE.primary.withValues(alpha: 0.2)
+                              : null,
                           borderRadius: BorderRadius.circular(24),
                         ),
                         child: reactionDisplay(k, size: 30),
@@ -1094,7 +1324,9 @@ class _PostCardState extends State<_PostCard> {
     try {
       await FeedRepo.instance.react(widget.p.id, key);
       HapticFeedback.selectionClick();
-    } catch (e) { widget.onError('$e'); }
+    } catch (e) {
+      widget.onError('$e');
+    }
   }
 
   Future<void> _openShareSheet(FeedPost p) async {
@@ -1112,18 +1344,27 @@ class _PostCardState extends State<_PostCard> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 ListTile(
-                  leading: Icon(Icons.send, color: GE.primary),
+                  leading: Icon(
+                    CupertinoIcons.paperplane_fill,
+                    color: GE.primary,
+                  ),
                   title: Text('В Telegram', style: TextStyle(color: GE.text)),
                   onTap: () => Navigator.pop(ctx, 'tg'),
                 ),
                 ListTile(
-                  leading: Icon(Icons.copy, color: GE.primary),
-                  title: Text('Копировать ссылку', style: TextStyle(color: GE.text)),
+                  leading: Icon(CupertinoIcons.doc_on_doc, color: GE.primary),
+                  title: Text(
+                    'Копировать ссылку',
+                    style: TextStyle(color: GE.text),
+                  ),
                   onTap: () => Navigator.pop(ctx, 'copy'),
                 ),
                 ListTile(
-                  leading: Icon(Icons.open_in_browser, color: GE.primary),
-                  title: Text('Открыть в браузере', style: TextStyle(color: GE.text)),
+                  leading: Icon(CupertinoIcons.globe, color: GE.primary),
+                  title: Text(
+                    'Открыть в браузере',
+                    style: TextStyle(color: GE.text),
+                  ),
                   onTap: () => Navigator.pop(ctx, 'open'),
                 ),
               ],
@@ -1135,15 +1376,16 @@ class _PostCardState extends State<_PostCard> {
     if (res == null || !mounted) return;
     switch (res) {
       case 'tg':
-        await launchUrl(Uri.parse(
-            'https://t.me/share/url?url=$url&text=${Uri.encodeComponent("Пост из Ghost")}'));
+        await PublicPageLink.open(
+          'https://t.me/share/url?url=$url&text=${Uri.encodeComponent("Пост из Ghost")}',
+        );
         break;
       case 'copy':
         await Clipboard.setData(ClipboardData(text: url));
         widget.onError('Ссылка скопирована');
         break;
       case 'open':
-        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+        await PublicPageLink.open(url);
         break;
     }
   }
@@ -1164,30 +1406,39 @@ class _PostCardState extends State<_PostCard> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 ListTile(
-                  leading: Icon(Icons.share, color: GE.primary),
+                  leading: Icon(CupertinoIcons.share, color: GE.primary),
                   title: Text('Поделиться', style: TextStyle(color: GE.text)),
                   onTap: () => Navigator.pop(ctx, 'share'),
                 ),
                 ListTile(
-                  leading: Icon(Icons.open_in_browser, color: GE.primary),
-                  title: Text('Открыть в браузере', style: TextStyle(color: GE.text)),
+                  leading: Icon(CupertinoIcons.globe, color: GE.primary),
+                  title: Text(
+                    'Открыть в браузере',
+                    style: TextStyle(color: GE.text),
+                  ),
                   onTap: () => Navigator.pop(ctx, 'open'),
                 ),
                 if (mine) ...[
                   ListTile(
-                    leading: Icon(Icons.edit_outlined, color: GE.primary),
-                    title: Text('Редактировать', style: TextStyle(color: GE.text)),
+                    leading: Icon(CupertinoIcons.pencil, color: GE.primary),
+                    title: Text(
+                      'Редактировать',
+                      style: TextStyle(color: GE.text),
+                    ),
                     onTap: () => Navigator.pop(ctx, 'edit'),
                   ),
                   ListTile(
-                    leading: Icon(Icons.delete_outline, color: GE.red),
+                    leading: Icon(CupertinoIcons.trash, color: GE.red),
                     title: Text('Удалить', style: TextStyle(color: GE.red)),
                     onTap: () => Navigator.pop(ctx, 'delete'),
                   ),
                 ] else
                   ListTile(
-                    leading: Icon(Icons.flag_outlined, color: GE.red),
-                    title: Text('Пожаловаться', style: TextStyle(color: GE.red)),
+                    leading: Icon(CupertinoIcons.flag, color: GE.red),
+                    title: Text(
+                      'Пожаловаться',
+                      style: TextStyle(color: GE.red),
+                    ),
                     onTap: () => Navigator.pop(ctx, 'report'),
                   ),
               ],
@@ -1202,8 +1453,7 @@ class _PostCardState extends State<_PostCard> {
         await _openShareSheet(p);
         break;
       case 'open':
-        await launchUrl(Uri.parse('${GE.baseUrl}/p/${p.id}'),
-            mode: LaunchMode.externalApplication);
+        await PublicPageLink.open('${GE.baseUrl}/p/${p.id}');
         break;
       case 'edit':
         await _openEditDialog(p);
@@ -1233,122 +1483,139 @@ class _PostCardState extends State<_PostCard> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetCtx) {
-        return StatefulBuilder(builder: (innerCtx, setSheet) {
-          final bottom = MediaQuery.of(innerCtx).viewInsets.bottom;
-          bool sending = false;
-          Future<void> doSend() async {
-            if (selected == null) return;
-            setSheet(() => sending = true);
-            try {
-              await ApiClient().socPost('/post/${p.id}/report', {
-                'reason': selected,
-                'comment': commentCtrl.text.trim(),
-              });
-              if (!innerCtx.mounted) return;
-              Navigator.pop(sheetCtx, true);
-            } catch (e) {
-              setSheet(() => sending = false);
-              toast.show('Не отправилось: $e');
+        return StatefulBuilder(
+          builder: (innerCtx, setSheet) {
+            final bottom = MediaQuery.of(innerCtx).viewInsets.bottom;
+            bool sending = false;
+            Future<void> doSend() async {
+              if (selected == null) return;
+              setSheet(() => sending = true);
+              try {
+                await ApiClient().socPost('/post/${p.id}/report', {
+                  'reason': selected,
+                  'comment': commentCtrl.text.trim(),
+                });
+                if (!innerCtx.mounted) return;
+                Navigator.pop(sheetCtx, true);
+              } catch (e) {
+                setSheet(() => sending = false);
+                toast.show('Не отправилось: $e');
+              }
             }
-          }
-          return Padding(
-            padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + bottom),
-            child: GlassCard(
-              padding: const EdgeInsets.all(16),
-              radius: GE.radiusLg,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(children: [
-                    Icon(Icons.flag_outlined, color: GE.red),
-                    const SizedBox(width: 8),
-                    Text('Пожаловаться на пост',
-                        style: TextStyle(
+
+            return Padding(
+              padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + bottom),
+              child: GlassCard(
+                padding: const EdgeInsets.all(16),
+                radius: GE.radiusLg,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(CupertinoIcons.flag, color: GE.red),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Пожаловаться на пост',
+                          style: TextStyle(
                             color: GE.text,
                             fontSize: 16,
-                            fontWeight: FontWeight.w700)),
-                  ]),
-                  const SizedBox(height: 4),
-                  Text('Анонимно. Модерация рассмотрит за 24 часа.',
-                      style: TextStyle(color: GE.sub, fontSize: 11)),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: reasons.map((r) {
-                      final (key, label) = r;
-                      final active = selected == key;
-                      return InkWell(
-                        onTap: () => setSheet(() => selected = key),
-                        borderRadius: BorderRadius.circular(20),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 160),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: active
-                                ? GE.red.withValues(alpha: 0.18)
-                                : GE.glassFill,
-                            borderRadius: BorderRadius.circular(20),
-                            border: ThemeService.isMinimal
-                                ? null
-                                : Border.all(
-                                    color: active ? GE.red : GE.glassBorder,
-                                    width: active ? 1.2 : 0.6,
-                                  ),
+                            fontWeight: FontWeight.w700,
                           ),
-                          child: Text(label,
-                              style: TextStyle(
-                                  color: active ? GE.red : GE.text,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600)),
                         ),
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: commentCtrl,
-                    maxLines: 3,
-                    minLines: 2,
-                    maxLength: 300,
-                    style: TextStyle(color: GE.text, fontSize: 13),
-                    cursorColor: GE.primary,
-                    decoration: InputDecoration(
-                      hintText: 'Комментарий (опционально)',
-                      hintStyle: TextStyle(color: GE.sub),
-                      filled: true,
-                      fillColor: GE.glassFill,
-                      counterStyle:
-                          TextStyle(color: GE.sub, fontSize: 10),
-                      border: OutlineInputBorder(
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Анонимно. Модерация рассмотрит за 24 часа.',
+                      style: TextStyle(color: GE.sub, fontSize: 11),
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: reasons.map((r) {
+                        final (key, label) = r;
+                        final active = selected == key;
+                        return InkWell(
+                          onTap: () => setSheet(() => selected = key),
+                          borderRadius: BorderRadius.circular(20),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 160),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: active
+                                  ? GE.red.withValues(alpha: 0.18)
+                                  : GE.glassFill,
+                              borderRadius: BorderRadius.circular(20),
+                              border: ThemeService.isMinimal
+                                  ? null
+                                  : Border.all(
+                                      color: active ? GE.red : GE.glassBorder,
+                                      width: active ? 1.2 : 0.6,
+                                    ),
+                            ),
+                            child: Text(
+                              label,
+                              style: TextStyle(
+                                color: active ? GE.red : GE.text,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: commentCtrl,
+                      maxLines: 3,
+                      minLines: 2,
+                      maxLength: 300,
+                      style: TextStyle(color: GE.text, fontSize: 13),
+                      cursorColor: GE.primary,
+                      decoration: InputDecoration(
+                        hintText: 'Комментарий (опционально)',
+                        hintStyle: TextStyle(color: GE.sub),
+                        filled: true,
+                        fillColor: GE.glassFill,
+                        counterStyle: TextStyle(color: GE.sub, fontSize: 10),
+                        border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide(color: GE.glassBorder)),
+                          borderSide: BorderSide(color: GE.glassBorder),
+                        ),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(children: [
-                    TextButton(
-                      onPressed: sending
-                          ? null
-                          : () => Navigator.pop(sheetCtx, false),
-                      child: const Text('Отмена'),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        TextButton(
+                          onPressed: sending
+                              ? null
+                              : () => Navigator.pop(sheetCtx, false),
+                          child: const Text('Отмена'),
+                        ),
+                        const Spacer(),
+                        GlassButton(
+                          label: 'Отправить',
+                          icon: CupertinoIcons.paperplane_fill,
+                          primary: true,
+                          loading: sending,
+                          onTap: (selected == null || sending) ? null : doSend,
+                        ),
+                      ],
                     ),
-                    const Spacer(),
-                    GlassButton(
-                      label: 'Отправить',
-                      icon: Icons.send,
-                      primary: true,
-                      loading: sending,
-                      onTap: (selected == null || sending) ? null : doSend,
-                    ),
-                  ]),
-                ],
+                  ],
+                ),
               ),
-            ),
-          );
-        });
+            );
+          },
+        );
       },
     );
     if (!mounted) return;
@@ -1370,7 +1637,10 @@ class _PostCardState extends State<_PostCard> {
           style: TextStyle(color: GE.text),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Отмена'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
             child: const Text('Сохранить'),
@@ -1394,10 +1664,15 @@ class _PostCardState extends State<_PostCard> {
       builder: (ctx) => AlertDialog(
         backgroundColor: GE.bgDeep,
         title: Text('Удалить пост?', style: TextStyle(color: GE.text)),
-        content: Text('Действие нельзя отменить.',
-            style: TextStyle(color: GE.sub)),
+        content: Text(
+          'Действие нельзя отменить.',
+          style: TextStyle(color: GE.sub),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Отмена'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: Text('Удалить', style: TextStyle(color: GE.red)),
@@ -1425,7 +1700,9 @@ String _ago(dynamic at) {
         ? DateTime.fromMillisecondsSinceEpoch(at * 1000)
         : DateTime.parse(at.toString());
     if (!dt.isUtc) dt = dt.toUtc();
-  } catch (_) { return ''; }
+  } catch (_) {
+    return '';
+  }
   final s = DateTime.now().toUtc().difference(dt).inSeconds;
   if (s < 60) return 'только что';
   if (s < 3600) return '${s ~/ 60} мин';
@@ -1436,7 +1713,8 @@ String _ago(dynamic at) {
 
 String _fmtCount(int n) {
   if (n < 1000) return '$n';
-  if (n < 1_000_000) return '${(n / 1000).toStringAsFixed(n < 10_000 ? 1 : 0)}K';
+  if (n < 1_000_000)
+    return '${(n / 1000).toStringAsFixed(n < 10_000 ? 1 : 0)}K';
   return '${(n / 1_000_000).toStringAsFixed(1)}M';
 }
 
@@ -1447,16 +1725,19 @@ class _MediaGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final imgs = media.where((m) => m.type == 'image' || m.type == 'video').toList();
+    final imgs = media
+        .where((m) => m.type == 'image' || m.type == 'video')
+        .toList();
     final auds = media.where((m) => m.type == 'audio').toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (imgs.isNotEmpty) _imageGrid(context, imgs),
-        for (final a in auds) Padding(
-          padding: const EdgeInsets.only(top: 6),
-          child: _AudioTile(url: a.url),
-        ),
+        for (final a in auds)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: _AudioTile(url: a.url),
+          ),
       ],
     );
   }
@@ -1468,27 +1749,33 @@ class _MediaGrid extends StatelessWidget {
     if (imgs.length == 2) {
       return SizedBox(
         height: 180,
-        child: Row(children: [
-          Expanded(child: _cell(context, imgs[0])),
-          const SizedBox(width: 3),
-          Expanded(child: _cell(context, imgs[1])),
-        ]),
+        child: Row(
+          children: [
+            Expanded(child: _cell(context, imgs[0])),
+            const SizedBox(width: 3),
+            Expanded(child: _cell(context, imgs[1])),
+          ],
+        ),
       );
     }
     if (imgs.length == 3) {
       return SizedBox(
         height: 220,
-        child: Row(children: [
-          Expanded(child: _cell(context, imgs[0])),
-          const SizedBox(width: 3),
-          Expanded(
-            child: Column(children: [
-              Expanded(child: _cell(context, imgs[1])),
-              const SizedBox(height: 3),
-              Expanded(child: _cell(context, imgs[2])),
-            ]),
-          ),
-        ]),
+        child: Row(
+          children: [
+            Expanded(child: _cell(context, imgs[0])),
+            const SizedBox(width: 3),
+            Expanded(
+              child: Column(
+                children: [
+                  Expanded(child: _cell(context, imgs[1])),
+                  const SizedBox(height: 3),
+                  Expanded(child: _cell(context, imgs[2])),
+                ],
+              ),
+            ),
+          ],
+        ),
       );
     }
     // 4+ — сетка 2x2 c overlay '+N' на последней если 5+
@@ -1496,38 +1783,49 @@ class _MediaGrid extends StatelessWidget {
     final extra = imgs.length > 4 ? imgs.length - 4 : 0;
     return SizedBox(
       height: 220,
-      child: Column(children: [
-        Expanded(
-          child: Row(children: [
-            Expanded(child: _cell(context, visible[0])),
-            const SizedBox(width: 3),
-            Expanded(child: _cell(context, visible[1])),
-          ]),
-        ),
-        const SizedBox(height: 3),
-        Expanded(
-          child: Row(children: [
-            Expanded(child: _cell(context, visible[2])),
-            const SizedBox(width: 3),
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  _cell(context, visible[3]),
-                  if (extra > 0)
-                    Container(
-                      color: Colors.black54,
-                      alignment: Alignment.center,
-                      child: Text('+$extra',
-                          style: const TextStyle(
-                              color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
-                    ),
-                ],
-              ),
+      child: Column(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: _cell(context, visible[0])),
+                const SizedBox(width: 3),
+                Expanded(child: _cell(context, visible[1])),
+              ],
             ),
-          ]),
-        ),
-      ]),
+          ),
+          const SizedBox(height: 3),
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: _cell(context, visible[2])),
+                const SizedBox(width: 3),
+                Expanded(
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      _cell(context, visible[3]),
+                      if (extra > 0)
+                        Container(
+                          color: Colors.black54,
+                          alignment: Alignment.center,
+                          child: Text(
+                            '+$extra',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1547,16 +1845,22 @@ class _MediaGrid extends StatelessWidget {
                 _absUrl(m.url),
                 fit: BoxFit.cover,
                 errorBuilder: (_, _, _) => Center(
-                    child: Icon(Icons.broken_image, color: GE.sub, size: 32)),
+                  child: Icon(Icons.broken_image, color: GE.sub, size: 32),
+                ),
                 loadingBuilder: (ctx, child, progress) {
                   if (progress == null) return child;
                   return Center(
                     child: SizedBox(
-                      width: 24, height: 24,
+                      width: 24,
+                      height: 24,
                       child: CircularProgressIndicator(
-                          color: GE.primary, strokeWidth: 2,
-                          value: progress.expectedTotalBytes == null ? null :
-                              progress.cumulativeBytesLoaded / progress.expectedTotalBytes!),
+                        color: GE.primary,
+                        strokeWidth: 2,
+                        value: progress.expectedTotalBytes == null
+                            ? null
+                            : progress.cumulativeBytesLoaded /
+                                  progress.expectedTotalBytes!,
+                      ),
                     ),
                   );
                 },
@@ -1564,12 +1868,17 @@ class _MediaGrid extends StatelessWidget {
               if (isVideo)
                 Center(
                   child: Container(
-                    width: 50, height: 50,
+                    width: 50,
+                    height: 50,
                     decoration: const BoxDecoration(
                       shape: BoxShape.circle,
                       color: Colors.black54,
                     ),
-                    child: const Icon(Icons.play_arrow, color: Colors.white, size: 30),
+                    child: const Icon(
+                      CupertinoIcons.play_fill,
+                      color: Colors.white,
+                      size: 30,
+                    ),
                   ),
                 ),
             ],
@@ -1581,7 +1890,7 @@ class _MediaGrid extends StatelessWidget {
 
   void _openViewer(BuildContext context, String url, bool isVideo) {
     if (isVideo) {
-      launchUrl(Uri.parse(_absUrl(url)), mode: LaunchMode.externalApplication);
+      // Media URLs are never handed to the OS browser as page links.
       return;
     }
     showDialog<void>(
@@ -1590,18 +1899,25 @@ class _MediaGrid extends StatelessWidget {
       builder: (_) => Dialog(
         backgroundColor: Colors.transparent,
         insetPadding: const EdgeInsets.all(8),
-        child: Stack(children: [
-          InteractiveViewer(
-            child: Center(child: Image.network(_absUrl(url))),
-          ),
-          Positioned(
-            top: 0, right: 0,
-            child: IconButton(
-              icon: const Icon(Icons.close, color: Colors.white, size: 28),
-              onPressed: () => Navigator.pop(context),
+        child: Stack(
+          children: [
+            InteractiveViewer(
+              child: Center(child: Image.network(_absUrl(url))),
             ),
-          ),
-        ]),
+            Positioned(
+              top: 0,
+              right: 0,
+              child: IconButton(
+                icon: const Icon(
+                  CupertinoIcons.xmark,
+                  color: Colors.white,
+                  size: 28,
+                ),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1612,10 +1928,8 @@ class _AudioTile extends StatelessWidget {
   const _AudioTile({required this.url});
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: () =>
-          launchUrl(Uri.parse(_absUrl(url)), mode: LaunchMode.externalApplication),
-      borderRadius: BorderRadius.circular(10),
+    return PressScale(
+      onTap: () => PublicPageLink.open(_absUrl(url)),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
@@ -1623,21 +1937,26 @@ class _AudioTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: GE.glassBorder),
         ),
-        child: Row(children: [
-          Container(
-            width: 36, height: 36,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: GE.primary.withValues(alpha: 0.2),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: GE.primary.withValues(alpha: 0.2),
+              ),
+              child: Icon(CupertinoIcons.play_fill, color: GE.primary),
             ),
-            child: Icon(Icons.play_arrow, color: GE.primary),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text('Аудио',
-                style: TextStyle(color: GE.text, fontSize: 13)),
-          ),
-        ]),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Аудио',
+                style: TextStyle(color: GE.text, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1656,7 +1975,10 @@ class _LinkPreviewWidget extends StatefulWidget {
 }
 
 class _LinkPreviewWidgetState extends State<_LinkPreviewWidget> {
-  static final RegExp _urlRe = RegExp(r'\bhttps?://[^\s<>"]+', caseSensitive: false);
+  static final RegExp _urlRe = RegExp(
+    r'\bhttps?://[^\s<>"]+',
+    caseSensitive: false,
+  );
   // Process-wide cache: url → preview data | null (отсутствие)
   static final Map<String, Map<String, dynamic>?> _cache = {};
   static final ApiClient _api = ApiClient();
@@ -1694,15 +2016,24 @@ class _LinkPreviewWidgetState extends State<_LinkPreviewWidget> {
       if (r is Map && (r['title'] != null || r['image'] != null)) {
         final data = Map<String, dynamic>.from(r);
         _cache[u] = data;
-        setState(() { _data = data; _loading = false; });
+        setState(() {
+          _data = data;
+          _loading = false;
+        });
       } else {
         _cache[u] = null;
-        setState(() { _failed = true; _loading = false; });
+        setState(() {
+          _failed = true;
+          _loading = false;
+        });
       }
     } catch (_) {
       if (!mounted) return;
       _cache[u] = null;
-      setState(() { _failed = true; _loading = false; });
+      setState(() {
+        _failed = true;
+        _loading = false;
+      });
     }
   }
 
@@ -1715,18 +2046,27 @@ class _LinkPreviewWidgetState extends State<_LinkPreviewWidget> {
         child: GlassCard(
           lite: true,
           padding: const EdgeInsets.all(10),
-          child: Row(children: [
-            SizedBox(
-              width: 14, height: 14,
-              child: CircularProgressIndicator(color: GE.primary, strokeWidth: 2),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(_url!,
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: GE.sub, fontSize: 11)),
-            ),
-          ]),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  color: GE.primary,
+                  strokeWidth: 2,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _url!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: GE.sub, fontSize: 11),
+                ),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -1740,42 +2080,57 @@ class _LinkPreviewWidgetState extends State<_LinkPreviewWidget> {
       child: GlassCard(
         lite: true,
         padding: EdgeInsets.zero,
-        onTap: () => launchUrl(Uri.parse(_url!),
-            mode: LaunchMode.externalApplication),
+        onTap: () => PublicPageLink.open(_url!),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(GE.radiusMd),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (image != null && image.isNotEmpty)
-                Image.network(image,
-                    height: 140, fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => const SizedBox.shrink()),
+                Image.network(
+                  image,
+                  height: 140,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                ),
               Padding(
                 padding: const EdgeInsets.all(10),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (site.isNotEmpty)
-                      Text(site.toUpperCase(),
-                          style: TextStyle(
-                              color: GE.primary,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.5)),
-                    Text(title,
-                        maxLines: 2, overflow: TextOverflow.ellipsis,
+                      Text(
+                        site.toUpperCase(),
                         style: TextStyle(
-                            color: GE.text,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            height: 1.3)),
+                          color: GE.primary,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: GE.text,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        height: 1.3,
+                      ),
+                    ),
                     if (desc != null && desc.isNotEmpty) ...[
                       const SizedBox(height: 3),
-                      Text(desc,
-                          maxLines: 2, overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              color: GE.sub, fontSize: 11, height: 1.35)),
+                      Text(
+                        desc,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: GE.sub,
+                          fontSize: 11,
+                          height: 1.35,
+                        ),
+                      ),
                     ],
                   ],
                 ),
@@ -1794,7 +2149,11 @@ class _LinkPreviewWidgetState extends State<_LinkPreviewWidget> {
 class VisibilityAwareView extends StatefulWidget {
   final Widget child;
   final VoidCallback onVisible;
-  const VisibilityAwareView({super.key, required this.child, required this.onVisible});
+  const VisibilityAwareView({
+    super.key,
+    required this.child,
+    required this.onVisible,
+  });
   @override
   State<VisibilityAwareView> createState() => _VisibilityAwareViewState();
 }
@@ -1875,52 +2234,60 @@ class _PollWidgetState extends State<_PollWidget> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-              decoration: BoxDecoration(
-                color: GE.primary.withValues(alpha: 0.18),
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(
-                  poll.isQuiz ? Icons.psychology : Icons.bar_chart,
-                  size: 11,
-                  color: GE.primary,
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: GE.primary.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(999),
                 ),
-                const SizedBox(width: 4),
-                Text(
-                  poll.isQuiz ? 'ВИКТОРИНА' : 'ОПРОС',
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      poll.isQuiz
+                          ? Icons.psychology
+                          : CupertinoIcons.chart_bar_fill,
+                      size: 11,
+                      color: GE.primary,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      poll.isQuiz ? 'ВИКТОРИНА' : 'ОПРОС',
+                      style: TextStyle(
+                        color: GE.primary,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  poll.question,
                   style: TextStyle(
-                    color: GE.primary,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.4,
+                    color: GE.text,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    height: 1.3,
                   ),
                 ),
-              ]),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                poll.question,
-                style: TextStyle(
-                  color: GE.text,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  height: 1.3,
-                ),
               ),
-            ),
-          ]),
+            ],
+          ),
           const SizedBox(height: 10),
           ...List.generate(poll.options.length, (i) {
             final cnt = poll.counts[i] ?? 0;
             final pct = poll.total == 0 ? 0 : (cnt * 100 / poll.total).round();
             final isMine = poll.myVote == i;
             final isCorrect = (poll.correctIdx != null && poll.correctIdx == i);
-            final isWrongMine = voted && isMine &&
+            final isWrongMine =
+                voted &&
+                isMine &&
                 (poll.correctIdx != null && poll.correctIdx != i);
 
             Color fill = GE.primary.withValues(alpha: 0.18);
@@ -1931,12 +2298,12 @@ class _PollWidgetState extends State<_PollWidget> {
               if (isCorrect) {
                 fill = GE.green.withValues(alpha: 0.22);
                 border = GE.green;
-                badge = Icons.check_circle;
+                badge = CupertinoIcons.checkmark_circle_fill;
                 badgeColor = GE.green;
               } else if (isWrongMine) {
                 fill = GE.red.withValues(alpha: 0.22);
                 border = GE.red;
-                badge = Icons.cancel;
+                badge = CupertinoIcons.xmark_circle_fill;
                 badgeColor = GE.red;
               } else if (isMine) {
                 fill = GE.primary.withValues(alpha: 0.28);
@@ -1946,9 +2313,8 @@ class _PollWidgetState extends State<_PollWidget> {
 
             return Padding(
               padding: const EdgeInsets.only(bottom: 6),
-              child: InkWell(
+              child: PressScale(
                 onTap: voted || _busy ? null : () => _vote(i),
-                borderRadius: BorderRadius.circular(10),
                 child: Stack(
                   children: [
                     Container(
@@ -1960,38 +2326,43 @@ class _PollWidgetState extends State<_PollWidget> {
                         border: Border.all(color: border),
                       ),
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 11),
-                      child: Row(children: [
-                        Expanded(
-                          child: Text(
-                            poll.options[i],
-                            style: TextStyle(
-                                color: GE.text,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                        if (badge != null)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 6),
-                            child: Icon(badge, size: 14, color: badgeColor),
-                          ),
-                        if (voted)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 8),
+                        horizontal: 12,
+                        vertical: 11,
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
                             child: Text(
-                              '$pct%',
+                              poll.options[i],
                               style: TextStyle(
                                 color: GE.text,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w800,
-                                fontFeatures: const [
-                                  FontFeature.tabularFigures()
-                                ],
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                           ),
-                      ]),
+                          if (badge != null)
+                            Padding(
+                              padding: const EdgeInsets.only(left: 6),
+                              child: Icon(badge, size: 14, color: badgeColor),
+                            ),
+                          if (voted)
+                            Padding(
+                              padding: const EdgeInsets.only(left: 8),
+                              child: Text(
+                                '$pct%',
+                                style: TextStyle(
+                                  color: GE.text,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
                     // fill-полоска снизу (только после голосования)
                     if (voted)
@@ -2000,7 +2371,9 @@ class _PollWidgetState extends State<_PollWidget> {
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(10),
                             child: FractionallySizedBox(
-                              widthFactor: poll.total == 0 ? 0 : cnt / poll.total,
+                              widthFactor: poll.total == 0
+                                  ? 0
+                                  : cnt / poll.total,
                               alignment: Alignment.centerLeft,
                               child: Container(color: fill),
                             ),
@@ -2012,13 +2385,14 @@ class _PollWidgetState extends State<_PollWidget> {
               ),
             );
           }),
-          if (voted) Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              '${poll.total} голос${_plural(poll.total)}',
-              style: TextStyle(color: GE.sub, fontSize: 11),
+          if (voted)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '${poll.total} голос${_plural(poll.total)}',
+                style: TextStyle(color: GE.sub, fontSize: 11),
+              ),
             ),
-          ),
         ],
       ),
     );

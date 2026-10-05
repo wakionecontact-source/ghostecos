@@ -4,12 +4,20 @@
 // Защищённо: если нет доступа к галерее (permission denied / недоступно) —
 // показываем кнопку «Разрешить доступ», шорткаты работают всегда. Грид НАДО
 // проверить на устройстве (разрешения READ_MEDIA_* + рендер превью).
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
+import 'package:camera/camera.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../theme.dart';
+import '../services/permissions_service.dart';
+import 'video_player_viewer.dart';
+import 'skeleton.dart';
 
 /// Один выбранный элемент галереи, разрешённый в файл.
 class AttachItem {
@@ -26,6 +34,9 @@ class AttachSheet extends StatefulWidget {
   final VoidCallback onCamera; // камера
   final VoidCallback onGeo; // геопозиция (заглушка пока)
   final VoidCallback onWallet; // кошелёк (заглушка до GhostBank)
+  /// Режим выбора одного изображения без отправки в чат (например, для обоев).
+  final bool selectionOnly;
+  final Future<void> Function(File file)? onPickedSelect;
   const AttachSheet({
     super.key,
     required this.onPickedSend,
@@ -34,6 +45,8 @@ class AttachSheet extends StatefulWidget {
     required this.onCamera,
     required this.onGeo,
     required this.onWallet,
+    this.selectionOnly = false,
+    this.onPickedSelect,
   });
 
   @override
@@ -43,10 +56,12 @@ class AttachSheet extends StatefulWidget {
 class _AttachSheetState extends State<AttachSheet> {
   List<AssetEntity> _assets = [];
   final Set<String> _selected = {}; // id выбранных
-  final Map<String, Uint8List?> _thumbCache = {}; // превью по id (без перезагрузки)
+  final Map<String, Uint8List?> _thumbCache =
+      {}; // превью по id (без перезагрузки)
   bool _loading = true;
   bool _denied = false;
   bool _sending = false;
+  final bool _showExperimentalAttachSources = false;
 
   @override
   void initState() {
@@ -54,15 +69,36 @@ class _AttachSheetState extends State<AttachSheet> {
     _load();
   }
 
+  Future<void> _auditGalleryUsage() async {
+    try {
+      await PermissionUsageAudit.instance.recordCurrentStatus(
+        Permission.photos,
+        context: 'attachment_gallery',
+      );
+      await PermissionUsageAudit.instance.recordCurrentStatus(
+        Permission.videos,
+        context: 'attachment_gallery',
+      );
+    } catch (_) {
+      // Аудит не должен ломать открытие скрепки.
+    }
+  }
+
   Future<void> _load() async {
     try {
       final ps = await PhotoManager.requestPermissionExtend();
+      await _auditGalleryUsage();
       if (!ps.hasAccess) {
-        if (mounted) setState(() { _denied = true; _loading = false; });
+        if (mounted)
+          setState(() {
+            _denied = true;
+            _loading = false;
+          });
         return;
       }
       final albums = await PhotoManager.getAssetPathList(
-        type: RequestType.common, // фото + видео
+        type: widget.selectionOnly ? RequestType.image : RequestType.common,
+        // фото + видео в обычном режиме; только фото — для выбора обоев
         onlyAll: true,
         // Новые СВЕРХУ + ВИДЕО тоже (дефолтный videoOption отбрасывает видео с
         // null-длительностью — allowNullable их возвращает). RequestType.common
@@ -78,19 +114,33 @@ class _AttachSheetState extends State<AttachSheet> {
         ),
       );
       if (albums.isEmpty) {
-        if (mounted) setState(() { _assets = []; _loading = false; });
+        if (mounted)
+          setState(() {
+            _assets = [];
+            _loading = false;
+          });
         return;
       }
       final recent = await albums.first.getAssetListPaged(page: 0, size: 60);
-      if (mounted) setState(() { _assets = recent; _loading = false; });
+      if (mounted)
+        setState(() {
+          _assets = recent;
+          _loading = false;
+        });
     } catch (_) {
-      if (mounted) setState(() { _denied = true; _loading = false; });
+      await _auditGalleryUsage();
+      if (mounted)
+        setState(() {
+          _denied = true;
+          _loading = false;
+        });
     }
   }
 
   void _toggle(AssetEntity a) {
     HapticFeedback.selectionClick();
     setState(() {
+      if (widget.selectionOnly) _selected.clear();
       if (_selected.contains(a.id)) {
         _selected.remove(a.id);
       } else {
@@ -99,9 +149,21 @@ class _AttachSheetState extends State<AttachSheet> {
     });
   }
 
-  // Полноэкранный просмотр (крупное превью 1080 — работает и для фото, и для
-  // кадра видео). Тап по фону — закрыть. Выбор делается кружком в гриде.
+  // Полноэкранный просмотр: фото открывается как изображение, видео — во
+  // встроенном плеере. Выбор делается кружком в гриде.
   Future<void> _openPreview(AssetEntity a) async {
+    if (a.type == AssetType.video) {
+      final file = await a.file;
+      if (file == null || !mounted) return;
+      Navigator.of(context).push(
+        PageRouteBuilder<void>(
+          opaque: false,
+          barrierColor: Colors.black,
+          pageBuilder: (_, _, _) => GhostVideoViewer(path: file.path),
+        ),
+      );
+      return;
+    }
     final data = await a.thumbnailDataWithSize(const ThumbnailSize(1080, 1080));
     if (data == null || !mounted) return;
     Navigator.of(context).push(
@@ -120,8 +182,11 @@ class _AttachSheetState extends State<AttachSheet> {
                   child: Image.memory(data, fit: BoxFit.contain),
                 ),
                 if (a.type == AssetType.video)
-                  const Icon(Icons.play_circle_fill,
-                      color: Colors.white70, size: 64),
+                  const Icon(
+                    CupertinoIcons.play_circle_fill,
+                    color: Colors.white70,
+                    size: 64,
+                  ),
               ],
             ),
           ),
@@ -142,7 +207,12 @@ class _AttachSheetState extends State<AttachSheet> {
       } catch (_) {}
     }
     if (mounted) Navigator.of(context).maybePop();
-    if (items.isNotEmpty) await widget.onPickedSend(items);
+    if (items.isEmpty) return;
+    if (widget.selectionOnly && widget.onPickedSelect != null) {
+      await widget.onPickedSelect!(items.first.file);
+    } else {
+      await widget.onPickedSend(items);
+    }
   }
 
   @override
@@ -168,7 +238,7 @@ class _AttachSheetState extends State<AttachSheet> {
             ),
           ),
           Expanded(child: _gridArea()),
-          _shortcutRow(),
+          if (!widget.selectionOnly) _shortcutRow(),
         ],
       ),
     );
@@ -176,17 +246,23 @@ class _AttachSheetState extends State<AttachSheet> {
 
   Widget _gridArea() {
     if (_loading) {
-      return Center(child: CircularProgressIndicator(color: GE.primary));
+      return const SkeletonGrid(
+        count: 12,
+        crossAxisCount: 3,
+        childAspectRatio: 1,
+      );
     }
     if (_denied) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.photo_library_outlined, color: GE.muted, size: 40),
+            Icon(CupertinoIcons.photo_on_rectangle, color: GE.muted, size: 40),
             const SizedBox(height: 10),
-            Text('Нет доступа к галерее',
-                style: TextStyle(color: GE.sub, fontSize: 13)),
+            Text(
+              'Нет доступа к галерее',
+              style: TextStyle(color: GE.sub, fontSize: 13),
+            ),
             const SizedBox(height: 12),
             TextButton(
               onPressed: () => PhotoManager.openSetting(),
@@ -205,24 +281,62 @@ class _AttachSheetState extends State<AttachSheet> {
             crossAxisSpacing: 2,
             mainAxisSpacing: 2,
           ),
-          itemCount: _assets.length,
-          itemBuilder: (_, i) => _cell(_assets[i]),
+          itemCount: _assets.length + (widget.selectionOnly ? 0 : 1),
+          itemBuilder: (_, i) {
+            if (!widget.selectionOnly && i == 0) {
+              return _InlineCameraCell(
+                onTap: () {
+                  Navigator.of(context).maybePop();
+                  widget.onCamera();
+                },
+              );
+            }
+            final assetIndex = widget.selectionOnly ? i : i - 1;
+            return _cell(_assets[assetIndex]);
+          },
         ),
         // Плавающая камера / кнопка отправки.
+        if (!widget.selectionOnly)
+          Positioned(
+            top: 6,
+            right: 6,
+            child: PopupMenuButton<String>(
+              tooltip: 'Другие источники',
+              icon: const Icon(CupertinoIcons.ellipsis, color: Colors.white),
+              color: GE.bgDeep,
+              onSelected: (value) {
+                Navigator.of(context).maybePop();
+                switch (value) {
+                  case 'gallery':
+                    widget.onGallery();
+                  case 'file':
+                    widget.onFile();
+                  case 'camera':
+                    widget.onCamera();
+                }
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'gallery',
+                  child: Text('Системная галерея'),
+                ),
+                PopupMenuItem(value: 'file', child: Text('Файловый проводник')),
+                PopupMenuItem(value: 'camera', child: Text('Камера')),
+              ],
+            ),
+          ),
         Positioned(
           right: 16,
           bottom: 16,
           child: _selected.isEmpty
-              ? _circleBtn(
-                  Icons.camera_alt_rounded,
-                  GE.blue,
-                  () {
-                    Navigator.of(context).maybePop();
-                    widget.onCamera();
-                  },
-                )
+              ? _circleBtn(CupertinoIcons.camera, GE.blue, () {
+                  Navigator.of(context).maybePop();
+                  widget.onCamera();
+                })
               : _circleBtn(
-                  _sending ? Icons.hourglass_top : Icons.send_rounded,
+                  _sending
+                      ? CupertinoIcons.hourglass
+                      : CupertinoIcons.paperplane_fill,
                   GE.primary,
                   _send,
                   badge: _selected.length,
@@ -242,30 +356,45 @@ class _AttachSheetState extends State<AttachSheet> {
         children: [
           _thumb(a),
           if (sel) ColoredBox(color: GE.primary.withValues(alpha: 0.30)),
-          // HD + play для видео.
+          // Видео остаётся обычной плиткой с кадром, а не иконкой паузы. Слева
+          // снизу показываем настоящую продолжительность из медиатеки.
           if (isVideo)
             Positioned(
-              left: 4,
-              bottom: 4,
+              left: 6,
+              bottom: 6,
               child: Row(
                 children: [
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 3,
+                    ),
                     decoration: BoxDecoration(
-                      color: Colors.black54,
+                      color: Colors.black.withValues(alpha: 0.68),
                       borderRadius: BorderRadius.circular(4),
                     ),
-                    child: const Text('HD',
-                        style: TextStyle(color: Colors.white, fontSize: 9,
-                            fontWeight: FontWeight.w700)),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          CupertinoIcons.video_camera_solid,
+                          color: Colors.white,
+                          size: 11,
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          _formatDuration(a.duration),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
-            ),
-          if (isVideo)
-            const Center(
-              child: Icon(Icons.play_circle_fill, color: Colors.white70, size: 28),
             ),
           // Кружок-выбор — ТОЛЬКО он переключает выбор (тап по фото = превью).
           Positioned(
@@ -285,7 +414,11 @@ class _AttachSheetState extends State<AttachSheet> {
                     border: Border.all(color: Colors.white, width: 1.5),
                   ),
                   child: sel
-                      ? const Icon(Icons.check, color: Colors.white, size: 14)
+                      ? const Icon(
+                          CupertinoIcons.checkmark,
+                          color: Colors.white,
+                          size: 14,
+                        )
                       : null,
                 ),
               ),
@@ -294,6 +427,14 @@ class _AttachSheetState extends State<AttachSheet> {
         ],
       ),
     );
+  }
+
+  String _formatDuration(int seconds) {
+    final duration = Duration(seconds: seconds);
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final secs = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return hours > 0 ? '$hours:$minutes:$secs' : '$minutes:$secs';
   }
 
   // Превью элемента: грузим байты один раз, кэшируем по id (на rebuild при
@@ -352,11 +493,14 @@ class _AttachSheetState extends State<AttachSheet> {
                   shape: BoxShape.circle,
                   color: Colors.white,
                 ),
-                child: Text('$badge',
-                    style: TextStyle(
-                        color: GE.primary,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800)),
+                child: Text(
+                  '$badge',
+                  style: TextStyle(
+                    color: GE.primary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
               ),
             ),
         ],
@@ -374,22 +518,39 @@ class _AttachSheetState extends State<AttachSheet> {
           children: [
             // GE.* вместо хардкод-хексов — иначе иконки не меняли тон между
             // темами (были одинаковые на всех 12 пресетах).
-            _shortcut(Icons.photo_library_rounded, 'Галерея', GE.blue, () {
-              Navigator.of(context).maybePop();
-              widget.onGallery();
-            }),
-            _shortcut(Icons.account_balance_wallet_rounded, 'Кошелёк', GE.primary, () {
-              Navigator.of(context).maybePop();
-              widget.onWallet();
-            }),
-            _shortcut(Icons.insert_drive_file_rounded, 'Файл', GE.primary2, () {
+            _shortcut(
+              CupertinoIcons.photo_on_rectangle,
+              'Галерея',
+              GE.blue,
+              () {
+                Navigator.of(context).maybePop();
+                widget.onGallery();
+              },
+            ),
+            if (_showExperimentalAttachSources)
+              _shortcut(
+                Icons.account_balance_wallet_rounded,
+                'Кошелёк',
+                GE.primary,
+                () {
+                  Navigator.of(context).maybePop();
+                  widget.onWallet();
+                },
+              ),
+            _shortcut(CupertinoIcons.doc, 'Файл', GE.primary2, () {
               Navigator.of(context).maybePop();
               widget.onFile();
             }),
-            _shortcut(Icons.location_on_rounded, 'Геопозиция', GE.green, () {
-              Navigator.of(context).maybePop();
-              widget.onGeo();
-            }),
+            if (_showExperimentalAttachSources)
+              _shortcut(
+                CupertinoIcons.location_solid,
+                'Геопозиция',
+                GE.green,
+                () {
+                  Navigator.of(context).maybePop();
+                  widget.onGeo();
+                },
+              ),
           ],
         ),
       ),
@@ -415,8 +576,151 @@ class _AttachSheetState extends State<AttachSheet> {
               child: Icon(ic, color: Colors.white, size: 26),
             ),
             const SizedBox(height: 5),
-            Text(label,
-                style: TextStyle(color: GE.sub, fontSize: 11)),
+            Text(label, style: TextStyle(color: GE.sub, fontSize: 11)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InlineCameraCell extends StatefulWidget {
+  final VoidCallback onTap;
+  const _InlineCameraCell({required this.onTap});
+
+  @override
+  State<_InlineCameraCell> createState() => _InlineCameraCellState();
+}
+
+class _InlineCameraCellState extends State<_InlineCameraCell> {
+  static String? _lastFramePath;
+  static DateTime? _lastFrameAt;
+  CameraController? _controller;
+  Timer? _frameTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    try {
+      final cameras = await availableCameras();
+      if (cameras.isEmpty) return;
+      final camera = cameras.firstWhere(
+        (item) => item.lensDirection == CameraLensDirection.back,
+        orElse: () => cameras.first,
+      );
+      final controller = CameraController(
+        camera,
+        ResolutionPreset.low,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
+      await controller.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() => _controller = controller);
+      await _refreshLastFrame();
+      _frameTimer = Timer.periodic(
+        const Duration(minutes: 1),
+        (_) => _refreshLastFrame(),
+      );
+    } catch (_) {
+      // The tile remains a camera shortcut if preview permission is delayed.
+    }
+  }
+
+  @override
+  void dispose() {
+    _frameTimer?.cancel();
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _refreshLastFrame() async {
+    final controller = _controller;
+    final last = _lastFrameAt;
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        controller.value.isTakingPicture ||
+        (last != null &&
+            DateTime.now().difference(last) < const Duration(minutes: 1))) {
+      return;
+    }
+    try {
+      final shot = await controller.takePicture();
+      _lastFramePath = shot.path;
+      _lastFrameAt = DateTime.now();
+      if (mounted) setState(() {});
+    } catch (_) {
+      // Пока камера занята, старый кадр остаётся валидным placeholder.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = _controller;
+    final ready = controller?.value.isInitialized == true;
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(2),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (ready)
+              CameraPreview(controller!)
+            else if (_lastFramePath != null)
+              ImageFiltered(
+                imageFilter: ImageFilter.blur(sigmaX: 7, sigmaY: 7),
+                child: Image.file(
+                  File(_lastFramePath!),
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => ColoredBox(color: GE.surface),
+                ),
+              )
+            else
+              ColoredBox(color: GE.surface),
+            if (!ready)
+              ImageFiltered(
+                imageFilter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+                child: ColoredBox(color: GE.primary.withValues(alpha: 0.12)),
+              ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Colors.black.withValues(alpha: 0.68),
+                  ],
+                ),
+              ),
+            ),
+            const Center(
+              child: Icon(
+                CupertinoIcons.camera_fill,
+                color: Colors.white,
+                size: 30,
+              ),
+            ),
+            const Positioned(
+              left: 7,
+              bottom: 6,
+              child: Text(
+                'Камера',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
           ],
         ),
       ),

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/api/auth_api.dart';
@@ -263,7 +264,7 @@ class _DeviceTrustWaitScreenState extends State<DeviceTrustWaitScreen> {
     return Column(
       children: [
         const Spacer(),
-        const Icon(Icons.error_outline, size: 56, color: AppColors.red),
+        const Icon(CupertinoIcons.exclamationmark_circle, size: 56, color: AppColors.red),
         const SizedBox(height: 16),
         Text(
           _error ?? 'Ошибка',

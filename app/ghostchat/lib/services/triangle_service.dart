@@ -17,8 +17,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'crypto_v2.dart';
+import 'chat_message_auth.dart';
 import 'ws_client.dart';
 
 const _stunHost = '155.212.166.221';
@@ -262,12 +264,20 @@ class TriangleService {
     Map<String, dynamic> inner,
   ) async {
     try {
+      final unsigned = <String, dynamic>{
+        ...inner,
+        'from_id': CryptoV2.instance.identityPubB64,
+      };
+      final signature = await CryptoV2.instance.signWithIdentity(
+        ChatMessageAuth.p2pPayloadBytes(unsigned),
+      );
+      final signed = <String, dynamic>{
+        ...unsigned,
+        'signature': base64.encode(signature),
+      };
       final envelope = await CryptoV2.instance.encryptV2(
         base64Decode(keys.devicePubB64),
-        utf8.encode(jsonEncode({
-          ...inner,
-          'from_id': CryptoV2.instance.identityPubB64,
-        })),
+        utf8.encode(jsonEncode(signed)),
       );
       final bytes = utf8.encode(envelope);
       for (final c in candidates) {
@@ -303,6 +313,7 @@ class TriangleService {
       if (clear == null) return;
       final inner = jsonDecode(utf8.decode(clear)) as Map<String, dynamic>;
       final fromId = inner['from_id'] as String?;
+      final signatureB64 = inner.remove('signature') as String?;
       final type = inner['type'] as String?;
 
       String? username;
@@ -313,6 +324,22 @@ class TriangleService {
         }
       }
       if (username == null) return; // не сверяемая identity — игнор (спуфинг/шум)
+
+      final peer = _attemptKeys[username]!;
+      final signature = signatureB64 == null
+          ? null
+          : ChatMessageAuth.tryDecodeBase64(signatureB64);
+      final identity = ChatMessageAuth.tryDecodeBase64(peer.identityPubB64);
+      if (signature == null || signature.length != 64 ||
+          identity == null || identity.length != 32 ||
+          fromId != peer.identityPubB64 ||
+          !await CryptoV2.instance.verifyIdentitySignature(
+            identityPub: Uint8List.fromList(identity),
+            signature: Uint8List.fromList(signature),
+            message: ChatMessageAuth.p2pPayloadBytes(inner),
+          )) {
+        return;
+      }
 
       if (type == 'punch' || type == 'punch_ack') {
         final isNew = !_sessions.containsKey(username);

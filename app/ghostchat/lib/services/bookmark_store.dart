@@ -14,6 +14,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 import 'db_service.dart' show StoredDialog;
+import '../core/local/app_logger.dart';
 
 const bookmarkDialogPrefix = 'bm:';
 const defaultBookmarkId = 'default';
@@ -24,7 +25,11 @@ class BookmarkInfo {
   final String id;
   final String name;
   final bool isDefault;
-  const BookmarkInfo({required this.id, required this.name, required this.isDefault});
+  const BookmarkInfo({
+    required this.id,
+    required this.name,
+    required this.isDefault,
+  });
 }
 
 class BookmarkMessage {
@@ -51,15 +56,15 @@ class BookmarkMessage {
   bool get hasFile => fileName != null && fileBytes != null;
 
   static BookmarkMessage fromMap(Map<String, dynamic> m) => BookmarkMessage(
-        id: m['id'] as String,
-        bookmarkId: m['bookmark_id'] as String,
-        text: m['text'] as String? ?? '',
-        fileName: m['file_name'] as String?,
-        fileMime: m['file_mime'] as String?,
-        fileBytes: m['file_bytes'] as Uint8List?,
-        createdAt: m['created_at'] as int,
-        reaction: m['reaction'] as String?,
-      );
+    id: m['id'] as String,
+    bookmarkId: m['bookmark_id'] as String,
+    text: m['text'] as String? ?? '',
+    fileName: m['file_name'] as String?,
+    fileMime: m['file_mime'] as String?,
+    fileBytes: m['file_bytes'] as Uint8List?,
+    createdAt: m['created_at'] as int,
+    reaction: m['reaction'] as String?,
+  );
 }
 
 class BookmarkStore {
@@ -68,7 +73,9 @@ class BookmarkStore {
 
   Database? _db;
   String? _scope;
-  final ValueNotifier<List<StoredDialog>> dialogsNotifier = ValueNotifier(const []);
+  final ValueNotifier<List<StoredDialog>> dialogsNotifier = ValueNotifier(
+    const [],
+  );
 
   static int _nowSec() => DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
@@ -108,16 +115,31 @@ class BookmarkStore {
           )
         ''');
         await db.execute(
-            'CREATE INDEX idx_bm_msg ON bookmark_messages(bookmark_id, created_at)');
+          'CREATE INDEX idx_bm_msg ON bookmark_messages(bookmark_id, created_at)',
+        );
       },
       onUpgrade: (db, oldV, newV) async {
         if (oldV < 2) {
-          await db.execute('ALTER TABLE bookmark_messages ADD COLUMN reaction TEXT');
+          await db.execute(
+            'ALTER TABLE bookmark_messages ADD COLUMN reaction TEXT',
+          );
         }
       },
     );
     await _ensureDefault();
     await _reloadDialogs();
+    appLog.info('storage', 'bookmark database opened for current account');
+  }
+
+  /// Полностью скрыть текущий аккаунт при logout. Файл остаётся на диске —
+  /// после входа в этот же аккаунт закладки вернутся, но старый список не
+  /// протечёт в экран следующего пользователя.
+  Future<void> dispose() async {
+    await _db?.close();
+    _db = null;
+    _scope = null;
+    dialogsNotifier.value = const [];
+    appLog.info('storage', 'bookmark database closed');
   }
 
   Database get _safeDb {
@@ -127,8 +149,12 @@ class BookmarkStore {
   }
 
   Future<void> _ensureDefault() async {
-    final rows = await _safeDb.query('bookmarks',
-        where: 'id = ?', whereArgs: [defaultBookmarkId], limit: 1);
+    final rows = await _safeDb.query(
+      'bookmarks',
+      where: 'id = ?',
+      whereArgs: [defaultBookmarkId],
+      limit: 1,
+    );
     if (rows.isEmpty) {
       await _safeDb.insert('bookmarks', {
         'id': defaultBookmarkId,
@@ -142,33 +168,48 @@ class BookmarkStore {
   }
 
   Future<void> _reloadDialogs() async {
-    final rows = await _safeDb.query('bookmarks', orderBy: 'is_default DESC, last_at DESC');
+    final rows = await _safeDb.query(
+      'bookmarks',
+      orderBy: 'is_default DESC, last_at DESC',
+    );
     dialogsNotifier.value = rows
-        .map((r) => StoredDialog(
-              username: '$bookmarkDialogPrefix${r['id']}',
-              displayName: r['name'] as String,
-              lastText: r['last_text'] as String? ?? '',
-              lastAt: r['last_at'],
-              lastFromMe: true,
-              unread: 0,
-            ))
+        .map(
+          (r) => StoredDialog(
+            username: '$bookmarkDialogPrefix${r['id']}',
+            displayName: r['name'] as String,
+            lastText: r['last_text'] as String? ?? '',
+            lastAt: r['last_at'],
+            lastFromMe: true,
+            unread: (r['unread'] as int?) ?? 0,
+          ),
+        )
         .toList();
   }
 
   Future<List<BookmarkInfo>> getBookmarks() async {
-    final rows = await _safeDb.query('bookmarks', orderBy: 'is_default DESC, name ASC');
+    final rows = await _safeDb.query(
+      'bookmarks',
+      orderBy: 'is_default DESC, name ASC',
+    );
     return rows
-        .map((r) => BookmarkInfo(
-              id: r['id'] as String,
-              name: r['name'] as String,
-              isDefault: (r['is_default'] as int? ?? 0) == 1,
-            ))
+        .map(
+          (r) => BookmarkInfo(
+            id: r['id'] as String,
+            name: r['name'] as String,
+            isDefault: (r['is_default'] as int? ?? 0) == 1,
+          ),
+        )
         .toList();
   }
 
   Future<String?> getName(String bookmarkId) async {
-    final rows = await _safeDb.query('bookmarks',
-        columns: ['name'], where: 'id = ?', whereArgs: [bookmarkId], limit: 1);
+    final rows = await _safeDb.query(
+      'bookmarks',
+      columns: ['name'],
+      where: 'id = ?',
+      whereArgs: [bookmarkId],
+      limit: 1,
+    );
     if (rows.isEmpty) return null;
     return rows.first['name'] as String?;
   }
@@ -190,23 +231,35 @@ class BookmarkStore {
   Future<bool> renameBookmark(String id, String name) async {
     if (id == defaultBookmarkId) return false; // "Избранное" — имя фиксировано
     if (name.trim().isEmpty) return false;
-    await _safeDb.update('bookmarks', {'name': name.trim()},
-        where: 'id = ?', whereArgs: [id]);
+    await _safeDb.update(
+      'bookmarks',
+      {'name': name.trim()},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
     await _reloadDialogs();
     return true;
   }
 
   Future<bool> deleteBookmark(String id) async {
     if (id == defaultBookmarkId) return false; // нельзя удалить "Избранное"
-    await _safeDb.delete('bookmark_messages', where: 'bookmark_id = ?', whereArgs: [id]);
+    await _safeDb.delete(
+      'bookmark_messages',
+      where: 'bookmark_id = ?',
+      whereArgs: [id],
+    );
     await _safeDb.delete('bookmarks', where: 'id = ?', whereArgs: [id]);
     await _reloadDialogs();
     return true;
   }
 
   Future<List<BookmarkMessage>> getMessages(String bookmarkId) async {
-    final rows = await _safeDb.query('bookmark_messages',
-        where: 'bookmark_id = ?', whereArgs: [bookmarkId], orderBy: 'created_at ASC');
+    final rows = await _safeDb.query(
+      'bookmark_messages',
+      where: 'bookmark_id = ?',
+      whereArgs: [bookmarkId],
+      orderBy: 'created_at ASC',
+    );
     return rows.map(BookmarkMessage.fromMap).toList();
   }
 
@@ -222,6 +275,10 @@ class BookmarkStore {
       throw StateError('Файл больше 25MB — локальное хранилище не резиновое');
     }
     final id = const Uuid().v4();
+    appLog.info(
+      fileName == null ? 'msg' : 'file',
+      'bookmark ${fileName == null ? 'message' : 'file'} added: $bookmarkId',
+    );
     final at = _nowSec();
     await _safeDb.insert('bookmark_messages', {
       'id': id,
@@ -232,23 +289,81 @@ class BookmarkStore {
       'file_bytes': fileBytes,
       'created_at': at,
     });
-    final preview = text.isNotEmpty ? text : (fileName != null ? '📎 $fileName' : '');
-    await _safeDb.update('bookmarks', {'last_text': preview, 'last_at': at},
-        where: 'id = ?', whereArgs: [bookmarkId]);
+    final preview = text.isNotEmpty
+        ? text
+        : (fileName != null ? '📎 $fileName' : '');
+    await _safeDb.update(
+      'bookmarks',
+      {'last_text': preview, 'last_at': at},
+      where: 'id = ?',
+      whereArgs: [bookmarkId],
+    );
     await _reloadDialogs();
   }
 
   Future<void> deleteMessage(String messageId, String bookmarkId) async {
-    await _safeDb.delete('bookmark_messages', where: 'id = ?', whereArgs: [messageId]);
+    await _safeDb.delete(
+      'bookmark_messages',
+      where: 'id = ?',
+      whereArgs: [messageId],
+    );
+    await _reloadDialogs();
+  }
+
+  /// Bookmarks are local notes, so they do not have a real incoming unread
+  /// state. Keep the method for the common chat-list action surface.
+  Future<void> markRead(String bookmarkId) async {
+    await _safeDb.update(
+      'bookmarks',
+      {'unread': 0},
+      where: 'id = ?',
+      whereArgs: [bookmarkId],
+    );
+    await _reloadDialogs();
+  }
+
+  /// Keeps the common chat-list action surface usable for local bookmarks.
+  /// A bookmark can be marked unread even though it has no remote sender.
+  Future<void> markUnread(String bookmarkId) async {
+    await _safeDb.update(
+      'bookmarks',
+      {'unread': 1},
+      where: 'id = ?',
+      whereArgs: [bookmarkId],
+    );
+    await _reloadDialogs();
+  }
+
+  Future<void> clearBookmark(String bookmarkId) async {
+    await _safeDb.delete(
+      'bookmark_messages',
+      where: 'bookmark_id = ?',
+      whereArgs: [bookmarkId],
+    );
+    await _safeDb.update(
+      'bookmarks',
+      {'last_text': '', 'last_at': _nowSec(), 'unread': 0},
+      where: 'id = ?',
+      whereArgs: [bookmarkId],
+    );
     await _reloadDialogs();
   }
 
   /// Тап тем же эмодзи повторно — снимает реакцию (toggle), как в ЛС/LAN.
   Future<void> setReaction(String messageId, String emoji) async {
-    final rows = await _safeDb.query('bookmark_messages',
-        columns: ['reaction'], where: 'id = ?', whereArgs: [messageId], limit: 1);
+    final rows = await _safeDb.query(
+      'bookmark_messages',
+      columns: ['reaction'],
+      where: 'id = ?',
+      whereArgs: [messageId],
+      limit: 1,
+    );
     final current = rows.isNotEmpty ? rows.first['reaction'] as String? : null;
-    await _safeDb.update('bookmark_messages', {'reaction': current == emoji ? null : emoji},
-        where: 'id = ?', whereArgs: [messageId]);
+    await _safeDb.update(
+      'bookmark_messages',
+      {'reaction': current == emoji ? null : emoji},
+      where: 'id = ?',
+      whereArgs: [messageId],
+    );
   }
 }

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'local_transport.dart';
 
@@ -10,12 +11,13 @@ class LanSettings {
   factory LanSettings() => _i;
   LanSettings._();
 
-  bool lanAcceptRequests   = true;
-  bool lanAcceptWifi       = true;
+  bool lanAcceptRequests = true;
+  bool lanAcceptWifi = true;
   bool lanAcceptWifiDirect = true;
-  bool lanAcceptBluetooth  = true;
-  bool lanPingEnabled      = true;
-  String standardIp        = '';
+  bool lanAcceptBluetooth = true;
+  bool lanPingEnabled = true;
+  final ValueNotifier<bool> pingEnabledNotifier = ValueNotifier(true);
+  String standardIp = '';
 
   // Default: lan > wifi_direct > bluetooth. LAN — самый проработанный и
   // надёжный транспорт (UDP+TCP, полностью протестирован), BLE/WiFi Direct
@@ -39,12 +41,13 @@ class LanSettings {
   Future<void> load() async {
     if (_loaded) return;
     final p = await SharedPreferences.getInstance();
-    lanAcceptRequests   = p.getBool('lan_accept_requests')    ?? true;
-    lanAcceptWifi       = p.getBool('lan_accept_wifi')        ?? true;
+    lanAcceptRequests = p.getBool('lan_accept_requests') ?? true;
+    lanAcceptWifi = p.getBool('lan_accept_wifi') ?? true;
     lanAcceptWifiDirect = p.getBool('lan_accept_wifi_direct') ?? true;
-    lanAcceptBluetooth  = p.getBool('lan_accept_bluetooth')   ?? true;
-    lanPingEnabled      = p.getBool('lan_ping_enabled')       ?? true;
-    standardIp          = p.getString('lan_standard_ip')      ?? '';
+    lanAcceptBluetooth = p.getBool('lan_accept_bluetooth') ?? true;
+    lanPingEnabled = p.getBool('lan_ping_enabled') ?? true;
+    pingEnabledNotifier.value = lanPingEnabled;
+    standardIp = p.getString('lan_standard_ip') ?? '';
 
     final priorityJson = p.getString('lan_transport_priority');
     if (priorityJson != null) {
@@ -52,9 +55,12 @@ class LanSettings {
         final names = List<String>.from(jsonDecode(priorityJson));
         lanTransportPriority = names.map((n) {
           switch (n) {
-            case 'bluetooth':  return TransportType.bluetooth;
-            case 'wifiDirect': return TransportType.wifiDirect;
-            default:           return TransportType.lan;
+            case 'bluetooth':
+              return TransportType.bluetooth;
+            case 'wifiDirect':
+              return TransportType.wifiDirect;
+            default:
+              return TransportType.lan;
           }
         }).toList();
       } catch (_) {}
@@ -72,13 +78,17 @@ class LanSettings {
   bool isLanTransportEnabled(TransportType type) {
     if (!lanAcceptRequests) return false;
     switch (type) {
-      case TransportType.lan:        return lanAcceptWifi;
-      case TransportType.wifiDirect: return lanAcceptWifiDirect;
-      case TransportType.bluetooth:  return lanAcceptBluetooth;
+      case TransportType.lan:
+        return lanAcceptWifi;
+      case TransportType.wifiDirect:
+        return lanAcceptWifiDirect;
+      case TransportType.bluetooth:
+        return lanAcceptBluetooth;
     }
   }
 
-  bool isLanDeviceBlocked(String deviceId) => lanBlockedDevices.contains(deviceId);
+  bool isLanDeviceBlocked(String deviceId) =>
+      lanBlockedDevices.contains(deviceId);
 
   Future<void> addLanBlockedDevice(String deviceId) async {
     if (!lanBlockedDevices.contains(deviceId)) {
@@ -124,6 +134,7 @@ class LanSettings {
 
   Future<void> setLanPingEnabled(bool v) async {
     lanPingEnabled = v;
+    pingEnabledNotifier.value = v;
     final p = await SharedPreferences.getInstance();
     await p.setBool('lan_ping_enabled', v);
   }
