@@ -190,6 +190,7 @@ class CallService {
   int _iceRestartAttempts = 0;
   Timer? _relayFallbackTimer;
   Timer? _iceRestartTimer;
+  Timer? _iceRestartResponseTimer;
   Timer? _mediaRouteTimer;
   Completer<void>? _mediaNegotiationCompleter;
   String? _routeStatsCallIdInFlight;
@@ -985,17 +986,11 @@ class CallService {
             _iceRestartAttempts = 0;
             _relayFallbackTimer?.cancel();
             _iceRestartTimer?.cancel();
+            _iceRestartTimer = null;
+            _iceRestartResponseTimer?.cancel();
+            _iceRestartResponseTimer = null;
           case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
             _beginIceRecovery();
-            _disconnectTimer?.cancel();
-            _disconnectTimer = Timer(const Duration(seconds: 10), () {
-              if (state.value.connectionState ==
-                  RTCPeerConnectionState
-                      .RTCPeerConnectionStateDisconnected
-                      .name) {
-                unawaited(_fail('Соединение с собеседником потеряно'));
-              }
-            });
           case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
             _beginIceRecovery();
           case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
@@ -1258,35 +1253,63 @@ class CallService {
     final sdp = data['sdp']?.toString();
     final pc = _peerConnection;
     if (sdp == null || sdp.isEmpty || pc == null) return;
+    _iceRestartTimer?.cancel();
+    _iceRestartTimer = null;
+    _iceRestartResponseTimer?.cancel();
+    _iceRestartResponseTimer = null;
     try {
       await pc.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
+      if (!_ownsActiveCall(callId)) return;
       await _updateVerificationSdp(remoteSdp: sdp);
+      if (!_ownsActiveCall(callId)) return;
       _remoteDescriptionReady = true;
       await _flushCandidates(callId);
+      if (!_ownsActiveCall(callId)) return;
+      _iceRestartInFlight = false;
       _setState(state.value.copyWith(detail: 'Связь восстановлена'));
+      _scheduleIceRestartRetry(
+        callId: callId,
+        delay: const Duration(seconds: 3),
+      );
     } catch (error) {
+      if (_callId != callId) return;
+      _iceRestartInFlight = false;
       appLog.warn('call', 'ICE restart answer apply failed: $error');
+      _scheduleIceRestartRetry(
+        callId: callId,
+        delay: const Duration(seconds: 1),
+      );
     }
   }
 
   void _beginIceRecovery() {
-    if (!isActive || _ending || _iceRestartInFlight) return;
+    final callId = _callId;
+    if (!isActive || _ending || callId == null) return;
     _iceRecoveryActive = true;
-    _disconnectTimer?.cancel();
-    _disconnectTimer = Timer(const Duration(seconds: 25), () {
-      if (_iceRecoveryActive && isActive) {
-        unawaited(_fail('Соединение с собеседником потеряно'));
-      }
-    });
-    if (_isIceRestartLeader && _iceRestartTimer?.isActive != true) {
+    if (_disconnectTimer?.isActive != true) {
+      _disconnectTimer = Timer(const Duration(seconds: 30), () {
+        if (_iceRecoveryActive && _ownsActiveCall(callId)) {
+          unawaited(_fail('Соединение с собеседником потеряно'));
+        }
+      });
+    }
+    if (_isIceRestartLeader &&
+        !_iceRestartInFlight &&
+        _iceRestartTimer?.isActive != true) {
       final initialNegotiation = state.value.phase == CallPhase.connecting;
       final delay = initialNegotiation && _hasTurnServers
           ? const Duration(seconds: 7)
           : const Duration(seconds: 1);
-      _iceRestartTimer = Timer(delay, () {
+      late final Timer restartTimer;
+      restartTimer = Timer(delay, () {
+        if (!identical(_iceRestartTimer, restartTimer) ||
+            !_ownsActiveCall(callId)) {
+          return;
+        }
         _iceRestartTimer = null;
         unawaited(_attemptIceRestart());
       });
+      _iceRestartTimer = restartTimer;
       _setState(
         state.value.copyWith(detail: 'Связь потеряна — переподключаем…'),
       );
@@ -1306,32 +1329,84 @@ class CallService {
     }
     _iceRestartInFlight = true;
     _iceRestartAttempts++;
-    _iceGeneration++;
+    final generation = ++_iceGeneration;
     try {
       final offer = await pc.createOffer({'iceRestart': true});
-      if (!_ownsActiveCall(callId)) return;
+      if (!_ownsActiveCall(callId)) {
+        if (_callId == callId) _iceRestartInFlight = false;
+        return;
+      }
       await pc.setLocalDescription(offer);
+      if (!_ownsActiveCall(callId)) {
+        if (_callId == callId) _iceRestartInFlight = false;
+        return;
+      }
       await _updateVerificationSdp(localSdp: offer.sdp);
+      if (!_ownsActiveCall(callId)) {
+        if (_callId == callId) _iceRestartInFlight = false;
+        return;
+      }
       _sendSignal({
         'kind': 'ice-restart-offer',
         'sdp': offer.sdp,
-        'ice_generation': _iceGeneration,
+        'ice_generation': generation,
         'relay_only': false,
       });
       _localDescriptionSignaled = true;
       _flushLocalIce();
     } catch (error) {
+      if (_callId != callId) return;
       appLog.warn('call', 'ICE restart failed: $error');
-    } finally {
       _iceRestartInFlight = false;
+      _scheduleIceRestartRetry(
+        callId: callId,
+        delay: const Duration(seconds: 1),
+      );
+      return;
     }
-    if (_iceRecoveryActive && isActive && _iceRestartAttempts < 4) {
-      _iceRestartTimer?.cancel();
-      _iceRestartTimer = Timer(const Duration(seconds: 3), () {
-        _iceRestartTimer = null;
+    late final Timer responseTimer;
+    responseTimer = Timer(const Duration(seconds: 6), () {
+      if (!identical(_iceRestartResponseTimer, responseTimer) ||
+          _callId != callId ||
+          _iceGeneration != generation) {
+        return;
+      }
+      _iceRestartResponseTimer = null;
+      if (!_ownsActiveCall(callId) || !_iceRestartInFlight) return;
+      _iceRestartInFlight = false;
+      _scheduleIceRestartRetry(
+        callId: callId,
+        delay: const Duration(seconds: 1),
+      );
+    });
+    _iceRestartResponseTimer?.cancel();
+    _iceRestartResponseTimer = responseTimer;
+  }
+
+  void _scheduleIceRestartRetry({
+    required String callId,
+    required Duration delay,
+  }) {
+    if (!_iceRecoveryActive ||
+        !_ownsActiveCall(callId) ||
+        !_isIceRestartLeader ||
+        _iceRestartInFlight ||
+        _iceRestartAttempts >= 4) {
+      return;
+    }
+    _iceRestartTimer?.cancel();
+    late final Timer restartTimer;
+    restartTimer = Timer(delay, () {
+      if (!identical(_iceRestartTimer, restartTimer) ||
+          !_ownsActiveCall(callId)) {
+        return;
+      }
+      _iceRestartTimer = null;
+      if (_iceRecoveryActive && !_iceRestartInFlight) {
         unawaited(_attemptIceRestart());
-      });
-    }
+      }
+    });
+    _iceRestartTimer = restartTimer;
   }
 
   void _flushLocalIce() {
@@ -1598,12 +1673,14 @@ class CallService {
     _durationTimer?.cancel();
     _relayFallbackTimer?.cancel();
     _iceRestartTimer?.cancel();
+    _iceRestartResponseTimer?.cancel();
     _mediaRouteTimer?.cancel();
     _connectTimer = null;
     _disconnectTimer = null;
     _durationTimer = null;
     _relayFallbackTimer = null;
     _iceRestartTimer = null;
+    _iceRestartResponseTimer = null;
     _mediaRouteTimer = null;
   }
 
@@ -1628,6 +1705,15 @@ class CallService {
   void _setState(CallSnapshot next) => state.value = next;
 
   void _resetNegotiationState({bool clearCandidates = true}) {
+    _disconnectTimer?.cancel();
+    _disconnectTimer = null;
+    _iceRestartTimer?.cancel();
+    _iceRestartTimer = null;
+    _iceRestartResponseTimer?.cancel();
+    _iceRestartResponseTimer = null;
+    _iceRecoveryActive = false;
+    _iceRestartInFlight = false;
+    _iceRestartAttempts = 0;
     _remoteDescriptionReady = false;
     _localDescriptionSignaled = false;
     _localIceQueue.clear();
