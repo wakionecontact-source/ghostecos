@@ -22,6 +22,7 @@ import '../services/contact_service.dart';
 import '../services/optimistic_action.dart';
 import '../services/profile_cache.dart';
 import '../widgets/avatar.dart';
+import '../widgets/call_widget.dart';
 import '../services/theme_service.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
@@ -737,7 +738,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     // MeshBackground на все три вкладки; свой вложенный фон означал бы
     // пересоздание mesh-анимации заново при каждом возврате на вкладку.
     if (widget.embedded) return _scaffold(context);
-    return MeshBackground(child: _scaffold(context));
+    return MeshBackground(
+      callWidgetPlacement: CallWidgetPlacement.bottom,
+      callWidgetStyle: CallWidgetStyle.compact,
+      child: _scaffold(context),
+    );
   }
 
   Widget _scaffold(BuildContext context) {

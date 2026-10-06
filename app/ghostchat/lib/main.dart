@@ -42,11 +42,13 @@ import 'screens/preparing_screen.dart';
 import 'screens/main_shell.dart';
 import 'screens/logs_screen.dart';
 import 'screens/profile_screen.dart';
+import 'screens/call_screen.dart';
 import 'screens/room_link_preview_screen.dart';
 import 'screens/security_screen.dart';
 import 'widgets/toast_overlay.dart';
 import 'widgets/key_gate.dart';
 import 'widgets/liquid_glass.dart';
+import 'widgets/call_widget.dart';
 import 'core/local/app_logger.dart';
 
 // Desktop-only imports — на мобиле не подключатся (Platform-guard).
@@ -87,6 +89,7 @@ Future<void> main() async {
   // кости" светлые иконки на светлом фоне были бы невидимы.
   _applySystemBarStyle();
   unawaited(RoomDeepLinkService.instance.start());
+  CallWidgetSlot.onOpenCall = _openCallScreen;
   runApp(const GhostApp());
   // Nothing in this bootstrap is required to paint or interact with the first
   // screen. Keep plugin/storage work off the cold-start critical path.
@@ -201,6 +204,16 @@ Future<void> _openAudioSource(
   await Navigator.of(context).push<void>(
     MaterialPageRoute(
       builder: (_) => ProfileScreen(username: username, openMusicLibrary: true),
+    ),
+  );
+}
+
+void _openCallScreen(BuildContext context, String peer) {
+  unawaited(
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => CallScreen(peer: peer, displayName: '@$peer'),
+      ),
     ),
   );
 }

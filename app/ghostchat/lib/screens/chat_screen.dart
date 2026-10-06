@@ -34,6 +34,7 @@ import '../widgets/bot_chat_welcome.dart';
 import '../widgets/bot_reply_keyboard.dart';
 import '../widgets/reactions_bar.dart';
 import '../widgets/avatar.dart';
+import '../widgets/call_widget.dart';
 import '../mesh_background.dart';
 import '../services/chat_repo.dart';
 import '../services/db_service.dart';
@@ -1971,6 +1972,8 @@ class _ChatScreenState extends State<ChatScreen>
     // он не должен оказываться под прозрачным низом шапки на верхней позиции.
     final headerPad = MediaQuery.of(context).padding.top + headerHeight + 20;
     return MeshBackground(
+      callWidgetPlacement: CallWidgetPlacement.top,
+      callWidgetStyle: CallWidgetStyle.compact,
       // Mesh-обои: механика 1-в-1 с web mesh.js (частицы + сеть линий +
       // 3-слойный градиент). Шапка/композер-стекло размывают его сверху.
       child: Stack(

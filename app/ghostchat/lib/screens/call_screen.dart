@@ -12,6 +12,7 @@ import '../services/chat_repo.dart';
 import '../services/profile_cache.dart';
 import '../theme.dart';
 import '../widgets/avatar.dart';
+import '../widgets/call_widget.dart';
 import '../widgets/glass.dart';
 import '../widgets/emoji_text.dart';
 
@@ -32,39 +33,46 @@ class _CallScreenState extends State<CallScreen> {
   RTCVideoRenderer? _remoteRenderer;
   bool _renderersReady = false;
   bool _closing = false;
+  bool _allowPop = false;
   String? _avatarUrl;
+  late String _avatarPeer;
+
+  String get _currentPeer => _calls.state.value.peer ?? widget.peer;
+  String get _currentDisplayName =>
+      _currentPeer == widget.peer ? widget.displayName : '@$_currentPeer';
 
   @override
   void initState() {
     super.initState();
-    _avatarUrl = ChatRepo.instance.getPeerAvatarCached(widget.peer);
-    final cached = ProfileCache.instance.getProfileSync(widget.peer);
+    _avatarPeer = widget.peer;
+    _avatarUrl = ChatRepo.instance.getPeerAvatarCached(_avatarPeer);
+    final cached = ProfileCache.instance.getProfileSync(_avatarPeer);
     _avatarUrl ??= cached?['avatar_url'] as String?;
     _calls.state.addListener(_onStateChanged);
-    unawaited(_refreshPeerAvatar());
+    unawaited(_refreshPeerAvatar(_avatarPeer));
     unawaited(_initRenderers());
   }
 
-  Future<void> _refreshPeerAvatar() async {
+  Future<void> _refreshPeerAvatar(String peer) async {
     try {
       final profile = await ApiClient().socGet(
-        '/prof/${Uri.encodeComponent(widget.peer)}',
+        '/prof/${Uri.encodeComponent(peer)}',
       );
       if (profile is! Map) return;
       final remote = profile['avatar_url']?.toString().trim();
       if (remote == null || remote.isEmpty) return;
       // Do not rebuild or rewrite the cache when the server still has the
       // same avatar that was already rendered from memory.
-      if (remote != _avatarUrl && mounted) {
+      if (remote != _avatarUrl && mounted && _currentPeer == peer) {
         setState(() => _avatarUrl = remote);
       }
-      if (remote != ChatRepo.instance.getPeerAvatarCached(widget.peer)) {
-        await ChatRepo.instance.cachePeerAvatar(widget.peer, remote);
+      if (remote != ChatRepo.instance.getPeerAvatarCached(peer)) {
+        await ChatRepo.instance.cachePeerAvatar(peer, remote);
       }
-      final cachedProfile = ProfileCache.instance.getProfileSync(widget.peer);
+      final cachedProfile = ProfileCache.instance.getProfileSync(peer);
       if (cachedProfile == null || cachedProfile['avatar_url'] != remote) {
         await ProfileCache.instance.setProfile(
-          widget.peer,
+          peer,
           Map<String, dynamic>.from(profile),
         );
       }
@@ -101,15 +109,28 @@ class _CallScreenState extends State<CallScreen> {
   void _onStateChanged() {
     final snapshot = _calls.state.value;
     _attachStreams(snapshot);
+    final peer = snapshot.peer ?? widget.peer;
+    if (peer != _avatarPeer) {
+      _avatarPeer = peer;
+      _avatarUrl = ChatRepo.instance.getPeerAvatarCached(peer);
+      final cached = ProfileCache.instance.getProfileSync(peer);
+      _avatarUrl ??= cached?['avatar_url'] as String?;
+      unawaited(_refreshPeerAvatar(peer));
+    }
     if (!mounted || snapshot.phase != CallPhase.ended) {
+      _closing = false;
       if (mounted) setState(() {});
       return;
     }
     if (_closing) return;
     _closing = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && Navigator.of(context).canPop()) {
+      if (mounted &&
+          _calls.state.value.phase == CallPhase.ended &&
+          Navigator.of(context).canPop()) {
         Navigator.of(context).pop();
+      } else {
+        _closing = false;
       }
     });
   }
@@ -141,7 +162,13 @@ class _CallScreenState extends State<CallScreen> {
 
   void _minimizeCall() {
     _calls.minimize();
-    if (Navigator.of(context).canPop()) Navigator.of(context).pop();
+    if (!mounted) return;
+    setState(() => _allowPop = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+    });
   }
 
   Future<void> _toggleScreenShare() async {
@@ -206,33 +233,45 @@ class _CallScreenState extends State<CallScreen> {
   Widget build(BuildContext context) {
     return MeshBackground(
       particleCount: 46,
+      callWidgetPlacement: CallWidgetPlacement.top,
+      callWidgetStyle: CallWidgetStyle.compact,
+      openCallScreenAfterAnswer: false,
       child: Scaffold(
         backgroundColor: Colors.transparent,
         body: ValueListenableBuilder<CallSnapshot>(
           valueListenable: _calls.state,
           builder: (context, snapshot, _) {
             _attachStreams(snapshot);
-            return SafeArea(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (snapshot.video)
-                    _videoBody(snapshot)
-                  else
-                    _audioBody(snapshot),
-                  _topBar(snapshot),
-                  if (snapshot.verificationEmojis.isNotEmpty)
-                    Positioned(
-                      left: 18,
-                      right: snapshot.video ? 142 : 18,
-                      top: 112,
-                      child: _verificationCard(
-                        snapshot.verificationEmojis,
-                        compact: snapshot.video,
+            return PopScope<void>(
+              canPop:
+                  _allowPop ||
+                  snapshot.phase == CallPhase.ended ||
+                  snapshot.phase == CallPhase.failed,
+              onPopInvokedWithResult: (didPop, _) {
+                if (!didPop) _minimizeCall();
+              },
+              child: SafeArea(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (snapshot.video)
+                      _videoBody(snapshot)
+                    else
+                      _audioBody(snapshot),
+                    _topBar(snapshot),
+                    if (snapshot.verificationEmojis.isNotEmpty)
+                      Positioned(
+                        left: 18,
+                        right: snapshot.video ? 142 : 18,
+                        top: 112,
+                        child: _verificationCard(
+                          snapshot.verificationEmojis,
+                          compact: snapshot.video,
+                        ),
                       ),
-                    ),
-                  _controls(snapshot),
-                ],
+                    _controls(snapshot),
+                  ],
+                ),
               ),
             );
           },
@@ -294,9 +333,8 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Widget _avatarPlaceholder() {
-    final initial = widget.displayName.isNotEmpty
-        ? widget.displayName[0].toUpperCase()
-        : '?';
+    final displayName = _currentDisplayName;
+    final initial = displayName.isNotEmpty ? displayName[0].toUpperCase() : '?';
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -304,7 +342,7 @@ class _CallScreenState extends State<CallScreen> {
           GhostAvatar(avatarUrl: _avatarUrl, fallbackText: initial, size: 108),
           const SizedBox(height: 18),
           Text(
-            widget.displayName,
+            displayName,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -314,10 +352,7 @@ class _CallScreenState extends State<CallScreen> {
             ),
           ),
           const SizedBox(height: 6),
-          Text(
-            '@${widget.peer}',
-            style: TextStyle(color: GE.sub, fontSize: 13),
-          ),
+          Text('@$_currentPeer', style: TextStyle(color: GE.sub, fontSize: 13)),
         ],
       ),
     );
@@ -340,14 +375,16 @@ class _CallScreenState extends State<CallScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  snapshot.video ? 'Видеозвонок' : 'Аудиозвонок',
+                  _currentDisplayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
                 Text(
-                  _status(snapshot),
+                  '${snapshot.video ? 'Видеозвонок' : 'Аудиозвонок'} · ${_status(snapshot)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: Colors.white.withValues(alpha: .7)),

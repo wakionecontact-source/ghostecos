@@ -25,6 +25,7 @@ import '../services/theme_service.dart';
 import '../services/permissions_service.dart';
 import '../widgets/glass.dart';
 import '../widgets/avatar.dart';
+import '../widgets/call_widget.dart';
 import '../widgets/profile_banner.dart';
 import '../widgets/skeleton.dart';
 import '../widgets/toast_overlay.dart';
@@ -2144,6 +2145,8 @@ class _SectionScaffold extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MeshBackground(
+      callWidgetPlacement: CallWidgetPlacement.top,
+      callWidgetStyle: CallWidgetStyle.compact,
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: GlassAppBar(

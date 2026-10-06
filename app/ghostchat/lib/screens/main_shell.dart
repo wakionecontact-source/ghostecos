@@ -35,6 +35,7 @@ import '../services/nav_bar_settings.dart';
 import '../widgets/glass.dart';
 import '../widgets/skeleton.dart';
 import '../widgets/avatar.dart';
+import '../widgets/call_widget.dart';
 import '../services/profile_cache.dart';
 import '../widgets/toast_overlay.dart';
 import '../widgets/connectivity_badge.dart';
@@ -46,7 +47,6 @@ import 'lan_chat_screen.dart';
 import 'chat_screen.dart';
 import 'contacts_screen.dart';
 import 'custom_camera_screen.dart';
-import 'call_screen.dart';
 import '../core/local/local_hub.dart';
 import '../core/local/local_transport.dart';
 import '../core/local/lan_settings.dart';
@@ -119,8 +119,6 @@ class _MainShellState extends State<MainShell>
   bool _bootstrapped = false;
   bool _isGuest = false;
   bool _sessionExitStarted = false;
-  double _callMiniRight = 16;
-  double _callMiniBottom = 160;
   String? _username;
   String? _displayName;
   String? _error;
@@ -601,243 +599,13 @@ class _MainShellState extends State<MainShell>
     // Scaffold'ы ниже прозрачные и рассчитаны на фон снаружи — как во всех
     // остальных экранах приложения (mesh-сетка), а не плоский градиент.
     return MeshBackground(
+      callWidgetPlacement: CallWidgetPlacement.bottom,
+      callWidgetStyle: CallWidgetStyle.card,
       child: Stack(
         children: [
           _content(context),
           ConnectivityBadge(isGuest: _isGuest),
-          _incomingCallOverlay(context),
-          _minimizedCallOverlay(context),
         ],
-      ),
-    );
-  }
-
-  Widget _minimizedCallOverlay(BuildContext context) {
-    return ValueListenableBuilder<CallSnapshot>(
-      valueListenable: CallService.instance.state,
-      builder: (context, snapshot, _) {
-        if (!snapshot.minimized || !CallService.instance.isActive) {
-          return const SizedBox.shrink();
-        }
-        final peer = snapshot.peer;
-        if (peer == null || peer.isEmpty) return const SizedBox.shrink();
-        final avatarUrl =
-            ChatRepo.instance.getPeerAvatarCached(peer) ??
-            ProfileCache.instance
-                .getProfileSync(peer)?['avatar_url']
-                ?.toString();
-        final size = MediaQuery.sizeOf(context);
-        final padding = MediaQuery.paddingOf(context);
-        const width = 250.0;
-        const height = 70.0;
-        final maxRight = (size.width - width - 8).clamp(8.0, double.infinity);
-        final maxBottom =
-            (size.height - height - padding.top - padding.bottom - 8).clamp(
-              100.0,
-              double.infinity,
-            );
-        final right = _callMiniRight.clamp(8.0, maxRight).toDouble();
-        final bottom = _callMiniBottom.clamp(100.0, maxBottom).toDouble();
-        final minutes = snapshot.duration.inMinutes
-            .remainder(60)
-            .toString()
-            .padLeft(2, '0');
-        final seconds = snapshot.duration.inSeconds
-            .remainder(60)
-            .toString()
-            .padLeft(2, '0');
-        final duration = snapshot.duration.inHours > 0
-            ? '${snapshot.duration.inHours}:$minutes:$seconds'
-            : '$minutes:$seconds';
-
-        return Positioned(
-          right: right,
-          bottom: bottom + padding.bottom,
-          child: GestureDetector(
-            onPanUpdate: (details) {
-              setState(() {
-                _callMiniRight = (_callMiniRight - details.delta.dx)
-                    .clamp(8.0, maxRight)
-                    .toDouble();
-                _callMiniBottom = (_callMiniBottom - details.delta.dy)
-                    .clamp(100.0, maxBottom)
-                    .toDouble();
-              });
-            },
-            child: SizedBox(
-              width: width,
-              height: height,
-              child: GlassCard(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
-                child: Row(
-                  children: [
-                    Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        GhostAvatar(
-                          avatarUrl: avatarUrl,
-                          fallbackText: peer,
-                          size: 38,
-                        ),
-                        if (snapshot.screenSharing)
-                          Positioned(
-                            right: -2,
-                            bottom: -2,
-                            child: Container(
-                              width: 17,
-                              height: 17,
-                              decoration: BoxDecoration(
-                                color: GE.primary,
-                                shape: BoxShape.circle,
-                                border: Border.all(color: GE.bg, width: 1.5),
-                              ),
-                              child: const Icon(
-                                Icons.screen_share,
-                                size: 10,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: InkWell(
-                        onTap: () => _restoreMinimizedCall(snapshot),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 5),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text(
-                                '@$peer',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: GE.text,
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 13,
-                                ),
-                              ),
-                              Text(
-                                snapshot.phase == CallPhase.connected
-                                    ? duration
-                                    : snapshot.phase == CallPhase.outgoing
-                                    ? 'Вызов…'
-                                    : 'Соединение…',
-                                style: TextStyle(color: GE.sub, fontSize: 11),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Завершить звонок',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: () => unawaited(CallService.instance.end()),
-                      icon: Icon(
-                        CupertinoIcons.phone_down_fill,
-                        color: GE.red,
-                        size: 20,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  void _restoreMinimizedCall(CallSnapshot snapshot) {
-    final peer = snapshot.peer;
-    if (peer == null || peer.isEmpty) return;
-    CallService.instance.restore();
-    unawaited(
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => CallScreen(peer: peer, displayName: '@$peer'),
-        ),
-      ),
-    );
-  }
-
-  Widget _incomingCallOverlay(BuildContext context) {
-    return ValueListenableBuilder<CallInvite?>(
-      valueListenable: CallService.instance.incoming,
-      builder: (context, invite, _) {
-        if (invite == null) return const SizedBox.shrink();
-        return Positioned(
-          top: MediaQuery.of(context).padding.top + 10,
-          left: 12,
-          right: 12,
-          child: GlassCard(
-            padding: const EdgeInsets.fromLTRB(16, 14, 10, 12),
-            child: Row(
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: GE.primary.withValues(alpha: .16),
-                  ),
-                  child: Icon(
-                    invite.video
-                        ? CupertinoIcons.video_camera_solid
-                        : CupertinoIcons.phone_fill,
-                    color: GE.primary,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        invite.video
-                            ? 'Входящий видеозвонок'
-                            : 'Входящий звонок',
-                        style: TextStyle(
-                          color: GE.text,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text('@${invite.peer}', style: TextStyle(color: GE.sub)),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Отклонить',
-                  onPressed: () =>
-                      unawaited(CallService.instance.rejectIncoming()),
-                  icon: Icon(CupertinoIcons.phone_down_fill, color: GE.red),
-                ),
-                IconButton(
-                  tooltip: 'Принять',
-                  onPressed: () => unawaited(_acceptIncomingCall(invite)),
-                  icon: Icon(CupertinoIcons.phone_fill, color: GE.green),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _acceptIncomingCall(CallInvite invite) async {
-    await CallService.instance.acceptIncoming();
-    if (!mounted || !CallService.instance.isActive) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) =>
-            CallScreen(peer: invite.peer, displayName: '@${invite.peer}'),
       ),
     );
   }

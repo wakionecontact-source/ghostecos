@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'services/theme_service.dart';
 import 'services/performance_service.dart';
 import 'theme.dart';
+import 'widgets/call_widget.dart';
 
 /// Наблюдатель маршрутов для mesh-фона: когда поверх экрана открывается другой
 /// экран/диалог/боттом-шит, лежащий ниже MeshBackground перестаёт тикать
@@ -24,6 +25,12 @@ class MeshBackground extends StatefulWidget {
   final Widget? child;
   final int? particleCount;
 
+  /// Normal-flow call widget slot. Every screen may move it or change its
+  /// appearance; pass null when that screen should not host call controls.
+  final CallWidgetPlacement? callWidgetPlacement;
+  final CallWidgetStyle callWidgetStyle;
+  final bool openCallScreenAfterAnswer;
+
   /// Если false, mesh продолжает тикать под лёгкими overlay-маршрутами
   /// (например, контекстным меню сообщения), где фон всё ещё виден.
   final bool pauseWhenCovered;
@@ -32,6 +39,9 @@ class MeshBackground extends StatefulWidget {
     this.child,
     this.particleCount,
     this.pauseWhenCovered = true,
+    this.callWidgetPlacement = CallWidgetPlacement.top,
+    this.callWidgetStyle = CallWidgetStyle.compact,
+    this.openCallScreenAfterAnswer = true,
   });
   @override
   State<MeshBackground> createState() => _MeshBackgroundState();
@@ -432,7 +442,15 @@ class _MeshBackgroundState extends State<MeshBackground>
             if (widget.child != null)
               KeyedSubtree(
                 key: const ValueKey('mesh_child'),
-                child: widget.child!,
+                child: widget.callWidgetPlacement == null
+                    ? widget.child!
+                    : CallWidgetSlot(
+                        placement: widget.callWidgetPlacement!,
+                        style: widget.callWidgetStyle,
+                        openCallScreenAfterAnswer:
+                            widget.openCallScreenAfterAnswer,
+                        child: widget.child!,
+                      ),
               ),
           ],
         ),

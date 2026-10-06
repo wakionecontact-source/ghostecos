@@ -33,13 +33,17 @@ class CallInvite {
     required this.peer,
     required this.video,
     required this.sdp,
+    this.iceGeneration = 0,
   });
 
   final String callId;
   final String peer;
   final bool video;
   final String sdp;
+  final int iceGeneration;
 }
+
+enum CallAcceptAction { finishCurrent, holdCurrent }
 
 class _QueuedCallCandidate {
   const _QueuedCallCandidate(this.generation, this.candidate);
@@ -146,9 +150,21 @@ class CallSnapshot {
 /// may provide TURN credentials through `call.ice`; the built-in STUN list is
 /// kept as a development fallback.
 class CallService {
-  CallService._();
+  CallService._manager()
+    : _isManager = true,
+      _manager = null,
+      state = ValueNotifier<CallSnapshot>(const CallSnapshot()),
+      incoming = ValueNotifier<CallInvite?>(null),
+      heldCallState = ValueNotifier<CallSnapshot?>(null);
 
-  static final CallService instance = CallService._();
+  CallService._session(CallService manager)
+    : _isManager = false,
+      _manager = manager,
+      state = ValueNotifier<CallSnapshot>(const CallSnapshot()),
+      incoming = manager.incoming,
+      heldCallState = manager.heldCallState;
+
+  static final CallService instance = CallService._manager();
   static const MethodChannel _callAudioChannel = MethodChannel(
     'ghostchat/call_audio',
   );
@@ -159,10 +175,17 @@ class CallService {
     },
   ];
 
-  final ValueNotifier<CallSnapshot> state = ValueNotifier<CallSnapshot>(
-    const CallSnapshot(),
-  );
-  final ValueNotifier<CallInvite?> incoming = ValueNotifier<CallInvite?>(null);
+  final bool _isManager;
+  final CallService? _manager;
+  final ValueNotifier<CallSnapshot> state;
+  final ValueNotifier<CallInvite?> incoming;
+  final ValueNotifier<CallSnapshot?> heldCallState;
+  CallService? _activeSession;
+  CallService? _heldSession;
+  VoidCallback? _activeStateListener;
+  Timer? _waitingRingTimer;
+  Timer? _waitingRingSoundTimer;
+  bool _isOnHold = false;
 
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
@@ -217,14 +240,33 @@ class CallService {
   Timer? _disconnectTimer;
   Timer? _durationTimer;
   bool _ending = false;
+  bool _holdConnectionLost = false;
 
-  bool get isActive => switch (state.value.phase) {
-    CallPhase.outgoing ||
-    CallPhase.incoming ||
-    CallPhase.connecting ||
-    CallPhase.connected => true,
-    _ => false,
-  };
+  bool get isActive => _isManager
+      ? _activeSession?.isActive ?? false
+      : switch (state.value.phase) {
+          CallPhase.outgoing ||
+          CallPhase.incoming ||
+          CallPhase.connecting ||
+          CallPhase.connected => true,
+          _ => false,
+        };
+
+  bool get hasWaitingIncoming =>
+      _isManager &&
+      incoming.value != null &&
+      (_activeSession?.isActive ?? false) &&
+      _activeSession?.state.value.phase != CallPhase.incoming;
+
+  bool get canHoldCurrent => _isManager
+      ? _heldSession == null && (_activeSession?.canHoldCurrent ?? false)
+      : state.value.phase == CallPhase.connected &&
+            _peerConnection != null &&
+            _mediaNegotiationCompleter == null &&
+            !state.value.screenSharing &&
+            !_isOnHold;
+
+  bool get hasHeldCall => _isManager && _heldSession != null;
 
   bool _ownsActiveCall(String callId) =>
       _callId == callId && state.value.callId == callId && isActive;
@@ -236,6 +278,12 @@ class CallService {
   }
 
   void _onWsConnectionChanged(bool connected) {
+    if (_isManager) {
+      _activeSession?._onWsConnectionChanged(connected);
+      _heldSession?._onWsConnectionChanged(connected);
+      _wsWasConnected = connected;
+      return;
+    }
     final reconnected = connected && !_wsWasConnected;
     _wsWasConnected = connected;
     if (!reconnected ||
@@ -258,6 +306,12 @@ class CallService {
   }
 
   Future<void> initialize() async {
+    if (!_isManager) {
+      await _manager!.initialize();
+      _localUsername = _manager!._localUsername;
+      _wsWasConnected = _manager!._wsWasConnected;
+      return;
+    }
     final running = _initializing;
     if (running != null) {
       await running;
@@ -267,6 +321,10 @@ class CallService {
     _initialized = true;
     final future = () async {
       _localUsername = await AuthService.username();
+      _activeSession ??= _newSession();
+      _bindActiveSession(_activeSession!);
+      _activeSession!._localUsername = _localUsername;
+      _activeSession!._wsWasConnected = WsClient.instance.isConnected;
       WsClient.instance.on('call.signal', _onSignal);
       _wsConnectionSubscription ??= WsClient.instance.onConnectionChange.listen(
         _onWsConnectionChanged,
@@ -276,7 +334,13 @@ class CallService {
         final data = _asMap(payload);
         final message = data['error']?.toString() ?? 'Сигнал звонка отклонён';
         appLog.warn('call', 'call.signal.err: $message');
-        if (isActive) unawaited(_fail(message));
+        final callId = data['call_id']?.toString();
+        final held = _heldSession;
+        final active = _activeSession;
+        final target = callId != null && held?._callId == callId
+            ? held
+            : active;
+        if (target?.isActive == true) unawaited(target!._fail(message));
       });
     }();
     _initializing = future;
@@ -287,7 +351,46 @@ class CallService {
     }
   }
 
+  CallService _newSession() {
+    final session = CallService._session(this)
+      .._localUsername = _localUsername
+      .._wsWasConnected = WsClient.instance.isConnected;
+    return session;
+  }
+
+  void _bindActiveSession(CallService session) {
+    final previous = _activeSession;
+    final listener = _activeStateListener;
+    if (previous != null && listener != null) {
+      previous.state.removeListener(listener);
+    }
+    _activeSession = session;
+    final nextListener = () {
+      if (!identical(_activeSession, session)) return;
+      final next = session.state.value;
+      if (_heldSession != null &&
+          (next.phase == CallPhase.ended || next.phase == CallPhase.failed)) {
+        return;
+      }
+      state.value = next;
+    };
+    _activeStateListener = nextListener;
+    session.state.addListener(nextListener);
+    state.value = session.state.value;
+    heldCallState.value = _heldSession?.state.value;
+  }
+
   Future<void> startOutgoing({required String peer, bool video = false}) async {
+    if (_isManager) {
+      await initialize();
+      if (_heldSession != null) {
+        throw StateError(
+          'Сначала завершите или возобновите удерживаемый звонок',
+        );
+      }
+      await _activeSession!.startOutgoing(peer: peer, video: video);
+      return;
+    }
     await initialize();
     if (isActive) throw StateError('Звонок уже выполняется');
 
@@ -355,19 +458,69 @@ class CallService {
     }
   }
 
-  Future<void> acceptIncoming() async {
+  Future<void> acceptIncoming({
+    CallAcceptAction action = CallAcceptAction.finishCurrent,
+  }) async {
+    if (_isManager) {
+      await initialize();
+      final invite = incoming.value;
+      final current = _activeSession!;
+      if (invite == null) return;
+      final isSecondCall =
+          current.isActive && current.state.value.phase != CallPhase.incoming;
+      if (!isSecondCall) {
+        await current._acceptInvite(invite);
+        return;
+      }
+
+      if (action == CallAcceptAction.holdCurrent) {
+        if (_heldSession != null || !current.canHoldCurrent) {
+          throw StateError(
+            'Текущий звонок сейчас нельзя поставить на удержание',
+          );
+        }
+        _clearWaitingIncoming();
+        final candidates = current._pendingCandidates.remove(invite.callId);
+        await current._setOnHold(true);
+        _heldSession = current;
+        heldCallState.value = current.state.value;
+        final next = _newSession();
+        if (candidates != null) {
+          next._pendingCandidates[invite.callId] = candidates;
+        }
+        _bindActiveSession(next);
+        await next._acceptInvite(invite);
+        return;
+      }
+
+      _clearWaitingIncoming();
+      final candidates = current._pendingCandidates.remove(invite.callId);
+      final next = _newSession();
+      if (candidates != null)
+        next._pendingCandidates[invite.callId] = candidates;
+      _bindActiveSession(next);
+      await current.end(notify: true, signalKind: 'hangup');
+      await next._acceptInvite(invite);
+      return;
+    }
+
     final invite = incoming.value;
     if (invite == null ||
         (isActive && state.value.phase != CallPhase.incoming)) {
       return;
     }
 
+    await _acceptInvite(invite);
+  }
+
+  Future<void> _acceptInvite(CallInvite invite) async {
     incoming.value = null;
     unawaited(IncomingCallNotificationService.instance.clearIncomingCall());
     _cancelRingTimer();
     _peer = invite.peer;
     _callId = invite.callId;
     _resetNegotiationState(clearCandidates: false);
+    _iceGeneration = invite.iceGeneration;
     _currentVideo = invite.video;
     _remoteVideoSending = invite.video;
     _muted = false;
@@ -417,11 +570,32 @@ class CallService {
       _armConnectTimeout();
     } catch (error, stackTrace) {
       appLog.error('call', 'Incoming call setup failed: $error\n$stackTrace');
-      await _fail(_friendlyError(error));
+      final message = _friendlyError(error);
+      await _fail(message);
+      Error.throwWithStackTrace(StateError(message), stackTrace);
     }
   }
 
   Future<void> rejectIncoming() async {
+    if (_isManager) {
+      await initialize();
+      final invite = incoming.value;
+      if (invite == null) return;
+      final current = _activeSession!;
+      final isSecondCall =
+          current.isActive && current.state.value.phase != CallPhase.incoming;
+      if (!isSecondCall) {
+        await current.rejectIncoming();
+        return;
+      }
+      _sendSignalTo(invite.peer, <String, dynamic>{
+        'kind': 'reject',
+        'call_id': invite.callId,
+      });
+      current._pendingCandidates.remove(invite.callId);
+      _clearWaitingIncoming();
+      return;
+    }
     final invite = incoming.value;
     if (invite == null) return;
     incoming.value = null;
@@ -433,6 +607,10 @@ class CallService {
   }
 
   Future<void> toggleMuted() async {
+    if (_isManager) {
+      await _activeSession?.toggleMuted();
+      return;
+    }
     _muted = !_muted;
     for (final track
         in _localStream?.getAudioTracks() ?? <MediaStreamTrack>[]) {
@@ -442,6 +620,10 @@ class CallService {
   }
 
   Future<void> toggleSpeaker() async {
+    if (_isManager) {
+      await _activeSession?.toggleSpeaker();
+      return;
+    }
     if (Platform.isWindows) return;
     _speaker = !_speaker;
     await Helper.setSpeakerphoneOn(_speaker);
@@ -449,6 +631,10 @@ class CallService {
   }
 
   Future<void> toggleCamera() async {
+    if (_isManager) {
+      await _activeSession?.toggleCamera();
+      return;
+    }
     if (!_currentVideo || state.value.screenSharing) return;
     _cameraEnabled = !_cameraEnabled;
     for (final track
@@ -459,6 +645,10 @@ class CallService {
   }
 
   Future<void> switchCamera() async {
+    if (_isManager) {
+      await _activeSession?.switchCamera();
+      return;
+    }
     if (!_currentVideo || state.value.screenSharing) return;
     final track = _localStream?.getVideoTracks().firstOrNull;
     if (track == null) return;
@@ -466,14 +656,108 @@ class CallService {
   }
 
   void minimize() {
+    if (_isManager) {
+      _activeSession?.minimize();
+      return;
+    }
     if (isActive) _setState(state.value.copyWith(minimized: true));
   }
 
   void restore() {
+    if (_isManager) {
+      _activeSession?.restore();
+      return;
+    }
     if (isActive) _setState(state.value.copyWith(minimized: false));
   }
 
+  Future<void> switchToHeldCall() async {
+    if (!_isManager) {
+      await _manager!.switchToHeldCall();
+      return;
+    }
+    final current = _activeSession;
+    final held = _heldSession;
+    if (current == null || held == null || !current.canHoldCurrent) return;
+
+    await current._setOnHold(true);
+    if (!identical(_activeSession, current)) return;
+    if (!identical(_heldSession, held) || !held.isActive) {
+      await current._setOnHold(false);
+      return;
+    }
+    await held._setOnHold(false);
+    if (!identical(_activeSession, current)) return;
+    if (!identical(_heldSession, held) || !held.isActive) {
+      await current._setOnHold(false);
+      return;
+    }
+    _heldSession = current;
+    heldCallState.value = current.state.value;
+    _bindActiveSession(held);
+  }
+
+  Future<void> _setOnHold(bool held) async {
+    if (_isManager || held == _isOnHold) return;
+    if (held) {
+      if (!canHoldCurrent) {
+        throw StateError('Этот звонок сейчас нельзя поставить на удержание');
+      }
+      _isOnHold = true;
+      _holdConnectionLost = false;
+      _cancelTimers();
+      _iceRecoveryActive = false;
+      _iceRestartInFlight = false;
+      _iceRestartAttempts = 0;
+      for (final track in _localStream?.getTracks() ?? <MediaStreamTrack>[]) {
+        track.enabled = false;
+      }
+      for (final track in _remoteStream?.getTracks() ?? <MediaStreamTrack>[]) {
+        track.enabled = false;
+      }
+      if (!Platform.isWindows) {
+        try {
+          await Helper.setSpeakerphoneOn(false);
+        } catch (_) {}
+      }
+      _setState(state.value.copyWith(detail: 'Звонок на удержании'));
+      heldCallState.value = state.value;
+      return;
+    }
+
+    _isOnHold = false;
+    for (final track
+        in _localStream?.getAudioTracks() ?? <MediaStreamTrack>[]) {
+      track.enabled = !_muted;
+    }
+    for (final track
+        in _localStream?.getVideoTracks() ?? <MediaStreamTrack>[]) {
+      track.enabled = _cameraEnabled;
+    }
+    for (final track in _remoteStream?.getTracks() ?? <MediaStreamTrack>[]) {
+      track.enabled = true;
+    }
+    if (!Platform.isWindows) {
+      try {
+        await Helper.setSpeakerphoneOn(_speaker);
+      } catch (_) {}
+    }
+    _setState(state.value.copyWith(clearDetail: true));
+    if (_holdConnectionLost ||
+        state.value.connectionState == 'disconnected' ||
+        state.value.connectionState == 'failed') {
+      _holdConnectionLost = false;
+      _beginIceRecovery();
+    } else {
+      _markConnected();
+    }
+  }
+
   Future<void> enableVideo() async {
+    if (_isManager) {
+      await _activeSession?.enableVideo();
+      return;
+    }
     if (state.value.phase != CallPhase.connected ||
         _localStream?.getVideoTracks().isNotEmpty == true) {
       return;
@@ -538,6 +822,10 @@ class CallService {
   }
 
   Future<void> startScreenShare() async {
+    if (_isManager) {
+      await _activeSession?.startScreenShare();
+      return;
+    }
     if (state.value.phase != CallPhase.connected) {
       throw StateError('Сначала дождитесь соединения');
     }
@@ -648,6 +936,10 @@ class CallService {
   }
 
   Future<void> stopScreenShare() async {
+    if (_isManager) {
+      await _activeSession?.stopScreenShare();
+      return;
+    }
     if (_screenShareStopping || _screenStream == null) return;
     _screenShareStopping = true;
     final activeNegotiation = _mediaNegotiationCompleter;
@@ -903,14 +1195,30 @@ class CallService {
     CallPhase finalPhase = CallPhase.ended,
     String? error,
   }) async {
+    if (_isManager) {
+      await _activeSession?.end(
+        notify: notify,
+        signalKind: signalKind,
+        finalPhase: finalPhase,
+        error: error,
+      );
+      return;
+    }
     if (_ending) return;
+    final preserveSharedAudio =
+        _isOnHold && (_manager?._activeSession?.isActive ?? false);
     _ending = true;
     final peer = _peer;
     final callId = _callId;
     try {
       // Stop an already playing ring tone before any signaling or WebRTC
       // cleanup so an unavailable call does not leave audio behind.
-      _stopRingSound();
+      if (preserveSharedAudio) {
+        _ringSoundTimer?.cancel();
+        _ringSoundTimer = null;
+      } else {
+        _stopRingSound();
+      }
 
       if (notify && peer != null && callId != null) {
         _sendSignal({'kind': signalKind});
@@ -924,7 +1232,7 @@ class CallService {
           in _localStream?.getAudioTracks() ?? <MediaStreamTrack>[]) {
         track.enabled = false;
       }
-      if (hadCallAudio && !Platform.isWindows) {
+      if (hadCallAudio && !preserveSharedAudio && !Platform.isWindows) {
         try {
           await Helper.setSpeakerphoneOn(false);
         } catch (routeError) {
@@ -932,7 +1240,7 @@ class CallService {
         }
       }
 
-      _cancelTimers();
+      _cancelTimers(stopRingSound: !preserveSharedAudio);
       final mediaNegotiation = _mediaNegotiationCompleter;
       _mediaNegotiationCompleter = null;
       if (mediaNegotiation != null && !mediaNegotiation.isCompleted) {
@@ -946,7 +1254,7 @@ class CallService {
         appLog.warn('call', 'Peer connection close failed: $closeError');
       }
       await _disposeMedia();
-      await _resetCommunicationAudio();
+      if (!preserveSharedAudio) await _resetCommunicationAudio();
       _pendingCandidates.remove(callId);
       _localIceQueue.clear();
       _remoteDescriptionReady = false;
@@ -974,8 +1282,11 @@ class CallService {
       _screenShareOwnsVideoTransceiver = false;
       _currentVideo = false;
       _remoteVideoSending = false;
-      incoming.value = null;
-      unawaited(IncomingCallNotificationService.instance.clearIncomingCall());
+      final clearIncoming = incoming.value?.callId == callId;
+      if (clearIncoming) {
+        incoming.value = null;
+        unawaited(IncomingCallNotificationService.instance.clearIncomingCall());
+      }
       _setState(
         CallSnapshot(
           phase: finalPhase,
@@ -986,12 +1297,43 @@ class CallService {
     } finally {
       _ending = false;
     }
+    await _manager?._onSessionEnded(this);
+  }
+
+  Future<void> _onSessionEnded(CallService session) async {
+    if (!_isManager) return;
+    if (identical(_heldSession, session)) {
+      _heldSession = null;
+      heldCallState.value = null;
+      return;
+    }
+    if (!identical(_activeSession, session) || session.isActive) return;
+    final held = _heldSession;
+    if (held == null) return;
+
+    _heldSession = null;
+    heldCallState.value = null;
+    _bindActiveSession(held);
+    await held._setOnHold(false);
   }
 
   Future<void> dispose() async {
+    if (_isManager) {
+      _waitingRingTimer?.cancel();
+      _stopWaitingRingSound();
+      final current = _activeSession;
+      final held = _heldSession;
+      _heldSession = null;
+      await current?.end(notify: false);
+      await held?.end(notify: false);
+      await _wsConnectionSubscription?.cancel();
+      state.dispose();
+      incoming.dispose();
+      heldCallState.dispose();
+      return;
+    }
     await end(notify: false);
     state.dispose();
-    incoming.dispose();
   }
 
   Future<void> _resetCommunicationAudio() async {
@@ -1100,6 +1442,10 @@ class CallService {
   }
 
   Future<void> _onSignal(dynamic payload) async {
+    if (_isManager) {
+      await _routeSignal(payload);
+      return;
+    }
     final data = _asMap(payload);
     final from = _normalizePeer(
       (data['from'] ?? data['from_username'])?.toString() ?? '',
@@ -1149,6 +1495,7 @@ class CallService {
         peer: from,
         video: _currentVideo,
         sdp: sdp,
+        iceGeneration: _generationFrom(data),
       );
       _setState(
         CallSnapshot(
@@ -1173,7 +1520,6 @@ class CallService {
 
     final pendingIncoming = incoming.value;
     if (kind == 'candidate' &&
-        _peerConnection == null &&
         pendingIncoming?.callId == callId &&
         pendingIncoming?.peer == from) {
       _queueCandidate(callId, data);
@@ -1262,6 +1608,120 @@ class CallService {
       case 'timeout':
         await end(notify: false);
     }
+  }
+
+  Future<void> _routeSignal(dynamic payload) async {
+    final data = _asMap(payload);
+    final from = _normalizePeer(
+      (data['from'] ?? data['from_username'])?.toString() ?? '',
+    );
+    final callId = data['call_id']?.toString();
+    final kind = data['kind']?.toString();
+    final current = _activeSession;
+    if (from.isEmpty || callId == null || kind == null || current == null) {
+      return;
+    }
+
+    final held = _heldSession;
+    if (held != null && held._callId == callId && held._peer == from) {
+      await held._onSignal(payload);
+      return;
+    }
+    if (current._callId == callId && current._peer == from) {
+      await current._onSignal(payload);
+      return;
+    }
+
+    final waitingInvite = incoming.value;
+    if (waitingInvite?.callId == callId && waitingInvite?.peer == from) {
+      if (kind == 'candidate') {
+        current._queueCandidate(callId, data);
+      } else if (kind == 'hangup' ||
+          kind == 'reject' ||
+          kind == 'busy' ||
+          kind == 'timeout') {
+        current._pendingCandidates.remove(callId);
+        _clearWaitingIncoming();
+      }
+      return;
+    }
+
+    if (kind == 'offer') {
+      final phase = current.state.value.phase;
+      final crossedCall =
+          (phase == CallPhase.outgoing || phase == CallPhase.connecting) &&
+          _normalizePeer(current.state.value.peer ?? '') == from;
+      if (crossedCall) {
+        await current._onSignal(payload);
+        return;
+      }
+      if (current.isActive) {
+        if (held != null || incoming.value != null) {
+          _sendSignalTo(from, {'kind': 'busy', 'call_id': callId});
+          return;
+        }
+        _receiveWaitingOffer(from, callId, data);
+        return;
+      }
+    }
+
+    await current._onSignal(payload);
+  }
+
+  void _receiveWaitingOffer(
+    String peer,
+    String callId,
+    Map<String, dynamic> data,
+  ) {
+    final sdp = data['sdp']?.toString();
+    if (sdp == null || sdp.isEmpty) return;
+    final invite = CallInvite(
+      callId: callId,
+      peer: peer,
+      video: data['video'] == true,
+      sdp: sdp,
+      iceGeneration: _generationFrom(data),
+    );
+    incoming.value = invite;
+    _sendSignalTo(peer, {'kind': 'ringing', 'call_id': callId});
+    _waitingRingTimer?.cancel();
+    _waitingRingTimer = Timer(const Duration(seconds: 45), () {
+      if (incoming.value?.callId == callId) unawaited(rejectIncoming());
+    });
+    _startWaitingRingSound();
+    unawaited(
+      IncomingCallNotificationService.instance.showIncomingCall(
+        callId: callId,
+        from: peer,
+        video: invite.video,
+      ),
+    );
+  }
+
+  void _startWaitingRingSound() {
+    _stopWaitingRingSound();
+    unawaited(GhostSoundEffects.instance.playCall());
+    _waitingRingSoundTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (incoming.value == null) {
+        _stopWaitingRingSound();
+        return;
+      }
+      unawaited(GhostSoundEffects.instance.playCall());
+    });
+  }
+
+  void _stopWaitingRingSound() {
+    _waitingRingSoundTimer?.cancel();
+    _waitingRingSoundTimer = null;
+    unawaited(GhostSoundEffects.instance.stopCall());
+  }
+
+  void _clearWaitingIncoming() {
+    _waitingRingTimer?.cancel();
+    _waitingRingTimer = null;
+    _stopWaitingRingSound();
+    incoming.value = null;
+    unawaited(IncomingCallNotificationService.instance.clearIncomingCall());
   }
 
   void _queueCandidate(String callId, Map<String, dynamic> data) {
@@ -1390,6 +1850,10 @@ class CallService {
   void _beginIceRecovery() {
     final callId = _callId;
     if (!isActive || _ending || callId == null) return;
+    if (_isOnHold) {
+      _holdConnectionLost = true;
+      return;
+    }
     _iceRecoveryActive = true;
     if (_disconnectTimer?.isActive != true) {
       _disconnectTimer = Timer(const Duration(seconds: 30), () {
@@ -1608,7 +2072,7 @@ class CallService {
   }
 
   void _markConnected() {
-    if (!isActive) return;
+    if (!isActive || _isOnHold) return;
     _stopRingSound();
     _cancelRingTimer();
     _connectTimer?.cancel();
@@ -1793,9 +2257,14 @@ class CallService {
     _ringTimer = null;
   }
 
-  void _cancelTimers() {
+  void _cancelTimers({bool stopRingSound = true}) {
     _cancelRingTimer();
-    _stopRingSound();
+    if (stopRingSound) {
+      _stopRingSound();
+    } else {
+      _ringSoundTimer?.cancel();
+      _ringSoundTimer = null;
+    }
     _connectTimer?.cancel();
     _disconnectTimer?.cancel();
     _durationTimer?.cancel();
@@ -1830,7 +2299,20 @@ class CallService {
     unawaited(GhostSoundEffects.instance.stopCall());
   }
 
-  void _setState(CallSnapshot next) => state.value = next;
+  void _setState(CallSnapshot next) {
+    state.value = next;
+    final manager = _manager;
+    if (manager == null) return;
+    if (identical(manager._activeSession, this)) {
+      if (!(manager._heldSession != null &&
+          (next.phase == CallPhase.ended || next.phase == CallPhase.failed))) {
+        manager.state.value = next;
+      }
+    }
+    if (identical(manager._heldSession, this)) {
+      manager.heldCallState.value = next;
+    }
+  }
 
   void _resetNegotiationState({bool clearCandidates = true}) {
     _disconnectTimer?.cancel();
