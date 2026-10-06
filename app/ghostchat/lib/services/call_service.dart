@@ -41,6 +41,13 @@ class CallInvite {
   final String sdp;
 }
 
+class _QueuedCallCandidate {
+  const _QueuedCallCandidate(this.generation, this.candidate);
+
+  final int generation;
+  final RTCIceCandidate candidate;
+}
+
 class CallSnapshot {
   const CallSnapshot({
     this.phase = CallPhase.idle,
@@ -190,6 +197,7 @@ class CallService {
   bool _iceRecoveryActive = false;
   bool _iceRestartInFlight = false;
   int _iceRestartAttempts = 0;
+  int? _pendingIceRestartAnswerGeneration;
   Timer? _relayFallbackTimer;
   Timer? _iceRestartTimer;
   Timer? _iceRestartResponseTimer;
@@ -202,7 +210,7 @@ class CallService {
   int _verificationRevision = 0;
   final List<Map<String, dynamic>> _localIceQueue = [];
 
-  final Map<String, List<RTCIceCandidate>> _pendingCandidates = {};
+  final Map<String, List<_QueuedCallCandidate>> _pendingCandidates = {};
   Timer? _ringTimer;
   Timer? _ringSoundTimer;
   Timer? _connectTimer;
@@ -782,6 +790,9 @@ class CallService {
       if (identical(_mediaNegotiationCompleter, completer)) {
         _mediaNegotiationCompleter = null;
       }
+      if (_iceRecoveryActive && _callId == callId) {
+        _scheduleIceRestartRetry(callId: callId, delay: Duration.zero);
+      }
     }
   }
 
@@ -794,19 +805,38 @@ class CallService {
     final sdp = data['sdp']?.toString();
     final pc = _peerConnection;
     if (sdp == null || sdp.isEmpty || pc == null) return;
+    final generation = _generationFrom(data);
+    if (generation < _iceGeneration ||
+        (generation > _iceGeneration && _isIceRestartLeader)) {
+      return;
+    }
+    final isIceRestart = generation > _iceGeneration;
+    _iceGeneration = generation;
+    if (isIceRestart) {
+      _beginIceRecovery();
+      _setState(state.value.copyWith(detail: 'Переподключаем звонок…'));
+    }
     try {
       _localDescriptionSignaled = false;
+      _remoteDescriptionReady = false;
       await pc.setRemoteDescription(RTCSessionDescription(sdp, 'offer'));
+      if (!_ownsActiveCall(callId)) return;
       await _updateVerificationSdp(remoteSdp: sdp);
+      if (!_ownsActiveCall(callId)) return;
       _remoteDescriptionReady = true;
       _videoTransceiver ??= await _findVideoTransceiver();
+      if (!_ownsActiveCall(callId)) return;
       await _flushCandidates(callId);
+      if (!_ownsActiveCall(callId)) return;
       final answer = await pc.createAnswer({
         'offerToReceiveAudio': true,
         'offerToReceiveVideo': true,
       });
+      if (!_ownsActiveCall(callId)) return;
       await pc.setLocalDescription(answer);
+      if (!_ownsActiveCall(callId)) return;
       await _updateVerificationSdp(localSdp: answer.sdp);
+      if (!_ownsActiveCall(callId)) return;
       _sendSignal({
         'kind': 'media-answer',
         'sdp': answer.sdp,
@@ -820,8 +850,15 @@ class CallService {
           (_localStream?.getVideoTracks().isNotEmpty == true);
       _setState(state.value.copyWith(video: _currentVideo, clearDetail: true));
     } catch (error) {
+      if (_callId != callId) return;
       appLog.warn('call', 'Media renegotiation failed: $error');
-      _setState(state.value.copyWith(detail: 'Не удалось включить видео'));
+      _setState(
+        state.value.copyWith(
+          detail: isIceRestart
+              ? 'Не удалось восстановить звонок'
+              : 'Не удалось включить видео',
+        ),
+      );
     }
   }
 
@@ -917,6 +954,7 @@ class CallService {
       _iceRecoveryActive = false;
       _iceRestartInFlight = false;
       _iceRestartAttempts = 0;
+      _pendingIceRestartAnswerGeneration = null;
       _iceGeneration = 0;
       _mediaRoute = CallMediaRoute.unknown;
       _verificationRevision++;
@@ -1009,14 +1047,6 @@ class CallService {
         switch (connectionState) {
           case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
             _markConnected();
-            _iceRecoveryActive = false;
-            _iceRestartInFlight = false;
-            _iceRestartAttempts = 0;
-            _relayFallbackTimer?.cancel();
-            _iceRestartTimer?.cancel();
-            _iceRestartTimer = null;
-            _iceRestartResponseTimer?.cancel();
-            _iceRestartResponseTimer = null;
           case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
             _beginIceRecovery();
           case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
@@ -1174,15 +1204,48 @@ class CallService {
       case 'media-answer':
         final sdp = data['sdp']?.toString();
         final pc = _peerConnection;
-        if (sdp == null ||
-            pc == null ||
-            _generationFrom(data) != _iceGeneration) {
+        final generation = _generationFrom(data);
+        if (sdp == null || pc == null || generation != _iceGeneration) {
           return;
         }
-        await pc.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
-        await _updateVerificationSdp(remoteSdp: sdp);
-        _remoteDescriptionReady = true;
-        await _flushCandidates(callId);
+        final isIceRestartAnswer =
+            _pendingIceRestartAnswerGeneration == generation;
+        if (isIceRestartAnswer) {
+          _iceRestartTimer?.cancel();
+          _iceRestartTimer = null;
+          _iceRestartResponseTimer?.cancel();
+          _iceRestartResponseTimer = null;
+        }
+        try {
+          _remoteDescriptionReady = false;
+          await pc.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
+          if (!_ownsActiveCall(callId)) return;
+          await _updateVerificationSdp(remoteSdp: sdp);
+          if (!_ownsActiveCall(callId)) return;
+          _remoteDescriptionReady = true;
+          await _flushCandidates(callId);
+          if (!_ownsActiveCall(callId)) return;
+        } catch (error) {
+          if (!isIceRestartAnswer) rethrow;
+          if (_callId != callId) return;
+          _pendingIceRestartAnswerGeneration = null;
+          _iceRestartInFlight = false;
+          appLog.warn('call', 'ICE restart answer apply failed: $error');
+          _scheduleIceRestartRetry(
+            callId: callId,
+            delay: const Duration(seconds: 1),
+          );
+          return;
+        }
+        if (isIceRestartAnswer) {
+          _pendingIceRestartAnswerGeneration = null;
+          _iceRestartInFlight = false;
+          _setState(state.value.copyWith(detail: 'Связь восстановлена'));
+          _scheduleIceRestartRetry(
+            callId: callId,
+            delay: const Duration(seconds: 3),
+          );
+        }
         final mediaChange = _mediaNegotiationCompleter;
         if (mediaChange != null && !mediaChange.isCompleted) {
           mediaChange.complete();
@@ -1205,14 +1268,25 @@ class CallService {
     final candidate = _candidateFrom(data);
     if (candidate == null) return;
     _pendingCandidates
-        .putIfAbsent(callId, () => <RTCIceCandidate>[])
-        .add(candidate);
+        .putIfAbsent(callId, () => <_QueuedCallCandidate>[])
+        .add(_QueuedCallCandidate(_generationFrom(data), candidate));
   }
 
   Future<void> _flushCandidates(String callId) async {
-    final candidates = _pendingCandidates.remove(callId) ?? <RTCIceCandidate>[];
-    for (final candidate in candidates) {
-      await _peerConnection?.addCandidate(candidate);
+    final queued =
+        _pendingCandidates.remove(callId) ?? <_QueuedCallCandidate>[];
+    final ready = <_QueuedCallCandidate>[];
+    final future = <_QueuedCallCandidate>[];
+    for (final entry in queued) {
+      if (entry.generation == _iceGeneration) {
+        ready.add(entry);
+      } else if (entry.generation > _iceGeneration) {
+        future.add(entry);
+      }
+    }
+    if (future.isNotEmpty) _pendingCandidates[callId] = future;
+    for (final entry in ready) {
+      await _peerConnection?.addCandidate(entry.candidate);
     }
   }
 
@@ -1225,8 +1299,11 @@ class CallService {
     String callId,
     Map<String, dynamic> data,
   ) async {
-    if (_generationFrom(data) != _iceGeneration) return;
-    if (_remoteDescriptionReady && _peerConnection != null) {
+    final generation = _generationFrom(data);
+    if (generation < _iceGeneration) return;
+    if (generation == _iceGeneration &&
+        _remoteDescriptionReady &&
+        _peerConnection != null) {
       await _addCandidate(data);
     } else {
       _queueCandidate(callId, data);
@@ -1353,6 +1430,7 @@ class CallService {
         !_ownsActiveCall(callId) ||
         !_isIceRestartLeader ||
         _iceRestartInFlight ||
+        _mediaNegotiationCompleter != null ||
         _iceRestartAttempts >= 4) {
       return;
     }
@@ -1363,6 +1441,8 @@ class CallService {
     _iceRestartInFlight = true;
     _iceRestartAttempts++;
     final generation = ++_iceGeneration;
+    _pendingIceRestartAnswerGeneration = null;
+    _remoteDescriptionReady = false;
     try {
       final offer = await pc.createOffer({'iceRestart': true});
       if (!_ownsActiveCall(callId)) {
@@ -1386,11 +1466,11 @@ class CallService {
         return;
       }
       _sendSignal({
-        'kind': 'ice-restart-offer',
+        'kind': 'media-offer',
         'sdp': offer.sdp,
         'ice_generation': generation,
-        'relay_only': false,
       });
+      _pendingIceRestartAnswerGeneration = generation;
       _localDescriptionSignaled = true;
       _flushLocalIce();
     } catch (error) {
@@ -1534,6 +1614,15 @@ class CallService {
     _connectTimer?.cancel();
     _disconnectTimer?.cancel();
     _disconnectTimer = null;
+    _iceRecoveryActive = false;
+    _iceRestartInFlight = false;
+    _iceRestartAttempts = 0;
+    _pendingIceRestartAnswerGeneration = null;
+    _relayFallbackTimer?.cancel();
+    _iceRestartTimer?.cancel();
+    _iceRestartTimer = null;
+    _iceRestartResponseTimer?.cancel();
+    _iceRestartResponseTimer = null;
     _connectedAt ??= DateTime.now();
     _setState(
       state.value.copyWith(phase: CallPhase.connected, clearDetail: true),
@@ -1753,6 +1842,7 @@ class CallService {
     _iceRecoveryActive = false;
     _iceRestartInFlight = false;
     _iceRestartAttempts = 0;
+    _pendingIceRestartAnswerGeneration = null;
     _remoteDescriptionReady = false;
     _localDescriptionSignaled = false;
     _localIceQueue.clear();
