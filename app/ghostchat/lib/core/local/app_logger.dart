@@ -60,9 +60,42 @@ class AppLogger {
   final _entries = Queue<LogEntry>();
   final _ctrl = StreamController<LogEntry>.broadcast();
   int _nextId = 0;
+  bool _protectedContext = false;
+  Set<String> _sensitiveValues = {};
 
   Stream<LogEntry> get onLog => _ctrl.stream;
   List<LogEntry> get entries => _entries.toList();
+
+  /// Keep events raised inside protected environments out of the ordinary
+  /// app log. A dedicated protected journal can opt into a separate sink.
+  set protectedContext(bool value) => _protectedContext = value;
+
+  /// Remove protected chat identifiers from ordinary log history and filter
+  /// future entries that mention them.
+  set sensitiveValues(Iterable<String> values) {
+    _sensitiveValues = values
+        .map((value) => value.trim())
+        .where((value) => value.length >= 3)
+        .expand((value) {
+          final parts = <String>{value, Uri.encodeComponent(value)};
+          final suffix = value.split(':').last;
+          if (suffix.length >= 3) parts.add(suffix);
+          return parts;
+        })
+        .toSet();
+    _entries.removeWhere((entry) => _containsSensitiveValue(entry.message));
+  }
+
+  bool _containsSensitiveValue(String message) {
+    for (final value in _sensitiveValues) {
+      final pattern = RegExp(
+        '(^|[^A-Za-z0-9_])${RegExp.escape(value)}([^A-Za-z0-9_]|\$)',
+        caseSensitive: false,
+      );
+      if (pattern.hasMatch(message)) return true;
+    }
+    return false;
+  }
 
   LogEntry log(String category, String message, {String level = 'info'}) {
     final entry = LogEntry(
@@ -72,11 +105,13 @@ class AppLogger {
       level: level,
       message: message,
     );
-    _entries.addLast(entry);
-    while (_entries.length > maxEntries) {
-      _entries.removeFirst();
+    if (!_protectedContext && !_containsSensitiveValue(message)) {
+      _entries.addLast(entry);
+      while (_entries.length > maxEntries) {
+        _entries.removeFirst();
+      }
+      _ctrl.add(entry);
     }
-    _ctrl.add(entry);
     return entry;
   }
 

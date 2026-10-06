@@ -13,6 +13,7 @@ import 'dart:io';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../app_version.dart';
 import '../constants.dart';
 import '../storage/secure_store.dart';
 import '../../services/proxy_http_client.dart';
@@ -58,6 +59,9 @@ class WsClient {
     try {
       _ch = IOWebSocketChannel.connect(
         Uri.parse(K.wsUrl),
+        headers: {
+          GhostChatAppVersion.headerName: await GhostChatAppVersion.current(),
+        },
         customClient: httpClient,
       );
       await _ch!.ready;

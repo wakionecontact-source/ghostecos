@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_background/flutter_background.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -46,16 +47,20 @@ class CallSnapshot {
     this.peer,
     this.callId,
     this.video = false,
+    this.screenSharing = false,
+    this.minimized = false,
     this.muted = false,
     this.speaker = false,
     this.cameraEnabled = true,
     this.localStream,
+    this.screenStream,
     this.remoteStream,
     this.duration = Duration.zero,
     this.connectionState = 'new',
     this.error,
     this.detail,
     this.mediaRoute = CallMediaRoute.unknown,
+    this.latencyMs,
     this.verificationEmojis = const [],
   });
 
@@ -63,16 +68,20 @@ class CallSnapshot {
   final String? peer;
   final String? callId;
   final bool video;
+  final bool screenSharing;
+  final bool minimized;
   final bool muted;
   final bool speaker;
   final bool cameraEnabled;
   final MediaStream? localStream;
+  final MediaStream? screenStream;
   final MediaStream? remoteStream;
   final Duration duration;
   final String connectionState;
   final String? error;
   final String? detail;
   final CallMediaRoute mediaRoute;
+  final int? latencyMs;
   final List<String> verificationEmojis;
 
   CallSnapshot copyWith({
@@ -80,34 +89,45 @@ class CallSnapshot {
     String? peer,
     String? callId,
     bool? video,
+    bool? screenSharing,
+    bool? minimized,
     bool? muted,
     bool? speaker,
     bool? cameraEnabled,
     MediaStream? localStream,
+    MediaStream? screenStream,
     MediaStream? remoteStream,
     Duration? duration,
     String? connectionState,
     String? error,
     String? detail,
     CallMediaRoute? mediaRoute,
+    int? latencyMs,
     List<String>? verificationEmojis,
     bool clearDetail = false,
+    bool clearScreenStream = false,
   }) {
     return CallSnapshot(
       phase: phase ?? this.phase,
       peer: peer ?? this.peer,
       callId: callId ?? this.callId,
       video: video ?? this.video,
+      screenSharing: screenSharing ?? this.screenSharing,
+      minimized: minimized ?? this.minimized,
       muted: muted ?? this.muted,
       speaker: speaker ?? this.speaker,
       cameraEnabled: cameraEnabled ?? this.cameraEnabled,
       localStream: localStream ?? this.localStream,
+      screenStream: clearScreenStream
+          ? null
+          : screenStream ?? this.screenStream,
       remoteStream: remoteStream ?? this.remoteStream,
       duration: duration ?? this.duration,
       connectionState: connectionState ?? this.connectionState,
       error: error ?? this.error,
       detail: clearDetail ? null : detail ?? this.detail,
       mediaRoute: mediaRoute ?? this.mediaRoute,
+      latencyMs: latencyMs ?? this.latencyMs,
       verificationEmojis: verificationEmojis ?? this.verificationEmojis,
     );
   }
@@ -140,6 +160,14 @@ class CallService {
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
   MediaStream? _remoteStream;
+  MediaStream? _extraVideoStream;
+  MediaStream? _screenStream;
+  RTCRtpSender? _videoSender;
+  RTCRtpTransceiver? _videoTransceiver;
+  bool _cameraEnabledBeforeShare = true;
+  bool _screenShareOwnsVideoTransceiver = false;
+  bool _screenShareStopping = false;
+  bool _screenCaptureBackgroundEnabled = false;
   String? _peer;
   String? _callId;
   bool _remoteDescriptionReady = false;
@@ -150,6 +178,7 @@ class CallService {
   bool _speaker = false;
   bool _cameraEnabled = true;
   DateTime? _connectedAt;
+  bool _remoteVideoSending = false;
   List<Map<String, dynamic>> _iceServers = _defaultIceServers;
   String? _localUsername;
   bool _localDescriptionSignaled = false;
@@ -162,6 +191,7 @@ class CallService {
   Timer? _relayFallbackTimer;
   Timer? _iceRestartTimer;
   Timer? _mediaRouteTimer;
+  Completer<void>? _mediaNegotiationCompleter;
   String? _routeStatsCallIdInFlight;
   CallMediaRoute _mediaRoute = CallMediaRoute.unknown;
   String? _verificationLocalSdp;
@@ -236,9 +266,16 @@ class CallService {
     _callId = _newCallId();
     _resetNegotiationState();
     _currentVideo = video;
+    _remoteVideoSending = video;
     _muted = false;
     _speaker = false;
     _cameraEnabled = true;
+    _videoSender = null;
+    _videoTransceiver = null;
+    _extraVideoStream = null;
+    _screenStream = null;
+    _screenShareStopping = false;
+    _screenShareOwnsVideoTransceiver = false;
     _setState(
       CallSnapshot(
         phase: CallPhase.outgoing,
@@ -295,9 +332,16 @@ class CallService {
     _callId = invite.callId;
     _resetNegotiationState(clearCandidates: false);
     _currentVideo = invite.video;
+    _remoteVideoSending = invite.video;
     _muted = false;
     _speaker = false;
     _cameraEnabled = true;
+    _videoSender = null;
+    _videoTransceiver = null;
+    _extraVideoStream = null;
+    _screenStream = null;
+    _screenShareStopping = false;
+    _screenShareOwnsVideoTransceiver = false;
     _setState(
       CallSnapshot(
         phase: CallPhase.connecting,
@@ -368,7 +412,7 @@ class CallService {
   }
 
   Future<void> toggleCamera() async {
-    if (!_currentVideo) return;
+    if (!_currentVideo || state.value.screenSharing) return;
     _cameraEnabled = !_cameraEnabled;
     for (final track
         in _localStream?.getVideoTracks() ?? <MediaStreamTrack>[]) {
@@ -378,10 +422,413 @@ class CallService {
   }
 
   Future<void> switchCamera() async {
-    if (!_currentVideo) return;
+    if (!_currentVideo || state.value.screenSharing) return;
     final track = _localStream?.getVideoTracks().firstOrNull;
     if (track == null) return;
     await Helper.switchCamera(track);
+  }
+
+  void minimize() {
+    if (isActive) _setState(state.value.copyWith(minimized: true));
+  }
+
+  void restore() {
+    if (isActive) _setState(state.value.copyWith(minimized: false));
+  }
+
+  Future<void> enableVideo() async {
+    if (state.value.phase != CallPhase.connected ||
+        _localStream?.getVideoTracks().isNotEmpty == true) {
+      return;
+    }
+    final peerConnection = _peerConnection;
+    final local = _localStream;
+    if (peerConnection == null || local == null) {
+      throw StateError('Звонок ещё не подключён');
+    }
+
+    final cameraPermission = await Permission.camera.request();
+    if (!cameraPermission.isGranted) {
+      throw StateError('Нет доступа к камере');
+    }
+    final cameraStream = await navigator.mediaDevices.getUserMedia({
+      'audio': false,
+      'video': {
+        'facingMode': 'user',
+        'width': {'ideal': 1280, 'max': 1920},
+        'height': {'ideal': 720, 'max': 1080},
+        'frameRate': {'ideal': 24, 'max': 30},
+      },
+    });
+    final cameraTrack = cameraStream.getVideoTracks().firstOrNull;
+    if (cameraTrack == null) {
+      await cameraStream.dispose();
+      throw StateError('Камера не создала видеопоток');
+    }
+
+    try {
+      await local.addTrack(cameraTrack, addToNative: true);
+      final transceiver = _videoTransceiver ?? await _findVideoTransceiver();
+      if (transceiver != null) {
+        _videoTransceiver = transceiver;
+        await transceiver.setDirection(TransceiverDirection.SendRecv);
+        await transceiver.sender.replaceTrack(cameraTrack);
+        _videoSender = transceiver.sender;
+      } else {
+        _videoSender = await peerConnection.addTrack(cameraTrack, local);
+      }
+      _extraVideoStream = cameraStream;
+      _currentVideo = true;
+      _cameraEnabled = true;
+      _setState(
+        state.value.copyWith(
+          video: true,
+          cameraEnabled: true,
+          localStream: local,
+          clearDetail: true,
+        ),
+      );
+      await _negotiateMediaChange();
+    } catch (_) {
+      if (!identical(_extraVideoStream, cameraStream)) {
+        for (final track in cameraStream.getTracks()) {
+          track.stop();
+        }
+        await cameraStream.dispose();
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> startScreenShare() async {
+    if (state.value.phase != CallPhase.connected) {
+      throw StateError('Сначала дождитесь соединения');
+    }
+    if (state.value.screenSharing) return;
+    final peerConnection = _peerConnection;
+    final local = _localStream;
+    if (peerConnection == null || local == null) {
+      throw StateError('Звонок уже завершён');
+    }
+
+    final cameraTrack = local.getVideoTracks().firstOrNull;
+    final existingSender = _videoSender ?? await _findVideoSender();
+    var streamAdded = false;
+    var cameraWasReplaced = false;
+    MediaStream? stream;
+    MediaStreamTrack? screenTrack;
+    RTCRtpSender? sender = existingSender;
+    try {
+      await _startScreenCaptureBackground();
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        'audio': false,
+        'video': {
+          'frameRate': {'ideal': 15, 'max': 24},
+        },
+      });
+      screenTrack = stream.getVideoTracks().firstOrNull;
+      if (screenTrack == null) {
+        throw StateError('Система не вернула изображение экрана');
+      }
+
+      if (cameraTrack != null && sender != null) {
+        _cameraEnabledBeforeShare = _cameraEnabled;
+        await sender.replaceTrack(screenTrack);
+        cameraWasReplaced = true;
+        cameraTrack.enabled = false;
+      } else {
+        final transceiver =
+            _videoTransceiver ??
+            await _findVideoTransceiver() ??
+            await peerConnection.addTransceiver(
+              kind: RTCRtpMediaType.RTCRtpMediaTypeVideo,
+              init: RTCRtpTransceiverInit(
+                direction: TransceiverDirection.SendRecv,
+                streams: [local],
+              ),
+            );
+        _videoTransceiver = transceiver;
+        _screenShareOwnsVideoTransceiver = true;
+        streamAdded = true;
+        await transceiver.setDirection(TransceiverDirection.SendRecv);
+        sender = transceiver.sender;
+        await sender.replaceTrack(screenTrack);
+      }
+
+      _videoSender = sender;
+      _currentVideo = true;
+      _cameraEnabled = false;
+      _screenStream = stream;
+      screenTrack.onEnded = () => unawaited(stopScreenShare());
+      _setState(
+        state.value.copyWith(
+          video: true,
+          screenSharing: true,
+          cameraEnabled: false,
+          screenStream: stream,
+          clearDetail: true,
+        ),
+      );
+      if (streamAdded) await _negotiateMediaChange();
+    } catch (_) {
+      if (cameraWasReplaced && sender != null) {
+        try {
+          await sender.replaceTrack(cameraTrack);
+          if (cameraTrack != null) {
+            cameraTrack.enabled = _cameraEnabledBeforeShare;
+          }
+          _cameraEnabled = _cameraEnabledBeforeShare;
+        } catch (_) {}
+      }
+      if (streamAdded) {
+        try {
+          await sender?.replaceTrack(null);
+          await _videoTransceiver?.setDirection(TransceiverDirection.RecvOnly);
+        } catch (_) {}
+        _screenShareOwnsVideoTransceiver = false;
+        _currentVideo = _remoteVideoSending;
+        _cameraEnabled = true;
+      }
+      if (screenTrack != null) {
+        screenTrack.onEnded = null;
+      }
+      for (final track in stream?.getTracks() ?? <MediaStreamTrack>[]) {
+        track.stop();
+      }
+      await stream?.dispose();
+      _screenStream = null;
+      _setState(
+        state.value.copyWith(
+          video: _currentVideo,
+          screenSharing: false,
+          cameraEnabled: _cameraEnabled,
+          clearScreenStream: true,
+        ),
+      );
+      await _stopScreenCaptureBackground();
+      rethrow;
+    }
+  }
+
+  Future<void> stopScreenShare() async {
+    if (_screenShareStopping || _screenStream == null) return;
+    _screenShareStopping = true;
+    final activeNegotiation = _mediaNegotiationCompleter;
+    if (activeNegotiation != null && !activeNegotiation.isCompleted) {
+      try {
+        await activeNegotiation.future.timeout(const Duration(seconds: 16));
+      } catch (_) {}
+    }
+
+    final stream = _screenStream;
+    final screenTrack = stream?.getVideoTracks().firstOrNull;
+    if (screenTrack != null) screenTrack.onEnded = null;
+    try {
+      final cameraTrack = _localStream?.getVideoTracks().firstOrNull;
+      final sender = _videoSender ?? await _findVideoSender();
+      if (_screenShareOwnsVideoTransceiver) {
+        if (sender != null) await sender.replaceTrack(null);
+        await _videoTransceiver?.setDirection(TransceiverDirection.RecvOnly);
+        _currentVideo = _remoteVideoSending;
+        _cameraEnabled = true;
+        if (state.value.phase == CallPhase.connected) {
+          await _negotiateMediaChange();
+        }
+      } else {
+        if (sender != null) await sender.replaceTrack(cameraTrack);
+        if (cameraTrack != null) {
+          cameraTrack.enabled = _cameraEnabledBeforeShare;
+        }
+        _cameraEnabled = _cameraEnabledBeforeShare;
+      }
+    } catch (error) {
+      appLog.warn(
+        'call',
+        'Could not restore call video after screen share: $error',
+      );
+      if (_screenShareOwnsVideoTransceiver) {
+        _currentVideo = _remoteVideoSending;
+        _cameraEnabled = true;
+      } else {
+        _currentVideo = true;
+        _cameraEnabled = _cameraEnabledBeforeShare;
+      }
+    } finally {
+      screenTrack?.stop();
+      await stream?.dispose();
+      _screenStream = null;
+      _screenShareOwnsVideoTransceiver = false;
+      _setState(
+        state.value.copyWith(
+          video: _currentVideo,
+          screenSharing: false,
+          cameraEnabled: _cameraEnabled,
+          clearScreenStream: true,
+        ),
+      );
+      _screenShareStopping = false;
+      await _stopScreenCaptureBackground();
+    }
+  }
+
+  Future<RTCRtpSender?> _findVideoSender() async {
+    final pc = _peerConnection;
+    if (pc == null) return null;
+    final senders = await pc.getSenders();
+    for (final sender in senders) {
+      if (sender.track?.kind == 'video') return sender;
+    }
+    return null;
+  }
+
+  Future<RTCRtpTransceiver?> _findVideoTransceiver() async {
+    final pc = _peerConnection;
+    if (pc == null) return null;
+    for (final transceiver in await pc.getTransceivers()) {
+      if (transceiver.sender.track?.kind == 'video' ||
+          transceiver.receiver.track?.kind == 'video') {
+        return transceiver;
+      }
+    }
+    return null;
+  }
+
+  bool _sdpSendsVideo(String sdp) {
+    var inVideoSection = false;
+    var sessionDirection = 'sendrecv';
+    var direction = 'sendrecv';
+    bool sendsVideo() => direction == 'sendrecv' || direction == 'sendonly';
+
+    for (final rawLine in sdp.split(RegExp(r'\r?\n'))) {
+      final line = rawLine.trim().toLowerCase();
+      if (line.startsWith('m=')) {
+        if (inVideoSection && sendsVideo()) return true;
+        inVideoSection = line.startsWith('m=video ');
+        direction = sessionDirection;
+      } else if (inVideoSection && line.startsWith('a=')) {
+        final attribute = line.substring(2);
+        if (attribute == 'sendrecv' ||
+            attribute == 'sendonly' ||
+            attribute == 'recvonly' ||
+            attribute == 'inactive') {
+          if (inVideoSection) {
+            direction = attribute;
+          } else {
+            sessionDirection = attribute;
+          }
+        }
+      }
+    }
+    return inVideoSection && sendsVideo();
+  }
+
+  Future<void> _negotiateMediaChange() async {
+    final pc = _peerConnection;
+    final callId = _callId;
+    if (pc == null || callId == null) {
+      throw StateError('Звонок завершён');
+    }
+    if (_mediaNegotiationCompleter != null) {
+      throw StateError('Уже меняем параметры звонка');
+    }
+    final completer = Completer<void>();
+    _mediaNegotiationCompleter = completer;
+    try {
+      _localDescriptionSignaled = false;
+      final offer = await pc.createOffer({
+        'offerToReceiveAudio': true,
+        'offerToReceiveVideo': true,
+      });
+      await pc.setLocalDescription(offer);
+      await _updateVerificationSdp(localSdp: offer.sdp);
+      _sendSignal({
+        'kind': 'media-offer',
+        'sdp': offer.sdp,
+        'ice_generation': _iceGeneration,
+      });
+      _localDescriptionSignaled = true;
+      _flushLocalIce();
+      await completer.future.timeout(const Duration(seconds: 15));
+    } finally {
+      if (identical(_mediaNegotiationCompleter, completer)) {
+        _mediaNegotiationCompleter = null;
+      }
+    }
+  }
+
+  Future<void> _handleMediaOffer(
+    String callId,
+    String from,
+    Map<String, dynamic> data,
+  ) async {
+    if (!_ownsActiveCall(callId) || from != _peer) return;
+    final sdp = data['sdp']?.toString();
+    final pc = _peerConnection;
+    if (sdp == null || sdp.isEmpty || pc == null) return;
+    try {
+      _localDescriptionSignaled = false;
+      await pc.setRemoteDescription(RTCSessionDescription(sdp, 'offer'));
+      await _updateVerificationSdp(remoteSdp: sdp);
+      _remoteDescriptionReady = true;
+      _videoTransceiver ??= await _findVideoTransceiver();
+      await _flushCandidates(callId);
+      final answer = await pc.createAnswer({
+        'offerToReceiveAudio': true,
+        'offerToReceiveVideo': true,
+      });
+      await pc.setLocalDescription(answer);
+      await _updateVerificationSdp(localSdp: answer.sdp);
+      _sendSignal({
+        'kind': 'media-answer',
+        'sdp': answer.sdp,
+        'ice_generation': _iceGeneration,
+      });
+      _localDescriptionSignaled = true;
+      _flushLocalIce();
+      _remoteVideoSending = _sdpSendsVideo(sdp);
+      _currentVideo =
+          _remoteVideoSending ||
+          (_localStream?.getVideoTracks().isNotEmpty == true);
+      _setState(state.value.copyWith(video: _currentVideo, clearDetail: true));
+    } catch (error) {
+      appLog.warn('call', 'Media renegotiation failed: $error');
+      _setState(state.value.copyWith(detail: 'Не удалось включить видео'));
+    }
+  }
+
+  Future<void> _startScreenCaptureBackground() async {
+    if (!Platform.isAndroid) return;
+    final initialized = await FlutterBackground.initialize(
+      androidConfig: const FlutterBackgroundAndroidConfig(
+        notificationTitle: 'GhostChat',
+        notificationText: 'Идёт демонстрация экрана в звонке',
+        notificationImportance: AndroidNotificationImportance.normal,
+        notificationIcon: AndroidResource(
+          name: 'ic_notification',
+          defType: 'drawable',
+        ),
+        enableWifiLock: false,
+        shouldRequestBatteryOptimizationsOff: false,
+      ),
+    );
+    if (!initialized) {
+      throw StateError('Не удалось подготовить показ экрана');
+    }
+    if (!FlutterBackground.isBackgroundExecutionEnabled) {
+      final enabled = await FlutterBackground.enableBackgroundExecution();
+      if (!enabled) throw StateError('Не удалось запустить показ экрана');
+    }
+    _screenCaptureBackgroundEnabled = true;
+  }
+
+  Future<void> _stopScreenCaptureBackground() async {
+    if (!Platform.isAndroid || !_screenCaptureBackgroundEnabled) return;
+    _screenCaptureBackgroundEnabled = false;
+    try {
+      await FlutterBackground.disableBackgroundExecution();
+    } catch (error) {
+      appLog.warn('call', 'Screen-share service stop failed: $error');
+    }
   }
 
   Future<void> end({
@@ -420,6 +867,11 @@ class CallService {
       }
 
       _cancelTimers();
+      final mediaNegotiation = _mediaNegotiationCompleter;
+      _mediaNegotiationCompleter = null;
+      if (mediaNegotiation != null && !mediaNegotiation.isCompleted) {
+        mediaNegotiation.completeError(StateError('Звонок завершён'));
+      }
       final connection = _peerConnection;
       _peerConnection = null;
       try {
@@ -447,6 +899,14 @@ class CallService {
       _muted = false;
       _speaker = false;
       _cameraEnabled = true;
+      _videoSender = null;
+      _videoTransceiver = null;
+      _extraVideoStream = null;
+      _screenStream = null;
+      _screenShareStopping = false;
+      _screenShareOwnsVideoTransceiver = false;
+      _currentVideo = false;
+      _remoteVideoSending = false;
       incoming.value = null;
       unawaited(IncomingCallNotificationService.instance.clearIncomingCall());
       _setState(
@@ -580,7 +1040,8 @@ class CallService {
     final stream = _localStream;
     if (connection == null || stream == null) return;
     for (final track in stream.getTracks()) {
-      await connection.addTrack(track, stream);
+      final sender = await connection.addTrack(track, stream);
+      if (track.kind == 'video') _videoSender = sender;
     }
     _setState(state.value.copyWith(localStream: stream));
   }
@@ -593,6 +1054,11 @@ class CallService {
     final callId = data['call_id']?.toString();
     final kind = data['kind']?.toString();
     if (from.isEmpty || callId == null || kind == null) return;
+
+    if (kind == 'media-offer') {
+      await _handleMediaOffer(callId, from, data);
+      return;
+    }
 
     if (kind == 'offer') {
       final sdp = data['sdp']?.toString();
@@ -623,7 +1089,8 @@ class CallService {
       _peer = from;
       _callId = callId;
       _iceGeneration = _generationFrom(data);
-      _currentVideo = data['video'] == true;
+      _remoteVideoSending = data['video'] == true;
+      _currentVideo = _remoteVideoSending;
       incoming.value = CallInvite(
         callId: callId,
         peer: from,
@@ -676,6 +1143,27 @@ class CallService {
         await _updateVerificationSdp(remoteSdp: sdp);
         _remoteDescriptionReady = true;
         await _flushCandidates(callId);
+        _remoteVideoSending = data['video'] == true;
+        _currentVideo =
+            _remoteVideoSending ||
+            (_localStream?.getVideoTracks().isNotEmpty == true);
+        _setState(state.value.copyWith(video: _currentVideo));
+      case 'media-answer':
+        final sdp = data['sdp']?.toString();
+        final pc = _peerConnection;
+        if (sdp == null ||
+            pc == null ||
+            _generationFrom(data) != _iceGeneration) {
+          return;
+        }
+        await pc.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
+        await _updateVerificationSdp(remoteSdp: sdp);
+        _remoteDescriptionReady = true;
+        await _flushCandidates(callId);
+        final mediaChange = _mediaNegotiationCompleter;
+        if (mediaChange != null && !mediaChange.isCompleted) {
+          mediaChange.complete();
+        }
       case 'candidate':
         await _receiveCandidate(callId, data);
       case 'ice-restart-offer':
@@ -968,20 +1456,29 @@ class CallService {
           state.value.phase != CallPhase.connected) {
         return;
       }
-      final route = resolveCallMediaRouteFromStats(
-        reports
-            .map(
-              (report) => <String, dynamic>{
-                'id': report.id,
-                'type': report.type,
-                'values': report.values,
-              },
-            )
-            .toList(),
-      );
-      if (route != CallMediaRoute.unknown && route != _mediaRoute) {
-        _mediaRoute = route;
-        _setState(state.value.copyWith(mediaRoute: route));
+      final normalizedReports = reports
+          .map(
+            (report) => <String, dynamic>{
+              'id': report.id,
+              'type': report.type,
+              'values': report.values,
+            },
+          )
+          .toList(growable: false);
+      final route = resolveCallMediaRouteFromStats(normalizedReports);
+      final latencyMs = resolveCallLatencyMsFromStats(normalizedReports);
+      if (route != CallMediaRoute.unknown) _mediaRoute = route;
+      if ((route != CallMediaRoute.unknown &&
+              route != state.value.mediaRoute) ||
+          (latencyMs != null && latencyMs != state.value.latencyMs)) {
+        _setState(
+          state.value.copyWith(
+            mediaRoute: route == CallMediaRoute.unknown
+                ? state.value.mediaRoute
+                : route,
+            latencyMs: latencyMs,
+          ),
+        );
       }
     } catch (_) {
       // Stats are best-effort and may be unavailable on older Android builds.
@@ -1062,13 +1559,30 @@ class CallService {
   }
 
   Future<void> _disposeMedia() async {
+    final screen = _screenStream;
+    for (final track in screen?.getTracks() ?? <MediaStreamTrack>[]) {
+      track.onEnded = null;
+      track.stop();
+    }
+    await screen?.dispose();
+    final extraVideo = _extraVideoStream;
+    for (final track in extraVideo?.getTracks() ?? <MediaStreamTrack>[]) {
+      track.stop();
+    }
+    await extraVideo?.dispose();
     for (final track in _localStream?.getTracks() ?? <MediaStreamTrack>[]) {
       track.stop();
     }
     await _localStream?.dispose();
     await _remoteStream?.dispose();
     _localStream = null;
+    _extraVideoStream = null;
+    _screenStream = null;
     _remoteStream = null;
+    _videoSender = null;
+    _videoTransceiver = null;
+    _screenShareOwnsVideoTransceiver = false;
+    await _stopScreenCaptureBackground();
   }
 
   void _cancelRingTimer() {

@@ -28,12 +28,19 @@ class _RoomEditScreenState extends State<RoomEditScreen> {
   late final TextEditingController _username;
   late final TextEditingController _title;
   late final TextEditingController _about;
+  late final TextEditingController _rules;
+  late final TextEditingController _board;
+  late final TextEditingController _joinPassword;
   late String _visibility;
   late String _historyMode;
+  late String _joinMode;
+  late Set<String> _previewFields;
+  late bool _showPinnedPreview;
   bool _saving = false;
   bool _avatarBusy = false;
 
-  bool get _canChangeAvatar => _room.isGroup || _room.isChannel;
+  bool get _canChangeAvatar =>
+      (_room.isGroup || _room.isChannel) && _room.role == 'owner';
 
   @override
   void initState() {
@@ -42,8 +49,14 @@ class _RoomEditScreenState extends State<RoomEditScreen> {
     _username = TextEditingController(text: _room.username ?? '');
     _title = TextEditingController(text: _room.title);
     _about = TextEditingController(text: _room.about);
+    _rules = TextEditingController(text: _room.rules);
+    _board = TextEditingController(text: _room.boardText);
+    _joinPassword = TextEditingController();
     _visibility = _room.visibility;
     _historyMode = _room.historyMode;
+    _joinMode = _room.joinMode;
+    _previewFields = Set.of(_room.previewFields);
+    _showPinnedPreview = _room.showPinnedPreview;
   }
 
   @override
@@ -51,13 +64,16 @@ class _RoomEditScreenState extends State<RoomEditScreen> {
     _username.dispose();
     _title.dispose();
     _about.dispose();
+    _rules.dispose();
+    _board.dispose();
+    _joinPassword.dispose();
     super.dispose();
   }
 
   Future<void> _save() async {
     final username = _username.text.trim().replaceFirst('@', '');
     final title = _title.text.trim();
-    if (username.length < 3) {
+    if (_room.role == 'owner' && username.length < 3) {
       toast.show('Username должен быть не короче 3 символов');
       return;
     }
@@ -65,20 +81,43 @@ class _RoomEditScreenState extends State<RoomEditScreen> {
       toast.show('Название должно быть не короче 2 символов');
       return;
     }
+    if (_visibility == 'private' && _joinMode == 'password') {
+      final password = _joinPassword.text;
+      if (password.isNotEmpty && password.length < 8) {
+        toast.show('Пароль комнаты должен содержать минимум 8 символов');
+        return;
+      }
+      if (!_room.hasJoinPassword && password.isEmpty) {
+        toast.show('Задайте пароль для входа в комнату');
+        return;
+      }
+    }
     setState(() => _saving = true);
     try {
       final updated = await _service.updateRoom(
         _room,
-        username: username,
+        username: _room.role == 'owner' ? username : null,
         title: title,
         about: _about.text.trim(),
         visibility: _visibility,
         historyMode: _historyMode,
+        rules: _rules.text.trim(),
+        boardText: _board.text.trim(),
+        previewFields: _previewFields,
+        showPinnedPreview: _room.role == 'owner' ? _showPinnedPreview : null,
+        joinMode: _joinMode,
+        joinPassword:
+            _visibility == 'private' &&
+                _joinMode == 'password' &&
+                _joinPassword.text.isNotEmpty
+            ? _joinPassword.text
+            : null,
       );
       if (!mounted) return;
       setState(() {
         _room = updated;
         _saving = false;
+        _joinPassword.clear();
       });
       toast.show('Сохранено');
       Navigator.of(context).pop(updated);
@@ -337,14 +376,15 @@ class _RoomEditScreenState extends State<RoomEditScreen> {
                     onChanged: (_) => setState(() {}),
                     decoration: const InputDecoration(labelText: 'Название'),
                   ),
-                  TextField(
-                    controller: _username,
-                    onChanged: (_) => setState(() {}),
-                    decoration: const InputDecoration(
-                      labelText: 'Username',
-                      prefixText: '@',
+                  if (_room.role == 'owner')
+                    TextField(
+                      controller: _username,
+                      onChanged: (_) => setState(() {}),
+                      decoration: const InputDecoration(
+                        labelText: 'Username',
+                        prefixText: '@',
+                      ),
                     ),
-                  ),
                   TextField(
                     controller: _about,
                     maxLines: 4,
@@ -364,10 +404,32 @@ class _RoomEditScreenState extends State<RoomEditScreen> {
                         child: Text('Приватная'),
                       ),
                     ],
-                    onChanged: (value) {
-                      if (value != null) setState(() => _visibility = value);
-                    },
+                    onChanged: _room.isChannel
+                        ? null
+                        : (value) {
+                            if (value != null) {
+                              setState(() {
+                                if (value == 'public') {
+                                  _joinMode = 'open';
+                                } else if (_visibility == 'public') {
+                                  _joinMode = 'request';
+                                }
+                                _visibility = value;
+                              });
+                            }
+                          },
                   ),
+                  if (_room.isChannel)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 4, bottom: 8),
+                        child: Text(
+                          'Тип доступа канала нельзя изменить после создания.',
+                          style: TextStyle(color: GE.sub, fontSize: 12),
+                        ),
+                      ),
+                    ),
                   DropdownButtonFormField<String>(
                     initialValue: _historyMode,
                     decoration: const InputDecoration(
@@ -387,10 +449,156 @@ class _RoomEditScreenState extends State<RoomEditScreen> {
                       if (value != null) setState(() => _historyMode = value);
                     },
                   ),
+                  if (_visibility == 'private') ...[
+                    DropdownButtonFormField<String>(
+                      initialValue: _joinMode,
+                      decoration: const InputDecoration(
+                        labelText: 'Как вступают в комнату',
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'open',
+                          child: Text('Вступить сразу'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'request',
+                          child: Text('Сначала заявка'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'password',
+                          child: Text('По паролю'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) setState(() => _joinMode = value);
+                      },
+                    ),
+                    if (_joinMode == 'password')
+                      TextField(
+                        controller: _joinPassword,
+                        obscureText: true,
+                        enableSuggestions: false,
+                        autocorrect: false,
+                        maxLength: 128,
+                        decoration: InputDecoration(
+                          labelText: _room.hasJoinPassword
+                              ? 'Новый пароль комнаты'
+                              : 'Пароль комнаты',
+                          helperText: _room.hasJoinPassword
+                              ? 'Оставьте пустым, чтобы не менять пароль'
+                              : 'Не менее 8 символов',
+                        ),
+                      ),
+                  ],
                 ],
               ),
             ),
-            if (_room.canManage) ...[
+            const SizedBox(height: 12),
+            GlassCard(
+              padding: const EdgeInsets.fromLTRB(14, 4, 14, 12),
+              child: TextField(
+                controller: _rules,
+                maxLength: 2000,
+                minLines: 2,
+                maxLines: 5,
+                decoration: const InputDecoration(
+                  labelText: 'Правила комнаты',
+                  helperText:
+                      'Для приватной комнаты видимость настраивается ниже.',
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            GlassCard(
+              padding: const EdgeInsets.fromLTRB(14, 4, 14, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: _board,
+                    maxLength: 2000,
+                    minLines: 3,
+                    maxLines: 7,
+                    decoration: const InputDecoration(
+                      labelText: 'Доска комнаты',
+                      helperText:
+                          'Необязательная текстовая витрина, видимая всем.',
+                    ),
+                  ),
+                  Text(
+                    'Если оставить поле пустым, доски у комнаты не будет.',
+                    style: TextStyle(color: GE.sub, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            if (_visibility == 'private') ...[
+              const SizedBox(height: 12),
+              GlassCard(
+                padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Что видно до вступления',
+                      style: TextStyle(
+                        color: GE.text,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Доска комнаты остаётся видимой всегда. Эти переключатели управляют остальными полями профиля.',
+                      style: TextStyle(
+                        color: GE.sub,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                    for (final field in const <(String, String)>[
+                      ('about', 'Описание'),
+                      ('avatar', 'Аватар'),
+                      ('banner', 'Баннер'),
+                      ('members_count', 'Количество участников'),
+                      ('history', 'Режим истории'),
+                      ('rules', 'Правила'),
+                      ('username', 'Username комнаты'),
+                    ])
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        title: Text(field.$2),
+                        value: _previewFields.contains(field.$1),
+                        onChanged: _saving
+                            ? null
+                            : (value) => setState(() {
+                                if (value == true) {
+                                  _previewFields.add(field.$1);
+                                } else {
+                                  _previewFields.remove(field.$1);
+                                }
+                              }),
+                      ),
+                    if (_room.role == 'owner')
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        title: const Text('Показывать закрепы до вступления'),
+                        subtitle: const Text(
+                          'Текст приватных закрепов станет виден всем. Чтобы открыть текст уже закреплённых сообщений, закрепите их повторно после включения.',
+                        ),
+                        value: _showPinnedPreview,
+                        onChanged: _saving
+                            ? null
+                            : (value) => setState(
+                                () => _showPinnedPreview = value ?? false,
+                              ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+            if (_room.role == 'owner') ...[
               const SizedBox(height: 12),
               GlassCard(
                 padding: const EdgeInsets.symmetric(

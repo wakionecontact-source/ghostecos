@@ -57,10 +57,17 @@ enum SecurityUnlockMode { normal, scenario, wrong }
 class SecurityUnlockResult {
   final SecurityUnlockMode mode;
   final String? scenarioId;
+  final Set<String> removedScenarioIds;
 
-  const SecurityUnlockResult._(this.mode, [this.scenarioId]);
+  const SecurityUnlockResult._(
+    this.mode, [
+    this.scenarioId,
+    this.removedScenarioIds = const <String>{},
+  ]);
 
-  const SecurityUnlockResult.normal() : this._(SecurityUnlockMode.normal);
+  const SecurityUnlockResult.normal({
+    Set<String> removedScenarioIds = const <String>{},
+  }) : this._(SecurityUnlockMode.normal, null, removedScenarioIds);
   const SecurityUnlockResult.scenario(String id)
     : this._(SecurityUnlockMode.scenario, id);
   const SecurityUnlockResult.wrong() : this._(SecurityUnlockMode.wrong);
@@ -71,6 +78,8 @@ class AppSecurityStore {
   static final AppSecurityStore instance = AppSecurityStore._();
 
   static const _storageKey = 'ghostchat_app_security_v2';
+  static const maxScenarioDepth = 5;
+  static const autoLockDelayOptionsSeconds = <int>[0, 15, 30, 60, 300, 600];
   static final Random _random = Random.secure();
 
   final ValueNotifier<int> revision = ValueNotifier(0);
@@ -78,12 +87,16 @@ class AppSecurityStore {
   String? _primarySalt;
   String? _primaryDigest;
   String? _activeScenarioId;
+  int _autoLockDelaySeconds = 0;
+  bool _biometricUnlockEnabled = false;
   bool _loaded = false;
 
   bool get isLoaded => _loaded;
   bool get hasPrimaryCode => _primaryDigest != null && _primarySalt != null;
   bool get isInSafeMode => _activeScenarioId != null;
   String? get activeScenarioId => _activeScenarioId;
+  int get autoLockDelaySeconds => _autoLockDelaySeconds;
+  bool get biometricUnlockEnabled => _biometricUnlockEnabled;
   List<SecurityScenario> get scenarios => List.unmodifiable(_scenarios);
 
   SecurityScenario? scenarioById(String id) {
@@ -91,6 +104,28 @@ class AppSecurityStore {
       if (scenario.id == id) return scenario;
     }
     return null;
+  }
+
+  int scenarioDepth(String id) {
+    var current = scenarioById(id);
+    final visited = <String>{};
+    var depth = 0;
+    while (current != null) {
+      if (!visited.add(current.id)) return maxScenarioDepth + 1;
+      depth++;
+      if (depth > maxScenarioDepth) return depth;
+      final parentId = current.parentId;
+      if (parentId == null) return depth;
+      current = scenarioById(parentId);
+    }
+    return 0;
+  }
+
+  bool canCreateScenario({String? parentId}) {
+    if (!hasPrimaryCode || parentId != _activeScenarioId) return false;
+    if (parentId == null) return true;
+    final parentDepth = scenarioDepth(parentId);
+    return parentDepth > 0 && parentDepth < maxScenarioDepth;
   }
 
   Future<void> load() async {
@@ -104,6 +139,13 @@ class AppSecurityStore {
         if (decoded is Map) {
           _primarySalt = decoded['primary_salt']?.toString();
           _primaryDigest = decoded['primary_digest']?.toString();
+          _biometricUnlockEnabled =
+              decoded['biometric_unlock_enabled'] == true && hasPrimaryCode;
+          final savedDelay = decoded['auto_lock_delay_seconds'];
+          if (savedDelay is num &&
+              autoLockDelayOptionsSeconds.contains(savedDelay.toInt())) {
+            _autoLockDelaySeconds = savedDelay.toInt();
+          }
           final rawScenarios = decoded['scenarios'];
           if (rawScenarios is List) {
             _scenarios.addAll(
@@ -151,7 +193,32 @@ class AppSecurityStore {
     _primarySalt = null;
     _primaryDigest = null;
     _activeScenarioId = null;
+    _biometricUnlockEnabled = false;
     _scenarios.clear();
+    revision.value++;
+    await _save();
+  }
+
+  Future<void> setAutoLockDelaySeconds(int seconds) async {
+    if (!autoLockDelayOptionsSeconds.contains(seconds)) {
+      throw ArgumentError.value(
+        seconds,
+        'seconds',
+        'Unsupported auto-lock delay',
+      );
+    }
+    if (_autoLockDelaySeconds == seconds) return;
+    _autoLockDelaySeconds = seconds;
+    revision.value++;
+    await _save();
+  }
+
+  Future<void> setBiometricUnlockEnabled(bool enabled) async {
+    if (enabled && !hasPrimaryCode) {
+      throw StateError('Сначала установите основной код');
+    }
+    if (_biometricUnlockEnabled == enabled) return;
+    _biometricUnlockEnabled = enabled;
     revision.value++;
     await _save();
   }
@@ -161,14 +228,13 @@ class AppSecurityStore {
     String code, {
     String? parentId,
   }) async {
-    if (!hasPrimaryCode) return null;
+    if (!canCreateScenario(parentId: parentId)) return null;
     final normalizedName = name.trim();
     final normalizedCode = code.trim();
     if (normalizedName.isEmpty || normalizedCode.length < 4) return null;
-    if (parentId != null && scenarioById(parentId) == null) return null;
     final salt = _newSalt();
     final scenario = SecurityScenario(
-      id: 'safe_${DateTime.now().microsecondsSinceEpoch}',
+      id: 'safe_${DateTime.now().microsecondsSinceEpoch}_${_newSalt()}',
       name: normalizedName,
       salt: salt,
       digest: await _digest(salt, normalizedCode),
@@ -213,9 +279,10 @@ class AppSecurityStore {
     final normalized = code.trim();
     if (_primarySalt != null &&
         _primaryDigest == await _digest(_primarySalt!, normalized)) {
-      _activeScenarioId = null;
-      revision.value++;
-      return const SecurityUnlockResult.normal();
+      final removedScenarioIds = await leaveToNormal();
+      return SecurityUnlockResult.normal(
+        removedScenarioIds: removedScenarioIds,
+      );
     }
     for (final scenario in List<SecurityScenario>.from(_scenarios.reversed)) {
       if (scenario.digest == await _digest(scenario.salt, normalized)) {
@@ -225,6 +292,14 @@ class AppSecurityStore {
       }
     }
     return const SecurityUnlockResult.wrong();
+  }
+
+  Future<SecurityUnlockResult> unlockWithBiometrics() async {
+    if (!_biometricUnlockEnabled || !hasPrimaryCode) {
+      return const SecurityUnlockResult.wrong();
+    }
+    final removedScenarioIds = await leaveToNormal();
+    return SecurityUnlockResult.normal(removedScenarioIds: removedScenarioIds);
   }
 
   Future<Set<String>> leaveToNormal() async {
@@ -262,6 +337,8 @@ class AppSecurityStore {
         jsonEncode({
           'primary_salt': _primarySalt,
           'primary_digest': _primaryDigest,
+          'auto_lock_delay_seconds': _autoLockDelaySeconds,
+          'biometric_unlock_enabled': _biometricUnlockEnabled,
           'scenarios': _scenarios.map((item) => item.toJson()).toList(),
         }),
       );

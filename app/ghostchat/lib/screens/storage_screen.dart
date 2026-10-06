@@ -17,6 +17,7 @@ import '../theme.dart';
 import '../mesh_background.dart';
 import '../services/db_service.dart';
 import '../services/chat_repo.dart';
+import '../services/chat_organization_store.dart';
 import '../services/room_service.dart';
 import '../services/lan_chat_store.dart';
 import '../services/theme_service.dart';
@@ -77,6 +78,8 @@ class _StorageScreenState extends State<StorageScreen> {
   Map<String, int> _totals = {};
   final Set<String> _hiddenCategories = {};
   final Set<String> _selectedChats = {};
+  bool _selectionWasFiltered = false;
+  bool _initialChatsConsumed = false;
   String? _selectedCategory;
   double _totalLimitGb = 2;
   double _mediaLimitGb = 1;
@@ -119,13 +122,23 @@ class _StorageScreenState extends State<StorageScreen> {
       _totalLimitGb = prefs.getDouble(_totalLimitKey) ?? 2;
       _mediaLimitGb = prefs.getDouble(_mediaLimitKey) ?? 1;
       _keepDays = (prefs.getInt(_keepDaysKey) ?? 30).toDouble();
+      final requestedSelection =
+          !_initialChatsConsumed && widget.initialChats.isNotEmpty
+          ? widget.initialChats
+          : (prefs.getStringList(_selectedChatsKey) ?? const <String>[]);
+      _initialChatsConsumed = true;
+      final organization = ChatOrganizationStore.instance;
+      final visibleSelection = requestedSelection
+          .where(organization.canSeeChatInActiveScenario)
+          .toSet();
+      _selectionWasFiltered =
+          requestedSelection.isNotEmpty && visibleSelection.isEmpty;
       _selectedChats
         ..clear()
-        ..addAll(
-          widget.initialChats.isNotEmpty
-              ? widget.initialChats
-              : (prefs.getStringList(_selectedChatsKey) ?? const []),
-        );
+        ..addAll(visibleSelection);
+      if (visibleSelection.length != requestedSelection.toSet().length) {
+        await prefs.setStringList(_selectedChatsKey, visibleSelection.toList());
+      }
     } catch (_) {}
     if (!mounted) return;
     setState(() {
@@ -171,12 +184,17 @@ class _StorageScreenState extends State<StorageScreen> {
     await prefs.setInt(_keepDaysKey, _keepDays.round());
   }
 
-  List<String> _availableChats() => {
-    ...ChatRepo.instance.dialogsNotifier.value.map((dialog) => dialog.username),
-    ...LanChatStore.instance.dialogsNotifier.value.map(
-      (dialog) => dialog.username,
-    ),
-  }.toList();
+  List<String> _availableChats() {
+    final organization = ChatOrganizationStore.instance;
+    return {
+      ...ChatRepo.instance.dialogsNotifier.value
+          .map((dialog) => dialog.username)
+          .where(organization.canSeeChatInActiveScenario),
+      ...LanChatStore.instance.dialogsNotifier.value
+          .map((dialog) => dialog.username)
+          .where(organization.canSeeChatInActiveScenario),
+    }.toList();
+  }
 
   Future<void> _chooseChats() async {
     final selected = await Navigator.of(context).push<Set<String>>(
@@ -188,13 +206,17 @@ class _StorageScreenState extends State<StorageScreen> {
       ),
     );
     if (selected == null || !mounted) return;
+    final visibleSelection = selected
+        .where(ChatOrganizationStore.instance.canSeeChatInActiveScenario)
+        .toSet();
     setState(() {
       _selectedChats
         ..clear()
-        ..addAll(selected);
+        ..addAll(visibleSelection);
+      if (visibleSelection.isNotEmpty) _selectionWasFiltered = false;
     });
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(_selectedChatsKey, _selectedChats.toList());
+    await prefs.setStringList(_selectedChatsKey, visibleSelection.toList());
   }
 
   @override
@@ -529,6 +551,14 @@ class _StorageScreenState extends State<StorageScreen> {
 
   Future<void> _clearMediaCache() async {
     if (_clearing) return;
+    if (_selectionWasFiltered) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Выбор недоступен. Выберите чаты заново.'),
+        ),
+      );
+      return;
+    }
     final approved = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -562,34 +592,32 @@ class _StorageScreenState extends State<StorageScreen> {
         .map((category) => category.key)
         .toSet();
     try {
-      final serverPeers = _selectedChats
+      final organization = ChatOrganizationStore.instance;
+      final requestedChats = _selectedChats.isEmpty
+          ? _availableChats().toSet()
+          : _selectedChats;
+      final visibleChats = requestedChats
+          .where(organization.canSeeChatInActiveScenario)
+          .toSet();
+      final serverPeers = visibleChats
           .where(
             (id) =>
                 !id.startsWith(lanDialogPrefix) &&
                 !id.startsWith(roomDialogPrefix),
           )
           .toList();
-      final lanDevices = _selectedChats
+      final lanDevices = visibleChats
           .where((id) => id.startsWith(lanDialogPrefix))
           .map((id) => id.substring(lanDialogPrefix.length))
           .toList();
-      if (_selectedChats.isEmpty) {
-        removed += await DbService.instance.clearFileCacheByCategories(
-          categories,
-        );
-        removed += await LanChatStore.instance.clearMediaCacheByCategories(
-          categories,
-        );
-      } else {
-        removed += await DbService.instance.clearFileCacheForPeers(
-          serverPeers,
-          categories: categories,
-        );
-        removed += await LanChatStore.instance.clearMediaCacheForDevices(
-          lanDevices,
-          categories: categories,
-        );
-      }
+      removed += await DbService.instance.clearFileCacheForPeers(
+        serverPeers,
+        categories: categories,
+      );
+      removed += await LanChatStore.instance.clearMediaCacheForDevices(
+        lanDevices,
+        categories: categories,
+      );
       await _load();
       if (mounted) {
         ScaffoldMessenger.of(

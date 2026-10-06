@@ -1,4 +1,6 @@
+import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'app_navigator.dart';
 
 /// Opens only public web pages from user-visible link actions.
 ///
@@ -54,6 +56,9 @@ class PublicPageLink {
     caseSensitive: false,
   );
 
+  static bool isGhostEcosHost(String host) =>
+      _internalHosts.contains(host.trim().toLowerCase());
+
   static Uri? parse(String raw) {
     var value = raw.trim();
     if (value.isEmpty || value.length > 4096) return null;
@@ -91,6 +96,12 @@ class PublicPageLink {
   static Future<bool> open(String raw) async {
     final uri = parse(raw);
     if (uri == null) return false;
+    if (!isGhostEcosHost(uri.host)) {
+      final confirmed = await _confirmExternalOpen(uri);
+      if (confirmed == null) return false;
+      // A deliberate cancellation is a handled action, not a launch failure.
+      if (!confirmed) return true;
+    }
     try {
       return await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (_) {
@@ -105,5 +116,31 @@ class PublicPageLink {
     } catch (_) {
       return false;
     }
+  }
+
+  static Future<bool?> _confirmExternalOpen(Uri uri) async {
+    final context = appNavigatorKey.currentContext;
+    if (context == null || !context.mounted) return null;
+    return await showDialog<bool>(
+          context: context,
+          useRootNavigator: true,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Открыть внешнюю ссылку?'),
+            content: Text(
+              'Ссылка ведёт на ${uri.host}. GhostChat откроет её во внешнем приложении или браузере.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Отмена'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Открыть'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
   }
 }

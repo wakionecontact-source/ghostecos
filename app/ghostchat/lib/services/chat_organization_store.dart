@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/local/app_logger.dart';
 import 'app_security_store.dart';
 
 /// Account-local organization for the unified chat list.
@@ -106,7 +107,9 @@ class ChatOrganizationTemplate {
 }
 
 class ChatOrganizationStore {
-  ChatOrganizationStore._();
+  ChatOrganizationStore._() {
+    AppSecurityStore.instance.revision.addListener(_onSecurityChanged);
+  }
   static final ChatOrganizationStore instance = ChatOrganizationStore._();
 
   final ValueNotifier<int> revision = ValueNotifier(0);
@@ -125,18 +128,93 @@ class ChatOrganizationStore {
   String archiveAnchor = 'archived_at';
   String archiveDeleteMode = 'local';
 
-  List<ChatOrganizationFolder> get folders => List.unmodifiable(_folders);
-  List<ChatOrganizationFolder> get visibleFolders => _folders
-      .where(
-        (folder) => AppSecurityStore.instance.canSeeSecureFolder(
-          folder.securityScenarioId,
-        ),
-      )
-      .toList(growable: false);
+  List<ChatOrganizationFolder> get folders => visibleFolders;
+  List<ChatOrganizationFolder> get visibleFolders =>
+      _folders.where(_canSeeFolder).toList(growable: false);
+  Set<String> get secureChatIds => _folders
+      .where((folder) => _securityScopesForFolder(folder).isNotEmpty)
+      .expand((folder) => folder.chatIds)
+      .toSet();
   Set<String> get archived => Set.unmodifiable(_archived);
   Set<String> get mainHidden => Set.unmodifiable(_mainHidden);
   ChatOrganizationTemplate? templateFor(String folderId) =>
-      _templates[folderId];
+      visibleFolders.any((folder) => folder.id == folderId)
+      ? _templates[folderId]
+      : null;
+
+  ChatOrganizationFolder? _folderById(String? id) {
+    if (id == null) return null;
+    for (final folder in _folders) {
+      if (folder.id == id) return folder;
+    }
+    return null;
+  }
+
+  Set<String> _securityScopesForFolder(ChatOrganizationFolder folder) {
+    final scopes = <String>{};
+    final visited = <String>{};
+    ChatOrganizationFolder? current = folder;
+    while (current != null) {
+      if (!visited.add(current.id)) {
+        scopes.add('\u0000invalid_folder_cycle');
+        break;
+      }
+      final scenarioId = current.securityScenarioId;
+      if (scenarioId != null) scopes.add(scenarioId);
+      final parentId = current.parentId;
+      if (parentId == null) {
+        current = null;
+      } else {
+        current = _folderById(parentId);
+        if (current == null) scopes.add('\u0000missing_folder_parent');
+      }
+    }
+    return scopes;
+  }
+
+  bool _canSeeFolder(ChatOrganizationFolder folder) => _securityScopesForFolder(
+    folder,
+  ).every(AppSecurityStore.instance.canSeeSecureFolder);
+
+  bool canSeeChatInActiveScenario(String chatId) {
+    final key = chatId.trim().toLowerCase();
+    final secureFolders = _folders.where((folder) {
+      return _securityScopesForFolder(folder).isNotEmpty &&
+          folder.chatIds.any((id) => id.trim().toLowerCase() == key);
+    });
+    return secureFolders.isEmpty || secureFolders.any(_canSeeFolder);
+  }
+
+  bool isChatProtected(String chatId) {
+    final key = chatId.trim().toLowerCase();
+    return _folders.any(
+      (folder) =>
+          _securityScopesForFolder(folder).isNotEmpty &&
+          folder.chatIds.any((id) => id.trim().toLowerCase() == key),
+    );
+  }
+
+  void _onSecurityChanged() {
+    final selected = activeFolder.value;
+    if (selected != 'main' &&
+        selected != 'archive' &&
+        !visibleFolders.any((folder) => folder.id == selected)) {
+      activeFolder.value = 'main';
+    }
+    _refreshLogPrivacy();
+    revision.value++;
+  }
+
+  void _refreshLogPrivacy() {
+    final hiddenChatIds = <String>{};
+    for (final folder in _folders) {
+      if (_securityScopesForFolder(folder).isEmpty) continue;
+      for (final chatId in folder.chatIds) {
+        if (!canSeeChatInActiveScenario(chatId)) hiddenChatIds.add(chatId);
+      }
+    }
+    appLog.sensitiveValues = hiddenChatIds;
+  }
 
   Future<void> load({String? account}) async {
     final normalized = (account ?? 'guest').trim().toLowerCase();
@@ -251,11 +329,12 @@ class ChatOrganizationStore {
           final selected = json['active_folder']?.toString();
           if (selected == 'main' ||
               selected == 'archive' ||
-              _folders.any((folder) => folder.id == selected)) {
+              visibleFolders.any((folder) => folder.id == selected)) {
             activeFolder.value = selected!;
           }
         }
       }
+      _refreshLogPrivacy();
       revision.value++;
     } catch (_) {
       // Optional local organization data must never block the chat list.
@@ -267,10 +346,12 @@ class ChatOrganizationStore {
   bool isMainHidden(String chatId) => _mainHidden.contains(chatId);
 
   bool hasCustomFolder(String chatId) =>
-      _folders.any((folder) => folder.chatIds.contains(chatId));
+      visibleFolders.any((folder) => folder.chatIds.contains(chatId));
 
   List<ChatOrganizationHistoryEntry> historyFor(String folderId) =>
-      List.unmodifiable(_history[folderId] ?? const []);
+      visibleFolders.any((folder) => folder.id == folderId)
+      ? List.unmodifiable(_history[folderId] ?? const [])
+      : const [];
 
   bool matchesTemplate(String folderId, String chatId, {bool isBot = false}) {
     final template = _templates[folderId];
@@ -288,7 +369,7 @@ class ChatOrganizationStore {
     return 'dm';
   }
 
-  bool contains(String folderId, String chatId) => _folders
+  bool contains(String folderId, String chatId) => visibleFolders
       .where((folder) => folder.id == folderId)
       .any((folder) => folder.chatIds.contains(chatId));
 
@@ -311,9 +392,30 @@ class ChatOrganizationStore {
     final normalized = name.trim();
     if (normalized.isEmpty || _folders.length >= 50) return null;
     if (_depth(parentId) >= 5) return null;
-    if (securityScenarioId != null &&
-        !AppSecurityStore.instance.isInSafeMode &&
-        AppSecurityStore.instance.scenarioById(securityScenarioId) == null) {
+    final parent = _folderById(parentId);
+    if (parentId != null && (parent == null || !_canSeeFolder(parent))) {
+      return null;
+    }
+    final activeScenarioId = AppSecurityStore.instance.activeScenarioId;
+    if (activeScenarioId == null && securityScenarioId != null) return null;
+    if (activeScenarioId != null &&
+        securityScenarioId != null &&
+        securityScenarioId != activeScenarioId) {
+      return null;
+    }
+    var assignedScenarioId = activeScenarioId ?? securityScenarioId;
+    if (parent != null) {
+      final parentScopes = _securityScopesForFolder(parent);
+      if (parentScopes.isNotEmpty) {
+        if (securityScenarioId != null &&
+            !parentScopes.contains(securityScenarioId)) {
+          return null;
+        }
+        assignedScenarioId = parent.securityScenarioId ?? parentScopes.first;
+      }
+    }
+    if (assignedScenarioId != null &&
+        AppSecurityStore.instance.scenarioById(assignedScenarioId) == null) {
       return null;
     }
     final id = 'folder_${DateTime.now().microsecondsSinceEpoch}';
@@ -322,7 +424,7 @@ class ChatOrganizationStore {
         id: id,
         name: normalized,
         parentId: parentId,
-        securityScenarioId: securityScenarioId,
+        securityScenarioId: assignedScenarioId,
       ),
     );
     revision.value++;
@@ -398,12 +500,16 @@ class ChatOrganizationStore {
     await _save();
   }
 
-  Future<List<String>> expireArchived({int? nowSeconds}) async {
+  Future<List<String>> expireArchived({
+    int? nowSeconds,
+    bool Function(String chatId)? canExpire,
+  }) async {
     if (!archiveAutoDelete || archiveRetentionDays == null) return const [];
     final now = nowSeconds ?? DateTime.now().millisecondsSinceEpoch ~/ 1000;
     final threshold = now - archiveRetentionDays! * 24 * 60 * 60;
     final expired = _archived
         .where((chatId) {
+          if (canExpire != null && !canExpire(chatId)) return false;
           final anchor = archiveAnchor == 'activity'
               ? (_activityAt[chatId] ?? _archivedAt[chatId])
               : _archivedAt[chatId];
@@ -434,6 +540,7 @@ class ChatOrganizationStore {
     final index = _folders.indexWhere((folder) => folder.id == folderId);
     if (index < 0) return;
     final folder = _folders[index];
+    if (!_canSeeFolder(folder)) return;
     final ids = {..._folders[index].chatIds};
     if (value) {
       ids.add(chatId);
@@ -442,13 +549,14 @@ class ChatOrganizationStore {
       if (ids.isEmpty && isMainHidden(chatId)) return;
     }
     _folders[index] = _folders[index].copyWith(chatIds: ids);
-    if (value && folder.isSecure) {
+    final folderIsSecure = _securityScopesForFolder(folder).isNotEmpty;
+    if (value && folderIsSecure) {
       _mainHidden.add(chatId);
-    } else if (!value && folder.isSecure) {
+    } else if (!value && folderIsSecure) {
       final remainsSecure = _folders.any(
         (item) =>
             item.id != folderId &&
-            item.isSecure &&
+            _securityScopesForFolder(item).isNotEmpty &&
             item.chatIds.contains(chatId),
       );
       if (!remainsSecure) _mainHidden.remove(chatId);
@@ -465,11 +573,19 @@ class ChatOrganizationStore {
     final removed = _folders
         .where(
           (folder) =>
-              folder.securityScenarioId != null &&
-              scenarioIds.contains(folder.securityScenarioId),
+              _securityScopesForFolder(folder).any(scenarioIds.contains),
         )
         .map((folder) => folder.id)
         .toSet();
+    var changed = true;
+    while (changed) {
+      changed = false;
+      for (final folder in _folders) {
+        if (folder.parentId != null && removed.contains(folder.parentId)) {
+          changed = removed.add(folder.id) || changed;
+        }
+      }
+    }
     if (removed.isEmpty) return;
     final affectedChats = _folders
         .where((folder) => removed.contains(folder.id))
@@ -478,7 +594,9 @@ class ChatOrganizationStore {
     _folders.removeWhere((folder) => removed.contains(folder.id));
     for (final chatId in affectedChats) {
       final remainsSecure = _folders.any(
-        (folder) => folder.isSecure && folder.chatIds.contains(chatId),
+        (folder) =>
+            _securityScopesForFolder(folder).isNotEmpty &&
+            folder.chatIds.contains(chatId),
       );
       if (!remainsSecure) _mainHidden.remove(chatId);
     }
@@ -569,6 +687,7 @@ class ChatOrganizationStore {
   }
 
   Future<void> _save() async {
+    _refreshLogPrivacy();
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(

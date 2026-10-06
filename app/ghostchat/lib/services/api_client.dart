@@ -11,6 +11,7 @@
 import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
+import '../core/app_version.dart';
 import '../theme.dart';
 import 'auth_service.dart';
 import 'bot_check_service.dart';
@@ -86,6 +87,8 @@ class ApiClient {
       InterceptorsWrapper(
         onRequest: (opts, handler) async {
           appLog.debug('api', '${opts.method} ${service}${opts.path}');
+          opts.headers[GhostChatAppVersion.headerName] =
+              await GhostChatAppVersion.current();
           final token = await AuthService.token();
           if (token != null && token.isNotEmpty) {
             opts.headers['Authorization'] = 'Bearer $token';
@@ -203,6 +206,15 @@ class ApiClient {
         connectTimeout: const Duration(seconds: 8),
         receiveTimeout: const Duration(seconds: 8),
         validateStatus: (status) => status != null && status < 500,
+      ),
+    );
+    client.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) async {
+          options.headers[GhostChatAppVersion.headerName] =
+              await GhostChatAppVersion.current();
+          handler.next(options);
+        },
       ),
     );
     _applyProxy(client);

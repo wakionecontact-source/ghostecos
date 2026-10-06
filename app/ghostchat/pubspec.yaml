@@ -50,6 +50,8 @@ dependencies:
   # ─── Голосовые ───
   record: ^6.1.1                   # запись аудио, новая версия чтоб обойти record_linux баг
   flutter_webrtc: ^1.6.1           # P2P аудио/видео звонки через серверную сигнализацию
+  flutter_background: ^1.3.1       # отдельный Android mediaProjection FGS для показа экрана
+  local_auth: ^3.0.2               # вход по биометрии устройства (по желанию)
   audioplayers: ^6.1.0             # воспроизведение
   audio_service: ^0.18.19          # системный проигрыватель и уведомление
   # ─── Attach (картинки/видео) ───
@@ -123,6 +125,7 @@ flutter:
   shaders:
     - shaders/liquid_glass.frag
   assets:
+    - shorebird.yaml
     - assets/icon.ico
     - assets/icon.png
     - assets/app_avatars/

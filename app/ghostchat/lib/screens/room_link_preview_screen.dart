@@ -8,6 +8,7 @@ import '../theme.dart';
 import '../widgets/avatar.dart';
 import '../widgets/emoji_text.dart';
 import '../widgets/glass.dart';
+import '../widgets/profile_banner.dart';
 import 'rooms_screen.dart';
 
 /// A validated GhostChat room link. Keeping this parser separate from the
@@ -106,10 +107,19 @@ class _RoomLinkPreviewScreenState extends State<RoomLinkPreviewScreen> {
       return;
     }
 
+    String? password;
+    if (!preview.requestJoin && preview.room.joinMode == 'password') {
+      password = await _askRoomPassword();
+      if (password == null || !mounted) return;
+    }
+
     setState(() => _actionBusy = true);
     try {
       if (widget.target.isInvite) {
-        final result = await _service.redeemInvite(widget.target.token!);
+        final result = await _service.redeemInvite(
+          widget.target.token!,
+          password: password,
+        );
         final status = result['status']?.toString();
         if (status == 'requested') {
           _showMessage('Заявка отправлена владельцу');
@@ -117,7 +127,10 @@ class _RoomLinkPreviewScreenState extends State<RoomLinkPreviewScreen> {
           await _openRoom(RoomSummary.fromMap(result));
         }
       } else {
-        final result = await _service.requestJoin(preview.room);
+        final result = await _service.requestJoin(
+          preview.room,
+          password: password,
+        );
         if (result['status']?.toString() == 'requested') {
           _showMessage('Заявка отправлена владельцу');
         } else {
@@ -129,6 +142,41 @@ class _RoomLinkPreviewScreenState extends State<RoomLinkPreviewScreen> {
       if (mounted) _showMessage('Не удалось выполнить действие: $error');
     } finally {
       if (mounted) setState(() => _actionBusy = false);
+    }
+  }
+
+  Future<String?> _askRoomPassword() async {
+    final controller = TextEditingController();
+    try {
+      return await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: GE.bgDeep,
+          title: const Text('Пароль комнаты'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            obscureText: true,
+            enableSuggestions: false,
+            autocorrect: false,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (value) => Navigator.pop(dialogContext, value),
+            decoration: const InputDecoration(labelText: 'Введите пароль'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, controller.text),
+              child: const Text('Продолжить'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      controller.dispose();
     }
   }
 
@@ -190,43 +238,127 @@ class _RoomLinkPreviewScreenState extends State<RoomLinkPreviewScreen> {
     final access = room.isPublic ? 'Публичная' : 'Приватная';
     final actionLabel = preview.isMember
         ? 'Перейти'
+        : preview.requestJoin
+        ? 'Подать заявку'
+        : room.joinMode == 'password'
+        ? 'Ввести пароль'
         : widget.target.isInvite
         ? 'Принять приглашение'
         : 'Вступить';
+    bool canShow(String field) =>
+        room.isPublic || room.previewFields.contains(field);
 
     return SafeArea(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
         children: [
+          if (room.boardText.trim().isNotEmpty) ...[
+            GlassCard(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Доска комнаты',
+                    style: TextStyle(
+                      color: GE.text,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    room.boardText,
+                    style: TextStyle(color: GE.text, height: 1.4),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          for (final pin in preview.pinnedMessages) ...[
+            GlassCard(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        CupertinoIcons.pin_fill,
+                        color: GE.primary,
+                        size: 17,
+                      ),
+                      const SizedBox(width: 7),
+                      Text(
+                        'Закреплённое сообщение',
+                        style: TextStyle(
+                          color: GE.text,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (pin.senderDisplayName.isNotEmpty ||
+                      pin.senderUsername.isNotEmpty) ...[
+                    const SizedBox(height: 5),
+                    Text(
+                      pin.senderDisplayName.isNotEmpty
+                          ? pin.senderDisplayName
+                          : '@${pin.senderUsername}',
+                      style: TextStyle(color: GE.sub, fontSize: 12),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  Text(
+                    pin.text.trim().isEmpty
+                        ? 'Вложение или сообщение без текста'
+                        : pin.text,
+                    style: TextStyle(color: GE.text, height: 1.4),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           GlassCard(
             padding: const EdgeInsets.fromLTRB(18, 22, 18, 18),
             child: Column(
               children: [
-                GhostAvatar(
-                  avatarUrl: room.avatarUrl,
-                  fallbackText: fallback,
-                  fallbackIcon: room.isChannel
-                      ? CupertinoIcons.antenna_radiowaves_left_right
-                      : CupertinoIcons.person_3_fill,
-                  size: 92,
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  room.title,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: GE.text,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
+                ProfileBannerHeader(
+                  banner: canShow('banner') ? room.banner : null,
+                  avatar: GhostAvatar(
+                    avatarUrl: canShow('avatar') ? room.avatarUrl : null,
+                    fallbackText: fallback,
+                    fallbackIcon: room.isChannel
+                        ? CupertinoIcons.antenna_radiowaves_left_right
+                        : CupertinoIcons.person_3_fill,
+                    size: 92,
+                  ),
+                  avatarSize: 92,
+                  bannerHeight: 82,
+                  identity: Column(
+                    children: [
+                      Text(
+                        room.title,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: GE.text,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      if (canShow('username') &&
+                          room.username?.isNotEmpty == true) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          '@${room.username}',
+                          style: TextStyle(color: GE.primary, fontSize: 13),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
-                if (room.username?.isNotEmpty == true) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    '@${room.username}',
-                    style: TextStyle(color: GE.primary, fontSize: 13),
-                  ),
-                ],
                 const SizedBox(height: 12),
                 Wrap(
                   alignment: WrapAlignment.center,
@@ -240,13 +372,14 @@ class _RoomLinkPreviewScreenState extends State<RoomLinkPreviewScreen> {
                           : CupertinoIcons.lock,
                       label: access,
                     ),
-                    _InfoChip(
-                      icon: CupertinoIcons.person_3,
-                      label: '${room.membersCount}',
-                    ),
+                    if (canShow('members_count'))
+                      _InfoChip(
+                        icon: CupertinoIcons.person_3,
+                        label: '${room.membersCount}',
+                      ),
                   ],
                 ),
-                if (room.about.trim().isNotEmpty) ...[
+                if (canShow('about') && room.about.trim().isNotEmpty) ...[
                   const SizedBox(height: 15),
                   Text(
                     room.about,
@@ -257,6 +390,30 @@ class _RoomLinkPreviewScreenState extends State<RoomLinkPreviewScreen> {
               ],
             ),
           ),
+          if (canShow('rules') && room.rules.trim().isNotEmpty) ...[
+            const SizedBox(height: 12),
+            GlassCard(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Правила комнаты',
+                    style: TextStyle(
+                      color: GE.text,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    room.rules,
+                    style: TextStyle(color: GE.text, height: 1.4),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           Row(
             children: [
@@ -309,7 +466,7 @@ class _RoomLinkPreviewScreenState extends State<RoomLinkPreviewScreen> {
               padding: const EdgeInsets.only(top: 24),
               child: Text(
                 room.isPrivate
-                    ? 'Сообщения появятся после принятия приглашения.'
+                    ? 'Сообщения появятся после вступления в комнату.'
                     : 'В этом канале пока нет сообщений.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: GE.sub),

@@ -16,9 +16,9 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart' show compute, listEquals;
-import 'package:flutter/services.dart' show rootBundle;
 import '../core/local/app_logger.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'ghost_asset_ota.dart';
 
 // ── Тяжёлая крипта (X25519 ECDH + HKDF + AES-256-GCM) в отдельном изоляте ──
 // encryptV2/decryptForMe раньше делали это прямо на UI-изоляте — на каждое
@@ -253,7 +253,12 @@ class CryptoV2 {
   // ── BIP-39 wordlist ─────────────────────────────────────────────
   Future<List<String>> _words() async {
     if (_wl != null) return _wl!;
-    final raw = await rootBundle.loadString('assets/bip39_en.txt');
+    final bytes = await GhostAssetOta.instance.loadAssetData(
+      'assets/bip39_en.txt',
+    );
+    final raw = String.fromCharCodes(
+      bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
+    );
     _wl = raw
         .split('\n')
         .map((w) => w.trim())

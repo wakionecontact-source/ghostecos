@@ -1,7 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
-
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
@@ -13,6 +11,7 @@ import 'crypto_v2.dart';
 import 'db_service.dart';
 import 'ws_client.dart';
 import '../core/local/app_logger.dart';
+import '../core/models/message_button.dart';
 import '../widgets/profile_banner.dart';
 
 const roomDialogPrefix = 'room:';
@@ -37,6 +36,12 @@ class RoomSummary {
   final int? updatedAt;
   final String? avatarUrl;
   final ProfileBannerConfig? banner;
+  final String rules;
+  final String boardText;
+  final Set<String> previewFields;
+  final bool showPinnedPreview;
+  final String joinMode;
+  final bool hasJoinPassword;
   final int? lastMessageId;
   final int? lastMessageAt;
   final String? lastMessageSenderUsername;
@@ -62,6 +67,20 @@ class RoomSummary {
     required this.updatedAt,
     this.avatarUrl,
     this.banner,
+    this.rules = '',
+    this.boardText = '',
+    this.previewFields = const {
+      'about',
+      'avatar',
+      'banner',
+      'history',
+      'members_count',
+      'rules',
+      'username',
+    },
+    this.showPinnedPreview = false,
+    this.joinMode = 'open',
+    this.hasJoinPassword = false,
     this.lastMessageId,
     this.lastMessageAt,
     this.lastMessageSenderUsername,
@@ -97,6 +116,18 @@ class RoomSummary {
         ? 'public'
         : 'private';
     final rawLastMessage = map['last_message'];
+    final rawPreviewFields = map['preview_fields'];
+    final Set<String> previewFields = rawPreviewFields is List
+        ? rawPreviewFields.map((item) => item.toString()).toSet()
+        : const {
+            'about',
+            'avatar',
+            'banner',
+            'history',
+            'members_count',
+            'rules',
+            'username',
+          };
     final lastMessage = rawLastMessage is Map
         ? Map<String, dynamic>.from(rawLastMessage)
         : const <String, dynamic>{};
@@ -138,6 +169,16 @@ class RoomSummary {
       updatedAt: map['updated_at'] == null ? null : asInt(map['updated_at']),
       avatarUrl: map['avatar_url']?.toString(),
       banner: ProfileBannerConfig.fromDynamic(map['banner']),
+      rules: map['rules']?.toString() ?? '',
+      boardText: map['board_text']?.toString() ?? '',
+      previewFields: previewFields,
+      showPinnedPreview:
+          map['show_pinned_preview'] == true ||
+          map['show_pinned_preview'] == 1 ||
+          map['show_pinned_preview']?.toString().toLowerCase() == 'true',
+      joinMode: map['join_mode']?.toString() ?? 'open',
+      hasJoinPassword:
+          map['has_join_password'] == true || map['has_join_password'] == 1,
       lastMessageId: lastMessage['id'] == null
           ? null
           : asInt(lastMessage['id']),
@@ -192,6 +233,7 @@ class RoomMessage {
   final String senderDisplayName;
   final String? senderAvatarUrl;
   final String text;
+  final List<MessageButton> userButtons;
   final Map<String, dynamic>? attachment;
   final String? forwardedFrom;
   final int createdAt;
@@ -200,6 +242,7 @@ class RoomMessage {
   final int readCount;
   final bool pending;
   final bool sendFailed;
+  final bool hidden;
 
   const RoomMessage({
     required this.id,
@@ -208,6 +251,7 @@ class RoomMessage {
     required this.senderAvatarUrl,
     required this.text,
     this.attachment,
+    this.userButtons = const [],
     required this.forwardedFrom,
     required this.createdAt,
     this.fromMe = false,
@@ -215,6 +259,7 @@ class RoomMessage {
     this.readCount = 0,
     this.pending = false,
     this.sendFailed = false,
+    this.hidden = false,
   });
 }
 
@@ -238,6 +283,29 @@ class RoomPinnedMessage {
     required this.pinnedAt,
     required this.notify,
   });
+
+  factory RoomPinnedMessage.fromMap(Map<String, dynamic> map) {
+    var text = '';
+    final payload = map['payload']?.toString();
+    if (payload != null && payload.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(payload);
+        if (decoded is Map && decoded['type'] == 'msg') {
+          text = decoded['text']?.toString() ?? '';
+        }
+      } catch (_) {}
+    }
+    return RoomPinnedMessage(
+      messageId: _roomMapInt(map['message_id']),
+      text: text,
+      senderUsername: map['sender_username']?.toString() ?? '',
+      senderDisplayName: map['sender_display_name']?.toString() ?? '',
+      senderAvatarUrl: map['sender_avatar_url']?.toString(),
+      createdAt: _roomMapInt(map['created_at']),
+      pinnedAt: _roomMapInt(map['pinned_at']),
+      notify: map['notify'] == true || map['notify'] == 1,
+    );
+  }
 }
 
 class RoomDialogMeta {
@@ -286,18 +354,31 @@ class RoomMessagesPage {
   final int nextAfterId;
   final List<int> receivedMessageIds;
   final bool hasMore;
+  final List<RoomButtonRemoval> buttonRemovals;
 
   const RoomMessagesPage({
     required this.messages,
     required this.nextAfterId,
     required this.receivedMessageIds,
     required this.hasMore,
+    this.buttonRemovals = const [],
+  });
+}
+
+class RoomButtonRemoval {
+  final int targetMessageId;
+  final String ownerUsername;
+
+  const RoomButtonRemoval({
+    required this.targetMessageId,
+    required this.ownerUsername,
   });
 }
 
 class RoomPreview {
   final RoomSummary room;
   final List<RoomMessage> messages;
+  final List<RoomPinnedMessage> pinnedMessages;
   final bool isMember;
   final bool requestJoin;
   final String? inviteToken;
@@ -306,6 +387,7 @@ class RoomPreview {
   const RoomPreview({
     required this.room,
     required this.messages,
+    this.pinnedMessages = const [],
     required this.isMember,
     this.requestJoin = false,
     this.inviteToken,
@@ -324,11 +406,13 @@ class RoomPreview {
     for (final raw in rawMessages.whereType<Map>()) {
       final item = Map<String, dynamic>.from(raw);
       var text = '';
+      Map<String, dynamic>? messagePayload;
       final payload = item['payload']?.toString();
       if (payload != null && payload.isNotEmpty) {
         try {
           final decoded = jsonDecode(payload);
           if (decoded is Map && decoded['type'] == 'msg') {
+            messagePayload = Map<String, dynamic>.from(decoded);
             text = decoded['text']?.toString() ?? '';
           }
         } catch (_) {}
@@ -341,14 +425,25 @@ class RoomPreview {
           senderDisplayName: item['sender_display_name']?.toString() ?? '',
           senderAvatarUrl: item['sender_avatar_url']?.toString(),
           text: text,
+          userButtons: MessageButton.parseList(messagePayload?['user_buttons']),
           forwardedFrom: null,
           createdAt: _roomMapInt(item['created_at']),
         ),
       );
     }
+    final rawPins = map['pinned_messages'] is List
+        ? map['pinned_messages'] as List
+        : const [];
+    final pinnedMessages = rawPins
+        .whereType<Map>()
+        .map(
+          (item) => RoomPinnedMessage.fromMap(Map<String, dynamic>.from(item)),
+        )
+        .toList(growable: false);
     return RoomPreview(
       room: room,
       messages: messages,
+      pinnedMessages: pinnedMessages,
       isMember: map['is_member'] == true || map['is_member'] == 1,
       requestJoin: map['request_join'] == true || map['request_join'] == 1,
       inviteToken: map['token']?.toString(),
@@ -564,7 +659,10 @@ class RoomService {
     if (username == null) return const [];
     final rows = await DbService.instance.getRoomMessages(roomDialogKey(room));
     if (_dbInitUser != username) return const [];
-    final messages = rows.map(_roomMessageFromMap).toList(growable: false);
+    final messages = rows
+        .map(_roomMessageFromMap)
+        .where((message) => !message.hidden)
+        .toList(growable: false);
     if (messages.isNotEmpty) _lastMessages[roomDialogKey(room)] = messages.last;
     return messages;
   }
@@ -593,6 +691,7 @@ class RoomService {
     if (_dbInitUser != username) return;
     await _flushPendingRoomDeliveries(room, key, username);
     var cursor = await DbService.instance.lastRoomMessageId(key);
+    var appliedButtonRemoval = false;
     while (_dbInitUser == username) {
       final page = await _loadMessagePage(
         room,
@@ -605,9 +704,20 @@ class RoomService {
         key,
         page.messages.map(_roomMessageToMap).toList(growable: false),
       );
-      if (page.messages.isNotEmpty) {
-        _lastMessages[key] = page.messages.last;
-        for (final message in page.messages) {
+      for (final removal in page.buttonRemovals) {
+        await DbService.instance.clearRoomMessageButtons(
+          roomKey: key,
+          messageId: removal.targetMessageId,
+          senderUsername: removal.ownerUsername,
+        );
+        appliedButtonRemoval = true;
+      }
+      final visibleMessages = page.messages
+          .where((message) => !message.hidden)
+          .toList(growable: false);
+      if (visibleMessages.isNotEmpty) {
+        _lastMessages[key] = visibleMessages.last;
+        for (final message in visibleMessages) {
           _markActivity(room, message.createdAt);
         }
         activityRevision.value++;
@@ -629,6 +739,9 @@ class RoomService {
       }
       if (!page.hasMore || page.nextAfterId <= cursor) break;
       cursor = page.nextAfterId;
+    }
+    if (appliedButtonRemoval && _dbInitUser == username) {
+      await loadCachedMessages(room);
     }
     if (_dbInitUser == username) {
       await _flushPendingRoomDeliveries(room, key, username);
@@ -901,9 +1014,13 @@ class RoomService {
         .toList(growable: false);
   }
 
-  Future<Map<String, dynamic>> requestJoin(RoomSummary room) async {
+  Future<Map<String, dynamic>> requestJoin(
+    RoomSummary room, {
+    String? password,
+  }) async {
     final raw = await _api.chatPost(
       '/v2/rooms/${room.roomType}/${room.id}/request-join',
+      {'password': ?password},
     );
     await loadMy();
     return Map<String, dynamic>.from(raw as Map);
@@ -943,9 +1060,13 @@ class RoomService {
     await _api.chatDelete('/v2/rooms/${room.roomType}/${room.id}/invite-links');
   }
 
-  Future<Map<String, dynamic>> redeemInvite(String token) async {
+  Future<Map<String, dynamic>> redeemInvite(
+    String token, {
+    String? password,
+  }) async {
     final raw = await _api.chatPost('/v2/rooms/invite-links/redeem', {
       'token': token.trim(),
+      'password': ?password,
     });
     await loadMy();
     return Map<String, dynamic>.from(raw as Map);
@@ -958,15 +1079,29 @@ class RoomService {
     String? about,
     String? historyMode,
     String? visibility,
+    String? rules,
+    String? boardText,
+    Set<String>? previewFields,
+    bool? showPinnedPreview,
+    String? joinMode,
+    String? joinPassword,
     Map<String, dynamic>? banner,
     bool clearBanner = false,
   }) async {
+    final normalizedPreviewFields = previewFields?.toList();
+    normalizedPreviewFields?.sort();
     final body = <String, dynamic>{
       if (room.isChannel || room.isGroup) 'username': ?username,
       'title': ?title,
       'about': ?about,
       'history_mode': ?historyMode,
       'visibility': ?visibility,
+      'rules': ?rules,
+      'board_text': ?boardText,
+      'preview_fields': ?normalizedPreviewFields,
+      'show_pinned_preview': ?showPinnedPreview,
+      'join_mode': ?joinMode,
+      'join_password': ?joinPassword,
       'banner': ?banner,
       if (clearBanner) 'banner_clear': true,
     };
@@ -1087,29 +1222,9 @@ class RoomService {
     if (values is! List) return const [];
     return values
         .whereType<Map>()
-        .map((item) {
-          final map = Map<String, dynamic>.from(item);
-          var text = '';
-          final payload = map['payload']?.toString();
-          if (payload != null && payload.isNotEmpty) {
-            try {
-              final decoded = jsonDecode(payload);
-              if (decoded is Map && decoded['type'] == 'msg') {
-                text = decoded['text']?.toString() ?? '';
-              }
-            } catch (_) {}
-          }
-          return RoomPinnedMessage(
-            messageId: _asInt(map['message_id']),
-            text: text,
-            senderUsername: map['sender_username']?.toString() ?? '',
-            senderDisplayName: map['sender_display_name']?.toString() ?? '',
-            senderAvatarUrl: _nonEmpty(map['sender_avatar_url']),
-            createdAt: _asInt(map['created_at']),
-            pinnedAt: _asInt(map['pinned_at']),
-            notify: map['notify'] == true || map['notify'] == 1,
-          );
-        })
+        .map(
+          (item) => RoomPinnedMessage.fromMap(Map<String, dynamic>.from(item)),
+        )
         .toList(growable: false);
   }
 
@@ -1117,10 +1232,12 @@ class RoomService {
     RoomSummary room,
     int messageId, {
     bool notify = true,
+    String? previewText,
   }) async {
     await _api.chatPost('/v2/rooms/${room.roomType}/${room.id}/pins', {
       'message_id': messageId,
       'notify': notify,
+      'preview_text': ?previewText,
     });
   }
 
@@ -1135,7 +1252,11 @@ class RoomService {
     int afterId = 0,
   }) async {
     final username = (await AuthService.username())?.toLowerCase() ?? '';
-    return (await _loadMessagePage(room, username, afterId: afterId)).messages;
+    return (await _loadMessagePage(
+      room,
+      username,
+      afterId: afterId,
+    )).messages.where((message) => !message.hidden).toList(growable: false);
   }
 
   Future<RoomMessagesPage> _loadMessagePage(
@@ -1152,6 +1273,7 @@ class RoomService {
         (Map<String, dynamic>.from(raw as Map)['messages'] as List?) ??
         const [];
     final result = <RoomMessage>[];
+    final buttonRemovals = <RoomButtonRemoval>[];
     final receivedIds = <int>[];
     var nextAfterId = afterId;
     for (final value in values.whereType<Map>()) {
@@ -1180,7 +1302,42 @@ class RoomService {
       if (payload == null) continue;
       try {
         final decoded = jsonDecode(payload);
-        if (decoded is! Map || decoded['type'] != 'msg') continue;
+        if (decoded is! Map) continue;
+        if (decoded['type'] == 'user_buttons_remove') {
+          final owner = decoded['owner_username']
+              ?.toString()
+              .trim()
+              .toLowerCase();
+          final targetId = _asInt(decoded['target_message_id']);
+          if (owner != null &&
+              owner.isNotEmpty &&
+              owner == senderUsername.toLowerCase() &&
+              targetId > 0) {
+            buttonRemovals.add(
+              RoomButtonRemoval(
+                targetMessageId: targetId,
+                ownerUsername: owner,
+              ),
+            );
+          }
+          if (id > 0) {
+            result.add(
+              RoomMessage(
+                id: id,
+                senderUsername: senderUsername,
+                senderDisplayName: map['sender_display_name']?.toString() ?? '',
+                senderAvatarUrl: _nonEmpty(map['sender_avatar_url']),
+                text: '',
+                forwardedFrom: null,
+                createdAt: _asInt(map['created_at']),
+                fromMe: fromMe,
+                hidden: true,
+              ),
+            );
+          }
+          continue;
+        }
+        if (decoded['type'] != 'msg') continue;
         final text = decoded['text']?.toString() ?? '';
         final attachment = decoded['attachment'] is Map
             ? Map<String, dynamic>.from(decoded['attachment'] as Map)
@@ -1196,6 +1353,7 @@ class RoomService {
                 _nonEmpty(map['avatar_url']) ??
                 ChatRepo.instance.getPeerAvatarCached(senderUsername),
             text: text,
+            userButtons: MessageButton.parseList(decoded['user_buttons']),
             attachment: attachment,
             forwardedFrom: decoded['forwarded_from']?.toString(),
             createdAt: _asInt(map['created_at']),
@@ -1217,6 +1375,7 @@ class RoomService {
       final missing = <String>{
         for (final message in result)
           if (message.senderAvatarUrl == null &&
+              !message.hidden &&
               message.senderUsername.trim().isNotEmpty)
             message.senderUsername.trim().toLowerCase(),
       }.take(20).toList();
@@ -1231,7 +1390,7 @@ class RoomService {
       );
       for (var i = 0; i < result.length; i++) {
         final message = result[i];
-        if (message.senderAvatarUrl != null) continue;
+        if (message.hidden || message.senderAvatarUrl != null) continue;
         final avatar = ChatRepo.instance.getPeerAvatarCached(
           message.senderUsername,
         );
@@ -1242,6 +1401,7 @@ class RoomService {
           senderDisplayName: message.senderDisplayName,
           senderAvatarUrl: avatar,
           text: message.text,
+          userButtons: message.userButtons,
           attachment: message.attachment,
           forwardedFrom: message.forwardedFrom,
           createdAt: message.createdAt,
@@ -1250,6 +1410,7 @@ class RoomService {
           readCount: message.readCount,
           pending: message.pending,
           sendFailed: message.sendFailed,
+          hidden: message.hidden,
         );
       }
     }
@@ -1258,6 +1419,7 @@ class RoomService {
       nextAfterId: nextAfterId,
       receivedMessageIds: receivedIds.toSet().toList(growable: false),
       hasMore: values.length >= limit,
+      buttonRemovals: buttonRemovals,
     );
   }
 
@@ -1270,6 +1432,9 @@ class RoomService {
     'attachment_json': message.attachment == null
         ? null
         : jsonEncode(message.attachment),
+    'user_buttons_json': message.userButtons.isEmpty
+        ? null
+        : jsonEncode(MessageButton.encodeList(message.userButtons)),
     'forwarded_from': message.forwardedFrom,
     'created_at': message.createdAt,
     'from_me': message.fromMe ? 1 : 0,
@@ -1278,6 +1443,7 @@ class RoomService {
     'delivered_ack_sent': message.fromMe ? 1 : 0,
     'pending': message.pending ? 1 : 0,
     'send_failed': message.sendFailed ? 1 : 0,
+    'hidden': message.hidden ? 1 : 0,
   };
 
   RoomMessage _roomMessageFromMap(Map<String, Object?> map) => RoomMessage(
@@ -1287,6 +1453,11 @@ class RoomService {
     senderAvatarUrl: _nonEmpty(map['sender_avatar_url']),
     text: map['text']?.toString() ?? '',
     attachment: _decodeAttachment(map['attachment_json']),
+    userButtons: MessageButton.parseList(
+      map['user_buttons_json'] == null
+          ? null
+          : jsonDecode(map['user_buttons_json'] as String),
+    ),
     forwardedFrom: _nonEmpty(map['forwarded_from']),
     createdAt: _asInt(map['created_at']),
     fromMe: _asInt(map['from_me']) == 1,
@@ -1294,6 +1465,7 @@ class RoomService {
     readCount: _asInt(map['read_count']),
     pending: _asInt(map['pending']) == 1,
     sendFailed: _asInt(map['send_failed']) == 1,
+    hidden: _asInt(map['hidden']) == 1,
   );
 
   Future<void> _rememberSentMessage(
@@ -1304,6 +1476,7 @@ class RoomService {
     int? temporaryId,
     String? forwardedFrom,
     Map<String, dynamic>? attachment,
+    List<MessageButton> userButtons = const [],
   }) async {
     final username = await _ensureAccountDatabase();
     final id = _asInt(response['message_id']);
@@ -1319,6 +1492,7 @@ class RoomService {
       senderDisplayName: senderUsername,
       senderAvatarUrl: ChatRepo.instance.getPeerAvatarCached(senderUsername),
       text: text,
+      userButtons: userButtons,
       attachment: attachment,
       forwardedFrom: forwardedFrom,
       createdAt: _asInt(response['created_at']) > 0
@@ -1357,6 +1531,7 @@ class RoomService {
     RoomSummary room,
     String text, {
     String? forwardedFrom,
+    List<MessageButton> userButtons = const [],
   }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty || trimmed.length > 10_000) return;
@@ -1366,12 +1541,17 @@ class RoomService {
     final clientMessageId = const Uuid().v4();
     final temporaryId = -DateTime.now().microsecondsSinceEpoch;
     final createdAt = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final safeButtons = userButtons
+        .where((button) => button.isValid)
+        .take(MessageButton.maxCount)
+        .toList(growable: false);
     final optimistic = RoomMessage(
       id: temporaryId,
       senderUsername: ownUsername,
       senderDisplayName: ownUsername,
       senderAvatarUrl: ChatRepo.instance.getPeerAvatarCached(ownUsername),
       text: trimmed,
+      userButtons: safeButtons,
       forwardedFrom: forwardedFrom,
       createdAt: createdAt,
       fromMe: true,
@@ -1383,6 +1563,8 @@ class RoomService {
       'temporary_id': temporaryId,
       'sender_username': ownUsername,
       'text': trimmed,
+      if (safeButtons.isNotEmpty)
+        'user_buttons': MessageButton.encodeList(safeButtons),
       'sid': DateTime.now().microsecondsSinceEpoch,
       if (forwardedFrom != null && forwardedFrom.isNotEmpty)
         'forwarded_from': forwardedFrom,
@@ -1399,6 +1581,81 @@ class RoomService {
     _markActivity(room, createdAt);
     activityRevision.value++;
     unawaited(_drainRoomOutbox());
+  }
+
+  Future<void> removeMessageButtons(
+    RoomSummary room,
+    RoomMessage message,
+  ) async {
+    if (!message.fromMe || message.userButtons.isEmpty || message.id <= 0) {
+      throw StateError('У этого сообщения нет ваших кнопок');
+    }
+    final owner = (await AuthService.username())?.trim().toLowerCase() ?? '';
+    if (owner.isEmpty || owner != message.senderUsername.toLowerCase()) {
+      throw StateError('Удалить кнопки может только их автор');
+    }
+    final clientMessageId = const Uuid().v4();
+    final payload = jsonEncode({
+      'v': 2,
+      'type': 'user_buttons_remove',
+      'target_message_id': message.id,
+      'owner_username': owner,
+    });
+    late final Map<String, dynamic> request;
+    if (!room.isEncrypted) {
+      request = {'payload': payload, 'client_message_id': clientMessageId};
+    } else {
+      final members = await _loadMembers(room);
+      final usernames = <String>{
+        ...members.map((member) => member['username']?.toString() ?? ''),
+        owner,
+      }..removeWhere((value) => value.isEmpty);
+      final envelopes = <Map<String, dynamic>>[];
+      for (final memberUsername in usernames) {
+        final keys = await ChatRepo.instance.getPeerV2Keys(
+          memberUsername,
+          forceRefresh: true,
+        );
+        final devices = (keys?['devices'] as List?) ?? const [];
+        for (final rawDevice in devices.whereType<Map>()) {
+          final device = Map<String, dynamic>.from(rawDevice);
+          final pub = device['device_pub']?.toString();
+          final deviceId = _asInt(device['device_id']);
+          if (pub == null || pub.isEmpty || deviceId <= 0) continue;
+          try {
+            final envelope = await CryptoV2.instance.encryptV2(
+              Uint8List.fromList(base64.decode(pub)),
+              utf8.encode(payload),
+            );
+            envelopes.add({
+              'target_device_id': deviceId,
+              'target_device_pub': pub,
+              'envelope': envelope,
+            });
+          } on FormatException {
+            // One stale device key must not block every other room member.
+          }
+        }
+      }
+      if (envelopes.isEmpty) {
+        throw StateError('У участников нет доступных V2-ключей');
+      }
+      request = {'envelopes': envelopes, 'client_message_id': clientMessageId};
+    }
+    final response = await _sendRoomPayload(room, request);
+    await DbService.instance.clearRoomMessageButtons(
+      roomKey: roomDialogKey(room),
+      messageId: message.id,
+      senderUsername: owner,
+    );
+    _roomEvents.add(
+      RoomEvent(
+        roomType: room.roomType,
+        roomId: room.id,
+        messageId: _asInt(response['message_id']),
+      ),
+    );
+    await syncRoomMessages(room);
   }
 
   Future<void> sendAttachment(
@@ -1538,6 +1795,7 @@ class RoomService {
             draft['text']?.toString() ?? '',
             senderUsername: username.toLowerCase(),
             forwardedFrom: draft['forwarded_from']?.toString(),
+            userButtons: MessageButton.parseList(draft['user_buttons']),
             attachment: draft['attachment'] is Map
                 ? Map<String, dynamic>.from(draft['attachment'] as Map)
                 : null,
@@ -1564,11 +1822,13 @@ class RoomService {
                 senderDisplayName: current.senderDisplayName,
                 senderAvatarUrl: current.senderAvatarUrl,
                 text: current.text,
+                userButtons: current.userButtons,
                 attachment: current.attachment,
                 forwardedFrom: current.forwardedFrom,
                 createdAt: current.createdAt,
                 fromMe: true,
                 sendFailed: true,
+                hidden: current.hidden,
               );
             }
             activityRevision.value++;
@@ -1643,6 +1903,11 @@ class RoomService {
         'attachment': Map<String, dynamic>.from(draft['attachment'] as Map),
       if (draft['forwarded_from'] != null)
         'forwarded_from': draft['forwarded_from'],
+      if (draft['user_buttons'] is List &&
+          (draft['user_buttons'] as List).isNotEmpty)
+        'user_buttons': MessageButton.encodeList(
+          MessageButton.parseList(draft['user_buttons']),
+        ),
     });
     late final Map<String, dynamic> request;
     if (!room.isEncrypted) {

@@ -1,18 +1,21 @@
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' show ImageFilter;
 import 'package:file_selector/file_selector.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
+import '../core/models/message_button.dart';
 
 import '../mesh_background.dart';
 import '../services/auth_service.dart';
 import '../services/chat_repo.dart';
+import '../services/chat_organization_store.dart';
 import '../services/performance_service.dart';
+import '../services/public_page_link.dart';
 import '../services/room_service.dart';
 import '../theme.dart';
 import '../widgets/avatar.dart';
@@ -22,6 +25,8 @@ import '../widgets/emoji_text.dart';
 import '../widgets/empty_chat_state.dart';
 import '../widgets/glass.dart';
 import '../widgets/marquee_text.dart';
+import '../widgets/message_button_editor.dart';
+import '../widgets/user_message_buttons.dart';
 import 'room_profile_screen.dart';
 
 class RoomsScreen extends StatefulWidget {
@@ -945,6 +950,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
   StreamSubscription<RoomEvent>? _roomEventSub;
   List<RoomMessage> _messages = const [];
   List<RoomPinnedMessage> _pinnedMessages = const [];
+  List<MessageButton> _draftButtons = const [];
   Set<int> _pinnedIds = const {};
   final Set<int> _readReceiptSent = {};
   String? _me;
@@ -1054,7 +1060,8 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
             final next = entry.value;
             return old.id != next.id ||
                 old.pending != next.pending ||
-                old.sendFailed != next.sendFailed;
+                old.sendFailed != next.sendFailed ||
+                !listEquals(old.userButtons, next.userButtons);
           });
       setState(() {
         if (changed) _messages = cached;
@@ -1188,15 +1195,59 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
     if (_readOnly || _sending) return;
     final text = _composer.text.trim();
     if (text.isEmpty) return;
+    final buttons = List<MessageButton>.unmodifiable(_draftButtons);
     setState(() => _sending = true);
     try {
-      await _service.sendText(_room, text);
+      await _service.sendText(_room, text, userButtons: buttons);
       _composer.clear();
+      if (mounted) setState(() => _draftButtons = const []);
       await _refresh();
     } catch (error) {
       if (mounted) setState(() => _error = error.toString());
     } finally {
       if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  Future<void> _addMessageButton() async {
+    if (_readOnly || _sending) return;
+    if (_draftButtons.length >= MessageButton.maxCount) {
+      _message(
+        'К сообщению можно добавить не более ${MessageButton.maxCount} кнопок',
+      );
+      return;
+    }
+    final button = await showAddMessageButtonDialog(context);
+    if (!mounted || button == null) return;
+    setState(() => _draftButtons = [..._draftButtons, button]);
+  }
+
+  Future<void> _tapMessageButton(MessageButton button) async {
+    if (button.kind == MessageButtonKind.text) {
+      if (_readOnly) {
+        _message('В этом канале нельзя отправлять сообщения');
+        return;
+      }
+      try {
+        await _service.sendText(_room, button.label);
+      } catch (error) {
+        if (mounted) _message('Не удалось отправить текст кнопки: $error');
+      }
+      return;
+    }
+    final url = button.url;
+    if (url != null) await PublicPageLink.open(url);
+  }
+
+  Future<void> _removeMessageButtons(RoomMessage message) async {
+    try {
+      await _service.removeMessageButtons(_room, message);
+      if (mounted) {
+        _message('Кнопки удалены');
+        await _refresh();
+      }
+    } catch (error) {
+      if (mounted) _message('Не удалось удалить кнопки: $error');
     }
   }
 
@@ -1338,9 +1389,13 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
   }
 
   Future<RoomForwardTarget?> _showForwardPicker() async {
+    final organization = ChatOrganizationStore.instance;
     final dialogs = ChatRepo.instance.dialogsNotifier.value
         .where((d) => d.username != roomDialogKey(_room))
         .where((d) => !d.username.startsWith('g:'))
+        .where(
+          (dialog) => organization.canSeeChatInActiveScenario(dialog.username),
+        )
         .toList();
     var rooms = RoomService.instance.rooms.value;
     if (rooms.isEmpty) {
@@ -1351,6 +1406,10 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
     if (!mounted) return null;
     rooms = rooms
         .where((room) => roomDialogKey(room) != roomDialogKey(_room))
+        .where(
+          (room) =>
+              organization.canSeeChatInActiveScenario(roomDialogKey(room)),
+        )
         .toList(growable: false);
     return showModalBottomSheet<RoomForwardTarget>(
       context: context,
@@ -1494,6 +1553,8 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
             prevSame: prevSame,
             showAuthor: true,
             showAvatar: _room.isGroup,
+            onTextButtonTap: _tapMessageButton,
+            onLinkButtonTap: (url) async => PublicPageLink.open(url),
           ),
         );
       },
@@ -1521,6 +1582,15 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
                   title: const Text('Переслать'),
                   onTap: () => Navigator.pop(context, 'forward'),
                 ),
+                if (message.fromMe &&
+                    message.userButtons.isNotEmpty &&
+                    !message.pending &&
+                    message.id > 0)
+                  ListTile(
+                    leading: const Icon(CupertinoIcons.xmark_circle),
+                    title: const Text('Удалить кнопки'),
+                    onTap: () => Navigator.pop(context, 'remove_buttons'),
+                  ),
                 if (_room.canManage) ...[
                   ListTile(
                     leading: Icon(
@@ -1551,6 +1621,10 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
       await _forwardMessage(message);
       return;
     }
+    if (action == 'remove_buttons') {
+      await _removeMessageButtons(message);
+      return;
+    }
     try {
       if (action == 'unpin') {
         await _service.unpinMessage(_room, message.id);
@@ -1574,7 +1648,18 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
           ),
         );
         if (notify == null) return;
-        await _service.pinMessage(_room, message.id, notify: notify);
+        await _service.pinMessage(
+          _room,
+          message.id,
+          notify: notify,
+          previewText: _room.isPrivate && _room.showPinnedPreview
+              ? (message.text.trim().isNotEmpty
+                    ? message.text
+                    : message.attachment != null
+                    ? 'Вложение'
+                    : null)
+              : null,
+        );
       }
       await _loadPins();
       if (mounted) {
@@ -1689,6 +1774,13 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
                       ? 'Только чтение — публикуют админы'
                       : 'Сообщение',
                   onAttach: _openAttachSheet,
+                  onAddButton: _readOnly ? null : _addMessageButton,
+                  draftButtons: _draftButtons,
+                  onRemoveDraftButton: (index) => setState(() {
+                    final updated = List<MessageButton>.from(_draftButtons)
+                      ..removeAt(index);
+                    _draftButtons = updated;
+                  }),
                   onToggleEmoji: _toggleEmoji,
                   onSend: _send,
                   onFieldTap: () {
@@ -1828,6 +1920,8 @@ class _RoomMessageBubble extends StatelessWidget {
   final bool prevSame;
   final bool showAuthor;
   final bool showAvatar;
+  final Future<void> Function(MessageButton button)? onTextButtonTap;
+  final Future<void> Function(String url)? onLinkButtonTap;
 
   const _RoomMessageBubble({
     required this.message,
@@ -1836,6 +1930,8 @@ class _RoomMessageBubble extends StatelessWidget {
     required this.prevSame,
     required this.showAuthor,
     required this.showAvatar,
+    this.onTextButtonTap,
+    this.onLinkButtonTap,
   });
 
   @override
@@ -1897,6 +1993,13 @@ class _RoomMessageBubble extends StatelessWidget {
           EmojiText(
             message.text,
             style: TextStyle(color: textColor, fontSize: 15, height: 1.35),
+          ),
+        if (message.userButtons.isNotEmpty)
+          UserMessageButtons(
+            buttons: message.userButtons,
+            foregroundColor: textColor,
+            onTextTap: onTextButtonTap,
+            onLinkTap: onLinkButtonTap,
           ),
         const SizedBox(height: 2),
         Align(

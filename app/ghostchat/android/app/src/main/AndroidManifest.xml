@@ -24,6 +24,8 @@
     <!-- Микрофон для записи голосовых (запросится только когда юзер нажмёт) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
     <!-- Галерея (грид в меню скрепки, photo_manager). Android 13+ — гранулярные. -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
@@ -370,6 +372,22 @@
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="dataSync"
             android:exported="false" />
+        <!-- Separate, short-lived service used only while the user shares the screen. -->
+        <service
+            android:name="de.julianassmann.flutter_background.IsolateHolderService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection"
+            tools:replace="android:foregroundServiceType" />
+        <!-- DownloadManager survives the Flutter process and notifies us when
+             its one-use APK download ticket completes. -->
+        <receiver
+            android:name=".UpdateDownloadReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
+            </intent-filter>
+        </receiver>
         <!-- BootReceiver used to start the plugin before Flutter/auth was
              ready. Session startup owns the service now; keep boot inert even
              when an older installed version persisted autoRunOnBoot=true. -->
@@ -377,6 +395,11 @@
             android:name="com.pravera.flutter_foreground_task.service.RebootReceiver"
             android:enabled="false"
             tools:node="replace" />
+        <activity
+            android:name=".UpdateInstallerActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <service
             android:name="com.ryanheise.audioservice.AudioService"
             android:foregroundServiceType="mediaPlayback"

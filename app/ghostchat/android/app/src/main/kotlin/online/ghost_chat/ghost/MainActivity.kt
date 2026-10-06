@@ -14,12 +14,12 @@ import android.os.Looper
 import android.os.PowerManager
 import java.io.ByteArrayOutputStream
 import java.io.IOException
-import com.ryanheise.audioservice.AudioServiceActivity
+import com.ryanheise.audioservice.AudioServiceFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
-class MainActivity : AudioServiceActivity() {
+class MainActivity : AudioServiceFragmentActivity() {
     private companion object {
         const val PERFORMANCE_CHANNEL = "ghostchat/performance"
         const val LOG_CHANNEL = "ghostchat/logs"
@@ -27,6 +27,7 @@ class MainActivity : AudioServiceActivity() {
         const val SYSTEM_GESTURE_CHANNEL = "ghostchat/system_gesture"
         const val CALL_AUDIO_CHANNEL = "ghostchat/call_audio"
         const val APP_CHANNEL = "ghostchat/app"
+        const val UPDATE_DOWNLOAD_CHANNEL = "ghostchat/update_download"
         const val APP_AVATAR_COUNT = 20
         const val APP_NAMESPACE = "online.ghost_chat.ghost"
         const val SAVE_LOG_REQUEST_CODE = 7401
@@ -44,6 +45,7 @@ class MainActivity : AudioServiceActivity() {
     private var pendingDbOpenResult: MethodChannel.Result? = null
     private var pendingDeepLink: String? = null
     private var deepLinkChannel: MethodChannel? = null
+    private var updateDownloadChannel: MethodChannel? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         pendingDeepLink = intent?.dataString
@@ -77,6 +79,52 @@ class MainActivity : AudioServiceActivity() {
                     }
                     else -> result.notImplemented()
                 }
+            }
+        }
+
+        updateDownloadChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            UPDATE_DOWNLOAD_CHANNEL,
+        )
+        updateDownloadChannel?.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "enqueue" -> {
+                    val url = call.argument<String>("url")
+                    val version = call.argument<String>("version")
+                    if (url.isNullOrBlank() || version.isNullOrBlank()) {
+                        result.error("invalid_request", "Не указана ссылка или версия APK", null)
+                    } else {
+                        try {
+                            result.success(UpdateDownloadSupport.enqueue(this, url, version))
+                        } catch (error: Exception) {
+                            result.error("download_enqueue_failed", error.message, null)
+                        }
+                    }
+                }
+
+                "getState" -> result.success(UpdateDownloadSupport.state(this))
+
+                "openInstaller" -> {
+                    val id = call.argument<Number>("downloadId")?.toLong()
+                    if (id == null || id <= 0) {
+                        result.error("invalid_download", "Некорректная загрузка APK", null)
+                    } else {
+                        try {
+                            UpdateDownloadSupport.openInstaller(this, id)
+                            result.success(null)
+                        } catch (error: Exception) {
+                            result.error("installer_unavailable", error.message, null)
+                        }
+                    }
+                }
+
+                "clear" -> {
+                    val id = call.argument<Number>("downloadId")?.toLong()
+                    UpdateDownloadSupport.clear(this, id)
+                    result.success(null)
+                }
+
+                else -> result.notImplemented()
             }
         }
 

@@ -18,7 +18,9 @@ import 'notification_settings.dart';
 import 'sound_settings.dart';
 import 'network_settings.dart';
 import 'permissions_service.dart';
+import 'chat_organization_store.dart';
 import 'ws_client.dart';
+import 'app_navigator.dart';
 import '../widgets/toast_overlay.dart';
 
 enum NotificationMessageKind { text, photo, video, voice, file }
@@ -59,13 +61,13 @@ class NotificationService {
   static final NotificationService instance = NotificationService._();
 
   /// Глобальный ключ навигатора — чтобы открыть чат по тапу на уведомление.
-  static final GlobalKey<NavigatorState> navigatorKey =
-      GlobalKey<NavigatorState>();
+  static final GlobalKey<NavigatorState> navigatorKey = appNavigatorKey;
 
   /// Set by main.dart to avoid coupling notification plumbing to the update
   /// screen. The callback is also used when Android recreates the app after a
   /// tap on a local update notification.
   static Future<void> Function()? onUpdateNotificationTap;
+  static bool chatNavigationAllowed = false;
 
   /// Чат, открытый ПРЯМО СЕЙЧАС — о нём уведомление не шлём.
   /// Выставляется в ChatScreen.initState, сбрасывается в dispose.
@@ -206,6 +208,7 @@ class NotificationService {
       await androidPlugin?.createNotificationChannel(_mediaChannel);
       await androidPlugin?.createNotificationChannel(_silentChannel);
       _ready = true;
+      clearProtectedNotifications();
       if (!_systemNotificationListenerBound) {
         WsClient.instance.on('system.notification', _onServerNotification);
         _systemNotificationListenerBound = true;
@@ -277,6 +280,10 @@ class NotificationService {
     String? thumbnailBase64,
   }) {
     if (!_ready) return;
+    if (ChatOrganizationStore.instance.isChatProtected(peer)) {
+      clearPeer(peer);
+      return;
+    }
     if (activePeer == peer) return;
     // Настройки → Уведомления (перенесено из 1.19.3) — общий выключатель +
     // "исключения" (замьюченные чаты).
@@ -322,9 +329,13 @@ class NotificationService {
     _peerMessages.remove(peer);
     _peerKinds.remove(peer);
     _peerThumbnails.remove(peer);
-    try {
-      _plugin.cancel(_peerNotifId(peer));
-    } catch (_) {}
+    if (_ready) unawaited(_plugin.cancel(_peerNotifId(peer)));
+  }
+
+  void clearProtectedNotifications() {
+    for (final peer in ChatOrganizationStore.instance.secureChatIds) {
+      clearPeer(peer);
+    }
   }
 
   Future<void> _showGrouped(
@@ -664,7 +675,11 @@ class NotificationService {
         return;
       }
       final peer = data['peer'] as String?;
-      if (peer == null) return;
+      if (peer == null || !chatNavigationAllowed) return;
+      if (ChatOrganizationStore.instance.isChatProtected(peer)) {
+        clearPeer(peer);
+        return;
+      }
       navigatorKey.currentState?.push(
         MaterialPageRoute(
           builder: (_) => ChatScreen(peer: peer, displayName: peer),

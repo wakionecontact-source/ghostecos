@@ -1,0 +1,5 @@
+app_id: ghostchat-android
+base_url: https://ghostecos.duckdns.org
+auto_update: false
+patch_public_key: MIIBCgKCAQEAnYxNMAeJMq16/X5vQdRZ63P0NBkuL+QcudD7vcQyn/95apcARG3RilztFLxRIUAcLoYkZDvaTBUHbFb0cCRDEa38rWS1WGjisnCus+Ku7gG8a7YRZEORDjyEpi+KJXPClGi/Ak3Zmlje9Fl/yOUfIIG5ozYzkIajRircz/QVGdPUx1UGCTPbZ/gTs72zg2kfIXtjlLkn2eDWQ3Ex7BOzDj2g478ihSbHAJaKXz+u1s0WSy8ym/jIITwEdx+31XlbUvM2bUq39lw3t50DIgoGYvME7V+IbIWO2Z2/eSkEnhtl17mHyTHiUZaGHo1Xbj5owGzqLWWoPl8Cgma280bloQIDAQAB
+patch_verification: strict

@@ -13,6 +13,7 @@ import '../mesh_background.dart';
 import '../widgets/glass.dart';
 import '../widgets/toast_overlay.dart';
 import '../core/local/app_logger.dart';
+import '../services/app_security_store.dart';
 
 class LogsScreen extends StatefulWidget {
   final int? focusLogId;
@@ -23,6 +24,7 @@ class LogsScreen extends StatefulWidget {
 }
 
 class _LogsScreenState extends State<LogsScreen> {
+  bool _closingForSafeMode = false;
   final _scrollCtrl = ScrollController();
   final _searchCtrl = TextEditingController();
   StreamSubscription<LogEntry>? _sub;
@@ -95,6 +97,7 @@ class _LogsScreenState extends State<LogsScreen> {
   @override
   void initState() {
     super.initState();
+    AppSecurityStore.instance.revision.addListener(_onSecurityChanged);
     _searchCtrl.addListener(_onSearchChanged);
     _logs = List.of(appLog.entries);
     if (widget.focusLogId != null) _showDebug = true;
@@ -114,8 +117,32 @@ class _LogsScreenState extends State<LogsScreen> {
     }
   }
 
+  void _onSecurityChanged() {
+    if (!mounted || !AppSecurityStore.instance.isInSafeMode) return;
+    _closeForSafeMode();
+  }
+
+  void _closeForSafeMode() {
+    if (_closingForSafeMode) return;
+    _closingForSafeMode = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!AppSecurityStore.instance.isInSafeMode) {
+        _closingForSafeMode = false;
+        return;
+      }
+      final navigator = Navigator.of(context);
+      if (navigator.canPop()) {
+        navigator.pop();
+      } else {
+        _closingForSafeMode = false;
+      }
+    });
+  }
+
   @override
   void dispose() {
+    AppSecurityStore.instance.revision.removeListener(_onSecurityChanged);
     _sub?.cancel();
     _highlightTimer?.cancel();
     _searchCtrl
@@ -419,6 +446,10 @@ class _LogsScreenState extends State<LogsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (AppSecurityStore.instance.isInSafeMode) {
+      _closeForSafeMode();
+      return const SizedBox.shrink();
+    }
     final filtered = _filtered;
     return MeshBackground(
       child: Scaffold(

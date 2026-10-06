@@ -5,8 +5,12 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../mesh_background.dart';
+import '../core/local/app_logger.dart';
 import '../services/app_security_store.dart';
+import '../services/biometric_auth_service.dart';
 import '../services/chat_organization_store.dart';
+import '../services/incoming_call_notification_service.dart';
+import '../services/notification_service.dart';
 import '../theme.dart';
 import '../widgets/glass.dart';
 import '../widgets/ghost_native_dialog.dart';
@@ -26,11 +30,14 @@ class _SecurityGateState extends State<SecurityGate>
     with WidgetsBindingObserver {
   bool _ready = false;
   bool _locked = false;
+  bool _appInBackground = false;
+  Timer? _lockTimer;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    ChatOrganizationStore.instance.revision.addListener(_onOrganizationChanged);
     AppSecurityStore.instance.revision.addListener(_onSecurityChanged);
     unawaited(_load());
   }
@@ -38,57 +45,104 @@ class _SecurityGateState extends State<SecurityGate>
   Future<void> _load() async {
     await AppSecurityStore.instance.load();
     if (!mounted) return;
+    appLog.protectedContext = AppSecurityStore.instance.isInSafeMode;
+    final shouldLock = AppSecurityStore.instance.hasPrimaryCode;
     setState(() {
       _ready = true;
-      _locked = AppSecurityStore.instance.hasPrimaryCode;
+      _locked = shouldLock;
     });
+    NotificationService.chatNavigationAllowed = !shouldLock;
   }
 
   void _onSecurityChanged() {
+    appLog.protectedContext = AppSecurityStore.instance.isInSafeMode;
     if (mounted) setState(() {});
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.hidden ||
-        state == AppLifecycleState.detached) {
-      if (AppSecurityStore.instance.hasPrimaryCode) {
-        unawaited(_leaveSafeMode());
-        if (mounted) setState(() => _locked = true);
-      }
-    }
-  }
-
-  Future<void> _leaveSafeMode() async {
-    final removed = await AppSecurityStore.instance.leaveToNormal();
-    await ChatOrganizationStore.instance.removeFoldersForSecurityScenarios(
-      removed,
+  void _onOrganizationChanged() {
+    NotificationService.instance.clearProtectedNotifications();
+    unawaited(
+      IncomingCallNotificationService.instance.clearIfCallerProtected(),
     );
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _appInBackground = false;
+      _lockTimer?.cancel();
+      _lockTimer = null;
+      return;
+    }
+
+    if (state != AppLifecycleState.paused &&
+        state != AppLifecycleState.hidden &&
+        state != AppLifecycleState.detached) {
+      return;
+    }
+
+    _appInBackground = true;
+    if (!AppSecurityStore.instance.hasPrimaryCode ||
+        _locked ||
+        _lockTimer?.isActive == true) {
+      return;
+    }
+
+    final delay = AppSecurityStore.instance.autoLockDelaySeconds;
+    if (delay == 0) {
+      _lockNow();
+      return;
+    }
+    _lockTimer = Timer(Duration(seconds: delay), () {
+      _lockTimer = null;
+      if (!mounted ||
+          !_appInBackground ||
+          !AppSecurityStore.instance.hasPrimaryCode) {
+        return;
+      }
+      setState(() => _locked = true);
+      NotificationService.chatNavigationAllowed = false;
+    });
+  }
+
+  void _lockNow() {
+    _lockTimer?.cancel();
+    _lockTimer = null;
+    if (mounted) setState(() => _locked = true);
+    NotificationService.chatNavigationAllowed = false;
+  }
+
+  @override
   void dispose() {
+    _lockTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
+    ChatOrganizationStore.instance.revision.removeListener(
+      _onOrganizationChanged,
+    );
     AppSecurityStore.instance.revision.removeListener(_onSecurityChanged);
+    NotificationService.chatNavigationAllowed = false;
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!_ready || !_locked) return widget.child;
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        widget.child,
-        Positioned.fill(
-          child: _SecurityLockOverlay(
-            onUnlocked: () {
-              if (mounted) setState(() => _locked = false);
-            },
-          ),
-        ),
-      ],
+    if (!_ready) {
+      return ColoredBox(
+        color: Colors.black,
+        child: Center(child: CircularProgressIndicator(color: GE.primary)),
+      );
+    }
+    final scenarioId = AppSecurityStore.instance.activeScenarioId;
+    final scopedChild = KeyedSubtree(
+      key: ValueKey<String>('security:${scenarioId ?? 'normal'}'),
+      child: widget.child,
+    );
+    if (!_locked) return scopedChild;
+    return _SecurityLockOverlay(
+      onUnlocked: () {
+        if (mounted) setState(() => _locked = false);
+        NotificationService.chatNavigationAllowed = true;
+      },
     );
   }
 }
@@ -105,7 +159,20 @@ class _SecurityLockOverlay extends StatefulWidget {
 class _SecurityLockOverlayState extends State<_SecurityLockOverlay> {
   final _controller = TextEditingController();
   bool _busy = false;
+  bool _biometricsAvailable = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_refreshBiometricAvailability());
+  }
+
+  Future<void> _refreshBiometricAvailability() async {
+    if (!AppSecurityStore.instance.biometricUnlockEnabled) return;
+    final available = await BiometricAuthService.instance.isAvailable();
+    if (mounted) setState(() => _biometricsAvailable = available);
+  }
 
   @override
   void dispose() {
@@ -131,15 +198,55 @@ class _SecurityLockOverlayState extends State<_SecurityLockOverlay> {
       setState(() => _error = 'Неверный код');
       return;
     }
+    if (result.removedScenarioIds.isNotEmpty) {
+      await ChatOrganizationStore.instance.removeFoldersForSecurityScenarios(
+        result.removedScenarioIds,
+      );
+      if (!mounted) return;
+    }
     widget.onUnlocked();
+  }
+
+  Future<void> _unlockWithBiometrics() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final authenticated = await BiometricAuthService.instance.authenticate();
+      if (!mounted) return;
+      if (!authenticated) {
+        setState(() => _busy = false);
+        return;
+      }
+      final result = await AppSecurityStore.instance.unlockWithBiometrics();
+      if (!mounted) return;
+      if (result.mode == SecurityUnlockMode.wrong) {
+        setState(() {
+          _busy = false;
+          _error = 'Введите код или пароль';
+        });
+        return;
+      }
+      if (result.removedScenarioIds.isNotEmpty) {
+        await ChatOrganizationStore.instance.removeFoldersForSecurityScenarios(
+          result.removedScenarioIds,
+        );
+        if (!mounted) return;
+      }
+      widget.onUnlocked();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = 'Биометрия недоступна. Введите код или пароль';
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final active = AppSecurityStore.instance.activeScenarioId;
-    final activeName = active == null
-        ? null
-        : AppSecurityStore.instance.scenarioById(active)?.name;
     return BackdropFilter(
       filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
       child: Material(
@@ -155,17 +262,13 @@ class _SecurityLockOverlayState extends State<_SecurityLockOverlay> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      activeName == null
-                          ? CupertinoIcons.lock_shield
-                          : CupertinoIcons.eye_slash,
+                      CupertinoIcons.lock_shield,
                       color: GE.primary,
                       size: 42,
                     ),
                     const SizedBox(height: 14),
                     Text(
-                      activeName == null
-                          ? 'Приложение заблокировано'
-                          : 'Безопасная среда',
+                      'Приложение заблокировано',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: GE.text,
@@ -173,16 +276,9 @@ class _SecurityLockOverlayState extends State<_SecurityLockOverlay> {
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    if (activeName != null) ...[
-                      const SizedBox(height: 5),
-                      Text(
-                        activeName,
-                        style: TextStyle(color: GE.primary, fontSize: 13),
-                      ),
-                    ],
                     const SizedBox(height: 8),
                     Text(
-                      'Введите основной код для обычного режима или код безопасной среды.',
+                      'Введите код или пароль.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: GE.sub,
@@ -222,6 +318,17 @@ class _SecurityLockOverlayState extends State<_SecurityLockOverlay> {
                         label: const Text('Открыть'),
                       ),
                     ),
+                    if (_biometricsAvailable) ...[
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _busy ? null : _unlockWithBiometrics,
+                          icon: const Icon(Icons.fingerprint),
+                          label: const Text('Войти по биометрии'),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -241,15 +348,48 @@ class AppSecurityScreen extends StatefulWidget {
 }
 
 class _AppSecurityScreenState extends State<AppSecurityScreen> {
+  bool _closingForSafeMode = false;
+  bool _biometricsAvailable = false;
+
   @override
   void initState() {
     super.initState();
     unawaited(AppSecurityStore.instance.load());
+    unawaited(_refreshBiometricAvailability());
     AppSecurityStore.instance.revision.addListener(_refresh);
   }
 
+  Future<void> _refreshBiometricAvailability() async {
+    await AppSecurityStore.instance.load();
+    final available = await BiometricAuthService.instance.isAvailable();
+    if (mounted) setState(() => _biometricsAvailable = available);
+  }
+
   void _refresh() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    if (AppSecurityStore.instance.isInSafeMode) {
+      _closeForSafeMode();
+      return;
+    }
+    setState(() {});
+  }
+
+  void _closeForSafeMode() {
+    if (_closingForSafeMode) return;
+    _closingForSafeMode = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!AppSecurityStore.instance.isInSafeMode) {
+        _closingForSafeMode = false;
+        return;
+      }
+      final navigator = Navigator.of(context);
+      if (navigator.canPop()) {
+        navigator.pop();
+      } else {
+        _closingForSafeMode = false;
+      }
+    });
   }
 
   @override
@@ -322,6 +462,63 @@ class _AppSecurityScreenState extends State<AppSecurityScreen> {
     }
   }
 
+  Future<void> _setBiometricUnlock(bool enabled) async {
+    if (enabled) {
+      try {
+        final authenticated = await BiometricAuthService.instance
+            .authenticate();
+        if (!authenticated || !mounted) return;
+      } catch (_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не удалось проверить биометрию')),
+        );
+        return;
+      }
+    }
+    await AppSecurityStore.instance.setBiometricUnlockEnabled(enabled);
+  }
+
+  String _autoLockDelayLabel(int seconds) {
+    if (seconds == 0) return 'Сразу';
+    if (seconds < 60) return '$seconds секунд';
+    final minutes = seconds ~/ 60;
+    final suffix = minutes == 1
+        ? 'минута'
+        : minutes < 5
+        ? 'минуты'
+        : 'минут';
+    return '$minutes $suffix';
+  }
+
+  Future<void> _chooseAutoLockDelay() async {
+    final current = AppSecurityStore.instance.autoLockDelaySeconds;
+    final selected = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: GE.bgDeep,
+        title: const Text('Автоблокировка'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final seconds in AppSecurityStore.autoLockDelayOptionsSeconds)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(_autoLockDelayLabel(seconds)),
+                trailing: seconds == current
+                    ? Icon(CupertinoIcons.checkmark, color: GE.primary)
+                    : null,
+                onTap: () => Navigator.pop(dialogContext, seconds),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected != null) {
+      await AppSecurityStore.instance.setAutoLockDelaySeconds(selected);
+    }
+  }
+
   Future<void> _removePrimaryCode() async {
     final confirmed = await showGhostNativeConfirm(
       context: context,
@@ -334,7 +531,16 @@ class _AppSecurityScreenState extends State<AppSecurityScreen> {
   }
 
   Future<void> _createScenario() async {
-    if (!AppSecurityStore.instance.hasPrimaryCode) return;
+    final security = AppSecurityStore.instance;
+    final parentId = security.activeScenarioId;
+    if (!security.canCreateScenario(parentId: parentId)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Достигнута максимальная глубина: 5 уровней'),
+        ),
+      );
+      return;
+    }
     final nameController = TextEditingController();
     try {
       final name = await showDialog<String>(
@@ -367,7 +573,7 @@ class _AppSecurityScreenState extends State<AppSecurityScreen> {
       await AppSecurityStore.instance.createScenario(
         name,
         code,
-        parentId: AppSecurityStore.instance.activeScenarioId,
+        parentId: parentId,
       );
     } finally {
       nameController.dispose();
@@ -384,6 +590,13 @@ class _AppSecurityScreenState extends State<AppSecurityScreen> {
   @override
   Widget build(BuildContext context) {
     final security = AppSecurityStore.instance;
+    if (security.isInSafeMode) {
+      _closeForSafeMode();
+      return const SizedBox.shrink();
+    }
+    final canCreateScenario = security.canCreateScenario(
+      parentId: security.activeScenarioId,
+    );
     return MeshBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
@@ -411,7 +624,7 @@ class _AppSecurityScreenState extends State<AppSecurityScreen> {
                   ),
                   const SizedBox(height: 5),
                   Text(
-                    'Код не отправляется на сервер. После сворачивания приложение снова попросит его.',
+                    'Код не отправляется на сервер. После сворачивания приложение заблокируется через выбранное время.',
                     style: TextStyle(color: GE.sub, fontSize: 12, height: 1.35),
                   ),
                   const SizedBox(height: 14),
@@ -433,6 +646,30 @@ class _AppSecurityScreenState extends State<AppSecurityScreen> {
                         ),
                       ],
                     ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(CupertinoIcons.timer, color: GE.primary),
+                      title: const Text('Автоблокировка'),
+                      subtitle: Text(
+                        _autoLockDelayLabel(security.autoLockDelaySeconds),
+                      ),
+                      trailing: const Icon(CupertinoIcons.chevron_right),
+                      onTap: _chooseAutoLockDelay,
+                    ),
+                    if (_biometricsAvailable)
+                      SwitchListTile.adaptive(
+                        contentPadding: EdgeInsets.zero,
+                        secondary: Icon(
+                          Icons.fingerprint,
+                          color: GE.primary,
+                        ),
+                        title: const Text('Вход по биометрии'),
+                        subtitle: const Text(
+                          'Быстрый вход в обычное пространство. Для безопасных сред используются их отдельные коды.',
+                        ),
+                        value: security.biometricUnlockEnabled,
+                        onChanged: _setBiometricUnlock,
+                      ),
                     TextButton.icon(
                       onPressed: _removePrimaryCode,
                       icon: Icon(CupertinoIcons.trash, color: GE.red),
@@ -496,16 +733,25 @@ class _AppSecurityScreenState extends State<AppSecurityScreen> {
                       ),
                   if (security.hasPrimaryCode)
                     OutlinedButton.icon(
-                      onPressed: _createScenario,
+                      onPressed: canCreateScenario ? _createScenario : null,
                       icon: const Icon(CupertinoIcons.plus),
                       label: const Text('Добавить среду'),
                     ),
+                  if (security.hasPrimaryCode &&
+                      security.isInSafeMode &&
+                      !canCreateScenario) ...[
+                    const SizedBox(height: 5),
+                    Text(
+                      'В этой среде уже достигнута максимальная глубина в 5 уровней.',
+                      style: TextStyle(color: GE.sub, fontSize: 12),
+                    ),
+                  ],
                 ],
               ),
             ),
             const SizedBox(height: 12),
             Text(
-              'Безопасные группы помечаются при создании группы чатов. В обычном режиме они и их содержимое не показываются.',
+              'Группы, созданные внутри безопасной среды, доступны только в ней.',
               textAlign: TextAlign.center,
               style: TextStyle(color: GE.sub, fontSize: 12, height: 1.35),
             ),

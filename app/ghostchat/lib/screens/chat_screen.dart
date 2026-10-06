@@ -38,8 +38,10 @@ import '../mesh_background.dart';
 import '../services/chat_repo.dart';
 import '../services/db_service.dart';
 import '../services/room_service.dart';
+import '../services/chat_organization_store.dart';
 import '../services/search_service.dart';
 import '../services/public_page_link.dart';
+import '../core/models/message_button.dart';
 import '../services/auth_service.dart';
 import '../services/ws_client.dart';
 import '../services/notification_service.dart';
@@ -50,6 +52,8 @@ import '../services/performance_service.dart';
 import '../services/theme_service.dart';
 import '../widgets/attach_sheet.dart';
 import '../widgets/glass.dart';
+import '../widgets/message_button_editor.dart';
+import '../widgets/user_message_buttons.dart';
 import '../widgets/marquee_text.dart';
 import '../widgets/empty_chat_state.dart';
 import '../widgets/video_player_viewer.dart';
@@ -187,6 +191,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   StoredMessage? _replyTo;
   StoredMessage? _editing;
+  List<MessageButton> _draftButtons = const [];
 
   bool _recording = false;
   int _recordStartedAt = 0;
@@ -654,6 +659,45 @@ class _ChatScreenState extends State<ChatScreen>
     await PublicPageLink.open(raw);
   }
 
+  Future<void> _addMessageButton() async {
+    if (_isBot || _editing != null || _sending) return;
+    if (_draftButtons.length >= MessageButton.maxCount) {
+      _snack(
+        'К сообщению можно добавить не более ${MessageButton.maxCount} кнопок',
+      );
+      return;
+    }
+    final button = await showAddMessageButtonDialog(context);
+    if (!mounted || button == null) return;
+    setState(() => _draftButtons = [..._draftButtons, button]);
+    _remeasureComposer(animate: true);
+  }
+
+  Future<void> _tapMessageButton(MessageButton button) async {
+    if (button.kind == MessageButtonKind.text) {
+      try {
+        await ChatRepo.instance.sendDmText(widget.peer, button.label);
+      } catch (error) {
+        if (mounted) _snack('Не удалось отправить текст кнопки: $error');
+      }
+      return;
+    }
+    final url = button.url;
+    if (url != null) await _openTextLink(url);
+  }
+
+  Future<void> _removeMessageButtons(StoredMessage message) async {
+    try {
+      await ChatRepo.instance.removeDmMessageButtons(
+        toUsername: widget.peer,
+        sid: message.sid,
+      );
+      if (mounted) _snack('Кнопки удалены');
+    } catch (error) {
+      if (mounted) _snack('Не удалось удалить кнопки: $error');
+    }
+  }
+
   void _remeasureComposer({bool animate = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -931,12 +975,19 @@ class _ChatScreenState extends State<ChatScreen>
     _clearNewLine(); // отправка — действие → линия «Новое» уходит
     final replyTo = _replyTo;
     final editing = _editing;
+    final userButtons = editing == null
+        ? List<MessageButton>.unmodifiable(_draftButtons)
+        : const <MessageButton>[];
     // Чистим поле СРАЗУ: текст уходит в pending-бабл, бар свободен.
     _inputCtrl.clear();
     setState(() {
       _replyTo = null;
       _editing = null;
+      if (editing == null) _draftButtons = const [];
     });
+    if (editing == null && userButtons.isNotEmpty) {
+      _remeasureComposer(animate: true);
+    }
 
     // Правка — ждём (модифицирует уже существующее сообщение).
     if (editing != null) {
@@ -969,6 +1020,7 @@ class _ChatScreenState extends State<ChatScreen>
           text,
           replyTo: replyTo?.sid,
           replyPreview: replyTo == null ? null : _msgPreview(replyTo),
+          userButtons: userButtons,
         )
         .catchError((Object e) {
           if (mounted) _snack('Не отправилось: $e');
@@ -1489,6 +1541,16 @@ class _ChatScreenState extends State<ChatScreen>
         const _MenuAction('copy', CupertinoIcons.doc_on_doc, 'Копировать'),
       if (canEdit)
         const _MenuAction('edit', CupertinoIcons.pencil, 'Редактировать'),
+      if (mine &&
+          m.userButtons.isNotEmpty &&
+          !m.deleted &&
+          !m.pending &&
+          m.sid > 0)
+        const _MenuAction(
+          'remove_buttons',
+          CupertinoIcons.xmark_circle,
+          'Удалить кнопки',
+        ),
       const _MenuAction('select', CupertinoIcons.checkmark_circle, 'Выбрать'),
       if (mine && !m.deleted)
         const _MenuAction(
@@ -1566,6 +1628,9 @@ class _ChatScreenState extends State<ChatScreen>
         } catch (e) {
           _snack('Не удалилось: $e');
         }
+        break;
+      case 'remove_buttons':
+        await _removeMessageButtons(m);
         break;
       case 'forward':
         await _showForwardPicker(m);
@@ -1764,8 +1829,12 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<RoomForwardTarget?> _pickForwardTarget() async {
+    final organization = ChatOrganizationStore.instance;
     final dialogs = ChatRepo.instance.dialogsNotifier.value
         .where((d) => d.username != widget.peer && !d.username.startsWith('g:'))
+        .where(
+          (dialog) => organization.canSeeChatInActiveScenario(dialog.username),
+        )
         .toList();
     var rooms = RoomService.instance.rooms.value;
     if (rooms.isEmpty) {
@@ -1773,6 +1842,12 @@ class _ChatScreenState extends State<ChatScreen>
         rooms = await RoomService.instance.loadMy();
       } catch (_) {}
     }
+    rooms = rooms
+        .where(
+          (room) =>
+              organization.canSeeChatInActiveScenario(roomDialogKey(room)),
+        )
+        .toList(growable: false);
     return showModalBottomSheet<RoomForwardTarget>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -2181,6 +2256,9 @@ class _ChatScreenState extends State<ChatScreen>
                                                 ? () => _retryDecrypt(m)
                                                 : null,
                                             onUrlTap: _openTextLink,
+                                            onUserTextButtonTap:
+                                                _tapMessageButton,
+                                            onUserLinkButtonTap: _openTextLink,
                                             onBotCallback:
                                                 _sendBotButtonCallback,
                                           );
@@ -2804,6 +2882,36 @@ class _ChatScreenState extends State<ChatScreen>
             // Reply/edit-превью ВНУТРИ стекла композера → единый блок,
             // разделитель — тонкая 1px-линия (см. _replyEditBar).
             if (_replyTo != null || _editing != null) _replyEditBar(),
+            if (_draftButtons.isNotEmpty && _editing == null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 7, 12, 0),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    for (var i = 0; i < _draftButtons.length; i++)
+                      InputChip(
+                        visualDensity: VisualDensity.compact,
+                        avatar: Icon(
+                          _draftButtons[i].kind == MessageButtonKind.link
+                              ? CupertinoIcons.link
+                              : CupertinoIcons.chat_bubble_text,
+                          size: 14,
+                        ),
+                        label: Text(_draftButtons[i].label),
+                        onDeleted: () {
+                          setState(() {
+                            final updated = List<MessageButton>.from(
+                              _draftButtons,
+                            )..removeAt(i);
+                            _draftButtons = updated;
+                          });
+                          _remeasureComposer(animate: true);
+                        },
+                      ),
+                  ],
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
               child: Row(
@@ -2837,6 +2945,13 @@ class _ChatScreenState extends State<ChatScreen>
                               ),
                               onPressed: _toggleEmoji,
                             ),
+                            if (!_isBot && _editing == null)
+                              IconButton(
+                                tooltip: 'Добавить кнопку к сообщению',
+                                visualDensity: VisualDensity.compact,
+                                icon: Icon(CupertinoIcons.link, color: GE.sub),
+                                onPressed: _sending ? null : _addMessageButton,
+                              ),
                           ],
                         ),
                   // Середина: при записи — таймер+живая вейвформа, иначе поле ввода.
@@ -3235,6 +3350,8 @@ class _Bubble extends StatelessWidget {
   final bool prevSame;
   final Future<void> Function()? onRetry;
   final void Function(String raw)? onUrlTap;
+  final Future<void> Function(MessageButton button)? onUserTextButtonTap;
+  final Future<void> Function(String url)? onUserLinkButtonTap;
   final Future<void> Function(int messageId, String callbackData)?
   onBotCallback;
   const _Bubble(
@@ -3244,6 +3361,8 @@ class _Bubble extends StatelessWidget {
     this.prevSame = false,
     this.onRetry,
     this.onUrlTap,
+    this.onUserTextButtonTap,
+    this.onUserLinkButtonTap,
     this.onBotCallback,
   });
 
@@ -3412,6 +3531,13 @@ class _Bubble extends StatelessWidget {
                               ],
                             )
                           : _textContent(textColor),
+                    ),
+                  if (m.userButtons.isNotEmpty)
+                    UserMessageButtons(
+                      buttons: m.userButtons,
+                      foregroundColor: textColor,
+                      onTextTap: onUserTextButtonTap,
+                      onLinkTap: onUserLinkButtonTap,
                     ),
                 ],
                 if (!mine && m.replyMarkup?.inlineKeyboard != null)

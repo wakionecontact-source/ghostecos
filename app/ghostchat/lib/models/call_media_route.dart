@@ -57,6 +57,35 @@ CallMediaRoute resolveCallMediaRouteFromStats(
   return CallMediaRoute.unknown;
 }
 
+int? resolveCallLatencyMsFromStats(Iterable<Map<String, dynamic>> reports) {
+  final reportList = reports.toList(growable: false);
+  final reportsById = <String, Map<String, dynamic>>{};
+  for (final report in reportList) {
+    final id = report['id'];
+    if (id is String) reportsById[id] = report;
+  }
+
+  for (final transport in reportList.where(
+    (report) => _typeOf(report) == 'transport',
+  )) {
+    final pairId = _stringValue(
+      _valuesOf(transport),
+      'selectedCandidatePairId',
+    );
+    if (pairId == null) continue;
+    final pair = reportsById[pairId];
+    if (pair == null || _typeOf(pair) != 'candidate-pair') continue;
+    final values = _valuesOf(pair);
+    final seconds =
+        _numberValue(values, 'currentRoundTripTime') ??
+        _numberValue(values, 'roundTripTime');
+    if (seconds != null && seconds.isFinite && seconds >= 0) {
+      return (seconds * 1000).round();
+    }
+  }
+  return null;
+}
+
 String? _candidateType(Map<String, dynamic>? report) {
   if (report == null ||
       (_typeOf(report) != 'local-candidate' &&
@@ -93,6 +122,17 @@ bool? _boolValue(Map<dynamic, dynamic> values, String key) {
       if (value is bool) return value;
       if (value is String) return value.toLowerCase() == 'true';
     }
+  }
+  return null;
+}
+
+double? _numberValue(Map<dynamic, dynamic> values, String key) {
+  final normalizedKey = _normalize(key);
+  for (final entry in values.entries) {
+    if (_normalize(entry.key.toString()) != normalizedKey) continue;
+    final value = entry.value;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value.toString());
   }
   return null;
 }

@@ -92,7 +92,9 @@ class _CallScreenState extends State<CallScreen> {
 
   void _attachStreams(CallSnapshot snapshot) {
     if (!_renderersReady) return;
-    _localRenderer?.srcObject = snapshot.localStream;
+    _localRenderer?.srcObject = snapshot.screenSharing
+        ? snapshot.screenStream
+        : snapshot.localStream;
     _remoteRenderer?.srcObject = snapshot.remoteStream;
   }
 
@@ -124,6 +126,58 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _hangUp() async {
     await _calls.end();
+  }
+
+  Future<void> _enableVideo() async {
+    try {
+      await _calls.enableVideo();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось включить видео: $error')),
+      );
+    }
+  }
+
+  void _minimizeCall() {
+    _calls.minimize();
+    if (Navigator.of(context).canPop()) Navigator.of(context).pop();
+  }
+
+  Future<void> _toggleScreenShare() async {
+    if (_calls.state.value.screenSharing) {
+      await _calls.stopScreenShare();
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Показать экран?'),
+        content: const Text(
+          'Собеседник увидит весь экран, включая уведомления и открытые приложения. '
+          'После подтверждения система покажет запрос на запись экрана.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Продолжить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await _calls.startScreenShare();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось показать экран: $error')),
+      );
+    }
   }
 
   String _status(CallSnapshot snapshot) {
@@ -187,17 +241,27 @@ class _CallScreenState extends State<CallScreen> {
   Widget _videoBody(CallSnapshot snapshot) {
     final remote = _remoteRenderer;
     final local = _localRenderer;
+    final mainRenderer = snapshot.screenSharing ? local : remote;
+    final mainStream = snapshot.screenSharing
+        ? snapshot.screenStream
+        : snapshot.remoteStream;
+    final previewRenderer = snapshot.screenSharing ? remote : local;
+    final previewStream = snapshot.screenSharing
+        ? snapshot.remoteStream
+        : snapshot.localStream;
+    final mainHasVideo = mainStream?.getVideoTracks().isNotEmpty == true;
+    final previewHasVideo = previewStream?.getVideoTracks().isNotEmpty == true;
     return Stack(
       fit: StackFit.expand,
       children: [
-        if (remote != null && snapshot.remoteStream != null)
+        if (mainRenderer != null && mainHasVideo)
           RTCVideoView(
-            remote,
+            mainRenderer,
             objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
           )
         else
           _avatarPlaceholder(),
-        if (local != null && snapshot.localStream != null)
+        if (previewRenderer != null && previewHasVideo)
           Positioned(
             right: 16,
             top: 72,
@@ -211,8 +275,8 @@ class _CallScreenState extends State<CallScreen> {
                   border: Border.all(color: Colors.white24),
                 ),
                 child: RTCVideoView(
-                  local,
-                  mirror: true,
+                  previewRenderer,
+                  mirror: !snapshot.screenSharing,
                   objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
                 ),
               ),
@@ -265,7 +329,8 @@ class _CallScreenState extends State<CallScreen> {
         children: [
           IconButton(
             icon: const Icon(CupertinoIcons.chevron_down, color: Colors.white),
-            onPressed: _hangUp,
+            tooltip: 'Свернуть звонок',
+            onPressed: _minimizeCall,
           ),
           Expanded(
             child: Column(
@@ -287,33 +352,64 @@ class _CallScreenState extends State<CallScreen> {
               ],
             ),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              if (snapshot.connectionState != 'new')
-                Text(
-                  snapshot.connectionState,
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: .55),
-                    fontSize: 11,
+          SizedBox(
+            width: 88,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (snapshot.connectionState != 'new')
+                  Text(
+                    _connectionLabel(snapshot.connectionState),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: .55),
+                      fontSize: 11,
+                    ),
                   ),
-                ),
-              if (snapshot.mediaRoute != CallMediaRoute.unknown)
-                Text(
-                  snapshot.mediaRoute == CallMediaRoute.turnRelay
-                      ? 'TURN'
-                      : 'P2P',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: .55),
-                    fontSize: 11,
+                if (snapshot.mediaRoute != CallMediaRoute.unknown)
+                  Text(
+                    '${snapshot.mediaRoute == CallMediaRoute.turnRelay ? 'TURN' : 'P2P'}'
+                    '${snapshot.latencyMs == null ? '' : ' · ${snapshot.latencyMs} мс'}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: .55),
+                      fontSize: 11,
+                    ),
                   ),
-                ),
-            ],
+                if (snapshot.latencyMs != null)
+                  Text(
+                    'Качество: ${_qualityLabel(snapshot.latencyMs!)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: .55),
+                      fontSize: 10,
+                    ),
+                  ),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
+
+  String _qualityLabel(int latencyMs) {
+    if (latencyMs <= 150) return 'хорошее';
+    if (latencyMs <= 300) return 'среднее';
+    return 'слабое';
+  }
+
+  String _connectionLabel(String state) => switch (state.toLowerCase()) {
+    'connecting' => 'Подключение',
+    'connected' => 'На связи',
+    'disconnected' => 'Восстанавливаем связь',
+    'failed' => 'Связь потеряна',
+    'closed' => 'Звонок завершён',
+    _ => state,
+  };
 
   Widget _verificationCard(List<String> emojis) {
     return GlassCard(
@@ -369,14 +465,18 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Widget _controls(CallSnapshot snapshot) {
+    final hasLocalCamera =
+        snapshot.localStream?.getVideoTracks().isNotEmpty == true;
     return Positioned(
       left: 16,
       right: 16,
       bottom: 18,
       child: GlassCard(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        child: Wrap(
+          alignment: WrapAlignment.spaceEvenly,
+          spacing: 12,
+          runSpacing: 10,
           children: [
             _CallButton(
               icon: snapshot.muted
@@ -394,7 +494,15 @@ class _CallScreenState extends State<CallScreen> {
               active: snapshot.speaker,
               onTap: _calls.toggleSpeaker,
             ),
-            if (snapshot.video)
+            if (snapshot.phase == CallPhase.connected &&
+                !hasLocalCamera &&
+                !snapshot.screenSharing)
+              _CallButton(
+                icon: CupertinoIcons.videocam_fill,
+                label: 'Включить видео',
+                onTap: _enableVideo,
+              ),
+            if (hasLocalCamera && !snapshot.screenSharing)
               _CallButton(
                 icon: snapshot.cameraEnabled
                     ? CupertinoIcons.videocam_fill
@@ -403,11 +511,20 @@ class _CallScreenState extends State<CallScreen> {
                 active: !snapshot.cameraEnabled,
                 onTap: _calls.toggleCamera,
               ),
-            if (snapshot.video)
+            if (hasLocalCamera && !snapshot.screenSharing)
               _CallButton(
                 icon: CupertinoIcons.camera_rotate,
                 label: 'Сменить',
                 onTap: _calls.switchCamera,
+              ),
+            if (snapshot.phase == CallPhase.connected)
+              _CallButton(
+                icon: snapshot.screenSharing
+                    ? Icons.stop_screen_share
+                    : Icons.screen_share,
+                label: snapshot.screenSharing ? 'Стоп экрана' : 'Экран',
+                active: snapshot.screenSharing,
+                onTap: _toggleScreenShare,
               ),
             _CallButton(
               icon: CupertinoIcons.phone_down_fill,

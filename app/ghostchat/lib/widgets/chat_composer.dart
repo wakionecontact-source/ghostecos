@@ -12,6 +12,7 @@ import 'package:flutter/cupertino.dart';
 import '../theme.dart';
 import '../services/performance_service.dart';
 import '../services/theme_service.dart';
+import '../core/models/message_button.dart';
 
 class ChatComposer extends StatelessWidget {
   final TextEditingController controller;
@@ -25,6 +26,9 @@ class ChatComposer extends StatelessWidget {
   final VoidCallback? onFieldTap;
   final ValueChanged<String>? onChanged;
   final bool enabled;
+  final List<MessageButton> draftButtons;
+  final ValueChanged<int>? onRemoveDraftButton;
+  final VoidCallback? onAddButton;
 
   const ChatComposer({
     super.key,
@@ -39,6 +43,9 @@ class ChatComposer extends StatelessWidget {
     this.onFieldTap,
     this.onChanged,
     this.enabled = true,
+    this.draftButtons = const [],
+    this.onRemoveDraftButton,
+    this.onAddButton,
   });
 
   @override
@@ -64,73 +71,109 @@ class ChatComposer extends StatelessWidget {
           stops: const [0.0, 0.6, 1.0],
         ),
       ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            // Скрепка слева, эмодзи справа (порядок как в chat_screen).
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              icon: Icon(CupertinoIcons.paperclip, color: GE.sub),
-              onPressed: !enabled || sending ? null : onAttach,
-            ),
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              icon: Icon(
-                emojiOpen ? CupertinoIcons.keyboard : CupertinoIcons.smiley,
-                color: emojiOpen ? GE.primary : GE.sub,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (draftButtons.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  for (var i = 0; i < draftButtons.length; i++)
+                    InputChip(
+                      visualDensity: VisualDensity.compact,
+                      avatar: Icon(
+                        draftButtons[i].kind == MessageButtonKind.link
+                            ? CupertinoIcons.link
+                            : CupertinoIcons.chat_bubble_text,
+                        size: 14,
+                      ),
+                      label: Text(draftButtons[i].label),
+                      onDeleted: onRemoveDraftButton == null
+                          ? null
+                          : () => onRemoveDraftButton!(i),
+                    ),
+                ],
               ),
-              onPressed: enabled ? onToggleEmoji : null,
             ),
-            Expanded(
-              child: TextField(
-                controller: controller,
-                enabled: enabled,
-                minLines: 1,
-                maxLines: 6,
-                style: TextStyle(color: GE.text, fontSize: 15),
-                cursorColor: GE.primary,
-                textInputAction: TextInputAction.newline,
-                onTap: onFieldTap,
-                onChanged: onChanged,
-                decoration: InputDecoration(
-                  hintText: hint,
-                  hintStyle: TextStyle(color: GE.sub),
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 10,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                // Скрепка слева, эмодзи справа (порядок как в chat_screen).
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(CupertinoIcons.paperclip, color: GE.sub),
+                  onPressed: !enabled || sending ? null : onAttach,
+                ),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(
+                    emojiOpen ? CupertinoIcons.keyboard : CupertinoIcons.smiley,
+                    color: emojiOpen ? GE.primary : GE.sub,
+                  ),
+                  onPressed: enabled ? onToggleEmoji : null,
+                ),
+                if (onAddButton != null)
+                  IconButton(
+                    tooltip: 'Добавить кнопку к сообщению',
+                    visualDensity: VisualDensity.compact,
+                    icon: Icon(CupertinoIcons.link, color: GE.sub),
+                    onPressed: !enabled || sending ? null : onAddButton,
+                  ),
+                Expanded(
+                  child: TextField(
+                    controller: controller,
+                    enabled: enabled,
+                    minLines: 1,
+                    maxLines: 6,
+                    style: TextStyle(color: GE.text, fontSize: 15),
+                    cursorColor: GE.primary,
+                    textInputAction: TextInputAction.newline,
+                    onTap: onFieldTap,
+                    onChanged: onChanged,
+                    decoration: InputDecoration(
+                      hintText: hint,
+                      hintStyle: TextStyle(color: GE.sub),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 10,
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-            Material(
-              key: sendKey,
-              color: Colors.transparent,
-              child: InkWell(
-                customBorder: const CircleBorder(),
-                onTap: !enabled || sending ? null : onSend,
-                child: _circleBtn(
-                  sending
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(
-                          CupertinoIcons.paperplane_fill,
-                          color: Colors.white,
-                          size: 18,
-                        ),
+                Material(
+                  key: sendKey,
+                  color: Colors.transparent,
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: !enabled || sending ? null : onSend,
+                    child: _circleBtn(
+                      sending
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(
+                              CupertinoIcons.paperplane_fill,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
     return ClipRect(

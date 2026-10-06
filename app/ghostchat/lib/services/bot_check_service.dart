@@ -5,6 +5,7 @@ import 'package:dio/io.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/app_version.dart';
 import '../core/constants.dart';
 import '../core/local/app_logger.dart';
 import '../theme.dart';
@@ -49,6 +50,17 @@ class _CaptchaChallenge {
 /// Токен не является сессией и не заменяет Bearer-токен аккаунта.
 class BotCheckService {
   BotCheckService._() {
+    for (final dio in [_dio, _downloadDio]) {
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) async {
+            options.headers[GhostChatAppVersion.headerName] =
+                await GhostChatAppVersion.current();
+            handler.next(options);
+          },
+        ),
+      );
+    }
     // The update CAPTCHA must follow the same user-selected proxy as the APK
     // stream itself; otherwise the first half of the flow could fail behind a
     // restricted network even though the download would be reachable.

@@ -31,6 +31,7 @@ import 'profile_cache.dart';
 import 'privacy_settings.dart';
 import '../core/local/app_logger.dart';
 import '../core/models/bot_reply_markup.dart';
+import '../core/models/message_button.dart';
 
 class V2IdentitySecurityException implements Exception {
   final String message;
@@ -2550,6 +2551,7 @@ class ChatRepo {
     int? replyTo,
     String? replyPreview,
     String? forwardedFrom,
+    List<MessageButton> userButtons = const [],
   }) async {
     // Оптимистичный пузырь уже создан в sendDmText (мгновенно). Здесь только
     // шифрование/отправка и промоут temp → клиентский v2 sid.
@@ -2578,7 +2580,9 @@ class ChatRepo {
     final connMode = await ConnectionModeStore.get(toUsername);
     if (connMode == ConnectionMode.server) peerKeys = null;
 
-    if (peerKeys != null && triangleService.hasSession(toUsername)) {
+    if (userButtons.isEmpty &&
+        peerKeys != null &&
+        triangleService.hasSession(toUsername)) {
       final sentViaP2p = await triangleService.sendText(
         toUsername,
         sid.toString(),
@@ -2615,6 +2619,8 @@ class ChatRepo {
           'reply_preview': replyPreview,
         if (forwardedFrom != null && forwardedFrom.isNotEmpty)
           'forwarded_from': forwardedFrom,
+        if (userButtons.isNotEmpty)
+          'user_buttons': MessageButton.encodeList(userButtons),
       };
       await _sendV2Payload(
         toUsername: toUsername,
@@ -2823,6 +2829,21 @@ class ChatRepo {
       await _refreshMessages(fromUser);
       return true;
     }
+    if (type == 'user_buttons_remove') {
+      final targetSid = payload['target_sid'] is int
+          ? payload['target_sid'] as int
+          : (payload['sid'] is int ? payload['sid'] as int : null);
+      final owner = payload['owner_username']?.toString().trim().toLowerCase();
+      if (targetSid != null && owner == fromUser.toLowerCase()) {
+        await _clearDmMessageButtonsIfOwned(
+          peer: fromUser,
+          targetSid: targetSid,
+          senderIsMe: isMine,
+          includeSealedSid: true,
+        );
+      }
+      return true;
+    }
     if (type == 'delete') {
       if (targetSid == null) return false;
       await _db.updateMessageFlags(fromUser, targetSid, {
@@ -2864,6 +2885,7 @@ class ChatRepo {
       replyTo: payload['reply_to'] as int?,
       replyPreview: payload['reply_preview'] as String?,
       forwardedFrom: payload['forwarded_from'] as String?,
+      userButtons: MessageButton.parseList(payload['user_buttons']),
       filePayload: isFile
           ? {
               'file_id': payload['file_id'],
@@ -3202,6 +3224,21 @@ class ChatRepo {
       }
       return true;
     }
+    if (type == 'user_buttons_remove') {
+      final rawTarget = env['target_sid'] is int
+          ? env['target_sid'] as int
+          : (env['sid'] is int ? env['sid'] as int : null);
+      final owner = env['owner_username']?.toString().trim().toLowerCase();
+      if (rawTarget != null && owner == fromUsername.toLowerCase()) {
+        await _clearDmMessageButtonsIfOwned(
+          peer: fromUsername,
+          targetSid: rawTarget,
+          senderIsMe: false,
+          includeSealedSid: true,
+        );
+      }
+      return true;
+    }
     if (type == 'delete') {
       final sid = env['sid'];
       if (sid is int) {
@@ -3255,6 +3292,7 @@ class ChatRepo {
       replyTo: env['reply_to'] is int ? env['reply_to'] as int : null,
       replyPreview: env['reply_preview'] as String?,
       forwardedFrom: env['forwarded_from'] as String?,
+      userButtons: MessageButton.parseList(env['user_buttons']),
       filePayload: isFile
           ? {
               'file_id': env['file_id'],
@@ -3882,6 +3920,7 @@ class ChatRepo {
     int? replyTo,
     String? replyPreview,
     Map<String, dynamic>? preparedRequest,
+    List<MessageButton> userButtons = const [],
   }) async {
     final request = preparedRequest ?? <String, dynamic>{};
     if (preparedRequest == null) {
@@ -3895,6 +3934,8 @@ class ChatRepo {
         if (replyTo != null) 'reply_to': replyTo,
         if (replyPreview != null && replyPreview.isNotEmpty)
           'reply_preview': replyPreview,
+        if (userButtons.isNotEmpty)
+          'user_buttons': MessageButton.encodeList(userButtons),
       });
       request.addAll({
         'to_username': toUsername,
@@ -3947,6 +3988,7 @@ class ChatRepo {
     int? replyTo,
     String? replyPreview,
     String? forwardedFrom,
+    List<MessageButton> userButtons = const [],
   }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
@@ -3976,6 +4018,8 @@ class ChatRepo {
         if (replyTo != null) 'reply_to': replyTo,
         if (replyPreview != null) 'reply_preview': replyPreview,
         if (forwardedFrom != null) 'forwarded_from': forwardedFrom,
+        if (userButtons.isNotEmpty)
+          'user_buttons': MessageButton.encodeList(userButtons),
       },
       optimisticMessage: StoredMessage(
         sid: tempSid,
@@ -3988,6 +4032,10 @@ class ChatRepo {
         replyTo: replyTo,
         replyPreview: replyPreview,
         forwardedFrom: forwardedFrom,
+        userButtons: userButtons
+            .where((button) => button.isValid)
+            .take(MessageButton.maxCount)
+            .toList(growable: false),
       ),
     );
     await _refreshMessages(toUsername);
@@ -4022,6 +4070,7 @@ class ChatRepo {
         final clientSid = int.tryParse(draft['client_sid']?.toString() ?? '');
         final tmpKey = draft['temp_key']?.toString();
         final text = draft['text']?.toString() ?? '';
+        final userButtons = MessageButton.parseList(draft['user_buttons']);
         if (tempSid == null ||
             clientSid == null ||
             tmpKey == null ||
@@ -4041,6 +4090,7 @@ class ChatRepo {
             replyTo: int.tryParse(draft['reply_to']?.toString() ?? ''),
             replyPreview: draft['reply_preview']?.toString(),
             forwardedFrom: draft['forwarded_from']?.toString(),
+            userButtons: userButtons,
             generation: generation,
             savePreparedRequest: (request) =>
                 _db.saveOutboxRequest(entry.id, request),
@@ -4103,6 +4153,7 @@ class ChatRepo {
     int? replyTo,
     String? replyPreview,
     String? forwardedFrom,
+    List<MessageButton> userButtons = const [],
   }) async {
     if (!_isCurrentSession(generation)) return;
     final trimmed = text.trim();
@@ -4155,6 +4206,7 @@ class ChatRepo {
           tmpKey: tmpKey,
           onPreparedRequest: savePreparedRequest,
           preparedRequest: preparedRequest,
+          userButtons: userButtons,
         );
       }
       return;
@@ -4171,6 +4223,9 @@ class ChatRepo {
       // ключей; обычный сервер отвергнет plain_text сам.
       if (!_isMissingPeerKeysError(e)) {
         rethrow;
+      }
+      if (userButtons.isNotEmpty) {
+        throw StateError('Кнопки сообщений недоступны в чате с ботом');
       }
       try {
         final sentSid = await _sendPlainTextDm(
@@ -4200,6 +4255,9 @@ class ChatRepo {
     }
 
     if (peerIsBot) {
+      if (userButtons.isNotEmpty) {
+        throw StateError('Кнопки сообщений недоступны в чате с ботом');
+      }
       try {
         final sentSid = await _sendPlainTextDm(
           toUsername: toUsername,
@@ -4241,6 +4299,7 @@ class ChatRepo {
             replyTo: replyTo,
             replyPreview: replyPreview,
             forwardedFrom: forwardedFrom,
+            userButtons: userButtons,
           );
         }
       }
@@ -4251,6 +4310,7 @@ class ChatRepo {
         onPreparedRequest: savePreparedRequest,
         replyTo: replyTo,
         replyPreview: replyPreview,
+        userButtons: userButtons,
       );
     } catch (e) {
       appLog.warn('chat', '[sendDmText] $e');
@@ -4622,6 +4682,21 @@ class ChatRepo {
       }
       return true;
     }
+    if (type == 'user_buttons_remove') {
+      final targetSid = payload['target_sid'] is int
+          ? payload['target_sid'] as int
+          : (payload['sid'] is int ? payload['sid'] as int : null);
+      final owner = payload['owner_username']?.toString().trim().toLowerCase();
+      if (targetSid != null && owner == fromUsername.toLowerCase()) {
+        await _clearDmMessageButtonsIfOwned(
+          peer: peerUsername,
+          targetSid: targetSid,
+          senderIsMe: isMine,
+          includeSealedSid: true,
+        );
+      }
+      return true;
+    }
     if (type == 'delete') {
       final targetSid = payload['sid'] is int ? payload['sid'] as int : null;
       if (targetSid != null) {
@@ -4674,6 +4749,7 @@ class ChatRepo {
       forwardedFrom: payload['forwarded_from'] is String
           ? payload['forwarded_from'] as String
           : null,
+      userButtons: MessageButton.parseList(payload['user_buttons']),
       replyMarkup: !isMine && botPlain != null
           ? BotReplyMarkup.tryParse(payload['reply_markup'])
           : null,
@@ -4839,6 +4915,74 @@ class ChatRepo {
     await _db.updateMessageFlags(peer, sid, {
       'reactions': reactions.isEmpty ? null : jsonEncode(reactions),
     });
+  }
+
+  Future<void> _clearDmMessageButtonsIfOwned({
+    required String peer,
+    required int targetSid,
+    required bool senderIsMe,
+    bool includeSealedSid = false,
+  }) async {
+    final candidates = <int>{targetSid};
+    if (includeSealedSid && targetSid > 0) {
+      candidates.add(_sealedSid(targetSid));
+    }
+    for (final sid in candidates) {
+      final message = await _db.getMessage(peer, sid);
+      if (message == null || message.fromMe != senderIsMe) continue;
+      await _db.updateMessageFlags(peer, sid, {'user_buttons_json': null});
+      await _refreshMessages(peer);
+      return;
+    }
+  }
+
+  Future<void> removeDmMessageButtons({
+    required String toUsername,
+    required int sid,
+  }) async {
+    final message = await _db.getMessage(toUsername, sid);
+    if (message == null ||
+        !message.fromMe ||
+        message.userButtons.isEmpty ||
+        message.pending ||
+        sid <= 0) {
+      throw StateError('У этого сообщения нет ваших кнопок');
+    }
+    final owner = (_myUsername ?? await AuthService.username())
+        ?.trim()
+        .toLowerCase();
+    if (owner == null || owner.isEmpty) {
+      throw StateError('Нет активного аккаунта');
+    }
+    final targetSid = sid >= _sealedSidOffset ? sid - _sealedSidOffset : sid;
+    final payload = {
+      'type': 'user_buttons_remove',
+      'target_sid': targetSid,
+      'owner_username': owner,
+    };
+    final keys = await getPeerV2Keys(toUsername, forceRefresh: true);
+    if (keys != null) {
+      await _sendV2Payload(
+        toUsername: toUsername,
+        keys: keys,
+        payload: payload,
+      );
+    } else {
+      final peerPubs = await getPeerDevicePubs(toUsername);
+      if (peerPubs.isEmpty) {
+        throw StateError('У @$toUsername нет ключей для защищённой отправки');
+      }
+      final ciphertext = await _crypto.encryptFor(
+        theirPubRaw: peerPubs.first,
+        plaintext: jsonEncode(payload),
+      );
+      await _api.chatPost('/send', {
+        'to_username': toUsername,
+        'ciphertext': ciphertext,
+      });
+    }
+    await _db.updateMessageFlags(toUsername, sid, {'user_buttons_json': null});
+    await _refreshMessages(toUsername);
   }
 
   // ─── Edit / Delete / React / Forward (исходящие) ────────────────────────

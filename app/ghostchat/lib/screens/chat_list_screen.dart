@@ -27,6 +27,7 @@ import '../services/contact_service.dart';
 import '../services/notification_settings.dart';
 import '../services/theme_service.dart';
 import '../services/chat_header_settings.dart';
+import '../services/remote_settings_service.dart';
 import '../core/local/local_hub.dart';
 import '../widgets/glass.dart';
 import '../widgets/bot_badge.dart';
@@ -106,6 +107,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
     ThemeService.instance.detailedDescriptionsNotifier.addListener(
       _onDescriptionsChanged,
     );
+    RemoteSettingsService.instance.revisionNotifier.addListener(
+      _onRemoteSettingsChanged,
+    );
     AppSecurityStore.instance.revision.addListener(_onSecurityChanged);
     unawaited(ChatHeaderSettings.instance.load());
     _init();
@@ -119,21 +123,37 @@ class _ChatListScreenState extends State<ChatListScreen> {
     if (mounted) setState(() {});
   }
 
+  void _onRemoteSettingsChanged() {
+    if (mounted) setState(() {});
+  }
+
   void _onSecurityChanged() {
     if (mounted) setState(() {});
   }
 
+  bool get _compactChatList =>
+      RemoteSettingsService.instance.valueForIds(
+        'appearance.chat_list',
+        'compact',
+        fallback: false,
+      ) ==
+      true;
+
   Future<void> _init() async {
+    final account = widget.username ?? await AuthService.username();
+    await ChatOrganizationStore.instance.load(account: account);
     // Гость: НИКАКИХ обращений к серверным ChatRepo/поиску — только LAN.
     if (!widget.isGuest) await ChatRepo.instance.init();
     if (!widget.isGuest) unawaited(RoomService.instance.startSessionSync());
     _prefs ??= _cachedPrefs ??= await SharedPreferences.getInstance();
     await DialogSettingsStore.instance.load();
-    await ChatOrganizationStore.instance.load(
-      account: widget.username ?? await AuthService.username(),
-    );
     await _expireArchivedChats();
-    if (mounted) setState(() => _initialized = true);
+    if (mounted) {
+      setState(() => _initialized = true);
+      if (_searchCtrl.text.trim().isNotEmpty) {
+        _onSearchChanged(_searchCtrl.text);
+      }
+    }
     unawaited(_warmBotBadges());
     unawaited(_warmChatProfiles());
     _botStatusTimer ??= Timer.periodic(
@@ -144,7 +164,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   Future<void> _expireArchivedChats() async {
     final store = ChatOrganizationStore.instance;
-    final expired = await store.expireArchived();
+    final expired = await store.expireArchived(
+      canExpire: store.canSeeChatInActiveScenario,
+    );
     if (expired.isEmpty) return;
     for (final chatId in expired) {
       try {
@@ -167,10 +189,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
             await ContactService.instance.remove(chatId);
           }
         }
-      } catch (error) {
+      } catch (_) {
         appLog.warn(
           'chat_list',
-          'Не удалось очистить просроченный архивный чат $chatId: $error',
+          'Не удалось очистить просроченный архивный чат',
         );
       }
     }
@@ -205,7 +227,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
               !u.startsWith('g:') &&
               !u.startsWith(roomDialogPrefix) &&
               !u.startsWith(lanDialogPrefix) &&
-              !u.startsWith(bookmarkDialogPrefix),
+              !u.startsWith(bookmarkDialogPrefix) &&
+              ChatOrganizationStore.instance.canSeeChatInActiveScenario(u),
         )
         .toSet()
         .toList();
@@ -219,11 +242,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
             return null;
           }
           return peer;
-        } catch (e) {
-          appLog.warn(
-            'chat_list',
-            'Не удалось прочитать кэш профиля @$peer: $e',
-          );
+        } catch (_) {
+          appLog.warn('chat_list', 'Не удалось прочитать кэш профиля');
           return peer;
         }
       }),
@@ -242,8 +262,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
         await ProfileCache.instance.setProfile(peer, profile);
         _chatProfiles[peer] = profile;
       }
-    } catch (e) {
-      appLog.warn('chat_list', 'Не удалось обновить профиль @$peer: $e');
+    } catch (_) {
+      appLog.warn('chat_list', 'Не удалось обновить кэш профиля');
     }
   }
 
@@ -260,7 +280,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
               !u.startsWith('g:') &&
               !u.startsWith(roomDialogPrefix) &&
               !u.startsWith(lanDialogPrefix) &&
-              !u.startsWith(bookmarkDialogPrefix),
+              !u.startsWith(bookmarkDialogPrefix) &&
+              ChatOrganizationStore.instance.canSeeChatInActiveScenario(u),
         )
         .toList();
     // Параллельно, не по одному — иначе на списке из десятков диалогов
@@ -271,8 +292,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
       peers.map((peer) async {
         try {
           await ChatRepo.instance.isPeerBot(peer);
-        } catch (e) {
-          appLog.warn('chat_list', 'Не удалось прогреть /keys/$peer: $e');
+        } catch (_) {
+          appLog.warn(
+            'chat_list',
+            'Не удалось обновить кэш статуса собеседника',
+          );
         }
       }),
     );
@@ -283,6 +307,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
     if (widget.isGuest) return;
     final bots = ChatRepo.instance.dialogsNotifier.value
         .map((dialog) => dialog.username)
+        .where(ChatOrganizationStore.instance.canSeeChatInActiveScenario)
         .where(ChatRepo.instance.isPeerBotCached)
         .toSet();
     await Future.wait(bots.map(ChatRepo.instance.refreshPeerBotStatus));
@@ -507,11 +532,15 @@ class _ChatListScreenState extends State<ChatListScreen> {
     ThemeService.instance.detailedDescriptionsNotifier.removeListener(
       _onDescriptionsChanged,
     );
+    RemoteSettingsService.instance.revisionNotifier.removeListener(
+      _onRemoteSettingsChanged,
+    );
     AppSecurityStore.instance.revision.removeListener(_onSecurityChanged);
     super.dispose();
   }
 
   void _onSearchChanged(String value) {
+    if (!_initialized) return;
     final generation = ++_searchGeneration;
     _debounce?.cancel();
     final query = value.trim();
@@ -793,88 +822,45 @@ class _ChatListScreenState extends State<ChatListScreen> {
   Future<void> _createChatFolder() async {
     final controller = TextEditingController();
     try {
-      var secure = false;
-      String? scenarioId = AppSecurityStore.instance.activeScenarioId;
-      final result = await showDialog<({String name, String? scenarioId})>(
+      final result = await showDialog<String>(
         context: context,
-        builder: (dialogContext) => StatefulBuilder(
-          builder: (context, setDialogState) => AlertDialog(
-            backgroundColor: GE.bgDeep,
-            title: const Text('Новая группа чатов'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: controller,
-                    autofocus: true,
-                    maxLength: 40,
-                    decoration: const InputDecoration(
-                      labelText: 'Название',
-                      hintText: 'Например, Работа',
-                    ),
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: GE.bgDeep,
+          title: const Text('Новая группа чатов'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  maxLength: 40,
+                  decoration: const InputDecoration(
+                    labelText: 'Название',
+                    hintText: 'Например, Работа',
                   ),
-                  if (AppSecurityStore.instance.hasPrimaryCode &&
-                      AppSecurityStore.instance.scenarios.isNotEmpty)
-                    CheckboxListTile(
-                      contentPadding: EdgeInsets.zero,
-                      value: secure,
-                      title: const Text('Р‘РµР·РѕРїР°СЃРЅР°СЏ РіСЂСѓРїРїР°'),
-                      subtitle: const Text(
-                        'РќРµ РїРѕРєР°Р·С‹РІР°С‚СЊ РІ РѕР±С‹С‡РЅРѕРј РґРµР¶РёРјРµ',
-                      ),
-                      onChanged: (value) => setDialogState(() {
-                        secure = value == true;
-                        if (!secure) scenarioId = null;
-                        if (secure && scenarioId == null) {
-                          scenarioId =
-                              AppSecurityStore.instance.scenarios.first.id;
-                        }
-                      }),
-                    ),
-                  if (secure)
-                    DropdownButtonFormField<String>(
-                    initialValue: scenarioId,
-                      isExpanded: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Безопасная среда',
-                      ),
-                      items: [
-                        for (final scenario
-                            in AppSecurityStore.instance.scenarios)
-                          DropdownMenuItem(
-                            value: scenario.id,
-                            child: Text(scenario.name),
-                          ),
-                      ],
-                      onChanged: (value) =>
-                          setDialogState(() => scenarioId = value),
-                    ),
-                ],
-              ),
+                ),
+              ],
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('Отмена'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(dialogContext, (
-                  name: controller.text,
-                  scenarioId: secure ? scenarioId : null,
-                )),
-                child: const Text('Создать'),
-              ),
-            ],
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, controller.text),
+              child: const Text('Создать'),
+            ),
+          ],
         ),
       );
-      if (result == null || result.name.trim().isEmpty) return;
+      if (result == null || result.trim().isEmpty) return;
       final parent = ChatOrganizationStore.instance.activeFolder.value;
       await ChatOrganizationStore.instance.createFolder(
-        result.name,
+        result,
         parentId: parent == 'main' || parent == 'archive' ? null : parent,
-        securityScenarioId: result.scenarioId,
+        securityScenarioId: AppSecurityStore.instance.activeScenarioId,
       );
     } finally {
       controller.dispose();
@@ -1211,10 +1197,17 @@ class _ChatListScreenState extends State<ChatListScreen> {
             return ValueListenableBuilder<List<StoredDialog>>(
               valueListenable: BookmarkStore.instance.dialogsNotifier,
               builder: (_, bookmarkDialogs, _) {
-                if (serverDialogs.isEmpty &&
-                    lanDialogs.isEmpty &&
-                    bookmarkDialogs.isEmpty &&
-                    rooms.isEmpty) {
+                final organization = ChatOrganizationStore.instance;
+                bool isVisible(String chatId) =>
+                    organization.canSeeChatInActiveScenario(chatId);
+                final hasVisibleChat =
+                    serverDialogs.any((dialog) => isVisible(dialog.username)) ||
+                    lanDialogs.any((dialog) => isVisible(dialog.username)) ||
+                    bookmarkDialogs.any(
+                      (dialog) => isVisible(dialog.username),
+                    ) ||
+                    rooms.any((room) => isVisible(roomDialogKey(room)));
+                if (!hasVisibleChat) {
                   return _empty();
                 }
                 final defaultBm = bookmarkDialogs
@@ -1238,9 +1231,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   ...restBm.map(_UnifiedChatEntry.dialog),
                   ...rooms.map(_UnifiedChatEntry.room),
                 ];
-                final organization = ChatOrganizationStore.instance;
                 if (organization.archiveAnchor == 'activity') {
                   for (final entry in sourceEntries) {
+                    if (!isVisible(entry.key)) continue;
                     if (!organization.isArchived(entry.key)) continue;
                     unawaited(
                       organization.noteActivity(
@@ -1252,6 +1245,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 }
                 final activeFolder = organization.activeFolder.value;
                 final visibleEntries = sourceEntries.where((entry) {
+                  if (!isVisible(entry.key)) return false;
                   final archived = organization.isArchived(entry.key);
                   if (activeFolder == 'archive') return archived;
                   if (archived) return false;
@@ -1287,7 +1281,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
                     return bLast.compareTo(aLast);
                   });
                 final all = <_UnifiedChatEntry>[
-                  ...defaultBm.map(_UnifiedChatEntry.dialog),
+                  ...defaultBm
+                      .where((dialog) => isVisible(dialog.username))
+                      .map(_UnifiedChatEntry.dialog),
                   ...rest,
                 ];
                 final folderRows = activeFolder == 'archive'
@@ -1302,6 +1298,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 int folderUnread(ChatOrganizationFolder folder) {
                   var total = 0;
                   for (final entry in sourceEntries) {
+                    if (!isVisible(entry.key)) continue;
                     if (organization.isArchived(entry.key)) continue;
                     final isBot =
                         entry.dialog != null &&
@@ -1380,6 +1377,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         d,
                         profile: _profileForDialog(d.username),
                         prefs: _prefs,
+                        compact: _compactChatList,
                         selected: _selectedChats.contains(d.username),
                         selectionMode: _selectedChats.isNotEmpty,
                         onSelect: () => _toggleChatSelection(d.username),
@@ -1435,7 +1433,15 @@ class _ChatListScreenState extends State<ChatListScreen> {
       }
     }
     final outcome = _searchResults;
-    final hits = outcome?.hits ?? const <SearchHit>[];
+    final organization = ChatOrganizationStore.instance;
+    final hits = (outcome?.hits ?? const <SearchHit>[])
+        .where((hit) {
+          final chatId =
+              hit.dialog?.username ?? hit.message?.peer ?? hit.user?.username;
+          return chatId == null ||
+              organization.canSeeChatInActiveScenario(chatId);
+        })
+        .toList(growable: false);
     if (hits.isEmpty) {
       // Различаем "сеть отвалилась" и "юзера правда нет" — раньше оба
       // случая молча схлопывались в одно и то же сообщение.
@@ -1471,7 +1477,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
         if (dialogsHits.isNotEmpty) ...[
           _sectionHeader('Чаты'),
           ...dialogsHits.map(
-            (h) => _DialogTile(h.dialog!, onTap: _clearSearch),
+            (h) => _DialogTile(
+              h.dialog!,
+              compact: _compactChatList,
+              onTap: _clearSearch,
+            ),
           ),
         ],
         if (usersHits.isNotEmpty) ...[
@@ -2073,6 +2083,7 @@ class _DialogTile extends StatelessWidget {
   final bool selected;
   final bool selectionMode;
   final VoidCallback? onSelect;
+  final bool compact;
   const _DialogTile(
     this.d, {
     this.profile,
@@ -2082,6 +2093,7 @@ class _DialogTile extends StatelessWidget {
     this.selected = false,
     this.selectionMode = false,
     this.onSelect,
+    this.compact = false,
   });
 
   String get _displayName {
@@ -2328,12 +2340,15 @@ class _DialogTile extends StatelessWidget {
     final pinned = _isPinned;
     final muted = _isMuted;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+      padding: EdgeInsets.symmetric(horizontal: 6, vertical: compact ? 3 : 5),
       child: GlassCard(
         lite: true,
         isListSection: true,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-        radius: 20,
+        padding: EdgeInsets.symmetric(
+          horizontal: 10,
+          vertical: compact ? 6 : 10,
+        ),
+        radius: compact ? 16 : 20,
         child: PressScale(
           onLongPress: onSelect ?? () => _showMenu(context),
           onTap: () async {
@@ -2382,12 +2397,12 @@ class _DialogTile extends StatelessWidget {
                             ),
                           ),
                     child: d.username.startsWith('g:')
-                        ? _Avatar(_displayName, size: 52)
+                        ? _Avatar(_displayName, size: compact ? 44 : 52)
                         : Stack(
                             children: [
                               _Avatar(
                                 _displayName,
-                                size: 52,
+                                size: compact ? 44 : 52,
                                 avatarUrl:
                                     _avatarUrl ??
                                     ChatRepo.instance.getPeerAvatarCached(
@@ -2452,7 +2467,7 @@ class _DialogTile extends StatelessWidget {
                             ],
                           ),
                   ),
-                  const SizedBox(width: 12),
+                  SizedBox(width: compact ? 8 : 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,

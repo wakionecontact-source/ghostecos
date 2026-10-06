@@ -18,7 +18,10 @@ import 'services/auth_service.dart';
 import 'services/theme_service.dart';
 import 'services/nav_bar_settings.dart';
 import 'services/network_settings.dart';
+import 'services/remote_settings_service.dart';
+import 'services/ghost_asset_ota.dart';
 import 'services/settings_order.dart';
+import 'services/app_security_store.dart';
 import 'services/notification_settings.dart';
 import 'services/notification_service.dart';
 import 'services/sound_settings.dart';
@@ -70,6 +73,7 @@ Future<void> main() async {
   // frozen when the network is slow.
   // Кнопка "Логи" на тостах — открывает LogsScreen поверх текущего экрана.
   toast.onNavigateToLogs = (logId) {
+    if (AppSecurityStore.instance.isInSafeMode) return;
     NotificationService.navigatorKey.currentState?.push(
       MaterialPageRoute(builder: (_) => LogsScreen(focusLogId: logId)),
     );
@@ -95,6 +99,14 @@ Future<void> _bootstrapAfterFirstFrame() async {
   // leave the first Flutter screen looking frozen. The player still gets its
   // system controls, but only after the UI has painted and accepted input.
   await WidgetsBinding.instance.endOfFrame;
+
+  try {
+    // Restore the previously verified asset overlay before preloading sounds.
+    await GhostAssetOta.instance.loadLocal();
+    unawaited(GhostAssetOta.instance.refresh());
+  } catch (e, stack) {
+    appLog.warn('asset-ota', 'asset OTA startup was skipped: $e\n$stack');
+  }
 
   // Initialize the native WebRTC audio device after the first frame. This
   // keeps cold start responsive while making the first call use the same
@@ -140,6 +152,8 @@ Future<void> _bootstrapAfterFirstFrame() async {
     await LiquidGlassEngine.initialize();
     await NavBarSettings.instance.load();
     await NetworkSettings.instance.load();
+    await RemoteSettingsService.instance.loadLocal();
+    unawaited(RemoteSettingsService.instance.refresh());
     await SettingsOrder.instance.load();
     await NotificationSettings.instance.load();
     await SoundSettings.instance.load();
@@ -257,13 +271,22 @@ class GhostApp extends StatelessWidget {
                   ),
                 );
                 final media = MediaQuery.maybeOf(context);
-                if (media == null) return content;
-                return MediaQuery(
-                  data: media.copyWith(
-                    disableAnimations:
-                        media.disableAnimations || disableGlobalAnimations,
+                final appContent = media == null
+                    ? content
+                    : MediaQuery(
+                        data: media.copyWith(
+                          disableAnimations:
+                              media.disableAnimations ||
+                              disableGlobalAnimations,
+                        ),
+                        child: content,
+                      );
+                return ListenableBuilder(
+                  listenable: GhostAssetOta.instance.revisionNotifier,
+                  builder: (context, _) => DefaultAssetBundle(
+                    bundle: GhostOtaAssetBundle(),
+                    child: appContent,
                   ),
-                  child: content,
                 );
               },
             );

@@ -38,6 +38,8 @@ import 'storage_screen.dart';
 import 'custom_theme_screen.dart';
 import 'network_screen.dart';
 import '../services/settings_order.dart';
+import '../services/remote_settings_service.dart';
+import '../services/app_security_store.dart';
 import '../services/performance_service.dart';
 import '../services/privacy_settings.dart';
 import '../services/profile_appearance_settings.dart';
@@ -53,6 +55,7 @@ import 'sound_settings_screen.dart';
 import 'updates_settings_screen.dart';
 import 'bots_screen.dart';
 import 'security_screen.dart';
+import '../widgets/remote_settings_panel.dart';
 
 // ─── Хаб ────────────────────────────────────────────────────────────────────
 class SettingsScreen extends StatefulWidget {
@@ -104,6 +107,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _settingsSearchController.addListener(_onSettingsSearchChanged);
+    AppSecurityStore.instance.revision.addListener(_onSecurityChanged);
     unawaited(ProfileAppearanceSettings.instance.load());
     unawaited(ChatHeaderSettings.instance.load());
     unawaited(AppAvatarSettings.instance.load());
@@ -114,6 +118,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     NavBarSettings.instance.selectedBackgroundNotifier.addListener(_onTheme);
     NavBarSettings.instance.selectedScaleNotifier.addListener(_onTheme);
     NavBarSettings.instance.selectedFlyoutNotifier.addListener(_onTheme);
+    RemoteSettingsService.instance.revisionNotifier.addListener(
+      _onRemoteSettingsChanged,
+    );
     unawaited(SettingsOrder.instance.load());
     if (!widget.isGuest) {
       final username = widget.username?.trim();
@@ -127,6 +134,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   void dispose() {
+    AppSecurityStore.instance.revision.removeListener(_onSecurityChanged);
     _settingsSearchController
       ..removeListener(_onSettingsSearchChanged)
       ..dispose();
@@ -137,10 +145,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     NavBarSettings.instance.selectedBackgroundNotifier.removeListener(_onTheme);
     NavBarSettings.instance.selectedScaleNotifier.removeListener(_onTheme);
     NavBarSettings.instance.selectedFlyoutNotifier.removeListener(_onTheme);
+    RemoteSettingsService.instance.revisionNotifier.removeListener(
+      _onRemoteSettingsChanged,
+    );
     super.dispose();
   }
 
   void _onTheme() {
+    if (mounted) setState(() {});
+  }
+
+  void _onSecurityChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onRemoteSettingsChanged() {
     if (mounted) setState(() {});
   }
 
@@ -697,6 +716,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             last: true,
           ),
         ),
+        const RemoteSettingsPanel(category: 'appearance'),
       ],
     ),
     'security': Column(
@@ -748,6 +768,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             last: true,
           ),
         ),
+        const RemoteSettingsPanel(category: 'network'),
       ],
     ),
     'privacy': Column(
@@ -944,11 +965,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   };
 
   bool _matchesSettingsCategory(String key) {
+    if (AppSecurityStore.instance.isInSafeMode &&
+        (key == 'security' || key == 'dev')) {
+      return false;
+    }
     if (_settingsFilter.isEmpty) return true;
     final terms = _normalizeSearch(_settingsSearchTerms[key] ?? '');
     // Search the actual setting entries represented by the section, not the
     // section name alone. Individual rows apply the same filter below.
-    return terms.contains(_settingsFilter);
+    final remoteTerms = _normalizeSearch(
+      RemoteSettingsService.instance.searchableTextForCategory(key),
+    );
+    return terms.contains(_settingsFilter) ||
+        remoteTerms.contains(_settingsFilter);
   }
 
   bool _matchesSettingEntry(
@@ -1351,9 +1380,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         valueListenable: SettingsOrder.instance.orderNotifier,
         builder: (context, order, _) {
           final blocks = _categoryBlocks(context);
+          final safeMode = AppSecurityStore.instance.isInSafeMode;
           final visibleOrder = order
               .where(_matchesSettingsCategory)
               .toList(growable: false);
+          final reorderOrder = safeMode
+              ? order.where((key) => key != 'security' && key != 'dev').toList()
+              : order;
           final bottomPad = widget.embedded
               ? 120 + MediaQuery.of(context).padding.bottom
               : 12.0;
@@ -1362,14 +1395,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: _reorderMode
                 ? _ReorderList(
                     key: const ValueKey('reorder'),
-                    order: order,
+                    order: reorderOrder,
                     blocks: blocks,
                     bottomPad: bottomPad,
                     onReorder: (oldIdx, newIdx) {
-                      final list = List.of(order);
-                      final k = list.removeAt(oldIdx);
-                      list.insert(newIdx, k);
-                      SettingsOrder.instance.save(list);
+                      final movable = List<String>.of(reorderOrder);
+                      final key = movable.removeAt(oldIdx);
+                      movable.insert(newIdx, key);
+                      if (!safeMode) {
+                        SettingsOrder.instance.save(movable);
+                        return;
+                      }
+                      var movableIndex = 0;
+                      final updated = List<String>.of(order);
+                      for (var index = 0; index < updated.length; index++) {
+                        final current = updated[index];
+                        if (current == 'security' || current == 'dev') continue;
+                        updated[index] = movable[movableIndex++];
+                      }
+                      SettingsOrder.instance.save(updated);
                     },
                   )
                 : ListView(

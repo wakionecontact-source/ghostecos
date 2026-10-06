@@ -34,7 +34,12 @@ class _RoomProfileScreenState extends State<RoomProfileScreen> {
   String? _error;
 
   bool get _isOwner => _room.role == 'owner';
+  bool get _canManage => _room.canManage;
   bool get _canChangeAvatar => (_room.isGroup || _room.isChannel) && _isOwner;
+  bool _canShowPreviewField(String field) =>
+      _room.isPublic ||
+      _room.role != null ||
+      _room.previewFields.contains(field);
 
   @override
   void initState() {
@@ -350,7 +355,7 @@ class _RoomProfileScreenState extends State<RoomProfileScreen> {
   }
 
   Future<void> _openEditor() async {
-    if (!_isOwner || _saving) return;
+    if (!_canManage || _saving) return;
     final updated = await Navigator.of(context).push<RoomSummary>(
       MaterialPageRoute(builder: (_) => RoomEditScreen(room: _room)),
     );
@@ -358,7 +363,7 @@ class _RoomProfileScreenState extends State<RoomProfileScreen> {
   }
 
   Future<void> _editBanner() async {
-    if (!_isOwner || _saving) return;
+    if (!_canManage || _saving) return;
     final result = await showProfileBannerEditor(
       context,
       initial: _room.banner,
@@ -391,9 +396,12 @@ class _RoomProfileScreenState extends State<RoomProfileScreen> {
     final fallback = _room.isChannel
         ? '#'
         : (_room.title.isNotEmpty ? _room.title[0].toUpperCase() : '?');
-    final subtitle = _room.username?.isNotEmpty == true
+    final subtitle =
+        _canShowPreviewField('username') && _room.username?.isNotEmpty == true
         ? '@${_room.username}'
-        : '${_room.membersCount} участников';
+        : _canShowPreviewField('members_count')
+        ? '${_room.membersCount} участников'
+        : (_room.isChannel ? 'Канал' : 'Группа');
 
     return PopScope<RoomSummary>(
       canPop: false,
@@ -410,13 +418,13 @@ class _RoomProfileScreenState extends State<RoomProfileScreen> {
             ),
             titleText: _room.isChannel ? 'Профиль канала' : 'Профиль группы',
             actions: [
-              if (_isOwner)
+              if (_canManage)
                 IconButton(
                   tooltip: 'Изменить баннер',
                   onPressed: _saving ? null : _editBanner,
                   icon: const Icon(CupertinoIcons.paintbrush),
                 ),
-              if (_isOwner)
+              if (_canManage)
                 IconButton(
                   tooltip: 'Редактировать',
                   onPressed: _saving ? null : _openEditor,
@@ -428,14 +436,16 @@ class _RoomProfileScreenState extends State<RoomProfileScreen> {
             padding: const EdgeInsets.fromLTRB(16, 24, 16, 32),
             children: [
               ProfileBannerHeader(
-                banner: _room.banner,
+                banner: _canShowPreviewField('banner') ? _room.banner : null,
                 avatar: GestureDetector(
                   onTap: _canChangeAvatar ? _pickAvatar : null,
                   child: Stack(
                     alignment: Alignment.bottomRight,
                     children: [
                       GhostAvatar(
-                        avatarUrl: _room.avatarUrl,
+                        avatarUrl: _canShowPreviewField('avatar')
+                            ? _room.avatarUrl
+                            : null,
                         fallbackText: fallback,
                         fallbackIcon: _room.isChannel
                             ? CupertinoIcons.antenna_radiowaves_left_right
@@ -510,8 +520,32 @@ class _RoomProfileScreenState extends State<RoomProfileScreen> {
                 linkBusy: _linkBusy,
                 onLink: _copyRoomLink,
                 onMembers: _openMembers,
-                onManage: _isOwner ? _openEditor : null,
+                onManage: _canManage ? _openEditor : null,
               ),
+              if (_room.boardText.trim().isNotEmpty) ...[
+                const SizedBox(height: 16),
+                GlassCard(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Доска комнаты',
+                        style: TextStyle(
+                          color: GE.text,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _room.boardText,
+                        style: TextStyle(color: GE.text, height: 1.4),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               if (_room.isPublic || _room.canManage)
                 GlassCard(
@@ -612,11 +646,12 @@ class _RoomProfileScreenState extends State<RoomProfileScreen> {
                 padding: const EdgeInsets.symmetric(vertical: 6),
                 child: Column(
                   children: [
-                    _RoomProfileRow(
-                      icon: CupertinoIcons.person_2,
-                      label: 'Участники',
-                      value: '${_room.membersCount}',
-                    ),
+                    if (_canShowPreviewField('members_count'))
+                      _RoomProfileRow(
+                        icon: CupertinoIcons.person_2,
+                        label: 'Участники',
+                        value: '${_room.membersCount}',
+                      ),
                     _RoomProfileRow(
                       icon: _room.isPublic
                           ? CupertinoIcons.globe
@@ -624,23 +659,49 @@ class _RoomProfileScreenState extends State<RoomProfileScreen> {
                       label: 'Доступ',
                       value: _room.isPublic ? 'Публичная' : 'Приватная',
                     ),
-                    _RoomProfileRow(
-                      icon: CupertinoIcons.clock,
-                      label: 'История',
-                      value: _room.historyMode == 'all'
-                          ? 'Вся история'
-                          : 'Только новые сообщения',
-                    ),
+                    if (_canShowPreviewField('history'))
+                      _RoomProfileRow(
+                        icon: CupertinoIcons.clock,
+                        label: 'История',
+                        value: _room.historyMode == 'all'
+                            ? 'Вся история'
+                            : 'Только новые сообщения',
+                      ),
                   ],
                 ),
               ),
-              if (_room.about.isNotEmpty) ...[
+              if (_canShowPreviewField('about') && _room.about.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 GlassCard(
                   padding: const EdgeInsets.all(16),
                   child: Text(
                     _room.about,
                     style: TextStyle(color: GE.text, height: 1.4),
+                  ),
+                ),
+              ],
+              if (_canShowPreviewField('rules') &&
+                  _room.rules.trim().isNotEmpty) ...[
+                const SizedBox(height: 16),
+                GlassCard(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Правила комнаты',
+                        style: TextStyle(
+                          color: GE.text,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _room.rules,
+                        style: TextStyle(color: GE.text, height: 1.4),
+                      ),
+                    ],
                   ),
                 ),
               ],

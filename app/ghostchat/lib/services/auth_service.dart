@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
+import '../core/app_version.dart';
 import '../theme.dart';
 import '../core/local/app_logger.dart';
 import 'chat_repo.dart';
@@ -238,13 +239,27 @@ class AuthService {
   }
 
   // ─── HTTP-ручки авторизации ──────────────────────────────────────────
-  static final _dio = Dio(
-    BaseOptions(
-      baseUrl: GE.apiSoc,
-      headers: {'Content-Type': 'application/json'},
-      validateStatus: (s) => s != null && s < 500,
-    ),
-  );
+  static final _dio = _createAuthDio();
+
+  static Dio _createAuthDio() {
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: GE.apiSoc,
+        headers: {'Content-Type': 'application/json'},
+        validateStatus: (s) => s != null && s < 500,
+      ),
+    );
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) async {
+          options.headers[GhostChatAppVersion.headerName] =
+              await GhostChatAppVersion.current();
+          handler.next(options);
+        },
+      ),
+    );
+    return dio;
+  }
 
   /// Логин. Если аккаунт включил TDA (подтверждение новых устройств) и это
   /// устройство ещё не доверено — сервер НЕ выдаёт токен сразу, а возвращает

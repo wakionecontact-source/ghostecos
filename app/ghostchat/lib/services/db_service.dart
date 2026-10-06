@@ -22,6 +22,7 @@ import 'package:sqflite/sqflite.dart';
 import '../core/local/app_logger.dart';
 import 'message_record_merge.dart';
 import '../core/models/bot_reply_markup.dart';
+import '../core/models/message_button.dart';
 
 /// Приводит смешанные форматы времени из локальных таблиц к одной шкале.
 /// Старые записи могут содержать ISO-строку, Unix-секунды или Unix-миллисекунды;
@@ -82,6 +83,7 @@ class StoredMessage {
   /// {emoji: [username, ...]}
   final Map<String, List<String>>? reactions;
   final BotReplyMarkup? replyMarkup;
+  final List<MessageButton> userButtons;
   final bool edited;
   final bool deleted;
   final bool delivered;
@@ -106,6 +108,7 @@ class StoredMessage {
     this.filePayload,
     this.reactions,
     this.replyMarkup,
+    this.userButtons = const [],
     this.edited = false,
     this.deleted = false,
     this.delivered = false,
@@ -129,6 +132,9 @@ class StoredMessage {
     'bot_reply_markup': replyMarkup != null
         ? jsonEncode(replyMarkup!.toJson())
         : null,
+    'user_buttons_json': userButtons.isEmpty
+        ? null
+        : jsonEncode(MessageButton.encodeList(userButtons)),
     'edited': edited ? 1 : 0,
     'deleted': deleted ? 1 : 0,
     'delivered': delivered ? 1 : 0,
@@ -156,6 +162,11 @@ class StoredMessage {
           )
         : null,
     replyMarkup: BotReplyMarkup.tryParse(m['bot_reply_markup']),
+    userButtons: MessageButton.parseList(
+      m['user_buttons_json'] == null
+          ? null
+          : jsonDecode(m['user_buttons_json'] as String),
+    ),
     edited: (m['edited'] as int) == 1,
     deleted: (m['deleted'] as int) == 1,
     delivered: (m['delivered'] as int) == 1,
@@ -293,6 +304,7 @@ class DbService {
             read          INTEGER NOT NULL DEFAULT 0,
             decrypt_failed INTEGER NOT NULL DEFAULT 0,
             bot_reply_markup TEXT,
+            user_buttons_json TEXT,
             pending       INTEGER NOT NULL DEFAULT 0,
             temp_sid      TEXT,
             PRIMARY KEY (sid, peer)
@@ -361,6 +373,7 @@ class DbService {
             sender_avatar_url TEXT,
             text TEXT NOT NULL DEFAULT '',
             attachment_json TEXT,
+            user_buttons_json TEXT,
             forwarded_from TEXT,
             created_at INTEGER NOT NULL,
             from_me INTEGER NOT NULL DEFAULT 0,
@@ -369,6 +382,7 @@ class DbService {
             delivered_ack_sent INTEGER NOT NULL DEFAULT 1,
             pending INTEGER NOT NULL DEFAULT 0,
             send_failed INTEGER NOT NULL DEFAULT 0,
+            hidden INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (room_key, message_id)
           )
         ''');
@@ -506,8 +520,38 @@ class DbService {
             );
           }
         }
+        if (oldVersion < 12) {
+          final messageColumns = await db.rawQuery(
+            'PRAGMA table_info(messages)',
+          );
+          if (!messageColumns.any(
+            (row) => row['name'] == 'user_buttons_json',
+          )) {
+            await db.execute(
+              'ALTER TABLE messages ADD COLUMN user_buttons_json TEXT',
+            );
+          }
+          final roomColumns = await db.rawQuery(
+            'PRAGMA table_info(room_messages)',
+          );
+          if (!roomColumns.any((row) => row['name'] == 'user_buttons_json')) {
+            await db.execute(
+              'ALTER TABLE room_messages ADD COLUMN user_buttons_json TEXT',
+            );
+          }
+        }
+        if (oldVersion < 13) {
+          final roomColumns = await db.rawQuery(
+            'PRAGMA table_info(room_messages)',
+          );
+          if (!roomColumns.any((row) => row['name'] == 'hidden')) {
+            await db.execute(
+              'ALTER TABLE room_messages ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0',
+            );
+          }
+        }
       },
-      version: 11,
+      version: 13,
     );
   }
 
@@ -926,6 +970,19 @@ class DbService {
       {'pending': 0, 'send_failed': 1},
       where: 'room_key = ? AND message_id = ?',
       whereArgs: [roomKey, messageId],
+    );
+  }
+
+  Future<void> clearRoomMessageButtons({
+    required String roomKey,
+    required int messageId,
+    required String senderUsername,
+  }) async {
+    await _safeDb.update(
+      'room_messages',
+      {'user_buttons_json': null},
+      where: 'room_key = ? AND message_id = ? AND lower(sender_username) = ?',
+      whereArgs: [roomKey, messageId, senderUsername.toLowerCase()],
     );
   }
 

@@ -5,6 +5,7 @@ library;
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 
+import '../app_version.dart';
 import '../constants.dart';
 import '../storage/secure_store.dart';
 import '../../services/bot_check_service.dart';
@@ -39,6 +40,9 @@ class HttpClient {
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
+          options.headers[GhostChatAppVersion.headerName] =
+              await GhostChatAppVersion.current();
+
           // Public update metadata/APK requests still use the configured
           // transport (including SOCKS5), but must not inherit account or
           // auth-CAPTCHA headers.  The update download supplies its own

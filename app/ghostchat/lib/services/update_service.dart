@@ -4,19 +4,21 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/api/http_client.dart';
-import '../core/constants.dart';
+import '../core/app_version.dart';
 import '../core/local/app_logger.dart';
 import '../theme.dart';
 import '../widgets/error_panel.dart';
 import '../widgets/glass.dart';
 import '../widgets/toast_overlay.dart';
+import 'android_update_download.dart';
 import 'bot_check_service.dart';
+import 'ghost_asset_ota.dart';
 import 'notification_service.dart';
+import 'remote_settings_service.dart';
 
 class UpdateException implements Exception {
   final String message;
@@ -72,15 +74,84 @@ class AppUpdateInfo {
   }
 }
 
+enum AppUpdatePhase {
+  hidden,
+  available,
+  syncing,
+  downloading,
+  installing,
+  readyToInstall,
+  failed,
+}
+
+class AppUpdateUiState {
+  final AppUpdateInfo? info;
+  final AppUpdatePhase phase;
+  final double? progress;
+  final String? message;
+
+  const AppUpdateUiState({
+    this.info,
+    this.phase = AppUpdatePhase.hidden,
+    this.progress,
+    this.message,
+  });
+
+  bool get isVisible => info != null && phase != AppUpdatePhase.hidden;
+  bool get isBusy =>
+      phase == AppUpdatePhase.syncing ||
+      phase == AppUpdatePhase.downloading ||
+      phase == AppUpdatePhase.installing;
+}
+
+/// Server-selected delivery path for clients using update protocol v2.
+/// A missing plan means the server is using the legacy update response.
+class AppUpdatePlan {
+  final String recommended;
+  final bool apkAvailable;
+  final bool apkRequired;
+  final bool otaEligible;
+  final bool otaAvailable;
+  final String baseVersion;
+
+  const AppUpdatePlan({
+    required this.recommended,
+    required this.apkAvailable,
+    required this.apkRequired,
+    required this.otaEligible,
+    required this.otaAvailable,
+    required this.baseVersion,
+  });
+
+  static AppUpdatePlan? tryParse(dynamic raw) {
+    if (raw is! Map || raw['protocol'] != 2) return null;
+    final apk = raw['apk'];
+    final ota = raw['ota'];
+    if (apk is! Map || ota is! Map) return null;
+    final recommended = '${raw['recommended'] ?? ''}'.trim();
+    if (!const {'apk', 'ota', 'none'}.contains(recommended)) return null;
+    return AppUpdatePlan(
+      recommended: recommended,
+      apkAvailable: apk['available'] == true,
+      apkRequired: apk['required'] == true,
+      otaEligible: ota['eligible'] == true,
+      otaAvailable: ota['available'] == true,
+      baseVersion: '${ota['base_version'] ?? ''}'.trim(),
+    );
+  }
+}
+
 class AppUpdateCheckResult {
   final String currentVersion;
   final String latestVersion;
   final AppUpdateInfo? update;
+  final AppUpdatePlan? plan;
 
   const AppUpdateCheckResult({
     required this.currentVersion,
     required this.latestVersion,
     this.update,
+    this.plan,
   });
 
   bool get updateAvailable => update != null;
@@ -101,14 +172,22 @@ class UpdateService with WidgetsBindingObserver {
   static const _resumeDebounce = Duration(seconds: 45);
 
   Timer? _timer;
+  Timer? _androidDownloadPollTimer;
   Future<void>? _checkInFlight;
   DateTime? _lastCheck;
   DateTime? _snoozeUntil;
   DateTime? _skipUntil;
   AppUpdateInfo? _pending;
+  final ValueNotifier<AppUpdateUiState> uiState = ValueNotifier(
+    const AppUpdateUiState(),
+  );
   String? _shownVersion;
   String? _notifiedVersion;
-  bool _openRequested = false;
+  bool _downloadInFlight = false;
+  bool _androidDownloadPollInFlight = false;
+  bool _androidRestoreInFlight = false;
+  bool _installerHandoffInFlight = false;
+  bool _installerOpened = false;
   bool _started = false;
   bool _checksEnabled = true;
   AppLifecycleState _lifecycle = AppLifecycleState.resumed;
@@ -126,6 +205,9 @@ class UpdateService with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     await _loadSuppression();
     unawaited(checkNow());
+    if (AndroidUpdateDownload.isSupported) {
+      unawaited(_restoreAndroidDownload());
+    }
     if (_lifecycle == AppLifecycleState.resumed) _startTimer();
   }
 
@@ -134,10 +216,11 @@ class UpdateService with WidgetsBindingObserver {
     _started = false;
     WidgetsBinding.instance.removeObserver(this);
     _stopTimer();
+    _stopAndroidDownloadPolling();
     _pending = null;
+    uiState.value = const AppUpdateUiState();
     _shownVersion = null;
     _notifiedVersion = null;
-    _openRequested = false;
   }
 
   @override
@@ -145,13 +228,30 @@ class UpdateService with WidgetsBindingObserver {
     _lifecycle = state;
     if (state == AppLifecycleState.resumed) {
       _startTimer();
-      unawaited(checkNow());
+      if (_installerOpened) {
+        _installerOpened = false;
+        _lastCheck = null;
+        unawaited(_resumeUpdateState(forceCheck: true));
+        return;
+      }
+      unawaited(_resumeUpdateState());
     } else if (state == AppLifecycleState.hidden ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       // Проверка обновлений не должна будить сеть каждые 15 минут, пока
       // приложение свёрнуто. При возврате в foreground проверим сразу.
       _stopTimer();
+    }
+  }
+
+  Future<void> _resumeUpdateState({bool forceCheck = false}) async {
+    if (forceCheck) {
+      await checkNow(force: true);
+    } else {
+      await checkNow();
+    }
+    if (AndroidUpdateDownload.isSupported) {
+      await _restoreAndroidDownload();
     }
   }
 
@@ -210,6 +310,7 @@ class UpdateService with WidgetsBindingObserver {
     _checksEnabled = enabled;
     if (!enabled) {
       _pending = null;
+      uiState.value = const AppUpdateUiState();
       _shownVersion = null;
       _notifiedVersion = null;
       _lastCheck = null;
@@ -242,19 +343,33 @@ class UpdateService with WidgetsBindingObserver {
         throw const UpdateException('Сервер вернул некорректный ответ');
       }
       final overview = Map<String, dynamic>.from(response.data as Map);
+      final plan = AppUpdatePlan.tryParse(overview['update_plan']);
       final latest = '${overview['latest'] ?? ''}'.trim();
       if (overview['available'] == false || latest.isEmpty) {
         _pending = null;
+        uiState.value = const AppUpdateUiState();
         return AppUpdateCheckResult(
           currentVersion: current,
           latestVersion: current,
+          plan: plan,
+        );
+      }
+      if (plan != null && plan.recommended != 'apk') {
+        _pending = null;
+        uiState.value = const AppUpdateUiState();
+        return AppUpdateCheckResult(
+          currentVersion: current,
+          latestVersion: latest,
+          plan: plan,
         );
       }
       if (latest == current) {
         _pending = null;
+        uiState.value = const AppUpdateUiState();
         return AppUpdateCheckResult(
           currentVersion: current,
           latestVersion: latest,
+          plan: plan,
         );
       }
 
@@ -280,11 +395,16 @@ class UpdateService with WidgetsBindingObserver {
         json: details,
       );
       _pending = info;
+      uiState.value = AppUpdateUiState(
+        info: info,
+        phase: AppUpdatePhase.available,
+      );
       _lastCheck = DateTime.now();
       return AppUpdateCheckResult(
         currentVersion: current,
         latestVersion: latest,
         update: info,
+        plan: plan,
       );
     } catch (error) {
       if (error is UpdateException) rethrow;
@@ -300,20 +420,30 @@ class UpdateService with WidgetsBindingObserver {
       final info = await _fetchInfo();
       if (!_checksEnabled) {
         _pending = null;
+        uiState.value = const AppUpdateUiState();
         return;
       }
       if (info == null) {
         _pending = null;
+        _stopAndroidDownloadPolling();
+        uiState.value = const AppUpdateUiState();
+        return;
+      }
+      final currentUi = uiState.value;
+      if (currentUi.info?.latestVersion == info.latestVersion &&
+          (currentUi.phase == AppUpdatePhase.downloading ||
+              currentUi.phase == AppUpdatePhase.installing ||
+              currentUi.phase == AppUpdatePhase.readyToInstall ||
+              currentUi.phase == AppUpdatePhase.failed)) {
+        _pending = info;
         return;
       }
       _pending = info;
-      if (_lifecycle == AppLifecycleState.resumed) {
-        if (_openRequested) {
-          _present(info, ignoreSuppression: true);
-        } else {
-          _presentIfAllowed(info);
-        }
-      } else {
+      uiState.value = AppUpdateUiState(
+        info: info,
+        phase: AppUpdatePhase.available,
+      );
+      if (_lifecycle != AppLifecycleState.resumed) {
         _notifyInBackground(info);
       }
     } catch (error, stack) {
@@ -335,6 +465,14 @@ class UpdateService with WidgetsBindingObserver {
     if (response.statusCode != 200 || response.data is! Map) return null;
     final overview = Map<String, dynamic>.from(response.data as Map);
     if (overview['available'] == false) return null;
+    final plan = AppUpdatePlan.tryParse(overview['update_plan']);
+    if (plan != null &&
+        (plan.recommended != 'apk' ||
+            !plan.apkRequired ||
+            !plan.apkAvailable)) {
+      _pending = null;
+      return null;
+    }
     final latest = '${overview['latest'] ?? ''}'.trim();
     if (latest.isEmpty || latest == current) return null;
 
@@ -363,45 +501,199 @@ class UpdateService with WidgetsBindingObserver {
     );
   }
 
-  Future<String> _currentVersion() async {
+  Future<void> _restoreAndroidDownload() async {
+    if (!AndroidUpdateDownload.isSupported || _androidRestoreInFlight) return;
+    _androidRestoreInFlight = true;
     try {
-      final info = await PackageInfo.fromPlatform();
-      final version = info.version.trim();
-      if (version.isNotEmpty) return version;
-    } catch (error) {
-      appLog.warn('update', 'package version unavailable: $error');
+      final state = await AndroidUpdateDownload.state();
+      if (state == null) return;
+
+      final current = await _currentVersion();
+      if (state.version == current) {
+        await AndroidUpdateDownload.clear(downloadId: state.downloadId);
+        _stopAndroidDownloadPolling();
+        _pending = null;
+        uiState.value = const AppUpdateUiState();
+        return;
+      }
+
+      final checkInFlight = _checkInFlight;
+      if (_pending == null && checkInFlight != null) await checkInFlight;
+      var info = _pending;
+      if (info == null) {
+        await checkNow(force: true);
+        info = _pending;
+      }
+      if (info != null && info.latestVersion != state.version) {
+        await AndroidUpdateDownload.clear(downloadId: state.downloadId);
+        _stopAndroidDownloadPolling();
+        _pending = info;
+        uiState.value = AppUpdateUiState(
+          info: info,
+          phase: AppUpdatePhase.available,
+        );
+        return;
+      }
+      info ??= AppUpdateInfo(
+        currentVersion: current,
+        latestVersion: state.version,
+        critical: false,
+        title: 'Обновление GhostChat',
+        notes: '',
+        whatsNew: const [],
+        releaseAt: null,
+      );
+      _pending = info;
+
+      switch (state.phase) {
+        case AndroidUpdateDownloadPhase.downloading:
+          uiState.value = AppUpdateUiState(
+            info: info,
+            phase: AppUpdatePhase.downloading,
+            progress: state.progress,
+          );
+          _startAndroidDownloadPolling(info);
+        case AndroidUpdateDownloadPhase.completed:
+          _stopAndroidDownloadPolling();
+          uiState.value = AppUpdateUiState(
+            info: info,
+            phase: AppUpdatePhase.readyToInstall,
+            progress: 1,
+          );
+        case AndroidUpdateDownloadPhase.failed:
+          _stopAndroidDownloadPolling();
+          uiState.value = AppUpdateUiState(
+            info: info,
+            phase: AppUpdatePhase.failed,
+            message: state.message ?? 'Не удалось скачать обновление',
+          );
+      }
+    } catch (error, stack) {
+      appLog.warn('update', 'Android download restore failed: $error');
+      appLog.debug('update', '$stack');
+    } finally {
+      _androidRestoreInFlight = false;
     }
-    return K.appVersion;
   }
+
+  void _startAndroidDownloadPolling(
+    AppUpdateInfo info, {
+    ValueChanged<double>? onProgress,
+  }) {
+    if (_androidDownloadPollTimer != null) return;
+    _androidDownloadPollTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => unawaited(_pollAndroidDownload(info, onProgress: onProgress)),
+    );
+    unawaited(_pollAndroidDownload(info, onProgress: onProgress));
+  }
+
+  void _stopAndroidDownloadPolling() {
+    _androidDownloadPollTimer?.cancel();
+    _androidDownloadPollTimer = null;
+  }
+
+  Future<void> _pollAndroidDownload(
+    AppUpdateInfo info, {
+    ValueChanged<double>? onProgress,
+  }) async {
+    if (_androidDownloadPollInFlight) return;
+    _androidDownloadPollInFlight = true;
+    try {
+      final state = await AndroidUpdateDownload.state();
+      if (state == null || state.version != info.latestVersion) {
+        _stopAndroidDownloadPolling();
+        return;
+      }
+      switch (state.phase) {
+        case AndroidUpdateDownloadPhase.downloading:
+          uiState.value = AppUpdateUiState(
+            info: info,
+            phase: AppUpdatePhase.downloading,
+            progress: state.progress,
+          );
+          if (state.progress != null) onProgress?.call(state.progress!);
+        case AndroidUpdateDownloadPhase.completed:
+          _stopAndroidDownloadPolling();
+          if (_lifecycle == AppLifecycleState.resumed) {
+            await _installAndroidDownload(info, state);
+          } else {
+            uiState.value = AppUpdateUiState(
+              info: info,
+              phase: AppUpdatePhase.readyToInstall,
+              progress: 1,
+            );
+          }
+        case AndroidUpdateDownloadPhase.failed:
+          _stopAndroidDownloadPolling();
+          uiState.value = AppUpdateUiState(
+            info: info,
+            phase: AppUpdatePhase.failed,
+            message: state.message ?? 'Не удалось скачать обновление',
+          );
+      }
+    } catch (error, stack) {
+      appLog.warn('update', 'Android download status failed: $error');
+      appLog.debug('update', '$stack');
+    } finally {
+      _androidDownloadPollInFlight = false;
+    }
+  }
+
+  Future<void> _installAndroidDownload(
+    AppUpdateInfo info,
+    AndroidUpdateDownloadState state,
+  ) async {
+    if (_installerHandoffInFlight) return;
+    _installerHandoffInFlight = true;
+    uiState.value = AppUpdateUiState(
+      info: info,
+      phase: AppUpdatePhase.syncing,
+      progress: 1,
+      message: 'Применяем настройки и ассеты…',
+    );
+    try {
+      await RemoteSettingsService.instance.refresh();
+      await GhostAssetOta.instance.refresh();
+      uiState.value = AppUpdateUiState(
+        info: info,
+        phase: AppUpdatePhase.installing,
+        progress: 1,
+        message: 'Открываем системный установщик…',
+      );
+      await AndroidUpdateDownload.openInstaller(state.downloadId);
+      _installerOpened = true;
+      _lastCheck = null;
+      await NotificationService.instance.clearUpdateNotifications();
+      appLog.info(
+        'update',
+        'Android DownloadManager APK opened for installation version=${info.latestVersion}',
+      );
+    } catch (error) {
+      uiState.value = AppUpdateUiState(
+        info: info,
+        phase: AppUpdatePhase.readyToInstall,
+        progress: 1,
+        message: error.toString(),
+      );
+      appLog.warn('update', 'Android installer handoff failed: $error');
+    } finally {
+      _installerHandoffInFlight = false;
+    }
+  }
+
+  Future<void> _refreshInternalUpdates() async {
+    await RemoteSettingsService.instance.refresh();
+    await GhostAssetOta.instance.refresh();
+  }
+
+  Future<String> _currentVersion() => GhostChatAppVersion.current();
 
   bool _suppressed(AppUpdateInfo info) {
     final now = DateTime.now();
     if (_snoozeUntil?.isAfter(now) == true) return true;
     if (!info.critical && _skipUntil?.isAfter(now) == true) return true;
     return false;
-  }
-
-  void _presentIfAllowed(AppUpdateInfo info) {
-    if (_suppressed(info) || _shownVersion == info.latestVersion) return;
-    final navigator = NotificationService.navigatorKey.currentState;
-    if (navigator == null) {
-      Future<void>.delayed(const Duration(milliseconds: 350), () {
-        if (_started && _lifecycle == AppLifecycleState.resumed) {
-          _presentIfAllowed(info);
-        }
-      });
-      return;
-    }
-    _shownVersion = info.latestVersion;
-    navigator.push(
-      PageRouteBuilder<void>(
-        opaque: true,
-        transitionDuration: const Duration(milliseconds: 180),
-        pageBuilder: (_, __, ___) => UpdateScreen(info: info),
-        transitionsBuilder: (_, animation, __, child) =>
-            FadeTransition(opacity: animation, child: child),
-      ),
-    );
   }
 
   void _notifyInBackground(AppUpdateInfo info) {
@@ -417,9 +709,8 @@ class UpdateService with WidgetsBindingObserver {
 
   /// Called by NotificationService when the user taps the update notification.
   Future<void> openPendingUpdate() async {
-    // Android may deliver the tap before Flutter has mounted MainShell. Keep
-    // the intent until the first version check can push the route safely.
-    _openRequested = true;
+    // A notification tap is explicit user intent, so the update details page
+    // can be opened. Routine foreground checks only reveal the sidebar button.
     var info = _pending;
     if (info == null) {
       try {
@@ -430,6 +721,10 @@ class UpdateService with WidgetsBindingObserver {
     }
     if (info == null) return;
     _pending = info;
+    uiState.value = AppUpdateUiState(
+      info: info,
+      phase: AppUpdatePhase.available,
+    );
     _shownVersion = null;
     _present(info, ignoreSuppression: true);
   }
@@ -440,7 +735,6 @@ class UpdateService with WidgetsBindingObserver {
     if (navigator == null) return;
     if (_shownVersion == info.latestVersion && !ignoreSuppression) return;
     _shownVersion = info.latestVersion;
-    _openRequested = false;
     navigator.push(
       PageRouteBuilder<void>(
         opaque: true,
@@ -482,17 +776,89 @@ class UpdateService with WidgetsBindingObserver {
     AppUpdateInfo info, {
     ValueChanged<double>? onProgress,
   }) async {
-    final token = await BotCheckService.instance.ensureToken(
-      context,
-      purpose: 'download',
-    );
-    final temp = await getTemporaryDirectory();
-    final safeVersion = info.latestVersion.replaceAll(
-      RegExp(r'[^0-9A-Za-z._-]'),
-      '_',
-    );
-    final file = File('${temp.path}/GhostChat_V${safeVersion}ob.apk');
+    if (_downloadInFlight) return;
+    if (AndroidUpdateDownload.isSupported) {
+      final existing = await AndroidUpdateDownload.state();
+      if (existing?.phase == AndroidUpdateDownloadPhase.completed &&
+          existing?.version == info.latestVersion) {
+        await _installAndroidDownload(info, existing!);
+        return;
+      }
+    }
+    if (!context.mounted) return;
+    _downloadInFlight = true;
+    _pending = info;
+    uiState.value = AppUpdateUiState(info: info, phase: AppUpdatePhase.syncing);
     try {
+      final token = await BotCheckService.instance.ensureToken(
+        context,
+        purpose: 'download',
+      );
+
+      if (AndroidUpdateDownload.isSupported) {
+        final response = await HttpClient.I.dio.post(
+          '/api/download/update-ticket',
+          data: {'version': info.latestVersion},
+          options: Options(
+            extra: const {'skipAuth': true},
+            headers: {'X-Ghost-Bot-Token': token, 'Cache-Control': 'no-store'},
+            responseType: ResponseType.json,
+            receiveTimeout: const Duration(seconds: 30),
+          ),
+        );
+        final body = response.data is Map
+            ? Map<String, dynamic>.from(response.data as Map)
+            : const <String, dynamic>{};
+        final downloadPath = '${body['download_url'] ?? ''}'.trim();
+        if ((response.statusCode ?? 0) != 200 || downloadPath.isEmpty) {
+          BotCheckService.instance.clear('download');
+          throw UpdateException(
+            _responseMessage(body, 'Скачивание обновления недоступно'),
+          );
+        }
+        final baseUri = Uri.parse(HttpClient.I.dio.options.baseUrl);
+        final downloadUri = baseUri.resolve(downloadPath);
+        if (downloadUri.scheme != 'https') {
+          throw const UpdateException('Ссылка на обновление не защищена HTTPS');
+        }
+        final state = await AndroidUpdateDownload.enqueue(
+          url: downloadUri.toString(),
+          version: info.latestVersion,
+        );
+        if (state == null) {
+          throw const UpdateException('Android не принял загрузку обновления');
+        }
+        _pending = info;
+        uiState.value = AppUpdateUiState(
+          info: info,
+          phase: switch (state.phase) {
+            AndroidUpdateDownloadPhase.downloading =>
+              AppUpdatePhase.downloading,
+            AndroidUpdateDownloadPhase.completed =>
+              AppUpdatePhase.readyToInstall,
+            AndroidUpdateDownloadPhase.failed => AppUpdatePhase.failed,
+          },
+          progress: state.progress,
+          message: state.message,
+        );
+        if (state.phase == AndroidUpdateDownloadPhase.downloading) {
+          _startAndroidDownloadPolling(info, onProgress: onProgress);
+        } else if (state.phase == AndroidUpdateDownloadPhase.completed) {
+          await _installAndroidDownload(info, state);
+        }
+        return;
+      }
+
+      final temp = await getTemporaryDirectory();
+      final safeVersion = info.latestVersion.replaceAll(
+        RegExp(r'[^0-9A-Za-z._-]'),
+        '_',
+      );
+      final file = File('${temp.path}/GhostChat_V${safeVersion}ob.apk');
+      uiState.value = AppUpdateUiState(
+        info: info,
+        phase: AppUpdatePhase.downloading,
+      );
       final response = await HttpClient.I.dio.download(
         '/api/download/update',
         file.path,
@@ -505,7 +871,15 @@ class UpdateService with WidgetsBindingObserver {
           receiveTimeout: const Duration(minutes: 5),
         ),
         onReceiveProgress: (received, total) {
-          if (total > 0) onProgress?.call(received / total);
+          if (total > 0) {
+            final progress = (received / total).clamp(0.0, 1.0).toDouble();
+            uiState.value = AppUpdateUiState(
+              info: info,
+              phase: AppUpdatePhase.downloading,
+              progress: progress,
+            );
+            onProgress?.call(progress);
+          }
         },
       );
       final status = response.statusCode ?? 0;
@@ -518,6 +892,13 @@ class UpdateService with WidgetsBindingObserver {
       if (!await file.exists() || await file.length() < 1024) {
         throw const UpdateException('Сервер прислал неполный APK');
       }
+      await _refreshInternalUpdates();
+      uiState.value = AppUpdateUiState(
+        info: info,
+        phase: AppUpdatePhase.installing,
+        progress: 1,
+        message: 'Открываем установщик…',
+      );
       final result = await OpenFilex.open(
         file.path,
         type: 'application/vnd.android.package-archive',
@@ -528,26 +909,51 @@ class UpdateService with WidgetsBindingObserver {
           details: result.message,
         );
       }
-      _pending = null;
+      _installerOpened = true;
+      _lastCheck = null;
+      uiState.value = AppUpdateUiState(
+        info: info,
+        phase: AppUpdatePhase.installing,
+        progress: 1,
+        message: 'Ожидаем завершения установки',
+      );
       await NotificationService.instance.clearUpdateNotifications();
       appLog.info(
         'update',
         'APK opened for installation version=${info.latestVersion}',
       );
-    } on UpdateException {
+    } on UpdateException catch (error) {
+      uiState.value = AppUpdateUiState(
+        info: info,
+        phase: AppUpdatePhase.failed,
+        message: error.message,
+      );
       rethrow;
     } on DioException catch (error) {
       BotCheckService.instance.clear('download');
-      throw UpdateException(
+      final failure = UpdateException(
         'Не удалось скачать обновление',
         details: error.response?.data?.toString() ?? error.message,
       );
+      uiState.value = AppUpdateUiState(
+        info: info,
+        phase: AppUpdatePhase.failed,
+        message: failure.message,
+      );
+      throw failure;
     } catch (error) {
-      throw UpdateException(
+      final failure = UpdateException(
         'Не удалось установить обновление',
         details: '$error',
       );
+      uiState.value = AppUpdateUiState(
+        info: info,
+        phase: AppUpdatePhase.failed,
+        message: failure.message,
+      );
+      throw failure;
     } finally {
+      _downloadInFlight = false;
       // Keep the APK while the system installer is using it. Temporary files
       // are cleaned by Android; deleting here would break the installer.
     }

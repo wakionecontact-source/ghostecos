@@ -28,6 +28,7 @@ import '../services/lan_chat_store.dart';
 import '../services/bookmark_store.dart';
 import '../services/crypto_v2.dart';
 import '../services/chat_repo.dart';
+import '../services/chat_organization_store.dart';
 import '../services/call_service.dart';
 import '../services/triangle_service.dart';
 import '../services/nav_bar_settings.dart';
@@ -118,6 +119,8 @@ class _MainShellState extends State<MainShell>
   bool _bootstrapped = false;
   bool _isGuest = false;
   bool _sessionExitStarted = false;
+  double _callMiniRight = 16;
+  double _callMiniBottom = 160;
   String? _username;
   String? _displayName;
   String? _error;
@@ -261,8 +264,8 @@ class _MainShellState extends State<MainShell>
       // После логина — спросить разрешение на уведомления (если ещё не выдано).
       NotificationService.instance.ensurePermission();
       ForegroundService.instance.start();
-      // Проверка стартует после построения MainShell, чтобы полноэкранный
-      // экран обновления не оказался поверх welcome/auth маршрутов.
+      // Проверка стартует после построения MainShell: доступное обновление
+      // появится кнопкой в сайдбаре и не перекроет рабочий экран.
       unawaited(UpdateService.instance.start());
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -603,7 +606,162 @@ class _MainShellState extends State<MainShell>
           _content(context),
           ConnectivityBadge(isGuest: _isGuest),
           _incomingCallOverlay(context),
+          _minimizedCallOverlay(context),
         ],
+      ),
+    );
+  }
+
+  Widget _minimizedCallOverlay(BuildContext context) {
+    return ValueListenableBuilder<CallSnapshot>(
+      valueListenable: CallService.instance.state,
+      builder: (context, snapshot, _) {
+        if (!snapshot.minimized || !CallService.instance.isActive) {
+          return const SizedBox.shrink();
+        }
+        final peer = snapshot.peer;
+        if (peer == null || peer.isEmpty) return const SizedBox.shrink();
+        final avatarUrl =
+            ChatRepo.instance.getPeerAvatarCached(peer) ??
+            ProfileCache.instance
+                .getProfileSync(peer)?['avatar_url']
+                ?.toString();
+        final size = MediaQuery.sizeOf(context);
+        final padding = MediaQuery.paddingOf(context);
+        const width = 250.0;
+        const height = 70.0;
+        final maxRight = (size.width - width - 8).clamp(8.0, double.infinity);
+        final maxBottom =
+            (size.height - height - padding.top - padding.bottom - 8).clamp(
+              100.0,
+              double.infinity,
+            );
+        final right = _callMiniRight.clamp(8.0, maxRight).toDouble();
+        final bottom = _callMiniBottom.clamp(100.0, maxBottom).toDouble();
+        final minutes = snapshot.duration.inMinutes
+            .remainder(60)
+            .toString()
+            .padLeft(2, '0');
+        final seconds = snapshot.duration.inSeconds
+            .remainder(60)
+            .toString()
+            .padLeft(2, '0');
+        final duration = snapshot.duration.inHours > 0
+            ? '${snapshot.duration.inHours}:$minutes:$seconds'
+            : '$minutes:$seconds';
+
+        return Positioned(
+          right: right,
+          bottom: bottom + padding.bottom,
+          child: GestureDetector(
+            onPanUpdate: (details) {
+              setState(() {
+                _callMiniRight = (_callMiniRight - details.delta.dx)
+                    .clamp(8.0, maxRight)
+                    .toDouble();
+                _callMiniBottom = (_callMiniBottom - details.delta.dy)
+                    .clamp(100.0, maxBottom)
+                    .toDouble();
+              });
+            },
+            child: SizedBox(
+              width: width,
+              height: height,
+              child: GlassCard(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
+                child: Row(
+                  children: [
+                    Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        GhostAvatar(
+                          avatarUrl: avatarUrl,
+                          fallbackText: peer,
+                          size: 38,
+                        ),
+                        if (snapshot.screenSharing)
+                          Positioned(
+                            right: -2,
+                            bottom: -2,
+                            child: Container(
+                              width: 17,
+                              height: 17,
+                              decoration: BoxDecoration(
+                                color: GE.primary,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: GE.bg, width: 1.5),
+                              ),
+                              child: const Icon(
+                                Icons.screen_share,
+                                size: 10,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: InkWell(
+                        onTap: () => _restoreMinimizedCall(snapshot),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 5),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                '@$peer',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: GE.text,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              Text(
+                                snapshot.phase == CallPhase.connected
+                                    ? duration
+                                    : snapshot.phase == CallPhase.outgoing
+                                    ? 'Вызов…'
+                                    : 'Соединение…',
+                                style: TextStyle(color: GE.sub, fontSize: 11),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Завершить звонок',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => unawaited(CallService.instance.end()),
+                      icon: Icon(
+                        CupertinoIcons.phone_down_fill,
+                        color: GE.red,
+                        size: 20,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _restoreMinimizedCall(CallSnapshot snapshot) {
+    final peer = snapshot.peer;
+    if (peer == null || peer.isEmpty) return;
+    CallService.instance.restore();
+    unawaited(
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => CallScreen(peer: peer, displayName: '@$peer'),
+        ),
       ),
     );
   }
@@ -784,11 +942,42 @@ class _MainShellState extends State<MainShell>
         // Плавающие кружки "новый чат"/"камера" — только на вкладке Чатов
         // (в других вкладках нет смысла: некуда открывать чат/слать фото).
         if (_section == Section.chat)
-          Positioned(
-            right: 16,
-            bottom: 88 + MediaQuery.of(context).padding.bottom,
-            child: _QuickActionButtons(isGuest: _isGuest),
+          ValueListenableBuilder<AppUpdateUiState>(
+            valueListenable: UpdateService.instance.uiState,
+            builder: (context, updateState, _) => Positioned(
+              right: 16,
+              bottom:
+                  88 +
+                  MediaQuery.of(context).padding.bottom +
+                  (updateState.isVisible ? 90 : 0),
+              child: _QuickActionButtons(isGuest: _isGuest),
+            ),
           ),
+        ValueListenableBuilder<AppUpdateUiState>(
+          valueListenable: UpdateService.instance.uiState,
+          builder: (context, state, _) {
+            if (!state.isVisible || state.info == null) {
+              return const SizedBox.shrink();
+            }
+            return Positioned(
+              left: 16,
+              right: 16,
+              bottom: 88 + MediaQuery.of(context).padding.bottom,
+              child: _UpdateRailAction(
+                state: state,
+                onTap: state.isBusy
+                    ? null
+                    : () {
+                        unawaited(
+                          UpdateService.instance
+                              .downloadAndOpen(context, state.info!)
+                              .catchError((Object _) {}),
+                        );
+                      },
+              ),
+            );
+          },
+        ),
       ],
     );
   }
@@ -952,7 +1141,10 @@ class _QuickActionButtons extends StatelessWidget {
           (d) =>
               !d.username.startsWith('g:') &&
               !d.username.startsWith(lanDialogPrefix) &&
-              !d.username.startsWith(bookmarkDialogPrefix),
+              !d.username.startsWith(bookmarkDialogPrefix) &&
+              ChatOrganizationStore.instance.canSeeChatInActiveScenario(
+                d.username,
+              ),
         )
         .toList();
     final peer = await showGlassSheet<String>(
@@ -1654,6 +1846,26 @@ class _SideRail extends StatelessWidget {
               ),
             ),
           ),
+          ValueListenableBuilder<AppUpdateUiState>(
+            valueListenable: UpdateService.instance.uiState,
+            builder: (context, state, _) {
+              if (!state.isVisible || state.info == null) {
+                return const SizedBox.shrink();
+              }
+              return _UpdateRailAction(
+                state: state,
+                onTap: state.isBusy
+                    ? null
+                    : () {
+                        unawaited(
+                          UpdateService.instance
+                              .downloadAndOpen(context, state.info!)
+                              .catchError((Object _) {}),
+                        );
+                      },
+              );
+            },
+          ),
           Divider(color: GE.glassBorder, height: 1),
           // Профиль пользователя — тап ведёт во вкладку «Профиль» (НЕ выход;
           // выход — внутри профиля, с подтверждением). Подсвечивается активным.
@@ -1707,6 +1919,119 @@ class _SideRail extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _UpdateRailAction extends StatelessWidget {
+  final AppUpdateUiState state;
+  final VoidCallback? onTap;
+
+  const _UpdateRailAction({required this.state, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final percent = state.progress == null
+        ? null
+        : (state.progress! * 100).round();
+    final label = switch (state.phase) {
+      AppUpdatePhase.available => 'Обновить GhostChat',
+      AppUpdatePhase.syncing => 'Подготавливаем обновление…',
+      AppUpdatePhase.downloading =>
+        percent == null
+            ? 'Скачиваем обновление…'
+            : 'Скачиваем обновление · $percent%',
+      AppUpdatePhase.installing => state.message ?? 'Открываем установщик…',
+      AppUpdatePhase.readyToInstall => 'Установить GhostChat',
+      AppUpdatePhase.failed => 'Повторить обновление',
+      AppUpdatePhase.hidden => '',
+    };
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF10C947), Color(0xFF00B9B5)],
+              ),
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF00B9B5).withValues(alpha: 0.18),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      state.isBusy
+                          ? CupertinoIcons.arrow_down_circle_fill
+                          : CupertinoIcons.arrow_down_circle,
+                      color: Colors.white,
+                      size: 19,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        label,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    if (!state.isBusy)
+                      const Icon(
+                        CupertinoIcons.chevron_right,
+                        color: Colors.white70,
+                        size: 15,
+                      ),
+                  ],
+                ),
+                if (state.isBusy) ...[
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      value: state.progress,
+                      minHeight: 4,
+                      color: Colors.white,
+                      backgroundColor: Colors.white.withValues(alpha: 0.28),
+                    ),
+                  ),
+                ],
+                if ((state.phase == AppUpdatePhase.failed ||
+                        state.phase == AppUpdatePhase.readyToInstall) &&
+                    state.message != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    state.message!,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontSize: 10),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

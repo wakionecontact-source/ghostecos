@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 
+import 'ghost_asset_ota.dart';
 import 'sound_settings.dart';
 
 /// Preloaded, original GhostChat UI tones. Route the short in-app effects to
@@ -31,10 +32,22 @@ class GhostSoundEffects {
   final Set<StopFunction> _activeCallStops = <StopFunction>{};
   Future<void>? _initializing;
   int _callPlaybackGeneration = 0;
+  int? _loadedAssetRevision;
+  bool _assetRevisionListenerAttached = false;
+  Future<void>? _assetRevisionReload;
 
-  Future<void> initialize() => _initializing ??= _initialize();
+  Future<void> initialize() {
+    if (!_assetRevisionListenerAttached) {
+      GhostAssetOta.instance.revisionNotifier.addListener(
+        _onAssetRevisionChanged,
+      );
+      _assetRevisionListenerAttached = true;
+    }
+    return _initializing ??= _initialize();
+  }
 
   Future<void> _initialize() async {
+    final startingRevision = GhostAssetOta.instance.revisionNotifier.value;
     try {
       await SoundSettings.instance.load();
       for (
@@ -47,18 +60,86 @@ class GhostSoundEffects {
             : 'sounds/ghost_tap_${variant + 1}.wav';
         _tapPools.add(await _createPool(tapAsset));
       }
+      _loadedAssetRevision = startingRevision;
+      if (GhostAssetOta.instance.revisionNotifier.value != startingRevision) {
+        _onAssetRevisionChanged();
+      }
     } catch (error) {
       _initializing = null;
       if (kDebugMode) debugPrint('[sound] preload failed: $error');
     }
   }
 
-  Future<AudioPool> _createPool(String assetPath) => AudioPool.create(
-    source: AssetSource(assetPath),
-    audioContext: _context,
-    minPlayers: 1,
-    maxPlayers: 3,
-  );
+  Future<AudioPool> _createPool(String assetPath) async {
+    final data = await GhostAssetOta.instance.loadAssetData(
+      'assets/$assetPath',
+    );
+    final bytes = data.buffer.asUint8List(
+      data.offsetInBytes,
+      data.lengthInBytes,
+    );
+    return AudioPool.create(
+      source: BytesSource(bytes, mimeType: 'audio/wav'),
+      audioContext: _context,
+      minPlayers: 1,
+      maxPlayers: 3,
+    );
+  }
+
+  void _onAssetRevisionChanged() {
+    final installedRevision = GhostAssetOta.instance.revisionNotifier.value;
+    if (_loadedAssetRevision == null ||
+        _loadedAssetRevision == installedRevision ||
+        _assetRevisionReload != null) {
+      return;
+    }
+    final reload = _reloadPoolsForAssetRevision();
+    _assetRevisionReload = reload;
+    unawaited(
+      reload.whenComplete(() {
+        if (identical(_assetRevisionReload, reload)) {
+          _assetRevisionReload = null;
+        }
+        _onAssetRevisionChanged();
+      }),
+    );
+  }
+
+  Future<void> _reloadPoolsForAssetRevision() async {
+    final pools = <AudioPool>{..._tapPools};
+    for (final pending in <Future<AudioPool>>[
+      ..._notificationPools.values,
+      ..._callPools.values,
+      ..._successPools.values,
+      ..._warningPools.values,
+      ..._errorPools.values,
+    ]) {
+      try {
+        pools.add(await pending);
+      } catch (_) {
+        // A failed pool is discarded with the rest; it will be retried on use.
+      }
+    }
+    await stopCall();
+    _tapPools.clear();
+    _notificationPools.clear();
+    _callPools.clear();
+    _successPools.clear();
+    _warningPools.clear();
+    _errorPools.clear();
+    for (final pool in pools) {
+      try {
+        await pool.dispose();
+      } catch (error) {
+        if (kDebugMode) {
+          debugPrint('[sound] old OTA pool disposal failed: $error');
+        }
+      }
+    }
+    _loadedAssetRevision = null;
+    _initializing = null;
+    await initialize();
+  }
 
   AudioPool? _tapPoolAt(int variant) {
     if (_tapPools.isEmpty) return null;
