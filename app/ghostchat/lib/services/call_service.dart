@@ -173,6 +173,8 @@ class CallService {
   bool _remoteDescriptionReady = false;
   bool _initialized = false;
   Future<void>? _initializing;
+  bool _wsWasConnected = false;
+  StreamSubscription<bool>? _wsConnectionSubscription;
   bool _currentVideo = false;
   bool _muted = false;
   bool _speaker = false;
@@ -225,6 +227,28 @@ class CallService {
     return local.isNotEmpty && remote.isNotEmpty && local.compareTo(remote) < 0;
   }
 
+  void _onWsConnectionChanged(bool connected) {
+    final reconnected = connected && !_wsWasConnected;
+    _wsWasConnected = connected;
+    if (!reconnected ||
+        !_iceRecoveryActive ||
+        !_isIceRestartLeader ||
+        _iceRestartInFlight) {
+      return;
+    }
+    final callId = _callId;
+    if (callId == null ||
+        !_ownsActiveCall(callId) ||
+        _iceRestartAttempts >= 4) {
+      return;
+    }
+    // Signals written while the WebSocket was down are discarded. Retry the
+    // ICE negotiation only after a fresh signaling connection exists.
+    _iceRestartTimer?.cancel();
+    _iceRestartTimer = null;
+    _scheduleIceRestartRetry(callId: callId, delay: Duration.zero);
+  }
+
   Future<void> initialize() async {
     final running = _initializing;
     if (running != null) {
@@ -236,6 +260,10 @@ class CallService {
     final future = () async {
       _localUsername = await AuthService.username();
       WsClient.instance.on('call.signal', _onSignal);
+      _wsConnectionSubscription ??= WsClient.instance.onConnectionChange.listen(
+        _onWsConnectionChanged,
+      );
+      _wsWasConnected = WsClient.instance.isConnected;
       WsClient.instance.on('call.signal.err', (dynamic payload) {
         final data = _asMap(payload);
         final message = data['error']?.toString() ?? 'Сигнал звонка отклонён';
@@ -1294,6 +1322,7 @@ class CallService {
       });
     }
     if (_isIceRestartLeader &&
+        WsClient.instance.isConnected &&
         !_iceRestartInFlight &&
         _iceRestartTimer?.isActive != true) {
       final initialNegotiation = state.value.phase == CallPhase.connecting;
@@ -1327,6 +1356,10 @@ class CallService {
         _iceRestartAttempts >= 4) {
       return;
     }
+    if (!WsClient.instance.isConnected) {
+      _beginIceRecovery();
+      return;
+    }
     _iceRestartInFlight = true;
     _iceRestartAttempts++;
     final generation = ++_iceGeneration;
@@ -1344,6 +1377,12 @@ class CallService {
       await _updateVerificationSdp(localSdp: offer.sdp);
       if (!_ownsActiveCall(callId)) {
         if (_callId == callId) _iceRestartInFlight = false;
+        return;
+      }
+      if (!WsClient.instance.isConnected) {
+        _iceRestartInFlight = false;
+        appLog.debug('call', 'ICE restart waiting for signaling reconnect');
+        _beginIceRecovery();
         return;
       }
       _sendSignal({
