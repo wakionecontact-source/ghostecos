@@ -224,9 +224,12 @@ class _CallScreenState extends State<CallScreen> {
                   if (snapshot.verificationEmojis.isNotEmpty)
                     Positioned(
                       left: 18,
-                      right: 18,
+                      right: snapshot.video ? 142 : 18,
                       top: 112,
-                      child: _verificationCard(snapshot.verificationEmojis),
+                      child: _verificationCard(
+                        snapshot.verificationEmojis,
+                        compact: snapshot.video,
+                      ),
                     ),
                   _controls(snapshot),
                 ],
@@ -411,10 +414,12 @@ class _CallScreenState extends State<CallScreen> {
     _ => state,
   };
 
-  Widget _verificationCard(List<String> emojis) {
+  Widget _verificationCard(List<String> emojis, {bool compact = false}) {
     return GlassCard(
       lite: true,
-      padding: const EdgeInsets.fromLTRB(14, 11, 14, 13),
+      padding: compact
+          ? const EdgeInsets.fromLTRB(12, 10, 12, 11)
+          : const EdgeInsets.fromLTRB(14, 11, 14, 13),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -427,24 +432,35 @@ class _CallScreenState extends State<CallScreen> {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Проверка звонка',
-                      style: TextStyle(
-                        color: GE.text,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
+                child: compact
+                    ? Text(
+                        'Сверь код',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: GE.text,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Проверка звонка',
+                            style: TextStyle(
+                              color: GE.text,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Сверь эти эмодзи с собеседником',
+                            style: TextStyle(color: GE.sub, fontSize: 11),
+                          ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Сверь эти эмодзи с собеседником',
-                      style: TextStyle(color: GE.sub, fontSize: 11),
-                    ),
-                  ],
-                ),
               ),
             ],
           ),
@@ -454,7 +470,7 @@ class _CallScreenState extends State<CallScreen> {
             child: EmojiText(
               emojis.join('  '),
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 30, height: 1.0),
+              style: TextStyle(fontSize: compact ? 26 : 30, height: 1.0),
               allowFormatting: false,
               scale: 1.0,
             ),
