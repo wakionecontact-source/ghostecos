@@ -7,7 +7,8 @@ import 'dart:typed_data';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/services.dart' show HapticFeedback;
+import 'package:flutter/services.dart'
+    show Clipboard, ClipboardData, HapticFeedback;
 import 'package:image_picker/image_picker.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
@@ -47,6 +48,8 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
   late String _name;
   bool _sending = false;
   bool _emojiOpen = false;
+  BookmarkMessage? _replyTo;
+  BookmarkMessage? _editing;
   final _sendBtnKey = GlobalKey();
   final _imagePicker = ImagePicker();
   static const double _emojiPanelH = 300;
@@ -82,13 +85,25 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
   Future<void> _sendText() async {
     final text = _msgCtrl.text.trim();
     if (text.isEmpty || _sending) return;
+    final editing = _editing;
+    final replyTo = _replyTo;
     flySendAnimation(context, _sendBtnKey);
     setState(() => _sending = true);
     try {
-      await BookmarkStore.instance.addMessage(
-        bookmarkId: widget.bookmarkId,
-        text: text,
-      );
+      if (editing != null) {
+        await BookmarkStore.instance.editMessageText(
+          messageId: editing.id,
+          bookmarkId: widget.bookmarkId,
+          text: text,
+        );
+      } else {
+        await BookmarkStore.instance.addMessage(
+          bookmarkId: widget.bookmarkId,
+          text: text,
+          replyTo: replyTo?.id,
+          replyPreview: replyTo == null ? null : _messagePreview(replyTo),
+        );
+      }
       final msgs = await BookmarkStore.instance.getMessages(widget.bookmarkId);
       if (!mounted) return;
       setState(() {
@@ -96,6 +111,8 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
           ..clear()
           ..addAll(msgs);
         _msgCtrl.clear();
+        _replyTo = null;
+        _editing = null;
       });
       _scrollToBottom();
     } finally {
@@ -107,6 +124,10 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
   // локальные — гео/кошелёк не имеют смысла здесь, поэтому это заглушки «скоро»
   // (единый вид листа важнее, чем прятать пункты).
   Future<void> _openAttachSheet() async {
+    if (_editing != null) {
+      toast.show('Текстовые заметки редактируются без вложений');
+      return;
+    }
     HapticFeedback.selectionClick();
     await showModalBottomSheet<void>(
       context: context,
@@ -174,11 +195,14 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
     String name,
     String? mime,
   ) async {
+    final replyTo = _replyTo;
     await BookmarkStore.instance.addMessage(
       bookmarkId: widget.bookmarkId,
       fileName: name,
       fileMime: mime,
       fileBytes: bytes,
+      replyTo: replyTo?.id,
+      replyPreview: replyTo == null ? null : _messagePreview(replyTo),
     );
     final msgs = await BookmarkStore.instance.getMessages(widget.bookmarkId);
     if (!mounted) return;
@@ -186,6 +210,7 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
       _messages
         ..clear()
         ..addAll(msgs);
+      _replyTo = null;
     });
     _scrollToBottom();
   }
@@ -336,18 +361,26 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
             SafeArea(
               top: false,
               bottom: !_emojiOpen,
-              child: ChatComposer(
-                controller: _msgCtrl,
-                emojiOpen: _emojiOpen,
-                sending: _sending,
-                sendKey: _sendBtnKey,
-                hint: 'Заметка себе…',
-                onAttach: _openAttachSheet,
-                onToggleEmoji: _toggleEmoji,
-                onSend: _sendText,
-                onFieldTap: () {
-                  if (_emojiOpen) setState(() => _emojiOpen = false);
-                },
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_replyTo != null || _editing != null) _replyEditBar(),
+                  ChatComposer(
+                    controller: _msgCtrl,
+                    emojiOpen: _emojiOpen,
+                    sending: _sending,
+                    sendKey: _sendBtnKey,
+                    hint: _editing == null
+                        ? 'Заметка себе…'
+                        : 'Изменить заметку…',
+                    onAttach: _openAttachSheet,
+                    onToggleEmoji: _toggleEmoji,
+                    onSend: _sendText,
+                    onFieldTap: () {
+                      if (_emojiOpen) setState(() => _emojiOpen = false);
+                    },
+                  ),
+                ],
               ),
             ),
             if (_emojiOpen)
@@ -387,6 +420,203 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
     });
   }
 
+  String _messagePreview(BookmarkMessage m) {
+    if (m.text.isNotEmpty) return m.text;
+    if (m.fileName != null) return '📎 ${m.fileName}';
+    return 'Сообщение';
+  }
+
+  Widget _replyEditBar() {
+    final editing = _editing;
+    final replyTo = _replyTo;
+    final title = editing != null ? 'Редактирование' : 'Ответ';
+    final preview = editing != null
+        ? _messagePreview(editing)
+        : _messagePreview(replyTo!);
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+      padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+      decoration: BoxDecoration(
+        color: GE.glassFill,
+        borderRadius: BorderRadius.circular(12),
+        border: Border(left: BorderSide(color: GE.primary, width: 3)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: GE.primary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  preview,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: GE.sub, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Отмена',
+            onPressed: () {
+              setState(() {
+                _replyTo = null;
+                _editing = null;
+                _msgCtrl.clear();
+              });
+            },
+            icon: Icon(CupertinoIcons.xmark, color: GE.sub, size: 17),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openMessageActions(BookmarkMessage m) async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    HapticFeedback.mediumImpact();
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: GlassCard(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _messageAction(
+                  sheetContext,
+                  'reply',
+                  CupertinoIcons.reply,
+                  'Ответить',
+                ),
+                _messageAction(
+                  sheetContext,
+                  'react',
+                  CupertinoIcons.smiley,
+                  'Поставить реакцию',
+                ),
+                if (m.text.isNotEmpty)
+                  _messageAction(
+                    sheetContext,
+                    'copy',
+                    CupertinoIcons.doc_on_doc,
+                    'Копировать',
+                  ),
+                if (m.text.isNotEmpty && !m.hasFile)
+                  _messageAction(
+                    sheetContext,
+                    'edit',
+                    CupertinoIcons.pencil,
+                    'Редактировать',
+                  ),
+                _messageAction(
+                  sheetContext,
+                  'delete',
+                  CupertinoIcons.trash,
+                  'Удалить',
+                  danger: true,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    switch (action) {
+      case 'reply':
+        setState(() {
+          _editing = null;
+          _replyTo = m;
+          _msgCtrl.clear();
+        });
+        break;
+      case 'react':
+        await _react(m);
+        break;
+      case 'copy':
+        await Clipboard.setData(ClipboardData(text: m.text));
+        toast.show('Скопировано');
+        break;
+      case 'edit':
+        setState(() {
+          _replyTo = null;
+          _editing = m;
+          _msgCtrl.text = m.text;
+          _msgCtrl.selection = TextSelection.collapsed(offset: m.text.length);
+        });
+        break;
+      case 'delete':
+        await _deleteMessage(m);
+        break;
+    }
+  }
+
+  Widget _messageAction(
+    BuildContext context,
+    String value,
+    IconData icon,
+    String label, {
+    bool danger = false,
+  }) => ListTile(
+    dense: true,
+    leading: Icon(icon, color: danger ? GE.red : GE.primary),
+    title: Text(label, style: TextStyle(color: danger ? GE.red : GE.text)),
+    onTap: () => Navigator.pop(context, value),
+  );
+
+  Future<void> _deleteMessage(BookmarkMessage m) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: GE.bgDeep,
+        title: Text('Удалить заметку?', style: TextStyle(color: GE.text)),
+        content: Text(
+          'Это действие удалит сообщение из локальной закладки.',
+          style: TextStyle(color: GE.sub),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text('Удалить', style: TextStyle(color: GE.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await BookmarkStore.instance.deleteMessage(m.id, widget.bookmarkId);
+    final msgs = await BookmarkStore.instance.getMessages(widget.bookmarkId);
+    if (!mounted) return;
+    setState(() {
+      _messages
+        ..clear()
+        ..addAll(msgs);
+      if (_replyTo?.id == m.id) _replyTo = null;
+      if (_editing?.id == m.id) {
+        _editing = null;
+        _msgCtrl.clear();
+      }
+    });
+  }
+
   Widget _bubble(BookmarkMessage m) {
     final time = DateTime.fromMillisecondsSinceEpoch(m.createdAt * 1000);
     final hh = time.hour.toString().padLeft(2, '0');
@@ -394,7 +624,7 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
     return Align(
       alignment: Alignment.centerRight,
       child: GestureDetector(
-        onLongPress: () => _react(m),
+        onLongPress: () => _openMessageActions(m),
         onDoubleTap: () => _quickReact(m),
         child: Container(
           margin: const EdgeInsets.symmetric(vertical: 3),
@@ -408,6 +638,29 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (m.replyPreview != null) ...[
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(7),
+                    border: Border(
+                      left: BorderSide(color: Colors.white70, width: 2),
+                    ),
+                  ),
+                  child: Text(
+                    m.replyPreview!,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white70, fontSize: 11),
+                  ),
+                ),
+              ],
               if (m.hasFile)
                 InkWell(
                   onTap: () => _openBookmarkFile(m),
@@ -459,7 +712,7 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
               ],
               const SizedBox(height: 2),
               Text(
-                '$hh:$mm',
+                '${m.editedAt == null ? '' : 'изменено · '}$hh:$mm',
                 style: const TextStyle(color: Colors.white70, fontSize: 10),
               ),
             ],

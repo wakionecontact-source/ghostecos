@@ -41,6 +41,9 @@ class BookmarkMessage {
   final Uint8List? fileBytes;
   final int createdAt; // unix seconds
   final String? reaction; // как в ЛС/LAN — свой Twemoji-маркер на заметке
+  final String? replyTo;
+  final String? replyPreview;
+  final int? editedAt;
 
   BookmarkMessage({
     required this.id,
@@ -51,6 +54,9 @@ class BookmarkMessage {
     this.fileBytes,
     required this.createdAt,
     this.reaction,
+    this.replyTo,
+    this.replyPreview,
+    this.editedAt,
   });
 
   bool get hasFile => fileName != null && fileBytes != null;
@@ -64,6 +70,9 @@ class BookmarkMessage {
     fileBytes: m['file_bytes'] as Uint8List?,
     createdAt: m['created_at'] as int,
     reaction: m['reaction'] as String?,
+    replyTo: m['reply_to'] as String?,
+    replyPreview: m['reply_preview'] as String?,
+    editedAt: m['edited_at'] as int?,
   );
 }
 
@@ -90,7 +99,7 @@ class BookmarkStore {
     final path = p.join(dir.path, 'bookmarks_$scopeKey.db');
     _db = await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (db, v) async {
         await db.execute('''
           CREATE TABLE bookmarks (
@@ -111,7 +120,10 @@ class BookmarkStore {
             file_mime    TEXT,
             file_bytes   BLOB,
             created_at   INTEGER NOT NULL,
-            reaction     TEXT
+            reaction     TEXT,
+            reply_to     TEXT,
+            reply_preview TEXT,
+            edited_at    INTEGER
           )
         ''');
         await db.execute(
@@ -122,6 +134,17 @@ class BookmarkStore {
         if (oldV < 2) {
           await db.execute(
             'ALTER TABLE bookmark_messages ADD COLUMN reaction TEXT',
+          );
+        }
+        if (oldV < 3) {
+          await db.execute(
+            'ALTER TABLE bookmark_messages ADD COLUMN reply_to TEXT',
+          );
+          await db.execute(
+            'ALTER TABLE bookmark_messages ADD COLUMN reply_preview TEXT',
+          );
+          await db.execute(
+            'ALTER TABLE bookmark_messages ADD COLUMN edited_at INTEGER',
           );
         }
       },
@@ -258,7 +281,7 @@ class BookmarkStore {
       'bookmark_messages',
       where: 'bookmark_id = ?',
       whereArgs: [bookmarkId],
-      orderBy: 'created_at ASC',
+      orderBy: 'created_at ASC, rowid ASC',
     );
     return rows.map(BookmarkMessage.fromMap).toList();
   }
@@ -270,6 +293,8 @@ class BookmarkStore {
     String? fileName,
     String? fileMime,
     Uint8List? fileBytes,
+    String? replyTo,
+    String? replyPreview,
   }) async {
     if (fileBytes != null && fileBytes.length > _maxFileBytes) {
       throw StateError('Файл больше 25MB — локальное хранилище не резиновое');
@@ -288,6 +313,8 @@ class BookmarkStore {
       'file_mime': fileMime,
       'file_bytes': fileBytes,
       'created_at': at,
+      'reply_to': replyTo,
+      'reply_preview': replyPreview,
     });
     final preview = text.isNotEmpty
         ? text
@@ -304,10 +331,55 @@ class BookmarkStore {
   Future<void> deleteMessage(String messageId, String bookmarkId) async {
     await _safeDb.delete(
       'bookmark_messages',
-      where: 'id = ?',
-      whereArgs: [messageId],
+      where: 'id = ? AND bookmark_id = ?',
+      whereArgs: [messageId, bookmarkId],
     );
+    await _refreshBookmarkPreview(bookmarkId);
     await _reloadDialogs();
+  }
+
+  Future<void> editMessageText({
+    required String messageId,
+    required String bookmarkId,
+    required String text,
+  }) async {
+    final normalized = text.trim();
+    if (normalized.isEmpty) return;
+    final at = _nowSec();
+    await _safeDb.update(
+      'bookmark_messages',
+      {'text': normalized, 'edited_at': at},
+      where: 'id = ? AND bookmark_id = ? AND file_name IS NULL',
+      whereArgs: [messageId, bookmarkId],
+    );
+    await _refreshBookmarkPreview(bookmarkId);
+    await _reloadDialogs();
+  }
+
+  Future<void> _refreshBookmarkPreview(String bookmarkId) async {
+    final rows = await _safeDb.query(
+      'bookmark_messages',
+      columns: ['text', 'file_name', 'created_at'],
+      where: 'bookmark_id = ?',
+      whereArgs: [bookmarkId],
+      orderBy: 'created_at DESC, rowid DESC',
+      limit: 1,
+    );
+    final last = rows.isEmpty ? null : rows.first;
+    final text = last?['text'] as String? ?? '';
+    final fileName = last?['file_name'] as String?;
+    final preview = text.isNotEmpty
+        ? text
+        : (fileName == null ? '' : '📎 $fileName');
+    await _safeDb.update(
+      'bookmarks',
+      {
+        'last_text': preview,
+        'last_at': last?['created_at'] as int? ?? _nowSec(),
+      },
+      where: 'id = ?',
+      whereArgs: [bookmarkId],
+    );
   }
 
   /// Bookmarks are local notes, so they do not have a real incoming unread
