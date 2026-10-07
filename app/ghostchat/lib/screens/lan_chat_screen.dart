@@ -63,6 +63,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
   final List<LanChatMessage> _messages = [];
   final Set<String> _seenMsgIds = {};
   final Set<String> _selectedIds = {};
+  LanChatMessage? _replyTo;
   StreamSubscription? _msgSub;
   StreamSubscription? _onlineSub;
   StreamSubscription? _ackSub;
@@ -205,6 +206,8 @@ class _LanChatScreenState extends State<LanChatScreen> {
   Future<void> _send() async {
     final text = _msgCtrl.text.trim();
     if (text.isEmpty || _sending) return;
+    final replyTo = _replyTo;
+    final replyPreview = replyTo == null ? null : _messagePreview(replyTo);
     flySendAnimation(context, _sendBtnKey);
 
     setState(() => _sending = true);
@@ -219,12 +222,19 @@ class _LanChatScreenState extends State<LanChatScreen> {
       final encB64 = await encodeLanEnvelope(
         peerPubB64: peerPubB64,
         text: text,
+        replyPreview: replyPreview,
       );
       // Офлайн — не блокируем отправку: шифруем и кладём в очередь, реально
       // уйдёт при переподключении (см. флаш очереди в MainShell).
       final online = localHub.hasSession(widget.deviceId);
       if (online) {
-        await localHub.sendMessage(widget.deviceId, msgId, encB64, nowMs);
+        await localHub.sendMessage(
+          widget.deviceId,
+          msgId,
+          encB64,
+          nowMs,
+          replyToMsgId: replyTo?.msgId ?? '',
+        );
       }
       await LanChatStore.instance.addMessage(
         deviceId: widget.deviceId,
@@ -233,6 +243,8 @@ class _LanChatScreenState extends State<LanChatScreen> {
         text: text,
         createdAtSec: nowMs ~/ 1000,
         queued: !online,
+        replyToMsgId: replyTo?.msgId,
+        replyPreview: replyPreview,
       );
       if (!mounted) return;
       _seenMsgIds.add(msgId);
@@ -245,9 +257,12 @@ class _LanChatScreenState extends State<LanChatScreen> {
             text: text,
             createdAt: nowMs ~/ 1000,
             queued: !online,
+            replyToMsgId: replyTo?.msgId,
+            replyPreview: replyPreview,
           ),
         );
         _msgCtrl.clear();
+        _replyTo = null;
       });
       _scrollToBottom();
     } finally {
@@ -346,15 +361,24 @@ class _LanChatScreenState extends State<LanChatScreen> {
     }
     final msgId = const Uuid().v4();
     final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final replyTo = _replyTo;
+    final replyPreview = replyTo == null ? null : _messagePreview(replyTo);
     final encB64 = await encodeLanEnvelope(
       peerPubB64: peerPubB64,
       fileName: name,
       fileMime: mime,
       fileBytes: bytes,
+      replyPreview: replyPreview,
     );
     final online = localHub.hasSession(widget.deviceId);
     if (online) {
-      await localHub.sendMessage(widget.deviceId, msgId, encB64, nowMs);
+      await localHub.sendMessage(
+        widget.deviceId,
+        msgId,
+        encB64,
+        nowMs,
+        replyToMsgId: replyTo?.msgId ?? '',
+      );
     }
     await LanChatStore.instance.addMessage(
       deviceId: widget.deviceId,
@@ -365,6 +389,8 @@ class _LanChatScreenState extends State<LanChatScreen> {
       fileMime: mime,
       fileBytes: bytes,
       queued: !online,
+      replyToMsgId: replyTo?.msgId,
+      replyPreview: replyPreview,
     );
     if (!mounted) return;
     _seenMsgIds.add(msgId);
@@ -380,8 +406,11 @@ class _LanChatScreenState extends State<LanChatScreen> {
           fileMime: mime,
           fileBytes: bytes,
           queued: !online,
+          replyToMsgId: replyTo?.msgId,
+          replyPreview: replyPreview,
         ),
       );
+      _replyTo = null;
     });
     _scrollToBottom();
   }
@@ -734,20 +763,26 @@ class _LanChatScreenState extends State<LanChatScreen> {
             SafeArea(
               top: false,
               bottom: !_emojiOpen,
-              child: ChatComposer(
-                controller: _msgCtrl,
-                emojiOpen: _emojiOpen,
-                sending: _sending,
-                sendKey: _sendBtnKey,
-                hint: online
-                    ? 'Сообщение…'
-                    : 'Сообщение… (уйдёт при подключении)',
-                onAttach: _openAttachSheet,
-                onToggleEmoji: _toggleEmoji,
-                onSend: _send,
-                onFieldTap: () {
-                  if (_emojiOpen) setState(() => _emojiOpen = false);
-                },
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_replyTo != null) _replyBar(),
+                  ChatComposer(
+                    controller: _msgCtrl,
+                    emojiOpen: _emojiOpen,
+                    sending: _sending,
+                    sendKey: _sendBtnKey,
+                    hint: online
+                        ? 'Сообщение…'
+                        : 'Сообщение… (уйдёт при подключении)',
+                    onAttach: _openAttachSheet,
+                    onToggleEmoji: _toggleEmoji,
+                    onSend: _send,
+                    onFieldTap: () {
+                      if (_emojiOpen) setState(() => _emojiOpen = false);
+                    },
+                  ),
+                ],
               ),
             ),
             if (_emojiOpen)
@@ -769,6 +804,12 @@ class _LanChatScreenState extends State<LanChatScreen> {
       ),
       titleText: '${_selectedIds.length}',
       actions: [
+        if (_selectedIds.length == 1)
+          IconButton(
+            icon: Icon(CupertinoIcons.reply, color: GE.primary),
+            tooltip: 'Ответить',
+            onPressed: _replyToSelected,
+          ),
         IconButton(
           icon: Icon(CupertinoIcons.trash, color: GE.red),
           onPressed: _deleteSelected,
@@ -918,6 +959,75 @@ class _LanChatScreenState extends State<LanChatScreen> {
     });
   }
 
+  void _replyToSelected() {
+    if (_selectedIds.length != 1) return;
+    final id = _selectedIds.single;
+    LanChatMessage? message;
+    for (final item in _messages) {
+      if (item.msgId == id) {
+        message = item;
+        break;
+      }
+    }
+    if (message == null) return;
+    setState(() {
+      _replyTo = message;
+      _selectedIds.clear();
+    });
+  }
+
+  String _messagePreview(LanChatMessage message) {
+    if (message.text.isNotEmpty) return message.text;
+    if (message.fileName != null) return '📎 ${message.fileName}';
+    return 'Сообщение';
+  }
+
+  Widget _replyBar() {
+    final message = _replyTo!;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+      padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+      decoration: BoxDecoration(
+        color: GE.glassFill,
+        borderRadius: BorderRadius.circular(12),
+        border: Border(left: BorderSide(color: GE.primary, width: 3)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Ответ',
+                  style: TextStyle(
+                    color: GE.primary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _messagePreview(message),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: GE.sub, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Отмена',
+            onPressed: () => setState(() => _replyTo = null),
+            icon: Icon(CupertinoIcons.xmark, color: GE.sub, size: 17),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _bubble(LanChatMessage m) {
     final time = DateTime.fromMillisecondsSinceEpoch(m.createdAt * 1000);
     final hh = time.hour.toString().padLeft(2, '0');
@@ -950,6 +1060,37 @@ class _LanChatScreenState extends State<LanChatScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (m.replyPreview != null) ...[
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 5),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: (m.fromMe ? Colors.white : GE.primary).withValues(
+                        alpha: 0.14,
+                      ),
+                      borderRadius: BorderRadius.circular(7),
+                      border: Border(
+                        left: BorderSide(
+                          color: m.fromMe ? Colors.white70 : GE.primary,
+                          width: 2,
+                        ),
+                      ),
+                    ),
+                    child: Text(
+                      m.replyPreview!,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: m.fromMe ? Colors.white70 : GE.sub,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                ],
                 if (m.hasFile)
                   InkWell(
                     onTap: _selectionMode ? null : () => _openLanFile(m),

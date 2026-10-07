@@ -47,6 +47,8 @@ class LanChatMessage {
   final String? fileName;
   final String? fileMime;
   final Uint8List? fileBytes;
+  final String? replyToMsgId;
+  final String? replyPreview;
 
   /// true — создано локально, но ещё не ушло по проводу (пир был офлайн).
   /// Флашится автоматически при реконнекте (см. MainShell).
@@ -66,6 +68,8 @@ class LanChatMessage {
     this.fileName,
     this.fileMime,
     this.fileBytes,
+    this.replyToMsgId,
+    this.replyPreview,
     this.queued = false,
     this.delivered = false,
     this.read = false,
@@ -87,6 +91,8 @@ class LanChatMessage {
     'file_name': fileName,
     'file_mime': fileMime,
     'file_bytes': fileBytes,
+    'reply_to_msg_id': replyToMsgId,
+    'reply_preview': replyPreview,
     'queued': queued ? 1 : 0,
     'is_delivered': delivered ? 1 : 0,
     'is_read': read ? 1 : 0,
@@ -102,6 +108,8 @@ class LanChatMessage {
     fileName: m['file_name'] as String?,
     fileMime: m['file_mime'] as String?,
     fileBytes: m['file_bytes'] as Uint8List?,
+    replyToMsgId: m['reply_to_msg_id'] as String?,
+    replyPreview: m['reply_preview'] as String?,
     queued: (m['queued'] as int? ?? 0) == 1,
     delivered: (m['is_delivered'] as int? ?? 0) == 1,
     read: (m['is_read'] as int? ?? 0) == 1,
@@ -133,7 +141,7 @@ class LanChatStore {
     _dbPath = path;
     _db = await openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: (db, v) async {
         await db.execute('''
           CREATE TABLE lan_dialogs (
@@ -162,7 +170,9 @@ class LanChatStore {
             queued        INTEGER NOT NULL DEFAULT 0,
             is_delivered  INTEGER NOT NULL DEFAULT 0,
             is_read       INTEGER NOT NULL DEFAULT 0,
-            reaction      TEXT
+            reaction      TEXT,
+            reply_to_msg_id TEXT,
+            reply_preview TEXT
           )
         ''');
         await db.execute(
@@ -215,6 +225,14 @@ class LanChatStore {
         }
         if (oldV < 6) {
           await db.execute('ALTER TABLE lan_messages ADD COLUMN reaction TEXT');
+        }
+        if (oldV < 7) {
+          await db.execute(
+            'ALTER TABLE lan_messages ADD COLUMN reply_to_msg_id TEXT',
+          );
+          await db.execute(
+            'ALTER TABLE lan_messages ADD COLUMN reply_preview TEXT',
+          );
         }
       },
     );
@@ -381,6 +399,8 @@ class LanChatStore {
     String? fileName,
     String? fileMime,
     Uint8List? fileBytes,
+    String? replyToMsgId,
+    String? replyPreview,
     bool queued = false,
   }) async {
     appLog.info(
@@ -400,6 +420,8 @@ class LanChatStore {
         fileName: fileName,
         fileMime: fileMime,
         fileBytes: fileBytes,
+        replyToMsgId: replyToMsgId,
+        replyPreview: replyPreview,
         queued: queued,
       ).toMap(),
       conflictAlgorithm: ConflictAlgorithm.ignore,

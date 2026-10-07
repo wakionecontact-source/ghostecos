@@ -448,12 +448,14 @@ class _MainShellState extends State<MainShell>
           fileName: m.fileName,
           fileMime: m.fileMime,
           fileBytes: m.fileBytes,
+          replyPreview: m.replyPreview,
         );
         await localHub.sendMessage(
           deviceId,
           m.msgId,
           encB64,
           m.createdAt * 1000,
+          replyToMsgId: m.replyToMsgId ?? '',
         );
         await LanChatStore.instance.markSent(deviceId, m.msgId);
       } catch (_) {
@@ -519,6 +521,8 @@ class _MainShellState extends State<MainShell>
         fileName: decoded.fileName,
         fileMime: decoded.fileMime,
         fileBytes: decoded.fileBytes,
+        replyToMsgId: m.replyToMsgId,
+        replyPreview: decoded.replyPreview,
       );
     } catch (_) {}
   }

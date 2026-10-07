@@ -19,22 +19,36 @@ class _FileEnvelopeArgs {
   final String fileName;
   final String fileMime;
   final Uint8List fileBytes;
-  const _FileEnvelopeArgs(this.fileName, this.fileMime, this.fileBytes);
+  final String? replyPreview;
+  const _FileEnvelopeArgs(
+    this.fileName,
+    this.fileMime,
+    this.fileBytes,
+    this.replyPreview,
+  );
 }
 
 String _buildFileEnvelope(_FileEnvelopeArgs a) => jsonEncode({
-      't': 'file',
-      'n': a.fileName,
-      'm': a.fileMime,
-      'd': base64Encode(a.fileBytes),
-    });
+  't': 'file',
+  'n': a.fileName,
+  'm': a.fileMime,
+  'd': base64Encode(a.fileBytes),
+  if (a.replyPreview != null) 'rp': a.replyPreview,
+});
 
 class DecodedLanMessage {
   final String text;
   final String? fileName;
   final String? fileMime;
   final Uint8List? fileBytes;
-  const DecodedLanMessage({this.text = '', this.fileName, this.fileMime, this.fileBytes});
+  final String? replyPreview;
+  const DecodedLanMessage({
+    this.text = '',
+    this.fileName,
+    this.fileMime,
+    this.fileBytes,
+    this.replyPreview,
+  });
 }
 
 Future<DecodedLanMessage?> decodeLanMessage(LocalMessageEvent m) async {
@@ -47,17 +61,26 @@ Future<DecodedLanMessage?> decodeLanMessage(LocalMessageEvent m) async {
     final t = env['t'] as String?;
     if (t == 'file') {
       final dataB64 = env['d'] as String?;
-      final fileBytes =
-          dataB64 != null ? await compute(base64Decode, dataB64) : null;
+      final fileBytes = dataB64 != null
+          ? await compute(base64Decode, dataB64)
+          : null;
       return DecodedLanMessage(
         fileName: env['n'] as String?,
-        fileMime: (env['m'] as String?)?.isEmpty == true ? null : env['m'] as String?,
+        fileMime: (env['m'] as String?)?.isEmpty == true
+            ? null
+            : env['m'] as String?,
         fileBytes: fileBytes,
+        replyPreview: env['rp'] as String?,
       );
     }
-    return DecodedLanMessage(text: env['v'] as String? ?? '');
+    return DecodedLanMessage(
+      text: env['v'] as String? ?? '',
+      replyPreview: env['rp'] as String?,
+    );
   } catch (_) {
-    return DecodedLanMessage(text: raw); // старый формат без конверта — совместимость
+    return DecodedLanMessage(
+      text: raw,
+    ); // старый формат без конверта — совместимость
   }
 }
 
@@ -71,12 +94,20 @@ Future<String> encodeLanEnvelope({
   String? fileName,
   String? fileMime,
   Uint8List? fileBytes,
+  String? replyPreview,
 }) async {
   final envelope = fileBytes != null && fileName != null
       ? await compute(
           _buildFileEnvelope,
-          _FileEnvelopeArgs(fileName, fileMime ?? '', fileBytes),
+          _FileEnvelopeArgs(fileName, fileMime ?? '', fileBytes, replyPreview),
         )
-      : jsonEncode({'t': 'txt', 'v': text});
-  return CryptoV2.instance.encryptV2(base64Decode(peerPubB64), utf8.encode(envelope));
+      : jsonEncode({
+          't': 'txt',
+          'v': text,
+          if (replyPreview != null) 'rp': replyPreview,
+        });
+  return CryptoV2.instance.encryptV2(
+    base64Decode(peerPubB64),
+    utf8.encode(envelope),
+  );
 }
