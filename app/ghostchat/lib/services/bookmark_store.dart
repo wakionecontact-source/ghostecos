@@ -44,6 +44,7 @@ class BookmarkMessage {
   final String? replyTo;
   final String? replyPreview;
   final int? editedAt;
+  final bool isPinned;
 
   BookmarkMessage({
     required this.id,
@@ -57,6 +58,7 @@ class BookmarkMessage {
     this.replyTo,
     this.replyPreview,
     this.editedAt,
+    this.isPinned = false,
   });
 
   bool get hasFile => fileName != null && fileBytes != null;
@@ -73,6 +75,7 @@ class BookmarkMessage {
     replyTo: m['reply_to'] as String?,
     replyPreview: m['reply_preview'] as String?,
     editedAt: m['edited_at'] as int?,
+    isPinned: (m['is_pinned'] as int? ?? 0) == 1,
   );
 }
 
@@ -99,7 +102,7 @@ class BookmarkStore {
     final path = p.join(dir.path, 'bookmarks_$scopeKey.db');
     _db = await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: (db, v) async {
         await db.execute('''
           CREATE TABLE bookmarks (
@@ -123,7 +126,8 @@ class BookmarkStore {
             reaction     TEXT,
             reply_to     TEXT,
             reply_preview TEXT,
-            edited_at    INTEGER
+            edited_at    INTEGER,
+            is_pinned    INTEGER NOT NULL DEFAULT 0
           )
         ''');
         await db.execute(
@@ -145,6 +149,11 @@ class BookmarkStore {
           );
           await db.execute(
             'ALTER TABLE bookmark_messages ADD COLUMN edited_at INTEGER',
+          );
+        }
+        if (oldV < 4) {
+          await db.execute(
+            'ALTER TABLE bookmark_messages ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0',
           );
         }
       },
@@ -354,6 +363,19 @@ class BookmarkStore {
     );
     await _refreshBookmarkPreview(bookmarkId);
     await _reloadDialogs();
+  }
+
+  Future<void> setMessagePinned({
+    required String messageId,
+    required String bookmarkId,
+    required bool pinned,
+  }) async {
+    await _safeDb.update(
+      'bookmark_messages',
+      {'is_pinned': pinned ? 1 : 0},
+      where: 'id = ? AND bookmark_id = ?',
+      whereArgs: [messageId, bookmarkId],
+    );
   }
 
   Future<void> _refreshBookmarkPreview(String bookmarkId) async {

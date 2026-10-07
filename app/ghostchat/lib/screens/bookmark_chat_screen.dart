@@ -24,7 +24,11 @@ import '../widgets/empty_chat_state.dart';
 import '../widgets/reactions_bar.dart';
 import '../widgets/send_fly_animation.dart';
 import '../widgets/toast_overlay.dart';
+import '../services/auth_service.dart';
 import '../services/bookmark_store.dart';
+import '../services/chat_organization_store.dart';
+import '../services/chat_repo.dart';
+import '../services/room_service.dart';
 
 class BookmarkChatScreen extends StatefulWidget {
   final String bookmarkId;
@@ -45,6 +49,7 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
   final _msgCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   final List<BookmarkMessage> _messages = [];
+  final Map<String, GlobalKey> _messageKeys = {};
   late String _name;
   bool _sending = false;
   bool _emojiOpen = false;
@@ -56,6 +61,9 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
   // Мало сообщений — держим ленту у низа, рядом с полем ввода (как в
   // chat_screen.dart), а не приклеенной к шапке с пустотой снизу.
   static const int _bottomAnchorMaxMsgs = 40;
+
+  List<BookmarkMessage> get _pinnedMessages =>
+      _messages.where((message) => message.isPinned).toList(growable: false);
 
   @override
   void initState() {
@@ -330,6 +338,7 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
         ),
         body: Column(
           children: [
+            if (_pinnedMessages.isNotEmpty) _pinnedBanner(),
             Expanded(
               child: _messages.isEmpty
                   ? const EmptyChatState(
@@ -347,7 +356,13 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
                           controller: _scrollCtrl,
                           padding: const EdgeInsets.all(12),
                           itemCount: _messages.length,
-                          itemBuilder: (_, i) => _bubble(_messages[i]),
+                          itemBuilder: (_, i) => KeyedSubtree(
+                            key: _messageKeys.putIfAbsent(
+                              _messages[i].id,
+                              GlobalKey.new,
+                            ),
+                            child: _bubble(_messages[i]),
+                          ),
                         );
                         return bottomAnchor
                             ? Align(
@@ -509,6 +524,18 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
                   CupertinoIcons.smiley,
                   'Поставить реакцию',
                 ),
+                _messageAction(
+                  sheetContext,
+                  'forward',
+                  CupertinoIcons.arrowshape_turn_up_right,
+                  'Переслать',
+                ),
+                _messageAction(
+                  sheetContext,
+                  'pin',
+                  m.isPinned ? CupertinoIcons.pin_slash : CupertinoIcons.pin,
+                  m.isPinned ? 'Открепить' : 'Закрепить',
+                ),
                 if (m.text.isNotEmpty)
                   _messageAction(
                     sheetContext,
@@ -548,6 +575,12 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
       case 'react':
         await _react(m);
         break;
+      case 'forward':
+        await _forwardMessage(m);
+        break;
+      case 'pin':
+        await _togglePinned(m);
+        break;
       case 'copy':
         await Clipboard.setData(ClipboardData(text: m.text));
         toast.show('Скопировано');
@@ -564,6 +597,304 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
         await _deleteMessage(m);
         break;
     }
+  }
+
+  Widget _pinnedBanner() {
+    final pinned = _pinnedMessages;
+    final latest = pinned.last;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: _showPinnedMessages,
+        child: GlassCard(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          child: Row(
+            children: [
+              Icon(CupertinoIcons.pin_fill, color: GE.primary, size: 17),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      pinned.length == 1
+                          ? 'Закреплённое сообщение'
+                          : 'Закреплённые · ${pinned.length}',
+                      style: TextStyle(
+                        color: GE.primary,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _messagePreview(latest),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: GE.text, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(CupertinoIcons.chevron_right, color: GE.sub, size: 15),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showPinnedMessages() async {
+    final pinned = _pinnedMessages.reversed.toList(growable: false);
+    final selectedId = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: GlassCard(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+            child: SizedBox(
+              height: MediaQuery.of(sheetContext).size.height * .55,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Закреплённые сообщения',
+                    style: TextStyle(
+                      color: GE.text,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: ListView.separated(
+                      itemCount: pinned.length,
+                      separatorBuilder: (_, _) => Divider(
+                        height: 1,
+                        color: GE.sub.withValues(alpha: .15),
+                      ),
+                      itemBuilder: (_, index) {
+                        final message = pinned[index];
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(CupertinoIcons.pin, color: GE.primary),
+                          title: Text(
+                            _messagePreview(message),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: GE.text, fontSize: 13),
+                          ),
+                          onTap: () => Navigator.pop(sheetContext, message.id),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (selectedId != null && mounted) {
+      await _scrollToMessage(selectedId);
+    }
+  }
+
+  Future<void> _scrollToMessage(String messageId) async {
+    final index = _messages.indexWhere((message) => message.id == messageId);
+    if (index < 0 || !_scrollCtrl.hasClients) return;
+    final maxExtent = _scrollCtrl.position.maxScrollExtent;
+    final ratio = _messages.length <= 1 ? 0.0 : index / (_messages.length - 1);
+    await _scrollCtrl.animateTo(
+      maxExtent * ratio,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+    await WidgetsBinding.instance.endOfFrame;
+    final targetContext = _messageKeys[messageId]?.currentContext;
+    if (targetContext != null && mounted) {
+      await Scrollable.ensureVisible(
+        targetContext,
+        alignment: .4,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
+  Future<void> _togglePinned(BookmarkMessage message) async {
+    final pinned = !message.isPinned;
+    await BookmarkStore.instance.setMessagePinned(
+      messageId: message.id,
+      bookmarkId: widget.bookmarkId,
+      pinned: pinned,
+    );
+    final messages = await BookmarkStore.instance.getMessages(
+      widget.bookmarkId,
+    );
+    if (!mounted) return;
+    setState(() {
+      _messages
+        ..clear()
+        ..addAll(messages);
+    });
+    toast.show(pinned ? 'Сообщение закреплено' : 'Закрепление снято');
+  }
+
+  Future<void> _forwardMessage(BookmarkMessage message) async {
+    final target = await _pickForwardTarget(includeRooms: !message.hasFile);
+    if (target == null || !mounted) return;
+    try {
+      if (target.room != null) {
+        final author = await AuthService.username() ?? 'Избранное';
+        await RoomService.instance.sendText(
+          target.room!,
+          message.text,
+          forwardedFrom: author,
+        );
+      } else {
+        final username = target.username!;
+        if (message.hasFile) {
+          await ChatRepo.instance.sendDmFile(
+            toUsername: username,
+            bytes: message.fileBytes!,
+            mime: message.fileMime ?? 'application/octet-stream',
+            fileName: message.fileName!,
+          );
+        }
+        if (message.text.isNotEmpty) {
+          final author = await AuthService.username() ?? 'Избранное';
+          await ChatRepo.instance.sendDmText(
+            username,
+            message.text,
+            forwardedFrom: author,
+          );
+        }
+      }
+      toast.show('Сообщение переслано');
+    } catch (error) {
+      toast.show('Не удалось переслать: $error');
+    }
+  }
+
+  Future<RoomForwardTarget?> _pickForwardTarget({
+    required bool includeRooms,
+  }) async {
+    final organization = ChatOrganizationStore.instance;
+    final dialogs = ChatRepo.instance.dialogsNotifier.value
+        .where(
+          (dialog) =>
+              !dialog.username.startsWith('g:') &&
+              !dialog.username.startsWith('bm:') &&
+              !dialog.username.startsWith('lan:'),
+        )
+        .where(
+          (dialog) => organization.canSeeChatInActiveScenario(dialog.username),
+        )
+        .toList(growable: false);
+    var rooms = includeRooms
+        ? RoomService.instance.rooms.value
+        : <RoomSummary>[];
+    if (includeRooms && rooms.isEmpty) {
+      try {
+        rooms = await RoomService.instance.loadMy();
+      } catch (_) {}
+    }
+    rooms = rooms
+        .where(
+          (room) =>
+              organization.canSeeChatInActiveScenario(roomDialogKey(room)),
+        )
+        .toList(growable: false);
+    return showModalBottomSheet<RoomForwardTarget>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: GlassCard(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: SizedBox(
+              height: MediaQuery.of(sheetContext).size.height * .65,
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Переслать кому?',
+                        style: TextStyle(
+                          color: GE.text,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView(
+                      children: [
+                        for (final dialog in dialogs)
+                          ListTile(
+                            leading: CircleAvatar(
+                              backgroundColor: GE.primary2,
+                              child: const Icon(
+                                CupertinoIcons.person,
+                                color: Colors.white,
+                                size: 18,
+                              ),
+                            ),
+                            title: Text(
+                              '@${dialog.username}',
+                              style: TextStyle(color: GE.text),
+                            ),
+                            onTap: () => Navigator.pop(
+                              sheetContext,
+                              RoomForwardTarget.user(dialog.username),
+                            ),
+                          ),
+                        for (final room in rooms)
+                          ListTile(
+                            leading: Icon(
+                              room.isChannel
+                                  ? CupertinoIcons.antenna_radiowaves_left_right
+                                  : CupertinoIcons.person_3_fill,
+                              color: GE.primary,
+                            ),
+                            title: Text(
+                              room.title,
+                              style: TextStyle(color: GE.text),
+                            ),
+                            onTap: () => Navigator.pop(
+                              sheetContext,
+                              RoomForwardTarget.room(room),
+                            ),
+                          ),
+                        if (dialogs.isEmpty && rooms.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Text(
+                              'Нет других чатов',
+                              style: TextStyle(color: GE.sub),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _messageAction(
@@ -638,6 +969,25 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (m.isPinned)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        CupertinoIcons.pin_fill,
+                        color: Colors.white70,
+                        size: 11,
+                      ),
+                      const SizedBox(width: 4),
+                      const Text(
+                        'Закреплено',
+                        style: TextStyle(color: Colors.white70, fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ),
               if (m.replyPreview != null) ...[
                 Container(
                   width: double.infinity,
