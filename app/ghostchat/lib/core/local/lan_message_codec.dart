@@ -42,12 +42,18 @@ class DecodedLanMessage {
   final String? fileMime;
   final Uint8List? fileBytes;
   final String? replyPreview;
+  final String? actionType;
+  final String? actionTargetMsgId;
+  final String? actionText;
   const DecodedLanMessage({
     this.text = '',
     this.fileName,
     this.fileMime,
     this.fileBytes,
     this.replyPreview,
+    this.actionType,
+    this.actionTargetMsgId,
+    this.actionText,
   });
 }
 
@@ -59,6 +65,13 @@ Future<DecodedLanMessage?> decodeLanMessage(LocalMessageEvent m) async {
   try {
     final env = jsonDecode(raw) as Map<String, dynamic>;
     final t = env['t'] as String?;
+    if (t == 'action') {
+      return DecodedLanMessage(
+        actionType: env['a'] as String?,
+        actionTargetMsgId: env['id'] as String?,
+        actionText: env['v'] as String?,
+      );
+    }
     if (t == 'file') {
       final dataB64 = env['d'] as String?;
       final fileBytes = dataB64 != null
@@ -106,6 +119,24 @@ Future<String> encodeLanEnvelope({
           'v': text,
           if (replyPreview != null) 'rp': replyPreview,
         });
+  return CryptoV2.instance.encryptV2(
+    base64Decode(peerPubB64),
+    utf8.encode(envelope),
+  );
+}
+
+Future<String> encodeLanControlEnvelope({
+  required String peerPubB64,
+  required String action,
+  required String targetMsgId,
+  String? text,
+}) async {
+  final envelope = jsonEncode({
+    't': 'action',
+    'a': action,
+    'id': targetMsgId,
+    if (text != null) 'v': text,
+  });
   return CryptoV2.instance.encryptV2(
     base64Decode(peerPubB64),
     utf8.encode(envelope),

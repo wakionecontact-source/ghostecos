@@ -64,6 +64,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
   final Set<String> _seenMsgIds = {};
   final Set<String> _selectedIds = {};
   LanChatMessage? _replyTo;
+  LanChatMessage? _editing;
   StreamSubscription? _msgSub;
   StreamSubscription? _onlineSub;
   StreamSubscription? _ackSub;
@@ -160,11 +161,9 @@ class _LanChatScreenState extends State<LanChatScreen> {
   }
 
   // ВАЖНО: расшифровку и запись в БД делает ТОЛЬКО глобальный обработчик в
-  // MainShell (_onLanMessage) — здесь просто ждём, пока он это сделает, и
-  // дочитываем результат из LanChatStore. Если бы этот экран тоже сам
-  // расшифровывал и писал в БД, при одновременном срабатывании обоих
-  // листенеров возникала бы гонка за один и тот же msg_id (кто первый
-  // вставит — тот и победит, включая потенциально "сырую" версию до фикса).
+  // MainShell (_onLanMessage). Здесь после короткой задержки перечитываем
+  // БД: так экран получает новые сообщения и отражает edit/delete-действия,
+  // не расшифровывая событие повторно и не создавая гонку за msg_id.
   void _onIncoming(LocalMessageEvent m) {
     if (m.fromUsername != widget.deviceId) return;
     _reloadNewMessages();
@@ -175,15 +174,29 @@ class _LanChatScreenState extends State<LanChatScreen> {
     if (!mounted) return;
     final msgs = await LanChatStore.instance.getMessages(widget.deviceId);
     final fresh = msgs.where((m) => !_seenMsgIds.contains(m.msgId)).toList();
-    if (fresh.isEmpty) return;
-    await LanChatStore.instance.markRead(widget.deviceId);
+    final newIncoming = fresh.where((m) => !m.fromMe).toList();
+    if (newIncoming.isNotEmpty) {
+      await LanChatStore.instance.markRead(widget.deviceId);
+    }
     if (!mounted) return;
+    final byId = {for (final message in msgs) message.msgId: message};
     setState(() {
-      _seenMsgIds.addAll(fresh.map((m) => m.msgId));
-      _messages.addAll(fresh);
+      _seenMsgIds
+        ..clear()
+        ..addAll(byId.keys);
+      _messages
+        ..clear()
+        ..addAll(msgs);
+      _selectedIds.removeWhere((id) => !byId.containsKey(id));
+      if (_replyTo != null) _replyTo = byId[_replyTo!.msgId];
+      if (_editing != null && !byId.containsKey(_editing!.msgId)) {
+        _editing = null;
+      } else if (_editing != null) {
+        _editing = byId[_editing!.msgId];
+      }
     });
-    _scrollToBottom();
-    _notifySeen(fresh.where((m) => !m.fromMe).map((m) => m.msgId).toList());
+    if (fresh.isNotEmpty) _scrollToBottom();
+    _notifySeen(newIncoming.map((m) => m.msgId).toList());
   }
 
   void _toggleEmoji() {
@@ -208,10 +221,41 @@ class _LanChatScreenState extends State<LanChatScreen> {
     if (text.isEmpty || _sending) return;
     final replyTo = _replyTo;
     final replyPreview = replyTo == null ? null : _messagePreview(replyTo);
+    final editing = _editing;
     flySendAnimation(context, _sendBtnKey);
 
     setState(() => _sending = true);
     try {
+      if (editing != null) {
+        await LanChatStore.instance.editMessageText(
+          widget.deviceId,
+          editing.msgId,
+          text,
+          fromMe: true,
+        );
+        try {
+          await _sendControlAction(
+            action: 'edit',
+            targetMsgId: editing.msgId,
+            text: text,
+          );
+        } catch (error) {
+          toast.show('Изменение сохранено только на этом устройстве: $error');
+        }
+        final messages = await LanChatStore.instance.getMessages(
+          widget.deviceId,
+        );
+        if (!mounted) return;
+        setState(() {
+          _messages
+            ..clear()
+            ..addAll(messages);
+          _msgCtrl.clear();
+          _editing = null;
+          _replyTo = null;
+        });
+        return;
+      }
       final peerPubB64 = await LanChatStore.instance.getPeerPub(
         widget.deviceId,
       );
@@ -270,11 +314,53 @@ class _LanChatScreenState extends State<LanChatScreen> {
     }
   }
 
+  Future<void> _sendControlAction({
+    required String action,
+    required String targetMsgId,
+    String? text,
+  }) async {
+    final controlMsgId = const Uuid().v4();
+    final sentAt = DateTime.now().millisecondsSinceEpoch;
+    final peerPubB64 = await LanChatStore.instance.getPeerPub(widget.deviceId);
+    if (peerPubB64 == null) throw StateError('Нет ключа собеседника');
+    if (!localHub.hasSession(widget.deviceId)) {
+      await LanChatStore.instance.queueControlAction(
+        deviceId: widget.deviceId,
+        msgId: controlMsgId,
+        action: action,
+        targetMsgId: targetMsgId,
+        text: text,
+      );
+      return;
+    }
+    try {
+      final encB64 = await encodeLanControlEnvelope(
+        peerPubB64: peerPubB64,
+        action: action,
+        targetMsgId: targetMsgId,
+        text: text,
+      );
+      await localHub.sendMessage(widget.deviceId, controlMsgId, encB64, sentAt);
+    } catch (_) {
+      await LanChatStore.instance.queueControlAction(
+        deviceId: widget.deviceId,
+        msgId: controlMsgId,
+        action: action,
+        targetMsgId: targetMsgId,
+        text: text,
+      );
+    }
+  }
+
   // Единый лист вложений (та же «скрепка», что в основном чате). Грид
   // галереи/фото/видео/файл; гео и кошелёк — заглушки до готового бэкенда
   // (как в chat_screen). P2P-канал не резиновый — крупные файлы отсекаем в
   // _sendLanBytes (10MB).
   Future<void> _openAttachSheet() async {
+    if (_editing != null) {
+      toast.show('Текст сообщения редактируется отдельно от вложений');
+      return;
+    }
     HapticFeedback.selectionClick();
     await showModalBottomSheet<void>(
       context: context,
@@ -630,12 +716,57 @@ class _LanChatScreenState extends State<LanChatScreen> {
 
   Future<void> _deleteSelected() async {
     final ids = _selectedIds.toList();
+    final selected = _messages
+        .where((message) => ids.contains(message.msgId))
+        .toList(growable: false);
+    for (final message in selected.where((message) => message.fromMe)) {
+      try {
+        await _sendControlAction(action: 'delete', targetMsgId: message.msgId);
+      } catch (error) {
+        toast.show('Не удалось подготовить удаление для собеседника: $error');
+      }
+    }
     await LanChatStore.instance.deleteMessages(widget.deviceId, ids);
     if (!mounted) return;
     setState(() {
       _messages.removeWhere((m) => ids.contains(m.msgId));
       _selectedIds.clear();
     });
+  }
+
+  bool get _allSelectedPinned {
+    final selected = _messages.where(
+      (message) => _selectedIds.contains(message.msgId),
+    );
+    return selected.isNotEmpty && selected.every((message) => message.isPinned);
+  }
+
+  Future<void> _togglePinnedSelected() async {
+    final selected = _messages
+        .where((message) => _selectedIds.contains(message.msgId))
+        .toList(growable: false);
+    if (selected.isEmpty) return;
+    final pin = selected.any((message) => !message.isPinned);
+    for (final message in selected) {
+      if (message.isPinned != pin) {
+        await LanChatStore.instance.setMessagePinned(
+          widget.deviceId,
+          message.msgId,
+          pin,
+        );
+      }
+    }
+    final messages = await LanChatStore.instance.getMessages(widget.deviceId);
+    if (!mounted) return;
+    setState(() {
+      _messages
+        ..clear()
+        ..addAll(messages);
+      _selectedIds.clear();
+    });
+    toast.show(
+      pin ? 'Сообщение закреплено на этом устройстве' : 'Закрепление снято',
+    );
   }
 
   void _scrollToBottom() {
@@ -766,13 +897,15 @@ class _LanChatScreenState extends State<LanChatScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (_replyTo != null) _replyBar(),
+                  if (_replyTo != null || _editing != null) _replyBar(),
                   ChatComposer(
                     controller: _msgCtrl,
                     emojiOpen: _emojiOpen,
                     sending: _sending,
                     sendKey: _sendBtnKey,
-                    hint: online
+                    hint: _editing != null
+                        ? 'Изменить сообщение…'
+                        : online
                         ? 'Сообщение…'
                         : 'Сообщение… (уйдёт при подключении)',
                     onAttach: _openAttachSheet,
@@ -810,6 +943,20 @@ class _LanChatScreenState extends State<LanChatScreen> {
             tooltip: 'Ответить',
             onPressed: _replyToSelected,
           ),
+        if (_canEditSelected)
+          IconButton(
+            icon: Icon(CupertinoIcons.pencil, color: GE.primary),
+            tooltip: 'Редактировать',
+            onPressed: _editSelected,
+          ),
+        IconButton(
+          icon: Icon(
+            _allSelectedPinned ? CupertinoIcons.pin_slash : CupertinoIcons.pin,
+            color: GE.primary,
+          ),
+          tooltip: _allSelectedPinned ? 'Открепить' : 'Закрепить',
+          onPressed: _togglePinnedSelected,
+        ),
         IconButton(
           icon: Icon(CupertinoIcons.trash, color: GE.red),
           onPressed: _deleteSelected,
@@ -971,8 +1118,44 @@ class _LanChatScreenState extends State<LanChatScreen> {
     }
     if (message == null) return;
     setState(() {
+      _editing = null;
       _replyTo = message;
       _selectedIds.clear();
+      _msgCtrl.clear();
+    });
+  }
+
+  bool get _canEditSelected {
+    if (_selectedIds.length != 1) return false;
+    final id = _selectedIds.single;
+    for (final message in _messages) {
+      if (message.msgId == id) {
+        return message.fromMe && !message.hasFile && message.text.isNotEmpty;
+      }
+    }
+    return false;
+  }
+
+  void _editSelected() {
+    if (!_canEditSelected) return;
+    final id = _selectedIds.single;
+    LanChatMessage? message;
+    for (final item in _messages) {
+      if (item.msgId == id) {
+        message = item;
+        break;
+      }
+    }
+    if (message == null) return;
+    final selectedMessage = message;
+    setState(() {
+      _replyTo = null;
+      _editing = selectedMessage;
+      _selectedIds.clear();
+      _msgCtrl.text = selectedMessage.text;
+      _msgCtrl.selection = TextSelection.collapsed(
+        offset: selectedMessage.text.length,
+      );
     });
   }
 
@@ -983,7 +1166,8 @@ class _LanChatScreenState extends State<LanChatScreen> {
   }
 
   Widget _replyBar() {
-    final message = _replyTo!;
+    final editing = _editing;
+    final message = editing ?? _replyTo!;
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.fromLTRB(12, 8, 12, 2),
@@ -1000,7 +1184,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Ответ',
+                  editing == null ? 'Ответ' : 'Редактирование',
                   style: TextStyle(
                     color: GE.primary,
                     fontSize: 11,
@@ -1020,7 +1204,11 @@ class _LanChatScreenState extends State<LanChatScreen> {
           IconButton(
             visualDensity: VisualDensity.compact,
             tooltip: 'Отмена',
-            onPressed: () => setState(() => _replyTo = null),
+            onPressed: () => setState(() {
+              _replyTo = null;
+              _editing = null;
+              _msgCtrl.clear();
+            }),
             icon: Icon(CupertinoIcons.xmark, color: GE.sub, size: 17),
           ),
         ],
@@ -1060,6 +1248,28 @@ class _LanChatScreenState extends State<LanChatScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (m.isPinned)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          CupertinoIcons.pin_fill,
+                          color: m.fromMe ? Colors.white70 : GE.primary,
+                          size: 11,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Закреплено на этом устройстве',
+                          style: TextStyle(
+                            color: m.fromMe ? Colors.white70 : GE.sub,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 if (m.replyPreview != null) ...[
                   Container(
                     width: double.infinity,
@@ -1130,7 +1340,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      '$hh:$mm',
+                      '${m.editedAt == null ? '' : 'изменено · '}$hh:$mm',
                       style: TextStyle(
                         color: m.fromMe ? Colors.white70 : GE.sub,
                         fontSize: 10,

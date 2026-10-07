@@ -49,6 +49,12 @@ class LanChatMessage {
   final Uint8List? fileBytes;
   final String? replyToMsgId;
   final String? replyPreview;
+  final int? editedAt;
+  final bool isPinned;
+  final bool isControl;
+  final String? controlAction;
+  final String? controlTargetMsgId;
+  final String? controlText;
 
   /// true — создано локально, но ещё не ушло по проводу (пир был офлайн).
   /// Флашится автоматически при реконнекте (см. MainShell).
@@ -70,6 +76,12 @@ class LanChatMessage {
     this.fileBytes,
     this.replyToMsgId,
     this.replyPreview,
+    this.editedAt,
+    this.isPinned = false,
+    this.isControl = false,
+    this.controlAction,
+    this.controlTargetMsgId,
+    this.controlText,
     this.queued = false,
     this.delivered = false,
     this.read = false,
@@ -93,6 +105,12 @@ class LanChatMessage {
     'file_bytes': fileBytes,
     'reply_to_msg_id': replyToMsgId,
     'reply_preview': replyPreview,
+    'edited_at': editedAt,
+    'is_pinned': isPinned ? 1 : 0,
+    'is_control': isControl ? 1 : 0,
+    'control_action': controlAction,
+    'control_target_msg_id': controlTargetMsgId,
+    'control_text': controlText,
     'queued': queued ? 1 : 0,
     'is_delivered': delivered ? 1 : 0,
     'is_read': read ? 1 : 0,
@@ -110,6 +128,12 @@ class LanChatMessage {
     fileBytes: m['file_bytes'] as Uint8List?,
     replyToMsgId: m['reply_to_msg_id'] as String?,
     replyPreview: m['reply_preview'] as String?,
+    editedAt: m['edited_at'] as int?,
+    isPinned: (m['is_pinned'] as int? ?? 0) == 1,
+    isControl: (m['is_control'] as int? ?? 0) == 1,
+    controlAction: m['control_action'] as String?,
+    controlTargetMsgId: m['control_target_msg_id'] as String?,
+    controlText: m['control_text'] as String?,
     queued: (m['queued'] as int? ?? 0) == 1,
     delivered: (m['is_delivered'] as int? ?? 0) == 1,
     read: (m['is_read'] as int? ?? 0) == 1,
@@ -141,7 +165,7 @@ class LanChatStore {
     _dbPath = path;
     _db = await openDatabase(
       path,
-      version: 7,
+      version: 8,
       onCreate: (db, v) async {
         await db.execute('''
           CREATE TABLE lan_dialogs (
@@ -172,7 +196,13 @@ class LanChatStore {
             is_read       INTEGER NOT NULL DEFAULT 0,
             reaction      TEXT,
             reply_to_msg_id TEXT,
-            reply_preview TEXT
+            reply_preview TEXT,
+            edited_at     INTEGER,
+            is_pinned     INTEGER NOT NULL DEFAULT 0,
+            is_control    INTEGER NOT NULL DEFAULT 0,
+            control_action TEXT,
+            control_target_msg_id TEXT,
+            control_text  TEXT
           )
         ''');
         await db.execute(
@@ -232,6 +262,26 @@ class LanChatStore {
           );
           await db.execute(
             'ALTER TABLE lan_messages ADD COLUMN reply_preview TEXT',
+          );
+        }
+        if (oldV < 8) {
+          await db.execute(
+            'ALTER TABLE lan_messages ADD COLUMN edited_at INTEGER',
+          );
+          await db.execute(
+            'ALTER TABLE lan_messages ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0',
+          );
+          await db.execute(
+            'ALTER TABLE lan_messages ADD COLUMN is_control INTEGER NOT NULL DEFAULT 0',
+          );
+          await db.execute(
+            'ALTER TABLE lan_messages ADD COLUMN control_action TEXT',
+          );
+          await db.execute(
+            'ALTER TABLE lan_messages ADD COLUMN control_target_msg_id TEXT',
+          );
+          await db.execute(
+            'ALTER TABLE lan_messages ADD COLUMN control_text TEXT',
           );
         }
       },
@@ -383,9 +433,9 @@ class LanChatStore {
   Future<List<LanChatMessage>> getMessages(String deviceId) async {
     final rows = await _safeDb.query(
       'lan_messages',
-      where: 'device_id = ?',
+      where: 'device_id = ? AND is_control = 0',
       whereArgs: [deviceId],
-      orderBy: 'created_at ASC',
+      orderBy: 'created_at ASC, rowid ASC',
     );
     return rows.map(LanChatMessage.fromMap).toList();
   }
@@ -437,6 +487,32 @@ class LanChatStore {
     await _reloadDialogs();
   }
 
+  Future<void> queueControlAction({
+    required String deviceId,
+    required String msgId,
+    required String action,
+    required String targetMsgId,
+    String? text,
+  }) async {
+    final at = _nowSec();
+    await _safeDb.insert(
+      'lan_messages',
+      LanChatMessage(
+        msgId: msgId,
+        deviceId: deviceId,
+        fromMe: true,
+        text: '',
+        createdAt: at,
+        queued: true,
+        isControl: true,
+        controlAction: action,
+        controlTargetMsgId: targetMsgId,
+        controlText: text,
+      ).toMap(),
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+  }
+
   /// Сообщения, созданные локально, пока пир был офлайн — ждут флаша при
   /// реконнекте (см. MainShell._flushQueuedLanMessages).
   Future<List<LanChatMessage>> getQueuedMessages(String deviceId) async {
@@ -444,7 +520,7 @@ class LanChatStore {
       'lan_messages',
       where: 'device_id = ? AND queued = 1',
       whereArgs: [deviceId],
-      orderBy: 'created_at ASC',
+      orderBy: 'created_at ASC, rowid ASC',
     );
     return rows.map(LanChatMessage.fromMap).toList();
   }
@@ -452,12 +528,27 @@ class LanChatStore {
   /// Сообщение реально ушло по проводу — снимаем queued (не меняет
   /// delivered/read, это отдельные события от __ack__/__seen__).
   Future<void> markSent(String deviceId, String msgId) async {
-    await _safeDb.update(
+    final rows = await _safeDb.query(
       'lan_messages',
-      {'queued': 0},
+      columns: ['is_control'],
       where: 'device_id = ? AND msg_id = ?',
       whereArgs: [deviceId, msgId],
+      limit: 1,
     );
+    if (rows.isNotEmpty && (rows.first['is_control'] as int? ?? 0) == 1) {
+      await _safeDb.delete(
+        'lan_messages',
+        where: 'device_id = ? AND msg_id = ?',
+        whereArgs: [deviceId, msgId],
+      );
+    } else {
+      await _safeDb.update(
+        'lan_messages',
+        {'queued': 0},
+        where: 'device_id = ? AND msg_id = ?',
+        whereArgs: [deviceId, msgId],
+      );
+    }
     await _reloadDialogs();
   }
 
@@ -504,6 +595,94 @@ class LanChatStore {
     );
   }
 
+  Future<void> editMessageText(
+    String deviceId,
+    String msgId,
+    String text, {
+    required bool fromMe,
+  }) async {
+    final normalized = text.trim();
+    if (normalized.isEmpty) return;
+    await _safeDb.update(
+      'lan_messages',
+      {'text': normalized, 'edited_at': _nowSec()},
+      where: 'device_id = ? AND msg_id = ? AND from_me = ? AND is_control = 0',
+      whereArgs: [deviceId, msgId, fromMe ? 1 : 0],
+    );
+    await _refreshDialogPreview(deviceId);
+    await _reloadDialogs();
+  }
+
+  Future<void> applyRemoteControlAction({
+    required String deviceId,
+    required String action,
+    required String targetMsgId,
+    String? text,
+  }) async {
+    if (action == 'edit') {
+      final normalized = text?.trim() ?? '';
+      if (normalized.isEmpty) return;
+      await _safeDb.update(
+        'lan_messages',
+        {'text': normalized, 'edited_at': _nowSec()},
+        where:
+            'device_id = ? AND msg_id = ? AND from_me = 0 AND is_control = 0',
+        whereArgs: [deviceId, targetMsgId],
+      );
+    } else if (action == 'delete') {
+      await _safeDb.delete(
+        'lan_messages',
+        where:
+            'device_id = ? AND msg_id = ? AND from_me = 0 AND is_control = 0',
+        whereArgs: [deviceId, targetMsgId],
+      );
+    } else {
+      return;
+    }
+    await _refreshDialogPreview(deviceId);
+    await _reloadDialogs();
+  }
+
+  Future<void> setMessagePinned(
+    String deviceId,
+    String msgId,
+    bool pinned,
+  ) async {
+    await _safeDb.update(
+      'lan_messages',
+      {'is_pinned': pinned ? 1 : 0},
+      where: 'device_id = ? AND msg_id = ? AND is_control = 0',
+      whereArgs: [deviceId, msgId],
+    );
+  }
+
+  Future<void> _refreshDialogPreview(String deviceId) async {
+    final rows = await _safeDb.query(
+      'lan_messages',
+      columns: ['text', 'file_name', 'created_at', 'from_me'],
+      where: 'device_id = ? AND is_control = 0',
+      whereArgs: [deviceId],
+      orderBy: 'created_at DESC, rowid DESC',
+      limit: 1,
+    );
+    final last = rows.isEmpty ? null : rows.first;
+    final text = last?['text'] as String? ?? '';
+    final fileName = last?['file_name'] as String?;
+    final preview = text.isNotEmpty
+        ? text
+        : (fileName == null ? '' : '📎 $fileName');
+    await _safeDb.update(
+      'lan_dialogs',
+      {
+        'last_text': preview,
+        'last_at': last?['created_at'] as int? ?? _nowSec(),
+        'last_from_me': last?['from_me'] as int? ?? 0,
+      },
+      where: 'device_id = ?',
+      whereArgs: [deviceId],
+    );
+  }
+
   Future<void> deleteMessages(String deviceId, List<String> msgIds) async {
     if (msgIds.isEmpty) return;
     final placeholders = List.filled(msgIds.length, '?').join(',');
@@ -511,6 +690,7 @@ class LanChatStore {
       'DELETE FROM lan_messages WHERE device_id = ? AND msg_id IN ($placeholders)',
       [deviceId, ...msgIds],
     );
+    await _refreshDialogPreview(deviceId);
     await _reloadDialogs();
   }
 

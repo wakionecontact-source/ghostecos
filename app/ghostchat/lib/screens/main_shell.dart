@@ -442,20 +442,27 @@ class _MainShellState extends State<MainShell>
     for (final m in queued) {
       if (!localHub.hasSession(deviceId)) break; // отвалилось посреди флаша
       try {
-        final encB64 = await encodeLanEnvelope(
-          peerPubB64: peerPubB64,
-          text: m.text,
-          fileName: m.fileName,
-          fileMime: m.fileMime,
-          fileBytes: m.fileBytes,
-          replyPreview: m.replyPreview,
-        );
+        final encB64 = m.isControl
+            ? await encodeLanControlEnvelope(
+                peerPubB64: peerPubB64,
+                action: m.controlAction!,
+                targetMsgId: m.controlTargetMsgId!,
+                text: m.controlText,
+              )
+            : await encodeLanEnvelope(
+                peerPubB64: peerPubB64,
+                text: m.text,
+                fileName: m.fileName,
+                fileMime: m.fileMime,
+                fileBytes: m.fileBytes,
+                replyPreview: m.replyPreview,
+              );
         await localHub.sendMessage(
           deviceId,
           m.msgId,
           encB64,
           m.createdAt * 1000,
-          replyToMsgId: m.replyToMsgId ?? '',
+          replyToMsgId: m.isControl ? '' : (m.replyToMsgId ?? ''),
         );
         await LanChatStore.instance.markSent(deviceId, m.msgId);
       } catch (_) {
@@ -510,6 +517,17 @@ class _MainShellState extends State<MainShell>
     try {
       final decoded = await decodeLanMessage(m);
       if (decoded == null) return;
+      if (decoded.actionType != null &&
+          decoded.actionTargetMsgId != null &&
+          decoded.actionTargetMsgId!.isNotEmpty) {
+        await LanChatStore.instance.applyRemoteControlAction(
+          deviceId: m.fromUsername,
+          action: decoded.actionType!,
+          targetMsgId: decoded.actionTargetMsgId!,
+          text: decoded.actionText,
+        );
+        return;
+      }
       await LanChatStore.instance.addMessage(
         deviceId: m.fromUsername,
         msgId: m.msgId,
