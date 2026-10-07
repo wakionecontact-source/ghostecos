@@ -1147,11 +1147,16 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
 
   Future<void> _openRoomProfile() async {
     FocusManager.instance.primaryFocus?.unfocus();
-    final updated = await Navigator.of(context).push<RoomSummary>(
+    final result = await Navigator.of(context).push<RoomProfileResult>(
       MaterialPageRoute(builder: (_) => RoomProfileScreen(room: _room)),
     );
-    if (updated != null && mounted) {
-      setState(() => _room = updated);
+    if (result == null || !mounted) return;
+    if (result.closeChat) {
+      Navigator.of(context).pop();
+      return;
+    }
+    if (result.room != null) {
+      setState(() => _room = result.room!);
     }
   }
 
@@ -1290,20 +1295,30 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
     try {
       final files = await openFiles();
       if (files.isEmpty || !mounted) return;
-      final selected = files.take(5).toList(growable: false);
-      if (files.length > selected.length) {
+      final firstFive = files.take(5).toList(growable: false);
+      if (files.length > firstFive.length) {
         _message('За одну отправку можно выбрать не более 5 вложений');
       }
+      final maxBytes = 50 * 1024 * 1024;
+      final selected = <XFile>[];
+      for (final file in firstFive) {
+        if (await file.length() <= maxBytes) selected.add(file);
+      }
+      if (selected.length != firstFive.length) {
+        _message('В комнатах размер одного файла не должен превышать 50 МБ');
+      }
+      if (selected.isEmpty) return;
       final caption = await _attachmentCaption();
       if (caption == null) return;
-      for (final file in selected) {
+      for (var index = 0; index < selected.length; index++) {
+        final file = selected[index];
         final bytes = await file.readAsBytes();
         await _service.sendAttachment(
           _room,
           bytes: Uint8List.fromList(bytes),
           mime: _mimeForName(file.name),
           fileName: file.name,
-          caption: caption,
+          caption: index == 0 ? caption : '',
         );
       }
       if (mounted) _message('Вложения поставлены в очередь отправки');

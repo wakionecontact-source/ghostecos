@@ -11,6 +11,7 @@ class LogEntry {
   final String category; // lan, bt, wifi_direct, etc.
   final String level; // info, warn, error, debug
   final String message;
+  final String? protectedScopeId;
 
   const LogEntry({
     this.id = 0,
@@ -18,6 +19,7 @@ class LogEntry {
     required this.category,
     required this.level,
     required this.message,
+    this.protectedScopeId,
   });
 
   String get timeStr {
@@ -58,17 +60,37 @@ class AppLogger {
   static const int maxEntries = 2000;
 
   final _entries = Queue<LogEntry>();
+  final Map<String, Queue<LogEntry>> _protectedEntries = {};
   final _ctrl = StreamController<LogEntry>.broadcast();
+  final _privacyChangesCtrl = StreamController<void>.broadcast(sync: true);
   int _nextId = 0;
   bool _protectedContext = false;
+  String? _protectedScopeId;
   Set<String> _sensitiveValues = {};
 
   Stream<LogEntry> get onLog => _ctrl.stream;
-  List<LogEntry> get entries => _entries.toList();
+  Stream<void> get onPrivacyChanged => _privacyChangesCtrl.stream;
+  List<LogEntry> get entries {
+    if (!_protectedContext) return _entries.toList();
+    final scope = _protectedScopeId;
+    return scope == null
+        ? const []
+        : (_protectedEntries[scope]?.toList() ?? const []);
+  }
 
   /// Keep events raised inside protected environments out of the ordinary
-  /// app log. A dedicated protected journal can opt into a separate sink.
+  /// app log; each environment gets its own in-memory journal.
   set protectedContext(bool value) => _protectedContext = value;
+
+  set protectedScopeId(String? value) => _protectedScopeId = value;
+
+  bool isVisibleInCurrentContext(LogEntry entry) => _protectedContext
+      ? _protectedScopeId != null && entry.protectedScopeId == _protectedScopeId
+      : entry.protectedScopeId == null;
+
+  void clearProtectedScope(String scopeId) {
+    _protectedEntries.remove(scopeId);
+  }
 
   /// Remove protected chat identifiers from ordinary log history and filter
   /// future entries that mention them.
@@ -84,6 +106,7 @@ class AppLogger {
         })
         .toSet();
     _entries.removeWhere((entry) => _containsSensitiveValue(entry.message));
+    _privacyChangesCtrl.add(null);
   }
 
   bool _containsSensitiveValue(String message) {
@@ -104,8 +127,21 @@ class AppLogger {
       category: category,
       level: level,
       message: message,
+      protectedScopeId: _protectedContext ? _protectedScopeId : null,
     );
-    if (!_protectedContext && !_containsSensitiveValue(message)) {
+    if (_protectedContext) {
+      final scope = _protectedScopeId;
+      if (scope == null) return entry;
+      final protected = _protectedEntries.putIfAbsent(
+        scope,
+        Queue<LogEntry>.new,
+      );
+      protected.addLast(entry);
+      while (protected.length > maxEntries) {
+        protected.removeFirst();
+      }
+      _ctrl.add(entry);
+    } else if (!_containsSensitiveValue(message)) {
       _entries.addLast(entry);
       while (_entries.length > maxEntries) {
         _entries.removeFirst();

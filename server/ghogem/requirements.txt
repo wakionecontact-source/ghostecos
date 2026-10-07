@@ -1,0 +1,12 @@
+-c security-constraints.txt
+aiogram>=3.31,<4
+python-dotenv>=1.0
+aiohttp>=3.9
+httpx[socks]>=0.27,<1
+ddgs>=9.14,<10
+pypdf>=5,<7
+python-docx>=1.1,<2
+openpyxl>=3.1,<4
+Pillow>=10,<13
+CairoSVG>=2.7,<3
+pypdfium2>=4.30,<6

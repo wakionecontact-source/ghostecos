@@ -7,7 +7,6 @@
 
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
@@ -910,11 +909,9 @@ class _QuickActionButtons extends StatelessWidget {
       return;
     }
     if (x == null || !context.mounted) return;
-    final bytes = await x.readAsBytes();
-    if (!context.mounted) return;
     await _pickRecipientAndSendPhoto(
       context,
-      bytes: bytes,
+      sourcePath: x.path,
       fileName: x.path.split(Platform.pathSeparator).last,
       localPath: x.path,
     );
@@ -922,7 +919,7 @@ class _QuickActionButtons extends StatelessWidget {
 
   Future<void> _pickRecipientAndSendPhoto(
     BuildContext context, {
-    required Uint8List bytes,
+    required String sourcePath,
     required String fileName,
     required String localPath,
   }) async {
@@ -942,9 +939,9 @@ class _QuickActionButtons extends StatelessWidget {
       child: SafeArea(child: _RecipientPicker(dialogs: dialogs)),
     );
     if (peer == null || peer.isEmpty || !context.mounted) return;
-    await ChatRepo.instance.sendDmFile(
+    await ChatRepo.instance.sendDmFileFromPath(
       toUsername: peer,
-      bytes: bytes,
+      sourcePath: sourcePath,
       mime: 'image/jpeg',
       fileName: fileName,
       localPath: localPath,

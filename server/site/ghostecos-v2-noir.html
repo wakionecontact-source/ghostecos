@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GhostEcos — приватная экосистема</title>
+<meta name="description" content="GhostEcos — экосистема независимых приватных продуктов: мессенджер GhostChat, социальная сеть GhostSocial и собственная экономика. Сквозное шифрование, ноль логов.">
+<style>
+  :root {
+    --ink:  #0a0710;
+    --ink2: #110c1a;
+    --paper:#efe9f5;
+    --dim:  #c7bfd2;
+    --muted:#8f86a0;
+    --faint:#5d5570;
+    --line: rgba(239,233,245,.12);
+    --violet:#7c3aed;
+    --iris: #a78bfa;
+
+    --serif: "Baskerville", "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+    --sans:  -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono:  ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+  }
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body {
+    background: var(--ink); color: var(--paper);
+    font-family: var(--sans); font-size:16px; line-height:1.6;
+    -webkit-font-smoothing: antialiased; overflow-x:hidden;
+  }
+  a { color:inherit; text-decoration:none; }
+  ::selection { background: var(--violet); color:#fff; }
+  .wrap { max-width:1160px; margin:0 auto; padding:0 40px; }
+  .mono { font-family:var(--mono); font-size:11px; letter-spacing:.2em; text-transform:uppercase; }
+
+  /* вертикальная боковая подпись */
+  .side { position:fixed; left:26px; top:50%; transform:translateY(-50%) rotate(180deg); writing-mode:vertical-rl;
+    font-family:var(--mono); font-size:10px; letter-spacing:.3em; text-transform:uppercase; color:var(--faint); z-index:5; }
+
+  header { position:fixed; top:0; left:0; right:0; z-index:50; padding:26px 40px; display:flex; align-items:center; justify-content:space-between; }
+  .brand { display:flex; align-items:center; gap:12px; }
+  .brand .ava { width:30px; height:30px; border-radius:8px; display:block; }
+  .brand-name { font-family:var(--serif); font-size:20px; }
+  .nav-cta { font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--paper); border:1px solid var(--line); padding:10px 16px; transition:border-color .18s,color .18s; }
+  .nav-cta:hover { border-color:var(--iris); color:var(--iris); }
+
+  .hero { min-height:100vh; display:flex; flex-direction:column; justify-content:flex-end; padding:120px 0 60px; position:relative; }
+  .hero-glow { position:absolute; top:0; left:50%; transform:translateX(-50%); width:70vw; height:60vh; pointer-events:none;
+    background:radial-gradient(50% 60% at 50% 30%, rgba(124,58,237,.28), transparent 70%); filter:blur(10px); }
+  .mark-row { display:flex; align-items:flex-end; justify-content:space-between; gap:40px; margin-bottom:40px; }
+  .mark-wrap { display:flex; align-items:center; gap:28px; }
+  .mark-ring { padding:5px; border:1px solid var(--line); border-radius:50%; }
+  .mark-ring .ava { width:96px; height:96px; border-radius:50%; display:block; }
+  .mark-caption { font-family:var(--mono); font-size:10px; letter-spacing:.24em; text-transform:uppercase; color:var(--faint); line-height:2; }
+  .mark-caption b { color:var(--iris); font-weight:400; }
+  .edition { font-family:var(--mono); font-size:11px; letter-spacing:.2em; text-transform:uppercase; color:var(--faint); text-align:right; }
+
+  h1 { font-family:var(--serif); font-weight:500; font-size:clamp(52px,9.5vw,132px); line-height:.98; letter-spacing:-.02em; }
+  h1 .i1 { display:block; color:var(--paper); }
+  h1 .i2 { display:block; color:var(--dim); font-style:italic; }
+  h1 .i2 em { color:var(--iris); font-style:italic; }
+
+  .hero-foot { display:flex; justify-content:space-between; align-items:flex-end; margin-top:56px; gap:40px; flex-wrap:wrap; }
+  .lede { max-width:420px; color:var(--dim); font-size:16px; line-height:1.75; }
+  .cta-row { display:flex; gap:14px; }
+  .btn { display:inline-flex; align-items:center; gap:10px; font-family:var(--mono); font-size:12px; letter-spacing:.12em; text-transform:uppercase; padding:16px 28px; transition:background .18s,border-color .18s,color .18s; }
+  .btn-solid { background:var(--paper); color:var(--ink); }
+  .btn-solid:hover { background:var(--iris); color:var(--ink); }
+  .btn-ghost { border:1px solid var(--line); color:var(--paper); }
+  .btn-ghost:hover { border-color:var(--violet); color:var(--iris); }
+
+  section { padding:110px 0; position:relative; }
+  .sec-label { font-family:var(--mono); font-size:11px; letter-spacing:.26em; text-transform:uppercase; color:var(--iris); margin-bottom:26px; display:flex; align-items:center; gap:14px; }
+  .sec-label::after { content:""; flex:1; height:1px; background:var(--line); }
+  h2 { font-family:var(--serif); font-weight:500; font-size:clamp(34px,5.5vw,66px); line-height:1.05; letter-spacing:-.015em; margin-bottom:18px; }
+  .sec-note { color:var(--muted); font-size:16px; line-height:1.75; max-width:520px; }
+
+  .catalog { margin-top:60px; }
+  .c-row { border-top:1px solid var(--line); padding:44px 0; display:grid; grid-template-columns:90px 1fr auto; gap:32px; align-items:center; }
+  .c-row:last-child { border-bottom:1px solid var(--line); }
+  .c-num { font-family:var(--serif); font-style:italic; font-size:40px; color:var(--faint); }
+  .c-row h3 { font-family:var(--serif); font-weight:500; font-size:34px; margin-bottom:10px; }
+  .c-row p { color:var(--muted); font-size:15px; line-height:1.7; max-width:520px; }
+  .c-tags { display:flex; gap:8px; flex-wrap:wrap; margin-top:16px; }
+  .c-tags span { font-family:var(--mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); border:1px solid var(--line); padding:5px 10px; }
+  .c-arrow { font-family:var(--serif); font-size:34px; color:var(--iris); transition:transform .25s; }
+  .c-row a:hover .c-arrow { transform:translate(4px,-4px); }
+
+  .principles { display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--line); border:1px solid var(--line); margin-top:60px; }
+  .p-cell { background:var(--ink); padding:44px; }
+  .p-cell:nth-child(2n) { background:var(--ink2); }
+  .p-num { font-family:var(--serif); font-style:italic; font-size:26px; color:var(--iris); margin-bottom:20px; }
+  .p-cell h3 { font-family:var(--serif); font-weight:500; font-size:23px; margin-bottom:10px; }
+  .p-cell p { color:var(--muted); font-size:14.5px; line-height:1.7; }
+
+  .economy { display:grid; grid-template-columns:1fr 1fr; gap:80px; align-items:center; }
+  .coin { display:flex; align-items:center; justify-content:center; position:relative; }
+  .coin svg { width:260px; height:260px; }
+  .economy-note { display:inline-flex; gap:10px; align-items:center; margin-top:28px; font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); border:1px solid var(--line); padding:10px 14px; }
+
+  .community { text-align:center; }
+  .community .sec-label::before { content:""; flex:1; height:1px; background:var(--line); }
+  .community h2 { margin-bottom:18px; }
+  .community p { color:var(--muted); max-width:480px; margin:0 auto 42px; font-size:15px; line-height:1.7; }
+  .community .btn { margin:0 auto; }
+
+  footer { border-top:1px solid var(--line); padding:60px 0; }
+  .foot { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:32px; }
+  .foot-brand { display:flex; align-items:center; gap:12px; }
+  .foot-brand .ava { width:28px; height:28px; border-radius:8px; }
+  .foot-brand span { font-family:var(--serif); font-size:18px; }
+  .foot-links { display:flex; gap:28px; flex-wrap:wrap; }
+  .foot-links a { font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); transition:color .18s; }
+  .foot-links a:hover { color:var(--paper); }
+  .foot-meta { width:100%; margin-top:40px; padding-top:22px; border-top:1px solid rgba(239,233,245,.08); display:flex; justify-content:space-between; }
+  .foot-meta span { font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); }
+
+  @media (max-width:880px) {
+    .wrap { padding:0 24px; }
+    header { padding:20px 24px; }
+    .side { display:none; }
+    .mark-row { flex-direction:column; align-items:flex-start; }
+    .edition { text-align:left; }
+    .c-row { grid-template-columns:1fr; gap:18px; }
+    .principles { grid-template-columns:1fr; }
+    .economy { grid-template-columns:1fr; gap:44px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="side">GhostEcos — private ecosystem — 2026</div>
+
+<header>
+  <a class="brand" href="#top"><img class="ava" src="ava.jpg" alt=""><span class="brand-name">GhostEcos</span></a>
+  <a class="nav-cta" href="https://t.me/waki_one" target="_blank" rel="noopener">Telegram ↗</a>
+</header>
+
+<div class="wrap hero" id="top">
+  <div class="hero-glow"></div>
+  <div class="mark-row">
+    <div class="mark-wrap">
+      <div class="mark-ring"><img class="ava" src="ava.jpg" alt="Призрак GhostEcos"></div>
+      <div class="mark-caption">MARK<b>·</b>№1<br>Private<br>Ecosystem</div>
+    </div>
+    <div class="edition">Edition 01<br>MMXXVI</div>
+  </div>
+  <h1>
+    <span class="i1">GhostEcos</span>
+    <span class="i2">приватная <em>экосистема</em></span>
+  </h1>
+  <div class="hero-foot">
+    <p class="lede">Сквозное шифрование как в Signal. Каналы как в Telegram. Своя экономика и игры. Один аккаунт — все сервисы. Ноль логов, ноль метаданных.</p>
+    <div class="cta-row">
+      <a class="btn btn-solid" href="/chat/">Открыть GhostChat →</a>
+      <a class="btn btn-ghost" href="#products">Что внутри</a>
+    </div>
+  </div>
+</div>
+
+<section id="products">
+  <div class="wrap">
+    <div class="sec-label">01 — Продукты</div>
+    <h2>Части одного целого.</h2>
+    <p class="sec-note">Каждый продукт самостоятелен, но вместе они — приватная альтернатива привычным сервисам.</p>
+    <div class="catalog">
+      <div class="c-row">
+        <div class="c-num">I</div>
+        <div>
+          <h3>GhostChat</h3>
+          <p>Приватный мессенджер со сквозным шифрованием. Ключи не покидают устройство, сервер видит только зашифрованные данные. Работает даже по локальной сети без интернета.</p>
+          <div class="c-tags"><span>X25519 + AES-256-GCM</span><span>LAN-режим</span><span>Группы и файлы</span></div>
+        </div>
+        <a href="/lend/ghostchat/" class="c-arrow">↗</a>
+      </div>
+      <div class="c-row">
+        <div class="c-num">II</div>
+        <div>
+          <h3>GhostSocial</h3>
+          <p>Анонимная социальная сеть. Лента, посты с медиа и профили — без привязки к настоящему имени и без слежки за действиями. Открывается прямо в браузере.</p>
+          <div class="c-tags"><span>Лента и посты</span><span>Без реальных имён</span><span>gost-экономика</span></div>
+        </div>
+        <a href="/social" class="c-arrow">↗</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="principles">
+  <div class="wrap">
+    <div class="sec-label">02 — Принципы</div>
+    <h2>Почему GhostEcos.</h2>
+    <p class="sec-note">Одни и те же правила во всех продуктах экосистемы. Без исключений.</p>
+    <div class="principles">
+      <div class="p-cell"><div class="p-num">01</div><h3>Сквозное шифрование</h3><p>Контент шифруется на устройстве. Ключи никогда не покидают вас — сервер бессилен прочитать.</p></div>
+      <div class="p-cell"><div class="p-num">02</div><h3>Ноль метаданных</h3><p>Никаких логов «кто с кем и когда». Сервер хранит только зашифрованные блобы — и не дольше нужного.</p></div>
+      <div class="p-cell"><div class="p-num">03</div><h3>Независимость</h3><p>Свой сервер, свой код, своя инфраструктура. Никаких больших корпораций между вами и собеседником.</p></div>
+      <div class="p-cell"><div class="p-num">04</div><h3>Mesh-будущее</h3><p>Следующий шаг — децентрализованная mesh-сеть: устройства соединяются напрямую, без серверов вовсе.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="economy">
+  <div class="wrap">
+    <div class="economy">
+      <div>
+        <div class="sec-label">03 — Экономика</div>
+        <h2>Своя валюта. <em style="color:var(--iris);font-style:italic;">gost.</em></h2>
+        <p class="sec-note" style="margin-top:18px;">Внутри экосистемы зарождается собственная экономика. Первая валюта — <b style="color:var(--paper);">gost</b> — стартует в GhostSocial как «семечко» будущей системы. Дальше будет больше.</p>
+        <div class="economy-note">В разработке · не финансовый инструмент</div>
+      </div>
+      <div class="coin">
+        <svg viewBox="0 0 260 260" aria-hidden="true">
+          <circle cx="130" cy="130" r="126" fill="none" stroke="#a78bfa" stroke-opacity=".14" stroke-width="1"/>
+          <circle cx="130" cy="130" r="104" fill="none" stroke="#a78bfa" stroke-opacity=".26" stroke-width="1"/>
+          <circle cx="130" cy="130" r="82" fill="none" stroke="#7c3aed" stroke-opacity=".55" stroke-width="1.2"/>
+          <circle cx="130" cy="130" r="60" fill="none" stroke="#7c3aed" stroke-opacity=".22" stroke-width="1"/>
+          <text x="130" y="141" text-anchor="middle" font-family="Baskerville, Palatino Linotype, Georgia, serif" font-size="42" font-style="italic" fill="#a78bfa">gost</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="community" class="community">
+  <div class="wrap">
+    <div class="sec-label">04 — Сообщество</div>
+    <h2>Следите за разработкой.</h2>
+    <p>Новости, ранний доступ, раздача приложений и стройка экосистемы — всё в Telegram-канале.</p>
+    <a class="btn btn-solid" href="https://t.me/waki_one" target="_blank" rel="noopener">@waki_one →</a>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <div class="foot-brand"><img class="ava" src="ava.jpg" alt=""><span>GhostEcos</span></div>
+      <div class="foot-links"><a href="/privacy">Политика</a><a href="/terms">Условия</a><a href="https://github.com/wakionecontact-source/ghostecos" target="_blank" rel="noopener">GitHub</a></div>
+    </div>
+    <div class="foot-meta"><span>GhostEcos · 2026</span><span>Encrypted by design</span></div>
+  </div>
+</footer>
+</body>
+</html>

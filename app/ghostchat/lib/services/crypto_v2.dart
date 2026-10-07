@@ -466,6 +466,7 @@ class CryptoV2 {
     required String saltB64,
     required String password,
     required String account,
+    required String expectedIdentityPubB64,
   }) async {
     final normalized = _normalizeAccount(account);
     if (normalized.isEmpty) throw StateError('CryptoV2 account is not set');
@@ -503,6 +504,12 @@ class CryptoV2 {
     );
     if (!listEquals(expectedPub, derivedPub)) {
       throw const FormatException('v2 identity public key does not match seed');
+    }
+    final serverIdentity = base64.decode(expectedIdentityPubB64);
+    if (!listEquals(serverIdentity, derivedPub)) {
+      // Keep the existing account bundle intact if the encrypted backup is
+      // stale or does not belong to the public identity currently on server.
+      throw const FormatException('v2 identity does not match server identity');
     }
 
     // Keep the local device private/public pair. It is intentionally unique

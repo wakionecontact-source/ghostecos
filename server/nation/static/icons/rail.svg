@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <!-- ties -->
+  <path d="M6 4 L18 4 M6 8 L18 8 M6 12 L18 12 M6 16 L18 16 M6 20 L18 20"
+        stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.8"/>
+  <!-- rails -->
+  <path d="M9 3 L9 21 M15 3 L15 21" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+</svg>

@@ -6,7 +6,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
@@ -1130,10 +1129,9 @@ class _ChatScreenState extends State<ChatScreen>
         maxHeight: 1920,
       );
       if (x == null) return;
-      final bytes = await x.readAsBytes();
-      await ChatRepo.instance.sendDmFile(
+      await ChatRepo.instance.sendDmFileFromPath(
         toUsername: widget.peer,
-        bytes: bytes,
+        sourcePath: x.path,
         mime: 'image/jpeg',
         fileName: x.name,
         localPath: x.path, // показываем фото СРАЗУ (превью) пока грузится
@@ -1150,23 +1148,14 @@ class _ChatScreenState extends State<ChatScreen>
         maxDuration: const Duration(minutes: 5),
       );
       if (x == null) return;
-      final bytes = await x.readAsBytes();
       final durationSec = await _videoDurationSeconds(x.path);
       // Первый кадр (превью) — показываем в чате ДО окончания загрузки.
       final thumb = await _videoThumbnail(x.path);
-      // Крупное видео сожмётся ВНУТРИ sendDmFile (прогресс 0-50%); путь нужен
-      // компрессору. Гард 80МБ — на совсем гигантские.
-      if (bytes.length > 80 * 1024 * 1024) {
-        final mb = (bytes.length / 1024 / 1024).toStringAsFixed(0);
-        _snack('Видео очень большое ($mb МБ) — выбери покороче.');
-        return;
-      }
-      await ChatRepo.instance.sendDmFile(
+      await ChatRepo.instance.sendDmFileFromPath(
         toUsername: widget.peer,
-        bytes: bytes,
+        sourcePath: x.path,
         mime: 'video/mp4',
         fileName: x.name,
-        sourcePath: x.path,
         thumbnail: thumb,
         localPath: x.path,
         duration: durationSec,
@@ -1181,11 +1170,10 @@ class _ChatScreenState extends State<ChatScreen>
     try {
       final file = await openFile();
       if (file == null) return;
-      final bytes = await file.readAsBytes();
       final mime = file.mimeType ?? _guessMime(file.name);
-      await ChatRepo.instance.sendDmFile(
+      await ChatRepo.instance.sendDmFileFromPath(
         toUsername: widget.peer,
-        bytes: bytes,
+        sourcePath: file.path,
         mime: mime,
         fileName: file.name,
         localPath: file.path, // аудио можно слушать пока грузится
@@ -1273,48 +1261,83 @@ class _ChatScreenState extends State<ChatScreen>
 
   // Отправить выбранные в гриде элементы по очереди (фото/видео).
   Future<void> _sendPickedItems(List<AttachItem> items) async {
-    for (final it in items) {
+    final selected = items.take(10).toList(growable: false);
+    if (items.length > selected.length) {
+      _snack('За одну отправку можно выбрать не более 10 вложений');
+    }
+    final caption = await _attachmentCaption();
+    if (caption == null) return;
+    for (var index = 0; index < selected.length; index++) {
+      final it = selected[index];
+      final sharedCaption = index == 0 ? caption : null;
       if (it.isVideo) {
-        await _sendVideoFile(it.file);
+        await _sendVideoFile(it.file, caption: sharedCaption);
       } else {
-        await _sendImageFile(it.file);
+        await _sendImageFile(it.file, caption: sharedCaption);
       }
     }
   }
 
-  Future<void> _sendImageFile(File f) async {
+  Future<String?> _attachmentCaption() async {
+    final controller = TextEditingController();
     try {
-      final bytes = await f.readAsBytes();
-      await ChatRepo.instance.sendDmFile(
+      return await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: GE.bgDeep,
+          title: const Text('Подпись к вложениям'),
+          content: TextField(
+            controller: controller,
+            maxLines: 3,
+            maxLength: 4000,
+            decoration: const InputDecoration(hintText: 'Необязательно'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, controller.text.trim()),
+              child: const Text('Отправить'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _sendImageFile(File f, {String? caption}) async {
+    try {
+      await ChatRepo.instance.sendDmFileFromPath(
         toUsername: widget.peer,
-        bytes: bytes,
+        sourcePath: f.path,
         mime: 'image/jpeg',
         fileName: f.path.split('/').last,
         localPath: f.path,
+        caption: caption,
       );
     } catch (e) {
       _snack('Фото не отправилось: $e');
     }
   }
 
-  Future<void> _sendVideoFile(File f) async {
+  Future<void> _sendVideoFile(File f, {String? caption}) async {
     try {
-      final bytes = await f.readAsBytes();
-      if (bytes.length > 80 * 1024 * 1024) {
-        _snack('Видео очень большое — выбери покороче.');
-        return;
-      }
       final durationSec = await _videoDurationSeconds(f.path);
       final thumb = await _videoThumbnail(f.path);
-      await ChatRepo.instance.sendDmFile(
+      await ChatRepo.instance.sendDmFileFromPath(
         toUsername: widget.peer,
-        bytes: bytes,
+        sourcePath: f.path,
         mime: 'video/mp4',
         fileName: f.path.split('/').last,
-        sourcePath: f.path,
         thumbnail: thumb,
         localPath: f.path,
         duration: durationSec,
+        caption: caption,
       );
     } catch (e) {
       _snack('Видео не отправилось: $e');
@@ -1478,12 +1501,11 @@ class _ChatScreenState extends State<ChatScreen>
       if (cancel || path == null) return;
       final file = File(path);
       if (!await file.exists()) return;
-      final bytes = await file.readAsBytes();
       final durSec = (_recordDur.inMilliseconds / 1000).round();
       final waveform = _downsampleWave(_recWave, 40);
-      await ChatRepo.instance.sendDmFile(
+      await ChatRepo.instance.sendDmFileFromPath(
         toUsername: widget.peer,
-        bytes: bytes,
+        sourcePath: path,
         mime: 'audio/m4a',
         fileName: 'voice.m4a',
         voice: true,
@@ -3372,6 +3394,10 @@ class _Bubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mine = m.fromMe;
+    final thoughtExpiresAt = m.forwardedThoughtExpiresAt;
+    final thoughtExpired =
+        thoughtExpiresAt != null &&
+        DateTime.now().millisecondsSinceEpoch ~/ 1000 >= thoughtExpiresAt;
     final align = mine ? Alignment.centerRight : Alignment.centerLeft;
     // Theme-реактивно (зеркало --bubble-mine/--bubble-theirs с сайта): свои —
     // фиолет-градиент GE.primary2→GE.primary (135deg, как в web-css), чужие —
@@ -3514,7 +3540,7 @@ class _Bubble extends StatelessWidget {
                 else ...[
                   if (m.filePayload != null)
                     _MediaPart(m: m, textColor: textColor),
-                  if (m.text.isNotEmpty)
+                  if (m.text.isNotEmpty || thoughtExpired)
                     Padding(
                       padding: EdgeInsets.only(
                         top: m.filePayload != null ? 4 : 0,
@@ -3523,7 +3549,16 @@ class _Bubble extends StatelessWidget {
                       // гиперссылки: тап сразу отправляет эту команду. Свои
                       // сообщения и переписка с людьми — как раньше, через
                       // EmojiText (эмодзи-рендер, не команды).
-                      child: inlineTextMeta
+                      child: thoughtExpired
+                          ? Text(
+                              'Мысль испарилась…',
+                              style: TextStyle(
+                                color: textColor.withValues(alpha: 0.68),
+                                fontSize: 14,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            )
+                          : inlineTextMeta
                           ? Row(
                               mainAxisSize: MainAxisSize.min,
                               crossAxisAlignment: CrossAxisAlignment.end,
@@ -3546,10 +3581,10 @@ class _Bubble extends StatelessWidget {
                 if (!mine && m.replyMarkup?.inlineKeyboard != null)
                   BotInlineKeyboardView(
                     markup: m.replyMarkup!,
-                    onCallback: (data) {
+                    onCallback: (data) async {
                       final callback = onBotCallback;
                       if (callback != null) {
-                        unawaited(callback(m.sid, data));
+                        await callback(m.sid, data);
                       }
                     },
                     onUrlTap: (url) => onUrlTap?.call(url),
@@ -3814,6 +3849,8 @@ class _MediaPartState extends State<_MediaPart> {
   Uint8List? _bytes;
   bool _loading = false;
   bool _failed = false;
+  bool _expired = false;
+  String? _plainPath;
   Uint8List? _previewBytes;
   String? _preparedVideoPath;
 
@@ -3841,6 +3878,8 @@ class _MediaPartState extends State<_MediaPart> {
   @override
   void initState() {
     super.initState();
+    _expired = widget.m.filePayload?['expired'] == true;
+    if (_expired) unawaited(_load());
     // Пока сообщение pending (своё изображение грузится на сервер) — НЕ грузим:
     // blob ещё не на сервере, расшифровка упадёт. Загрузим после промоушена
     // (баббл пересоздастся с новым sid → initState снова, уже не pending).
@@ -3857,15 +3896,28 @@ class _MediaPartState extends State<_MediaPart> {
 
   Future<Uint8List?> _load() async {
     if (_loading) return _bytes;
-    if (_bytes != null) return _bytes;
+    if (_bytes != null || _plainPath != null) return _bytes;
     if (!mounted) return null;
     setState(() => _loading = true);
     try {
+      if (widget.m.filePayload?['crypto_format'] == 'aes-gcm-chunked-v1') {
+        final path = await ChatRepo.instance.decryptMediaToPath(widget.m);
+        if (!mounted) return null;
+        setState(() {
+          _plainPath = path;
+          _failed = path == null && widget.m.filePayload?['expired'] != true;
+          _expired = widget.m.filePayload?['expired'] == true;
+          _loading = false;
+        });
+        return null;
+      }
       final b = await ChatRepo.instance.decryptMediaBlob(widget.m);
       if (!mounted) return b;
+      final expired = widget.m.filePayload?['expired'] == true;
       setState(() {
         _bytes = b;
-        _failed = b == null;
+        _failed = b == null && !expired;
+        _expired = expired;
         _loading = false;
       });
       return b;
@@ -3886,6 +3938,19 @@ class _MediaPartState extends State<_MediaPart> {
 
   @override
   Widget build(BuildContext context) {
+    if (_expired && !_loading && _bytes == null && _plainPath == null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Text(
+          'Тут был файл, но он удалён',
+          style: TextStyle(
+            color: widget.textColor.withValues(alpha: 0.75),
+            fontSize: 12,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      );
+    }
     if (_isImage) return _imageView();
     if (_isVideo) return _videoView(); // видео само рисует прогресс/превью
     final Widget media = _isVoice
@@ -3987,6 +4052,24 @@ class _MediaPartState extends State<_MediaPart> {
         ),
       );
     }
+    final plainPath = _plainPath;
+    if (plainPath != null && File(plainPath).existsSync()) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: GestureDetector(
+          onTap: () => _openPhotoFile(plainPath),
+          child: Image.file(
+            File(plainPath),
+            width: 240,
+            height: 180,
+            fit: BoxFit.cover,
+            cacheWidth: 480,
+            gaplessPlayback: true,
+            errorBuilder: (_, __, ___) => _imageUnavailable(),
+          ),
+        ),
+      );
+    }
     if (_loading) {
       return Container(
         width: 240,
@@ -4043,19 +4126,34 @@ class _MediaPartState extends State<_MediaPart> {
   );
 
   Future<void> _openPhoto() async {
-    Uint8List? bytes;
+    final plainPath = _plainPath;
+    if (plainPath != null && await File(plainPath).exists()) {
+      await _openPhotoFile(plainPath);
+      return;
+    }
     final localPath = _localPath;
     if (localPath != null && await File(localPath).exists()) {
-      bytes = await File(localPath).readAsBytes();
-    } else {
-      bytes = _bytes ?? await _load();
+      await _openPhotoFile(localPath);
+      return;
     }
+    final bytes = _bytes ?? await _load();
     if (!mounted || bytes == null) return;
     await Navigator.of(context).push(
       PageRouteBuilder<void>(
         opaque: false,
         barrierColor: Colors.black,
-        pageBuilder: (_, _, _) => _PhotoViewer(bytes: bytes!),
+        pageBuilder: (_, _, _) => _PhotoViewer(bytes: bytes),
+      ),
+    );
+  }
+
+  Future<void> _openPhotoFile(String path) async {
+    if (!await File(path).exists() || !mounted) return;
+    await Navigator.of(context).push(
+      PageRouteBuilder<void>(
+        opaque: false,
+        barrierColor: Colors.black,
+        pageBuilder: (_, _, _) => _PhotoViewer(file: File(path)),
       ),
     );
   }
@@ -4073,7 +4171,7 @@ class _MediaPartState extends State<_MediaPart> {
       onLoad: _load,
       textColor: widget.textColor,
       waveform: waveform,
-      localPath: widget.m.filePayload?['_local'] as String?,
+      localPath: _plainPath ?? widget.m.filePayload?['_local'] as String?,
     );
   }
 
@@ -4135,7 +4233,7 @@ class _MediaPartState extends State<_MediaPart> {
             textColor: widget.textColor,
             waveform: const <double>[],
             ext: ext,
-            localPath: widget.m.filePayload?['_local'] as String?,
+            localPath: _plainPath ?? widget.m.filePayload?['_local'] as String?,
           ),
         ],
       ),
@@ -4296,6 +4394,11 @@ class _MediaPartState extends State<_MediaPart> {
       await _load();
       b = _bytes;
     }
+    final plainPath = _plainPath;
+    if (plainPath != null && await File(plainPath).exists()) {
+      await OpenFilex.open(plainPath, type: mime.isNotEmpty ? mime : null);
+      return;
+    }
     if (b == null) {
       toast.show('Не удалось открыть файл');
       return;
@@ -4331,15 +4434,23 @@ class _MediaPartState extends State<_MediaPart> {
       // После отправки открываем ровно тот blob, который ушёл на сервер
       // (после сжатия), а не случайный устаревший путь из галереи. Для pending
       // единственный источник — локальный оригинал.
-      var path = widget.m.pending ? _localPath : _preparedVideoPath;
+      var path = widget.m.pending
+          ? _localPath
+          : (_preparedVideoPath ?? _plainPath ?? _localPath);
       if (path == null || !await _validVideoFile(path)) {
         if (widget.m.pending) return;
         final b = _bytes ?? await _load();
-        if (b == null || b.isEmpty || !mounted) return;
-        final dir = await getTemporaryDirectory();
-        path = '${dir.path}/ghost_vid_${widget.m.sid}$ext';
-        await File(path).writeAsBytes(b, flush: true);
-        _preparedVideoPath = path;
+        if (!mounted) return;
+        path = _plainPath;
+        if (path == null && (b == null || b.isEmpty)) return;
+        if (path != null && await _validVideoFile(path)) {
+          _preparedVideoPath = path;
+        } else {
+          final dir = await getTemporaryDirectory();
+          path = '${dir.path}/ghost_vid_${widget.m.sid}$ext';
+          await File(path).writeAsBytes(b!, flush: true);
+          _preparedVideoPath = path;
+        }
       }
       if (!mounted) return;
       Navigator.of(context).push(
@@ -4386,7 +4497,15 @@ class _MediaPartState extends State<_MediaPart> {
     final fp = widget.m.filePayload!;
     final mime = (fp['mime'] as String?) ?? 'video/mp4';
     final ext = _extFromMime(mime) ?? '.mp4';
+    final localPath = _localPath;
+    if (localPath != null && await _validVideoFile(localPath)) return localPath;
+    if (_plainPath != null && await _validVideoFile(_plainPath!)) {
+      return _plainPath;
+    }
     final b = _bytes ?? await _load();
+    if (_plainPath != null && await _validVideoFile(_plainPath!)) {
+      return _plainPath;
+    }
     if (b == null || b.isEmpty) return null;
     final dir = await getTemporaryDirectory();
     final path = '${dir.path}/ghost_vid_${widget.m.sid}$ext';
@@ -4542,8 +4661,10 @@ class _MediaPartState extends State<_MediaPart> {
 /// Полноэкранный просмотр фото (как в Telegram): чёрный фон, пинч-зум,
 /// свайп вниз закрывает с затуханием, крестик — закрыть.
 class _PhotoViewer extends StatefulWidget {
-  final Uint8List bytes;
-  const _PhotoViewer({required this.bytes});
+  final Uint8List? bytes;
+  final File? file;
+  const _PhotoViewer({this.bytes, this.file})
+    : assert(bytes != null || file != null);
   @override
   State<_PhotoViewer> createState() => _PhotoViewerState();
 }
@@ -4586,7 +4707,15 @@ class _PhotoViewerState extends State<_PhotoViewer> {
                 minScale: 1,
                 maxScale: 5,
                 onInteractionUpdate: (_) => setState(() {}),
-                child: Center(child: Image.memory(widget.bytes)),
+                child: Center(
+                  child: widget.file != null
+                      ? Image.file(
+                          widget.file!,
+                          fit: BoxFit.contain,
+                          cacheWidth: 2048,
+                        )
+                      : Image.memory(widget.bytes!, fit: BoxFit.contain),
+                ),
               ),
             ),
           ),
@@ -4738,8 +4867,13 @@ class _VoiceTileState extends State<_VoiceTile> {
     if (widget.bytes == null && _loaded == null && widget.localPath == null) {
       // Первый тап: грузим blob и СРАЗУ играем (без второго тапа).
       final b = await widget.onLoad();
-      if (!mounted || b == null) return;
-      setState(() => _loaded = b);
+      if (!mounted) return;
+      if (b != null) {
+        setState(() => _loaded = b);
+      } else {
+        await WidgetsBinding.instance.endOfFrame;
+        if (!mounted || widget.localPath == null) return;
+      }
     }
     await _ensureFile();
     if (_tmpPath == null) return;

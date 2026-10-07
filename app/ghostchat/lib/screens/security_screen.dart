@@ -45,7 +45,7 @@ class _SecurityGateState extends State<SecurityGate>
   Future<void> _load() async {
     await AppSecurityStore.instance.load();
     if (!mounted) return;
-    appLog.protectedContext = AppSecurityStore.instance.isInSafeMode;
+    _syncProtectedLogContext();
     final shouldLock = AppSecurityStore.instance.hasPrimaryCode;
     setState(() {
       _ready = true;
@@ -55,8 +55,14 @@ class _SecurityGateState extends State<SecurityGate>
   }
 
   void _onSecurityChanged() {
-    appLog.protectedContext = AppSecurityStore.instance.isInSafeMode;
+    _syncProtectedLogContext();
     if (mounted) setState(() {});
+  }
+
+  void _syncProtectedLogContext() {
+    final security = AppSecurityStore.instance;
+    appLog.protectedScopeId = security.activeScenarioId;
+    appLog.protectedContext = security.isInSafeMode;
   }
 
   void _onOrganizationChanged() {
@@ -659,10 +665,7 @@ class _AppSecurityScreenState extends State<AppSecurityScreen> {
                     if (_biometricsAvailable)
                       SwitchListTile.adaptive(
                         contentPadding: EdgeInsets.zero,
-                        secondary: Icon(
-                          Icons.fingerprint,
-                          color: GE.primary,
-                        ),
+                        secondary: Icon(Icons.fingerprint, color: GE.primary),
                         title: const Text('Вход по биометрии'),
                         subtitle: const Text(
                           'Быстрый вход в обычное пространство. Для безопасных сред используются их отдельные коды.',

@@ -50,6 +50,18 @@ class ApiException implements Exception {
   String toString() => 'ApiException($status): $message';
 }
 
+class OwnPasswordChallengeProof {
+  final String challengeId;
+  final String clientProof;
+  final String expectedServerProof;
+
+  const OwnPasswordChallengeProof({
+    required this.challengeId,
+    required this.clientProof,
+    required this.expectedServerProof,
+  });
+}
+
 class ApiClient {
   static final ApiClient _instance = ApiClient._internal();
   factory ApiClient() => _instance;
@@ -60,9 +72,12 @@ class ApiClient {
   late final Dio _core;
   late final Dio _bots;
   final Map<String, Dio> _serviceClients = {};
-  final Map<String, String> _discoveredServiceBases = {};
+  final Map<String, List<String>> _serviceCandidates = {};
   late final Dio _discoveryDio = _createDiscoveryDio();
-  final Map<String, DateTime> _lastDiscoveryAttempts = {};
+  DateTime? _lastDiscoveryAttempt;
+  DateTime? _lastDiscoverySuccess;
+  Future<void>? _serviceConfigLoad;
+  String _serviceHealthPath = '/api/soc/health';
 
   ApiClient._internal() {
     _chat = _build('chat', GE.apiChat);
@@ -70,6 +85,7 @@ class ApiClient {
     _ghosou = _build('root', GE.baseUrl);
     _core = _build('core', GE.apiCore);
     _bots = _build('bots', GE.apiBots);
+    unawaited(_discoverAllServiceBases());
   }
 
   Dio _build(String serviceKey, String base) {
@@ -105,11 +121,16 @@ class ApiClient {
         },
         onResponse: (resp, handler) async {
           if (resp.statusCode == 404 &&
+              (resp.requestOptions.method == 'GET' ||
+                  resp.requestOptions.method == 'HEAD') &&
               resp.requestOptions.extra['gc_endpoint_retry'] != true) {
             final oldBase = resp.requestOptions.baseUrl;
-            final replacement = await _discoverServiceBase(serviceKey);
+            final replacement = await _discoverServiceBase(
+              serviceKey,
+              excludeBase: oldBase,
+              updateClient: false,
+            );
             if (replacement != null && replacement != oldBase) {
-              d.options.baseUrl = replacement;
               try {
                 final retry = await d.fetch<dynamic>(
                   resp.requestOptions.copyWith(
@@ -120,6 +141,7 @@ class ApiClient {
                     },
                   ),
                 );
+                d.options.baseUrl = replacement;
                 handler.resolve(retry);
                 return;
               } catch (_) {
@@ -165,7 +187,41 @@ class ApiClient {
           );
           handler.next(resp);
         },
-        onError: (err, handler) {
+        onError: (err, handler) async {
+          final request = err.requestOptions;
+          final safeToRetry =
+              request.method == 'GET' || request.method == 'HEAD';
+          final status = err.response?.statusCode;
+          final canDiscover =
+              safeToRetry &&
+              request.extra['gc_endpoint_retry'] != true &&
+              (err.type == DioExceptionType.connectionError ||
+                  err.type == DioExceptionType.connectionTimeout ||
+                  err.type == DioExceptionType.receiveTimeout ||
+                  (status != null && status >= 500));
+          if (canDiscover) {
+            final replacement = await _discoverServiceBase(
+              serviceKey,
+              excludeBase: request.baseUrl,
+              updateClient: false,
+            );
+            if (replacement != null && replacement != request.baseUrl) {
+              try {
+                final retry = await d.fetch<dynamic>(
+                  request.copyWith(
+                    baseUrl: replacement,
+                    extra: {...request.extra, 'gc_endpoint_retry': true},
+                  ),
+                );
+                d.options.baseUrl = replacement;
+                handler.resolve(retry);
+                return;
+              } catch (_) {
+                // Keep the original connection failure if the alternate also
+                // fails; endpoint discovery must not hide the API error.
+              }
+            }
+          }
           // Если в err.error лежит наш ApiException — заменяем сообщение
           // на человеческое, чтобы print('$e') показывал текст ошибки.
           final inner = err.error;
@@ -221,44 +277,164 @@ class ApiClient {
     return client;
   }
 
-  Future<String?> _discoverServiceBase(String serviceKey) async {
-    final last = _lastDiscoveryAttempts[serviceKey];
-    if (last != null &&
-        DateTime.now().difference(last) < const Duration(minutes: 5)) {
-      return null;
+  Future<void> _discoverAllServiceBases() async {
+    await _ensureServiceConfig();
+    await Future.wait(
+      _serviceClients.keys.map((key) => _discoverServiceBase(key)),
+    );
+  }
+
+  Future<String?> _discoverServiceBase(
+    String serviceKey, {
+    String? excludeBase,
+    bool updateClient = true,
+  }) async {
+    await _ensureServiceConfig();
+    final candidates = _serviceCandidates[serviceKey] ?? const <String>[];
+    final eligible = candidates
+        .where((candidate) => candidate != excludeBase)
+        .toList();
+    final healthy = await Future.wait(eligible.map(_probeServiceBase));
+    for (var index = 0; index < eligible.length; index++) {
+      if (!healthy[index]) continue;
+      final candidate = eligible[index];
+      final client = _serviceClients[serviceKey];
+      if (updateClient && client != null) {
+        client.options.baseUrl = candidate;
+      }
+      appLog.info('api', 'selected healthy endpoint for $serviceKey');
+      return candidate;
     }
-    _lastDiscoveryAttempts[serviceKey] = DateTime.now();
+    return null;
+  }
+
+  /// Builds WSS endpoints from the same trusted root-service list used by
+  /// automatic API discovery. The configured host remains the final fallback.
+  Future<List<Uri>> webSocketEndpointCandidates() async {
+    await _ensureServiceConfig();
+    final endpoints = <Uri>[];
+    for (final base in _serviceCandidates['soc'] ?? const <String>[]) {
+      final uri = Uri.tryParse(base);
+      if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) continue;
+      final endpoint = uri.replace(
+        scheme: 'wss',
+        path: '${uri.path.replaceFirst(RegExp(r'/+$'), '')}/ws',
+        query: null,
+        fragment: null,
+      );
+      if (!endpoints.contains(endpoint)) endpoints.add(endpoint);
+    }
+    final fallback = Uri.parse(GE.wsUrl);
+    if (!endpoints.contains(fallback)) endpoints.add(fallback);
+    return endpoints;
+  }
+
+  Future<void> _ensureServiceConfig() async {
+    final inFlight = _serviceConfigLoad;
+    if (inFlight != null) {
+      await inFlight;
+      return;
+    }
+    final now = DateTime.now();
+    final lastSuccess = _lastDiscoverySuccess;
+    if (lastSuccess != null &&
+        now.difference(lastSuccess) < const Duration(minutes: 5)) {
+      return;
+    }
+    final lastAttempt = _lastDiscoveryAttempt;
+    if (lastAttempt != null &&
+        now.difference(lastAttempt) < const Duration(seconds: 15)) {
+      return;
+    }
+
+    _lastDiscoveryAttempt = now;
+    final load = _fetchServiceConfig();
+    _serviceConfigLoad = load;
+    try {
+      await load;
+    } finally {
+      if (identical(_serviceConfigLoad, load)) _serviceConfigLoad = null;
+    }
+  }
+
+  Future<void> _fetchServiceConfig() async {
     try {
       final response = await _discoveryDio.get<dynamic>(
         '${GE.baseUrl}/api/soc/client-config',
+        options: Options(
+          connectTimeout: const Duration(seconds: 4),
+          receiveTimeout: const Duration(seconds: 4),
+        ),
       );
-      if (response.statusCode != 200 || response.data is! Map) return null;
-      final services = (response.data as Map)['services'];
-      if (services is! Map) return null;
+      if (response.statusCode != 200 || response.data is! Map) return;
+      final config = Map<String, dynamic>.from(response.data as Map);
+      final healthPath = config['health_path']?.toString();
+      if (healthPath != null &&
+          healthPath.startsWith('/') &&
+          !healthPath.startsWith('//') &&
+          !healthPath.contains('?') &&
+          !healthPath.contains('#')) {
+        _serviceHealthPath = healthPath;
+      }
+      final services = config['services'];
+      if (services is! Map) return;
+      _serviceCandidates.clear();
+      var foundEndpoint = false;
       for (final entry in services.entries) {
         final key = entry.key.toString();
-        final raw = entry.value?.toString().trim() ?? '';
-        if (raw.isEmpty) continue;
-        final uri = Uri.tryParse(raw);
-        final resolved = uri != null && uri.hasScheme
-            ? uri
-            : Uri.parse(GE.baseUrl).resolve(raw);
-        if (resolved.scheme != 'https' ||
-            resolved.host.isEmpty ||
-            resolved.userInfo.isNotEmpty ||
-            resolved.hasFragment ||
-            resolved.hasQuery) {
-          continue;
+        final rawValues = entry.value is Iterable
+            ? (entry.value as Iterable).toList()
+            : <dynamic>[entry.value];
+        final candidates = <String>[];
+        for (final value in rawValues.take(8)) {
+          final raw = value?.toString().trim() ?? '';
+          if (raw.isEmpty) continue;
+          final uri = Uri.tryParse(raw);
+          final resolved = uri != null && uri.hasScheme
+              ? uri
+              : Uri.parse(GE.baseUrl).resolve(raw);
+          if (resolved.scheme != 'https' ||
+              resolved.host.isEmpty ||
+              resolved.userInfo.isNotEmpty ||
+              resolved.hasFragment ||
+              resolved.hasQuery) {
+            continue;
+          }
+          final normalized = resolved.toString().replaceFirst(
+            RegExp(r'/+$'),
+            '',
+          );
+          if (!candidates.contains(normalized)) candidates.add(normalized);
+          foundEndpoint = true;
         }
-        final normalized = resolved.toString().replaceFirst(RegExp(r'/+$'), '');
-        _discoveredServiceBases[key] = normalized;
-        final client = _serviceClients[key];
-        if (client != null) client.options.baseUrl = normalized;
+        _serviceCandidates[key] = candidates;
       }
-      return _discoveredServiceBases[serviceKey];
+      if (foundEndpoint) _lastDiscoverySuccess = DateTime.now();
     } catch (e) {
       appLog.warn('api', 'endpoint discovery failed: $e');
-      return null;
+    }
+  }
+
+  Future<bool> _probeServiceBase(String base) async {
+    try {
+      final uri = Uri.parse(base);
+      final probe = uri.replace(
+        path: _serviceHealthPath,
+        query: null,
+        fragment: null,
+      );
+      final response = await _discoveryDio.get<dynamic>(
+        probe.toString(),
+        options: Options(
+          connectTimeout: const Duration(seconds: 3),
+          receiveTimeout: const Duration(seconds: 3),
+        ),
+      );
+      return response.statusCode != null &&
+          response.statusCode! >= 200 &&
+          response.statusCode! < 300;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -284,6 +460,7 @@ class ApiClient {
     _applyProxy(_ghosou);
     _applyProxy(_core);
     _applyProxy(_bots);
+    _applyProxy(_discoveryDio);
   }
 
   String _extractError(dynamic data) {
@@ -411,29 +588,13 @@ class ApiClient {
 
   /// Проверить текущий пароль без изменения профиля.
   Future<Map<String, dynamic>> verifyOwnPassword(String password) async {
-    final nonce = PasswordAuthProtocol.newNonce();
-    final challengeResponse = await _soc.post(
-      '/auth/v2/password/challenge',
-      data: {
-        'purpose': 'verify_password',
-        'client_nonce': nonce,
-        'context': '',
-      },
-    );
-    final challenge = Map<String, dynamic>.from(challengeResponse.data as Map);
-    if (challenge['client_nonce'] != nonce || challenge['context'] != '') {
-      throw StateError('Сервер вернул некорректный запрос проверки пароля');
-    }
-    final proof = await PasswordAuthProtocol.prove(password, challenge);
+    final proof = await createOwnPasswordChallengeProof(password, context: '');
     final response = await _soc.post(
       '/auth/v2/password/verify',
-      data: {
-        'challenge_id': challenge['challenge_id'],
-        'proof': proof.clientProof,
-      },
+      data: {'challenge_id': proof.challengeId, 'proof': proof.clientProof},
     );
     final result = Map<String, dynamic>.from(response.data as Map);
-    if (!PasswordAuthProtocol.verifyServerProof(
+    if (!verifyOwnPasswordServerProof(
       proof.expectedServerProof,
       result['server_proof'],
     )) {
@@ -441,6 +602,45 @@ class ApiClient {
     }
     return result;
   }
+
+  /// Create a password proof bound to a specific server-side action.
+  /// The password itself is never sent over HTTP.
+  Future<OwnPasswordChallengeProof> createOwnPasswordChallengeProof(
+    String password, {
+    required String context,
+  }) async {
+    if (context.length > 128) {
+      throw ArgumentError.value(context, 'context', 'Не более 128 символов');
+    }
+    final nonce = PasswordAuthProtocol.newNonce();
+    final challengeResponse = await _soc.post(
+      '/auth/v2/password/challenge',
+      data: {
+        'purpose': 'verify_password',
+        'client_nonce': nonce,
+        'context': context,
+      },
+    );
+    final challenge = Map<String, dynamic>.from(challengeResponse.data as Map);
+    if (challenge['client_nonce'] != nonce ||
+        challenge['context'] != context ||
+        challenge['purpose'] != 'verify_password') {
+      throw StateError('Сервер вернул некорректный запрос проверки пароля');
+    }
+    final result = await PasswordAuthProtocol.prove(password, challenge);
+    final challengeId = challenge['challenge_id'];
+    if (challengeId is! String || challengeId.isEmpty) {
+      throw StateError('Сервер не вернул идентификатор проверки пароля');
+    }
+    return OwnPasswordChallengeProof(
+      challengeId: challengeId,
+      clientProof: result.clientProof,
+      expectedServerProof: result.expectedServerProof,
+    );
+  }
+
+  bool verifyOwnPasswordServerProof(String expected, dynamic received) =>
+      PasswordAuthProtocol.verifyServerProof(expected, received);
 
   /// Обновить данные своего профиля через актуальный Social API.
   ///
@@ -679,6 +879,37 @@ class ApiClient {
     return Map<String, dynamic>.from(r.data);
   }
 
+  /// Потоковая загрузка уже зашифрованного файла с диска. В отличие от
+  /// uploadFile, Dio не создаёт вторую копию всего вложения в памяти.
+  Future<Map<String, dynamic>> uploadFileFromPath({
+    required String toUsername,
+    required String encryptedPath,
+    String name = 'encrypted.bin',
+    void Function(int sent, int total)? onSendProgress,
+  }) async {
+    final part = await MultipartFile.fromFile(encryptedPath, filename: name);
+    final form = FormData.fromMap({'to_username': toUsername, 'blob': part});
+    final response = await _chat.post(
+      '/file/upload',
+      data: form,
+      onSendProgress: onSendProgress,
+      options: Options(
+        sendTimeout: const Duration(minutes: 30),
+        receiveTimeout: const Duration(minutes: 30),
+      ),
+    );
+    final status = response.statusCode ?? 500;
+    if (status >= 400) {
+      final body = response.data;
+      final message = body is Map
+          ? (body['detail'] ?? body['message'] ?? 'Ошибка загрузки файла')
+                .toString()
+          : 'Ошибка загрузки файла';
+      throw ApiException(status, message);
+    }
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
   /// Загрузить картинку/видео/аудио на соц-бэк (/api/soc/upload).
   /// Возвращает {url, type, ...} как отдаёт сервер.
   Future<Map<String, dynamic>> uploadSocFile({
@@ -761,6 +992,34 @@ class ApiClient {
       return List<int>.from(r.data);
     } on DioException catch (e) {
       if (e.response?.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// Скачивает шифротекст сразу на диск, не создавая Uint8List размером с файл.
+  Future<bool> downloadFileToPath({
+    required int fileId,
+    required String destinationPath,
+    void Function(int received, int total)? onReceiveProgress,
+  }) async {
+    try {
+      final response = await _chat.download(
+        '/file/$fileId',
+        destinationPath,
+        onReceiveProgress: onReceiveProgress,
+        options: Options(
+          receiveTimeout: const Duration(minutes: 30),
+          sendTimeout: const Duration(minutes: 2),
+        ),
+      );
+      final status = response.statusCode ?? 500;
+      if (status == 404) return false;
+      if (status >= 400) {
+        throw ApiException(status, 'Не удалось скачать вложение');
+      }
+      return true;
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404) return false;
       rethrow;
     }
   }

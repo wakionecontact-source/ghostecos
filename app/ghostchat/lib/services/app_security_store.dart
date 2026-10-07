@@ -5,9 +5,26 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/local/app_logger.dart';
+
+const _securityPbkdf2DigestPrefix = 'pbkdf2-sha256-v1:';
+
+Future<String> _deriveSecurityCodeDigest(List<String> input) async {
+  final key =
+      await Pbkdf2(
+        macAlgorithm: Hmac.sha256(),
+        iterations: 260000,
+        bits: 256,
+      ).deriveKey(
+        secretKey: SecretKey(utf8.encode(input[1])),
+        nonce: base64Url.decode(input[0]),
+      );
+  return '$_securityPbkdf2DigestPrefix${base64UrlEncode(await key.extractBytes())}';
+}
+
 /// Device-local security state for the app and its hidden chat spaces.
 ///
-/// Only salted SHA-256 digests are persisted.  This is deliberately separate
+/// Only salted PBKDF2 digests are persisted. This is deliberately separate
 /// from account/E2EE passwords: these codes unlock local UI state and never go
 /// to the server.  The primary code is required before a safe environment can
 /// be created.
@@ -78,6 +95,7 @@ class AppSecurityStore {
   static final AppSecurityStore instance = AppSecurityStore._();
 
   static const _storageKey = 'ghostchat_app_security_v2';
+  static const _pbkdf2DigestPrefix = _securityPbkdf2DigestPrefix;
   static const maxScenarioDepth = 5;
   static const autoLockDelayOptionsSeconds = <int>[0, 15, 30, 60, 300, 600];
   static final Random _random = Random.secure();
@@ -190,6 +208,9 @@ class AppSecurityStore {
   }
 
   Future<void> clearPrimaryCode() async {
+    for (final scenario in _scenarios) {
+      appLog.clearProtectedScope(scenario.id);
+    }
     _primarySalt = null;
     _primaryDigest = null;
     _activeScenarioId = null;
@@ -267,6 +288,9 @@ class AppSecurityStore {
       }
     }
     _scenarios.removeWhere((item) => removed.contains(item.id));
+    for (final scenarioId in removed) {
+      appLog.clearProtectedScope(scenarioId);
+    }
     if (_activeScenarioId != null && removed.contains(_activeScenarioId)) {
       _activeScenarioId = null;
     }
@@ -278,14 +302,37 @@ class AppSecurityStore {
     if (!hasPrimaryCode) return const SecurityUnlockResult.normal();
     final normalized = code.trim();
     if (_primarySalt != null &&
-        _primaryDigest == await _digest(_primarySalt!, normalized)) {
+        await _matches(_primarySalt!, _primaryDigest!, normalized)) {
+      if (!_usesPbkdf2(_primaryDigest!)) {
+        _primarySalt = _newSalt();
+        _primaryDigest = await _digest(_primarySalt!, normalized);
+        await _save();
+      }
       final removedScenarioIds = await leaveToNormal();
       return SecurityUnlockResult.normal(
         removedScenarioIds: removedScenarioIds,
       );
     }
     for (final scenario in List<SecurityScenario>.from(_scenarios.reversed)) {
-      if (scenario.digest == await _digest(scenario.salt, normalized)) {
+      // Nested codes are only valid while their parent environment is active.
+      // This keeps a child code from opening that environment directly from
+      // the ordinary mode or from an unrelated safe environment.
+      if (scenario.parentId != _activeScenarioId) continue;
+      if (await _matches(scenario.salt, scenario.digest, normalized)) {
+        if (!_usesPbkdf2(scenario.digest)) {
+          final salt = _newSalt();
+          final index = _scenarios.indexWhere((item) => item.id == scenario.id);
+          if (index >= 0) {
+            _scenarios[index] = SecurityScenario(
+              id: scenario.id,
+              name: scenario.name,
+              salt: salt,
+              digest: await _digest(salt, normalized),
+              parentId: scenario.parentId,
+            );
+            await _save();
+          }
+        }
         _activeScenarioId = scenario.id;
         revision.value++;
         return SecurityUnlockResult.scenario(scenario.id);
@@ -303,12 +350,30 @@ class AppSecurityStore {
   }
 
   Future<Set<String>> leaveToNormal() async {
-    final removed = _scenarios
-        .where((scenario) => scenario.parentId != null)
-        .map((scenario) => scenario.id)
-        .toSet();
+    final activeId = _activeScenarioId;
+    final active = activeId == null ? null : scenarioById(activeId);
+    final removed = <String>{};
+    if (active != null) {
+      // A top-level environment survives leaving it; only its descendants
+      // were created inside it. If the active environment is itself nested,
+      // remove that environment and its descendants on exit to normal mode.
+      if (active.parentId != null) removed.add(active.id);
+      var parents = <String>{active.id};
+      while (parents.isNotEmpty) {
+        final next = <String>{};
+        for (final scenario in _scenarios) {
+          if (parents.contains(scenario.parentId) && removed.add(scenario.id)) {
+            next.add(scenario.id);
+          }
+        }
+        parents = next;
+      }
+    }
     if (removed.isNotEmpty) {
       _scenarios.removeWhere((scenario) => removed.contains(scenario.id));
+      for (final scenarioId in removed) {
+        appLog.clearProtectedScope(scenarioId);
+      }
     }
     if (_activeScenarioId != null || removed.isNotEmpty) {
       _activeScenarioId = null;
@@ -318,13 +383,35 @@ class AppSecurityStore {
     return removed;
   }
 
-  bool canSeeSecureFolder(String? scenarioId) =>
-      scenarioId == null || scenarioId == _activeScenarioId;
+  bool canSeeSecureFolder(String? scenarioId) {
+    if (scenarioId == null) return true;
+    var active = scenarioById(_activeScenarioId ?? '');
+    final visited = <String>{};
+    while (active != null && visited.add(active.id)) {
+      if (active.id == scenarioId) return true;
+      final parentId = active.parentId;
+      active = parentId == null ? null : scenarioById(parentId);
+    }
+    return false;
+  }
 
   String _newSalt() =>
       base64UrlEncode(List<int>.generate(16, (_) => _random.nextInt(256)));
 
+  Future<bool> _matches(String salt, String digest, String code) async {
+    final computed = _usesPbkdf2(digest)
+        ? await _digest(salt, code)
+        : await _legacyDigest(salt, code);
+    return digest == computed;
+  }
+
+  bool _usesPbkdf2(String digest) => digest.startsWith(_pbkdf2DigestPrefix);
+
   Future<String> _digest(String salt, String code) async {
+    return compute(_deriveSecurityCodeDigest, [salt, code]);
+  }
+
+  Future<String> _legacyDigest(String salt, String code) async {
     final bytes = await Sha256().hash(utf8.encode('$salt:$code'));
     return base64UrlEncode(bytes.bytes);
   }

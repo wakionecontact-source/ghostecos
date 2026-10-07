@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Вход · GhostChat Shop</title>
+  <link rel="icon" type="image/png" href="{{PREFIX}}/static/favicon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="{{PREFIX}}/static/common.css">
+  <style>
+    .step { display: none; }
+    .step.active { display: block; }
+
+    .code-display {
+      font-size: 48px;
+      font-weight: 800;
+      letter-spacing: 14px;
+      color: var(--primary);
+      text-align: center;
+      padding: 18px 0 10px;
+      font-variant-numeric: tabular-nums;
+    }
+    .spin {
+      display: inline-block;
+      width: 18px; height: 18px;
+      border: 2px solid rgba(168,85,247,0.3);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 0;
+      color: var(--sub);
+      font-size: 14px;
+    }
+    .status-icon { font-size: 18px; }
+
+    .step-indicator {
+      display: flex;
+      gap: 6px;
+      justify-content: center;
+      margin-bottom: 24px;
+    }
+    .step-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--border);
+      transition: background .3s;
+    }
+    .step-dot.active { background: var(--primary); }
+    .step-dot.done { background: var(--green); }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="/">GhostChat</a>
+  <div class="nav-links">
+    <a href="{{PREFIX}}/premium" class="active">Premium</a>
+  </div>
+  <div class="nav-right"></div>
+</nav>
+
+<div class="page" style="max-width:440px;">
+  <div class="card" style="text-align:center;">
+    <div style="
+      width:60px; height:60px; border-radius:16px; margin:0 auto 20px;
+      background: linear-gradient(135deg, rgba(168,85,247,0.25), rgba(124,58,237,0.15));
+      border:1px solid rgba(168,85,247,0.3);
+      display:flex; align-items:center; justify-content:center;
+      font-size:24px; color:var(--primary);
+    "><i class="fa-solid fa-ghost"></i></div>
+
+    <h1 style="font-size:30px; margin-bottom:6px; letter-spacing:-1px;">
+      <span class="grad">Вход</span>
+    </h1>
+
+    <div class="step-indicator">
+      <div class="step-dot active" id="dot0"></div>
+      <div class="step-dot" id="dot1"></div>
+      <div class="step-dot" id="dot2"></div>
+    </div>
+
+    <!-- ===== STEP 0: username + password ===== -->
+    <div class="step active" id="step0">
+      <p style="margin-bottom:20px; font-size:14px; color:var(--sub);">
+        Введи юзернейм и пароль GhostChat
+      </p>
+      <div class="field" style="text-align:left; margin-bottom:10px;">
+        <input id="username" class="input"
+               placeholder="юзернейм (пример: exemple)"
+               autocomplete="username" autofocus spellcheck="false"
+               enterkeyhint="next"/>
+      </div>
+      <div class="field" style="text-align:left; margin-bottom:14px;">
+        <input id="password" class="input" type="password"
+               placeholder="пароль"
+               autocomplete="current-password"
+               enterkeyhint="go"/>
+      </div>
+      <button id="btnLogin" class="btn btn-primary" style="width:100%; justify-content:center;">
+        Войти <i class="fa-solid fa-arrow-right"></i>
+      </button>
+      <p id="errMsg" style="color:var(--red); font-size:13px; margin-top:10px; min-height:18px; display:none;"></p>
+      <p style="font-size:12px; margin-top:20px; color:var(--muted); line-height:1.55;">
+        Вход в аккаунт GhostChat здесь только для того,<br>чтобы совершить покупку Premium.
+      </p>
+    </div>
+
+    <!-- ===== STEP 1: waiting for app approval ===== -->
+    <div class="step" id="step1">
+      <p style="font-size:14px; color:var(--sub); margin-bottom:8px;">
+        Открой GhostChat на любом устройстве —<br>
+        там появился запрос на вход.
+      </p>
+      <div style="
+        background: rgba(168,85,247,0.08);
+        border: 1px solid rgba(168,85,247,0.2);
+        border-radius: 12px;
+        padding: 16px;
+        margin: 16px 0;
+        text-align: left;
+      ">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+          <i class="fa-solid fa-mobile-screen-button" style="color:var(--primary);"></i>
+          <span style="font-size:13px; font-weight:600;">GhostChat Shop (Сайт)</span>
+        </div>
+        <div style="font-size:12px; color:var(--sub);">
+          <i class="fa-solid fa-circle-info" style="margin-right:4px;"></i>
+          Нажми <b>Да</b> в уведомлении, затем введи код
+        </div>
+      </div>
+      <div class="status-row" style="justify-content:center;">
+        <span class="spin"></span>
+        <span id="statusText">Ожидаем подтверждение…</span>
+      </div>
+      <button id="btnCancelWait" class="btn btn-ghost" style="margin-top:8px; width:100%; justify-content:center;">
+        Отмена
+      </button>
+    </div>
+
+    <!-- ===== STEP 2: show code to enter in app ===== -->
+    <div class="step" id="step2">
+      <p style="font-size:14px; color:var(--sub); margin-bottom:4px;">
+        Введи этот код в приложении GhostChat:
+      </p>
+      <div class="code-display" id="codeDisplay">——————</div>
+      <p id="attemptsLeft" style="font-size:12px; color:var(--muted); margin-bottom:16px;"></p>
+      <div class="status-row" style="justify-content:center;">
+        <span class="spin"></span>
+        <span>Ожидаем ввода кода…</span>
+      </div>
+      <button id="btnCancelCode" class="btn btn-ghost" style="margin-top:8px; width:100%; justify-content:center;">
+        Отмена
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<script>window.SHOP_PREFIX = "{{PREFIX}}";</script>
+<script src="{{PREFIX}}/static/mesh.js"></script>
+<script src="{{PREFIX}}/static/common.js"></script>
+<script>
+(async function () {
+  const me = await SHOP.loadMe();
+  SHOP.renderNav(me);
+  if (me) {
+    const next = new URLSearchParams(location.search).get("next") || SHOP.url("/profile");
+    location.href = next;
+    return;
+  }
+
+  // -------- DOM refs --------
+  const usernameEl  = document.getElementById("username");
+  const passwordEl  = document.getElementById("password");
+  const errMsg      = document.getElementById("errMsg");
+  const btnLogin    = document.getElementById("btnLogin");
+  const statusText  = document.getElementById("statusText");
+  const codeDisplay = document.getElementById("codeDisplay");
+  const attemptsEl  = document.getElementById("attemptsLeft");
+
+  // -------- state --------
+  let _requestId = null;
+  let _myCode    = null;  // 6-digit string
+  let _polling   = false;
+  let _pollTimer = null;
+  let _phase     = "idle"; // idle → pending → code_phase → verify_phase → done
+
+  // -------- step helpers --------
+  function showStep(n) {
+    document.querySelectorAll('.step').forEach((el, i) => {
+      el.classList.toggle('active', i === n);
+    });
+    document.querySelectorAll('.step-dot').forEach((dot, i) => {
+      dot.classList.toggle('active', i === n);
+      dot.classList.toggle('done', i < n);
+    });
+  }
+
+  function showErr(msg) {
+    errMsg.textContent = msg;
+    errMsg.style.display = "block";
+  }
+  function hideErr() {
+    errMsg.textContent = "";
+    errMsg.style.display = "none";
+  }
+
+  // -------- generate code --------
+  function makeCode() {
+    return String(Math.floor(100000 + Math.random() * 900000));
+  }
+
+  // -------- STEP 0 → login --------
+  async function doLogin() {
+    const gc  = usernameEl.value.trim().replace(/^@/, "");
+    const pwd = passwordEl.value;
+    if (!gc) { showErr("Введи юзернейм"); return; }
+    if (!pwd) { showErr("Введи пароль"); return; }
+    if (!/^[A-Za-z0-9_]{2,32}$/.test(gc)) { showErr("Некорректный юзернейм"); return; }
+
+    btnLogin.disabled = true;
+    usernameEl.disabled = true;
+    passwordEl.disabled = true;
+    hideErr();
+
+    try {
+      const res = await SHOP.api("/api/login", { method: "POST", body: { gc_username: gc, password: pwd } });
+      _requestId = res.request_id;
+      showStep(1);
+      startPolling();
+    } catch (e) {
+      if (e.status === 401)        showErr("Неверный логин или пароль");
+      else if (e.status === 404)   showErr("Аккаунт GhostChat не найден");
+      else if (e.status === 400)   showErr("Нет устройств для подтверждения. Войди в приложение хотя бы раз.");
+      else if (e.status === 429)   showErr("Слишком много попыток — подожди минуту");
+      else if (e.status === 503)   showErr("GhostChat сервер недоступен. Попробуй позже.");
+      else                         showErr(e.message || "Ошибка входа");
+      btnLogin.disabled = false;
+      usernameEl.disabled = false;
+      passwordEl.disabled = false;
+    }
+  }
+
+  // -------- polling --------
+  function startPolling() {
+    if (_polling) return;
+    _polling = true;
+    poll();
+  }
+
+  function stopPolling() {
+    _polling = false;
+    if (_pollTimer) { clearTimeout(_pollTimer); _pollTimer = null; }
+  }
+
+  async function poll() {
+    if (!_polling || !_requestId) return;
+    try {
+      const res = await SHOP.api(`/api/login_poll/${_requestId}`);
+      await handlePollResult(res);
+    } catch (e) {
+      // ignore transient errors, keep polling
+    }
+    if (_polling) {
+      _pollTimer = setTimeout(poll, 2000);
+    }
+  }
+
+  async function handlePollResult(res) {
+    const status = res.status;
+
+    if (status === "pending") {
+      statusText.textContent = "Ожидаем подтверждение в приложении…";
+      return;
+    }
+
+    if (status === "expired") {
+      stopPolling();
+      goBack("Время вышло. Попробуй ещё раз.");
+      return;
+    }
+
+    if (status === "denied") {
+      stopPolling();
+      goBack("Вход отклонён.");
+      return;
+    }
+
+    if (status === "blocked") {
+      stopPolling();
+      goBack("Устройство заблокировано.");
+      return;
+    }
+
+    if (status === "not_found") {
+      stopPolling();
+      goBack("Запрос не найден. Попробуй ещё раз.");
+      return;
+    }
+
+    if (status === "code_phase") {
+      if (_phase !== "code_phase") {
+        _phase = "code_phase";
+        _myCode = makeCode();
+        codeDisplay.textContent = _myCode;
+        attemptsEl.textContent = "";
+        showStep(2);
+        // notify server we have a code
+        try {
+          await SHOP.api(`/api/login_code_ready/${_requestId}`, { method: "POST", body: {} });
+        } catch (_) {}
+      }
+      return;
+    }
+
+    if (status === "verify_phase") {
+      if (_phase === "code_phase" && _myCode) {
+        _phase = "verify_phase";
+        const submitted = res.submitted_code || "";
+        const matches = submitted === _myCode;
+        try {
+          await SHOP.api(`/api/login_code_verify/${_requestId}`, {
+            method: "POST",
+            body: { matches }
+          });
+        } catch (_) {}
+        if (!matches) {
+          // wrong code — server will reset to code_phase, generate new code next cycle
+          _phase = "code_phase";
+          _myCode = makeCode();
+          codeDisplay.textContent = _myCode;
+          attemptsEl.textContent = "Код неверный, введи новый";
+        }
+      }
+      return;
+    }
+
+    if (status === "ok") {
+      // JWT cookie already set by /api/login_poll
+      stopPolling();
+      const next = new URLSearchParams(location.search).get("next") || SHOP.url("/profile");
+      location.href = next;
+      return;
+    }
+
+    // code_wrong retry
+    if (status === "code_wrong") {
+      _phase = "code_phase";
+      _myCode = makeCode();
+      codeDisplay.textContent = _myCode;
+      const left = res.attempts_left ?? "";
+      attemptsEl.textContent = left ? `Осталось попыток: ${left}` : "";
+      return;
+    }
+  }
+
+  // -------- cancel / back --------
+  function goBack(errText) {
+    stopPolling();
+    _requestId = null;
+    _myCode = null;
+    _phase = "idle";
+    btnLogin.disabled = false;
+    usernameEl.disabled = false;
+    passwordEl.disabled = false;
+    showStep(0);
+    if (errText) showErr(errText);
+  }
+
+  document.getElementById("btnCancelWait").addEventListener("click", () => goBack(""));
+  document.getElementById("btnCancelCode").addEventListener("click", () => goBack(""));
+
+  // -------- event listeners --------
+  usernameEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { passwordEl.focus(); }
+  });
+  passwordEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") doLogin();
+  });
+  usernameEl.addEventListener("input", hideErr);
+  passwordEl.addEventListener("input", hideErr);
+  btnLogin.addEventListener("click", doLogin);
+})();
+</script>
+</body>
+</html>

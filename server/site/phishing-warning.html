@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#07090f">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <title>Защита GhostEcos</title>
+  <style>
+    * { box-sizing: border-box; }
+    :root { --bg:#07090f; --panel:rgba(17,20,29,.92); --line:rgba(255,255,255,.1); --text:#f7f8fb; --muted:#a9afbf; --violet:#a855f7; --violet2:#7c3aed; --danger:#ff4d67; }
+    html { min-height:100%; background:var(--bg); }
+    html, body { margin:0; color:var(--text); font-family:Inter,Arial,sans-serif; }
+    body { display:grid; place-items:center; min-height:100vh; min-height:100dvh; padding:28px; overflow-x:hidden; background:radial-gradient(80% 60% at 20% 0%,rgba(124,58,237,.18),transparent 60%),radial-gradient(70% 60% at 100% 100%,rgba(168,85,247,.12),transparent 60%),linear-gradient(180deg,#0b0f1d,var(--bg)); }
+    #mesh-bg { position:fixed; inset:0; z-index:0; pointer-events:none; }
+    main { position:relative; z-index:1; width:min(720px,100%); }
+    .brand { display:flex; align-items:center; gap:11px; margin-bottom:24px; font-size:21px; font-weight:800; }
+    .brand-mark { width:34px; height:34px; display:grid; place-items:center; border:1px solid rgba(192,132,252,.45); background:rgba(168,85,247,.14); color:#d8b4fe; border-radius:8px; }
+    .brand span:last-child { color:#c084fc; }
+    .panel { padding:clamp(24px,5vw,44px); border:1px solid var(--line); border-radius:8px; background:var(--panel); backdrop-filter:blur(18px); }
+    .status { display:inline-flex; align-items:center; gap:9px; margin-bottom:22px; padding:7px 11px; border:1px solid rgba(255,77,103,.35); background:rgba(255,77,103,.08); color:#ff9cac; border-radius:6px; font-size:13px; font-weight:700; text-transform:uppercase; }
+    .status i { width:8px; height:8px; border-radius:50%; background:var(--danger); }
+    h1 { margin:0 0 16px; max-width:620px; font-size:clamp(34px,7vw,58px); line-height:1.03; letter-spacing:0; }
+    .lead { margin:0 0 26px; color:var(--muted); font-size:clamp(16px,2.5vw,19px); line-height:1.65; }
+    .official { display:flex; align-items:center; gap:12px; margin:0 0 24px; padding:16px; border-left:3px solid var(--violet); background:rgba(168,85,247,.08); }
+    .official small { display:block; margin-bottom:4px; color:var(--muted); font-size:12px; text-transform:uppercase; }
+    .official strong { overflow-wrap:anywhere; font-family:Consolas,monospace; font-size:16px; }
+    .warning { margin:0 0 28px; padding:0; list-style:none; display:grid; gap:10px; color:#d8dbe5; }
+    .warning li { display:flex; gap:10px; line-height:1.45; }
+    .warning li::before { content:"×"; flex:none; color:var(--danger); font-weight:900; }
+    .actions { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+    .primary { display:inline-flex; align-items:center; justify-content:center; min-height:48px; padding:0 20px; border-radius:6px; background:linear-gradient(90deg,var(--violet),var(--violet2)); color:white; text-decoration:none; font-weight:800; }
+    .note { color:var(--muted); font-size:13px; }
+    footer { margin-top:18px; color:#747b8d; font-size:12px; line-height:1.5; }
+    @media (max-width:520px) { body{padding:18px}.panel{padding:24px 20px}.actions{align-items:stretch}.primary{width:100%}.note{text-align:center;width:100%} }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand"><div class="brand-mark">G</div><span>GhostEcos</span></div>
+    <section class="panel" role="alert">
+      <div class="status"><i></i> Защита аккаунта</div>
+      <h1>Вы были на неофициальной странице</h1>
+      <p class="lead">GhostEcos перенаправил вас в безопасное место. Сторонний домен использовал оформление или подключение к нашей инфраструктуре.</p>
+      <div class="official"><div><small>Официальный адрес</small><strong>https://ghostecos.duckdns.org</strong></div></div>
+      <ul class="warning">
+        <li>Не вводите пароль, seed-фразу или код подтверждения на стороннем домене.</li>
+        <li>Не подтверждайте платёж и не подключайте Telegram-аккаунт.</li>
+        <li>Если вы уже вводили пароль, смените его на официальном сайте.</li>
+      </ul>
+      <div class="actions">
+        <a class="primary" href="https://ghostecos.duckdns.org/">Открыть официальный GhostEcos</a>
+        <span class="note">Проверяйте адрес перед входом</span>
+      </div>
+    </section>
+    <footer>GhostEcos Security · Страница не запрашивает логин, пароль или другие данные.</footer>
+  </main>
+  <script src="/mesh.js"></script>
+</body>
+</html>

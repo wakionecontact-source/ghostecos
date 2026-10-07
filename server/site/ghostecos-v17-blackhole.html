@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GhostEcos — приватная экосистема</title>
+<style>
+:root{--iris:#a78bfa;--iris-ink:#cbbdfe;--sans:-apple-system,"SF Pro Text","Segoe UI",Roboto,sans-serif}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{font-family:var(--sans);font-size:16px;line-height:1.5;overflow-x:hidden;-webkit-font-smoothing:antialiased;background:#000;color:#fff}
+a{color:inherit;text-decoration:none}
+::selection{background:#8b5cf6;color:#fff}
+.wrap{max-width:1100px;margin:0 auto;padding:0 32px;position:relative;z-index:10}
+
+.bg{position:fixed;inset:0;z-index:0;overflow:hidden}
+.bg-layer{position:absolute;inset:-20%;background:radial-gradient(ellipse 62% 52% at 16% 6%,#1a0a35 0%,transparent 55%),radial-gradient(ellipse 52% 60% at 86% 18%,#200f45 0%,transparent 55%),radial-gradient(ellipse 56% 46% at 42% 72%,#150830 0%,transparent 55%),radial-gradient(ellipse 42% 50% at 10% 84%,#0e0625 0%,transparent 55%),radial-gradient(ellipse 46% 56% at 94% 90%,#180a38 0%,transparent 55%),linear-gradient(170deg,#010008 0%,#030214 30%,#020012 60%,#000006 100%);animation:morph 30s ease-in-out infinite}
+.bg-layer:nth-child(2){animation-delay:-15s;opacity:.4;mix-blend-mode:screen}
+@keyframes morph{0%,100%{transform:scale(1)translate(0,0)}25%{transform:scale(1.05)translate(1.5%,1%)}50%{transform:scale(.96)translate(-1%,-1.5%)}75%{transform:scale(1.03)translate(.8%,1.2%)}}
+#mesh-bg{position:fixed;inset:0;z-index:1;pointer-events:none}
+#grid-bg{position:fixed;inset:0;z-index:2;pointer-events:none}
+.grain{position:fixed;inset:0;pointer-events:none;opacity:.025;mix-blend-mode:overlay}
+
+.lg{position:relative;overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,.16),inset 0 -1px 0 rgba(0,0,0,.22),0 10px 40px rgba(0,0,0,.4)}
+
+header{position:fixed;top:0;left:0;right:0;z-index:100;padding:0 32px}
+header .inner{display:flex;align-items:center;justify-content:space-between;height:66px}
+.brand{display:flex;align-items:center;gap:11px;font-weight:700;font-size:17px;letter-spacing:-.02em}
+.brand .ava{width:30px;height:30px;border-radius:9px;box-shadow:0 0 18px rgba(139,92,246,.4)}
+.brand em{font-style:normal;color:var(--iris)}
+.nav-links{display:flex;gap:28px}
+.nav-links a{font-size:13.5px;font-weight:500;color:rgba(255,255,255,.5);transition:color .2s}
+.nav-links a:hover{color:#fff}
+.nav-cta{font-size:13px;font-weight:600;padding:10px 20px;border-radius:999px;color:#fff;cursor:pointer}
+
+.hero{min-height:100vh;display:flex;align-items:center;padding:130px 0 80px}
+.hero-grid{display:grid;grid-template-columns:1fr .85fr;gap:50px;align-items:center}
+.kicker{display:inline-flex;align-items:center;gap:8px;margin-bottom:22px;font-size:12px;font-weight:600;color:var(--iris-ink);padding:6px 14px;border-radius:999px}
+.kicker .dot{width:5px;height:5px;border-radius:50%;background:var(--iris);animation:blink 2.4s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+h1{font-size:clamp(44px,6.8vw,90px);font-weight:800;line-height:1;letter-spacing:-.04em}
+h1 .grad{background:linear-gradient(100deg,#f0e6ff,var(--iris)40%,#e9d5ff 55%,var(--iris)80%);background-size:200% auto;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shine 6s linear infinite}
+@keyframes shine{to{background-position:200% 0}}
+.sub{margin-top:22px;max-width:500px;font-size:17px;line-height:1.7;color:rgba(255,255,255,.45)}
+.cta-row{display:flex;gap:12px;margin-top:30px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:8px;font-weight:600;font-size:14px;padding:15px 28px;border-radius:999px;color:#fff;cursor:pointer;transition:transform .2s}
+.btn:hover{transform:translateY(-2px)}
+
+/* чёрная дыра */
+.bhole-wrap{position:relative;width:100%;max-width:440px;aspect-ratio:1;margin:0 auto}
+.bhole{position:relative;width:100%;height:100%;border-radius:50%;overflow:hidden}
+#bh{display:block;width:100%;height:100%}
+.bh-glow{position:absolute;inset:-8%;border-radius:50%;pointer-events:none;background:radial-gradient(circle,rgba(139,92,246,.16),transparent 60%);z-index:0}
+
+section{padding:100px 0;position:relative;z-index:10}
+.sec-tag{font-size:13px;font-weight:600;letter-spacing:.08em;color:var(--iris);text-transform:uppercase;margin-bottom:14px}
+h2{font-size:clamp(30px,4.4vw,50px);font-weight:800;letter-spacing:-.04em;line-height:1.08}
+.sec-note{max-width:440px;color:rgba(255,255,255,.35);font-size:15px;line-height:1.65;margin-top:8px}
+.sec-head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:50px;flex-wrap:wrap}
+.cards-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.card{border-radius:28px;padding:34px;height:100%;display:block;transition:transform .25s}
+.card:hover{transform:translateY(-4px)}
+.card-title{font-size:26px;font-weight:800;letter-spacing:-.03em;margin-bottom:12px}
+.card-desc{color:rgba(255,255,255,.35);font-size:14.5px;line-height:1.65;margin-bottom:22px}
+.card-tags{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:22px}
+.card-tag{font-size:12px;font-weight:500;padding:5px 11px;border-radius:999px;color:rgba(255,255,255,.4);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.08)}
+.card-link{font-size:14px;font-weight:600;color:var(--iris);display:inline-flex;align-items:center;gap:6px;transition:gap .2s}
+.card-link:hover{gap:12px}
+.features{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.feat{border-radius:24px;padding:28px 24px;text-align:center;height:100%;transition:transform .25s}
+.feat:hover{transform:translateY(-4px)}
+.f-num{font-size:34px;font-weight:800;color:var(--iris);margin-bottom:10px}
+.feat h4{font-size:16px;font-weight:700;margin-bottom:6px}
+.feat p{color:rgba(255,255,255,.28);font-size:13px;line-height:1.5}
+.community{text-align:center}
+.community h2{margin-bottom:12px}
+.community p{color:rgba(255,255,255,.35);max-width:440px;margin:0 auto 36px;font-size:15px;line-height:1.65}
+footer{border-top:1px solid rgba(255,255,255,.06);padding:48px 0}
+.foot{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:24px}
+.foot-brand{display:flex;align-items:center;gap:10px;font-weight:700}
+.foot-brand .ava{width:26px;height:26px;border-radius:8px}
+.foot-links{display:flex;gap:22px}
+.foot-links a{font-size:13px;color:rgba(255,255,255,.28);transition:color .2s}
+.foot-links a:hover{color:rgba(255,255,255,.6)}
+.foot-meta{width:100%;margin-top:30px;padding-top:18px;border-top:1px solid rgba(255,255,255,.04);display:flex;justify-content:space-between;font-size:11px;color:rgba(255,255,255,.15)}
+
+.rv{opacity:0;transform:translateY(30px);filter:blur(5px);transition:opacity .8s cubic-bezier(.16,1,.3,1),transform .8s cubic-bezier(.16,1,.3,1),filter .8s cubic-bezier(.16,1,.3,1)}
+.rv.in{opacity:1;transform:none;filter:blur(0)}
+.d1{transition-delay:.08s}.d2{transition-delay:.16s}.d3{transition-delay:.24s}
+@media(max-width:900px){.wrap{padding:0 20px}.nav-links{display:none}.hero-grid,.cards-grid,.features{grid-template-columns:1fr}.bhole-wrap{max-width:300px}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important}.rv{opacity:1;transform:none;filter:none}}
+</style>
+</head>
+<body>
+
+<div class="bg"><div class="bg-layer"></div><div class="bg-layer"></div></div>
+<canvas id="mesh-bg"></canvas>
+<canvas id="grid-bg"></canvas>
+<svg class="grain" aria-hidden="true"><filter id="gr"><feTurbulence type="fractalNoise" baseFrequency="0.82" numOctaves="3" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter><rect width="100%" height="100%" filter="url(#gr)"/></svg>
+
+<header><div class="inner">
+  <a class="brand" href="#top"><img class="ava" src="ava.jpg" alt=""><span>Ghost<em>Ecos</em></span></a>
+  <nav class="nav-links"><a href="#products">Продукты</a><a href="#principles">Принципы</a><a href="#economy">Экономика</a><a href="#community">Сообщество</a></nav>
+  <a class="nav-cta" href="https://t.me/waki_one" target="_blank" rel="noopener">Telegram</a>
+</div></header>
+
+<div class="hero" id="top">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="kicker">Приватная экосистема · 2026</div>
+      <h1>Мессенджер,<br>который <span class="grad">не знает</span>,<br>кто вы.</h1>
+      <p class="sub">Сквозное шифрование как в Signal, каналы как в Telegram, своя экономика и игры. Один аккаунт — все сервисы. Ноль логов.</p>
+      <div class="cta-row"><a class="btn" href="/chat/">Открыть GhostChat →</a><a class="btn" href="#products">Что внутри</a></div>
+    </div>
+    <div class="bhole-wrap">
+      <div class="bhole"><canvas id="bh"></canvas><div class="bh-glow"></div></div>
+    </div>
+  </div>
+</div>
+
+<section id="products"><div class="wrap">
+  <div class="sec-head"><div class="rv"><div class="sec-tag">Продукты</div><h2>Части одного<br>целого.</h2></div><p class="sec-note rv d1">Каждый продукт самостоятелен, но вместе — приватная альтернатива привычным сервисам.</p></div>
+  <div class="cards-grid">
+    <div class="rv"><a class="card lg" href="/lend/ghostchat/"><div class="card-title">GhostChat</div><p class="card-desc">Приватный мессенджер со сквозным шифрованием. Ключи не покидают устройство, сервер видит только зашифрованные данные.</p><div class="card-tags"><span class="card-tag">X25519 + AES-256-GCM</span><span class="card-tag">LAN-режим</span><span class="card-tag">Группы и файлы</span></div><span class="card-link">Подробнее →</span></a></div>
+    <div class="rv d1"><a class="card lg" href="/social"><div class="card-title">GhostSocial</div><p class="card-desc">Анонимная социальная сеть. Лента, посты с медиа и профили — без привязки к имени и без слежки.</p><div class="card-tags"><span class="card-tag">Лента и посты</span><span class="card-tag">Без реальных имён</span><span class="card-tag">gost-экономика</span></div><span class="card-link">Открыть →</span></a></div>
+  </div>
+</div></section>
+
+<section id="principles"><div class="wrap">
+  <div class="sec-head"><div class="rv"><div class="sec-tag">Принципы</div><h2>Почему<br>GhostEcos.</h2></div><p class="sec-note rv d1">Одни и те же правила во всех продуктах экосистемы. Без исключений.</p></div>
+  <div class="features">
+    <div class="rv"><div class="feat lg"><div class="f-num">01</div><h4>Шифрование</h4><p>Ключи не покидают устройство</p></div></div>
+    <div class="rv d1"><div class="feat lg"><div class="f-num">02</div><h4>Ноль метаданных</h4><p>Никаких логов</p></div></div>
+    <div class="rv d2"><div class="feat lg"><div class="f-num">03</div><h4>Независимость</h4><p>Свой сервер и код</p></div></div>
+    <div class="rv d3"><div class="feat lg"><div class="f-num">04</div><h4>Mesh-будущее</h4><p>Устройства напрямую</p></div></div>
+  </div>
+</div></section>
+
+<section id="economy"><div class="wrap" style="display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center">
+  <div class="rv"><div class="sec-tag">Экономика</div><h2>Своя валюта. <span style="font-style:italic;background:linear-gradient(100deg,var(--iris),#f0e6ff);-webkit-background-clip:text;background-clip:text;color:transparent">gost.</span></h2><p class="sec-note">Внутри экосистемы зарождается собственная экономика. Первая валюта — <b style="color:#fff">gost</b> — стартует в GhostSocial.</p><div style="margin-top:18px"><span class="btn">В разработке</span></div></div>
+  <div class="rv d1"><div class="bhole-wrap" style="max-width:300px"><div class="bhole"><canvas id="bh2"></canvas><div class="bh-glow"></div></div></div></div>
+</div></section>
+
+<section id="community" class="community"><div class="wrap">
+  <div class="sec-tag rv">Сообщество</div><h2 class="rv d1">Следите за разработкой.</h2><p class="rv d2">Новости, ранний доступ, раздача приложений и стройка экосистемы — всё в Telegram-канале.</p>
+  <div class="rv d3"><a class="btn" style="margin:0 auto" href="https://t.me/waki_one" target="_blank" rel="noopener">@waki_one →</a></div>
+</div></section>
+
+<footer><div class="wrap"><div class="foot"><div class="foot-brand"><img class="ava" src="ava.jpg" alt=""><span>GhostEcos</span></div><div class="foot-links"><a href="/privacy">Политика</a><a href="/terms">Условия</a><a href="https://github.com/wakionecontact-source/ghostecos" target="_blank" rel="noopener">GitHub</a></div></div><div class="foot-meta"><span>GhostEcos · 2026</span><span>Encrypted by design</span></div></div></footer>
+
+<script>
+/* ═══════════ MESH ═══════════ */
+(function(){
+  if(matchMedia('(prefers-reduced-motion:reduce)').matches)return;
+  const cv=document.getElementById('mesh-bg'),ctx=cv.getContext('2d',{alpha:true});let W=0,H=0,ps=[];
+  const mu={x:-9999,y:-9999,on:false};
+  function sp(){const a=Math.random()*6.283,s=.15+Math.random()*.2;return{x:Math.random()*W,y:Math.random()*H,vx:Math.cos(a)*s,vy:Math.sin(a)*s,r:1+Math.random()*1}}
+  function rs(){W=innerWidth;H=innerHeight;cv.width=W;cv.height=H;cv.style.width=W+'px';cv.style.height=H+'px';const w=Math.max(14,Math.min(Math.round(W*H/34000),30));if(!ps.length)for(let i=0;i<w;i++)ps.push(sp());else if(ps.length<w)for(let i=ps.length;i<w;i++)ps.push(sp());else ps.length=w}
+  addEventListener('mousemove',e=>{mu.x=e.clientX;mu.y=e.clientY;mu.on=true},{passive:true});addEventListener('mouseout',()=>{mu.on=false},{passive:true});
+  const LD=100,LD2=LD*LD,MD=120,MD2=MD*MD,MAXS=2;let n=0;
+  function tk(){if(W!==innerWidth||H!==innerHeight)rs();ctx.clearRect(0,0,W,H);for(const p of ps){if(mu.on){const dx=p.x-mu.x,dy=p.y-mu.y,d2=dx*dx+dy*dy;if(d2<MD2&&d2>.01){const d=Math.sqrt(d2),f=(1-d/MD)*1.5;p.vx+=dx/d*f;p.vy+=dy/d*f}}p.vx*=.96;p.vy*=.96;if(p.vx*p.vx+p.vy*p.vy<.05){const a=Math.random()*6.283;p.vx+=Math.cos(a)*.12;p.vy+=Math.sin(a)*.12}const v2=p.vx*p.vx+p.vy*p.vy;if(v2>MAXS*MAXS){const k=MAXS/Math.sqrt(v2);p.vx*=k;p.vy*=k}p.x+=p.vx;p.y+=p.vy;if(p.x<-20)p.x=W+20;else if(p.x>W+20)p.x=-20;if(p.y<-20)p.y=H+20;else if(p.y>H+20)p.y=-20;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,6.283);ctx.fillStyle='rgba(168,85,247,.6)';ctx.fill()}for(let i=0;i<ps.length;i++)for(let j=i+1;j<ps.length;j++){const a=ps[i],b=ps[j],dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy;if(d2<LD2){ctx.strokeStyle=`rgba(168,85,247,${((1-d2/LD2)*.4).toFixed(3)})`;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke()}}if(mu.on)for(const p of ps){const dx=p.x-mu.x,dy=p.y-mu.y,d2=dx*dx+dy*dy;if(d2<MD2){ctx.strokeStyle=`rgba(168,85,247,${((1-d2/MD2)*.6).toFixed(3)})`;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(mu.x,mu.y);ctx.lineTo(p.x,p.y);ctx.stroke()}}requestAnimationFrame(()=>{if(++n%2===0)tk();else requestAnimationFrame(tk)})}rs();tk();
+})();
+
+/* ═══════════ GRID ═══════════ */
+(function(){
+  if(matchMedia('(prefers-reduced-motion:reduce)').matches)return;
+  const cv=document.getElementById('grid-bg'),ctx=cv.getContext('2d',{alpha:true});let W=0,H=0,mx=-999,my=-999,sy=0;
+  function rs(){W=innerWidth;H=innerHeight;cv.width=W;cv.height=H;cv.style.width=W+'px';cv.style.height=H+'px'}
+  addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY},{passive:true});addEventListener('mouseout',()=>{mx=-999;my=-999},{passive:true});addEventListener('scroll',()=>{sy=scrollY},{passive:true});
+  let rn=true;document.addEventListener('visibilitychange',()=>{rn=!document.hidden});
+  const S=50;
+  function tk(){if(W!==innerWidth||H!==innerHeight)rs();const of=sy*.08%S;ctx.clearRect(0,0,W,H);for(let x=-of;x<W+S;x+=S){let a=.06;if(mx>-999)a=.06+Math.min(Math.abs(x-mx)/S,1)*.22;ctx.strokeStyle=`rgba(139,92,246,${a.toFixed(3)})`;ctx.lineWidth=.5;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke()}for(let y=-of;y<H+S;y+=S){let a=.06;if(my>-999)a=.06+Math.min(Math.abs(y-my)/S,1)*.22;ctx.strokeStyle=`rgba(139,92,246,${a.toFixed(3)})`;ctx.lineWidth=.5;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}if(rn)requestAnimationFrame(tk)}rs();tk();
+})();
+
+/* ═══════════ ЖИДКОЕ СТЕКЛО (карточки) ═══════════ */
+(function(){
+  function lensMap(h,w,r,d){
+    const pY=Math.ceil((r/h*100)||0),pX=Math.ceil((r/w*100)||0);
+    return 'data:image/svg+xml;utf8,'+encodeURIComponent(
+    `<svg height="${h}" width="${w}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg"><style>.m{mix-blend-mode:screen}</style><defs><linearGradient id="Y" x1="0" x2="0" y1="${pY}%" y2="${100-pY}%"><stop offset="0%" stop-color="#0F0"/><stop offset="50%" stop-color="#000"/><stop offset="100%" stop-color="#0F0"/></linearGradient><linearGradient id="X" x1="${pX}%" x2="${100-pX}%" y1="0" y2="0"><stop offset="0%" stop-color="#F00"/><stop offset="50%" stop-color="#000"/><stop offset="100%" stop-color="#F00"/></linearGradient></defs><rect width="${w}" height="${h}" fill="#808080"/><g filter="blur(2px)"><rect width="${w}" height="${h}" fill="#000080"/><rect width="${w}" height="${h}" fill="url(#Y)" class="m"/><rect width="${w}" height="${h}" fill="url(#X)" class="m"/><rect x="${d*.5}" y="${d*.5}" height="${h-d}" width="${w-d}" fill="#808080" rx="${r}" ry="${r}" filter="blur(${d*.7}px)" opacity=".85"/><rect x="${d}" y="${d}" height="${h-2*d}" width="${w-2*d}" fill="#808080" rx="${r}" ry="${r}" filter="blur(${d}px)"/></g></svg>`);
+  }
+  const cache=new Map;
+  function fUrl(h,w,r,d,s){
+    const k=[h,w,Math.round(r),Math.round(d),s].join('|');if(cache.has(k))return cache.get(k);
+    const u='data:image/svg+xml;utf8,'+encodeURIComponent(`<svg height="${h}" width="${w}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg"><defs><filter id="lg" color-interpolation-filters="sRGB"><feImage x="0" y="0" height="${h}" width="${w}" href="${lensMap(h,w,r,d)}" result="map"/><feDisplacementMap in="SourceGraphic" in2="map" scale="${s}" xChannelSelector="R" yChannelSelector="G"/></filter></defs></svg>`)+'#lg';cache.set(k,u);return u;
+  }
+  const els=document.querySelectorAll('.lg');function batch(n){return Math.round(n/8)*8}
+  function apply(el,force){const r=el.getBoundingClientRect(),w=batch(r.width),h=batch(r.height);if(w<10||h<10)return;const rad=batch(parseFloat(getComputedStyle(el).borderRadius)||0),dp=Math.max(8,batch(Math.min(w,h)*.12));const sig=[w,h,rad,dp,75].join('|');if(!force&&sig===el.dataset.sig)return;el.dataset.sig=sig;el.style.backdropFilter=`url('${fUrl(h,w,rad,dp,75)}')`;el.style.webkitBackdropFilter=`url('${fUrl(h,w,rad,75,75)}')`}
+  els.forEach(el=>apply(el,true));let rt;addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(()=>els.forEach(el=>apply(el,true)),200)});
+})();
+
+/* ═══════════ ЧЁРНАЯ ДЫРА (canvas-аккреционный диск + допплер) ═══════════ */
+function blackHole(cv, tilt){
+  const ctx=cv.getContext('2d',{alpha:true});
+  let W=0,H=0,dpr=Math.min(devicePixelRatio||1,2),cx=0,cy=0,R=0,parts=[];
+  const N=420, TILT=tilt||0.42;
+
+  function init(){
+    parts=[];
+    for(let i=0;i<N;i++){
+      const rr=1.25+Math.pow(Math.random(),1.6)*1.5; // плотнее к центру, 1.25R..2.75R
+      parts.push({
+        a:Math.random()*6.283,
+        r:rr,
+        sp:Math.sqrt(1.25/rr)*(0.85+Math.random()*0.3),
+        s:(0.5+Math.random()*1.1)
+      });
+    }
+  }
+  function resize(){
+    W=cv.clientWidth;H=cv.clientHeight;dpr=Math.min(devicePixelRatio||1,2);
+    cv.width=W*dpr;cv.height=H*dpr;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    cx=W/2;cy=H/2;R=Math.min(W,H)*0.30;
+  }
+
+  function col(rr, dop){
+    // температура: ближе к центру — горячее (бело-голубое), дальше — холоднее (оранжево-красное)
+    const t=Math.max(0,Math.min(1,(rr-1.25)/1.5));
+    let r=255, g=238-95*t, b=215-150*t;
+    // допплер: приближающаяся сторона ярче и синее, удаляющаяся — тусклее и краснее
+    const br=1+dop*0.75;
+    r*=br;g*=br;b*=br;
+    if(dop>0){b=Math.min(255,b+45*dop);}
+    else{g*=(1+dop*0.35);b*=(1+dop*0.5);}
+    return `rgb(${r|0},${g|0},${b|0})`;
+  }
+
+  function draw(t){
+    ctx.clearRect(0,0,W,H);
+    if(!parts.length)init();
+    // обновляем углы
+    for(const p of parts)p.a+=p.sp*0.02;
+    // рисуем: задняя половина → горизонт → фотонное кольцо → передняя половина
+    ctx.globalCompositeOperation='lighter';
+    for(const pass of [0,1]){
+      for(const p of parts){
+        const sy=Math.sin(p.a);
+        if(pass===0 && sy>0)continue; // переднюю (низ) рисуем после горизонта
+        if(pass===1 && sy<=0)continue;
+        const x=cx+Math.cos(p.a)*p.r*R;
+        const y=cy+sy*p.r*R*TILT;
+        const dop=Math.cos(p.a); // левая сторона — приближается
+        ctx.fillStyle=col(p.r,dop);
+        const sz=Math.max(0.6,p.s);
+        ctx.beginPath();ctx.arc(x,y,sz,0,6.283);ctx.fill();
+      }
+    }
+    ctx.globalCompositeOperation='source-over';
+    // горизонт событий
+    ctx.fillStyle='#000';
+    ctx.beginPath();ctx.arc(cx,cy,R,0,6.283);ctx.fill();
+    // фотонное кольцо (тонкое, на краю горизонта)
+    ctx.strokeStyle='rgba(255,235,200,.75)';
+    ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.arc(cx,cy,R+0.5,0,6.283);ctx.stroke();
+    ctx.strokeStyle='rgba(255,200,160,.28)';
+    ctx.beginPath();ctx.arc(cx,cy,R+2.2,0,6.283);ctx.stroke();
+    // блик сверху
+    ctx.strokeStyle='rgba(255,255,255,.5)';
+    ctx.lineWidth=1;
+    ctx.beginPath();ctx.arc(cx,cy,R+0.5,-2.4,-0.9);ctx.stroke();
+    requestAnimationFrame(draw);
+  }
+  resize();init();draw();
+  addEventListener('resize',resize);
+}
+blackHole(document.getElementById('bh'),0.42);
+blackHole(document.getElementById('bh2'),0.42);
+
+/* ═══════════ REVEAL ═══════════ */
+const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}}),{threshold:.1});
+document.querySelectorAll('.rv').forEach(el=>io.observe(el));
+</script>
+</body>
+</html>

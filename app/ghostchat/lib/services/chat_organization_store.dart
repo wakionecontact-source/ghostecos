@@ -121,8 +121,10 @@ class ChatOrganizationStore {
   final Map<String, int> _activityAt = {};
   final Map<String, List<ChatOrganizationHistoryEntry>> _history = {};
   final Map<String, ChatOrganizationTemplate> _templates = {};
+  final Map<String, List<String>> _manualOrder = {};
   String _storageKey = 'chat_organization_v2_guest';
   bool _loaded = false;
+  String chatSortMode = 'activity';
   bool archiveAutoDelete = true;
   int? archiveRetentionDays = 5;
   String archiveAnchor = 'archived_at';
@@ -230,6 +232,8 @@ class ChatOrganizationStore {
     _activityAt.clear();
     _history.clear();
     _templates.clear();
+    _manualOrder.clear();
+    chatSortMode = 'activity';
     archiveAutoDelete = true;
     archiveRetentionDays = 5;
     archiveAnchor = 'archived_at';
@@ -314,6 +318,19 @@ class ChatOrganizationStore {
               }
             }
           }
+          final rawManualOrder = json['manual_order'];
+          if (rawManualOrder is Map) {
+            for (final entry in rawManualOrder.entries) {
+              if (entry.value is List) {
+                _manualOrder[entry.key.toString()] = (entry.value as List)
+                    .whereType<String>()
+                    .toList();
+              }
+            }
+          }
+          chatSortMode = json['chat_sort_mode']?.toString() == 'manual'
+              ? 'manual'
+              : 'activity';
           archiveAutoDelete = json['archive_auto_delete'] != false;
           final rawDays = json['archive_retention_days'];
           archiveRetentionDays = rawDays == null
@@ -342,6 +359,23 @@ class ChatOrganizationStore {
   }
 
   bool isArchived(String chatId) => _archived.contains(chatId);
+
+  List<String> manualOrderFor(String viewId) =>
+      List.unmodifiable(_manualOrder[viewId] ?? const <String>[]);
+
+  Future<void> setChatSortMode(String mode) async {
+    final normalized = mode == 'manual' ? 'manual' : 'activity';
+    if (chatSortMode == normalized) return;
+    chatSortMode = normalized;
+    revision.value++;
+    await _save();
+  }
+
+  Future<void> setManualOrder(String viewId, List<String> order) async {
+    _manualOrder[viewId] = List<String>.of(order);
+    revision.value++;
+    await _save();
+  }
 
   bool isMainHidden(String chatId) => _mainHidden.contains(chatId);
 
@@ -504,18 +538,10 @@ class ChatOrganizationStore {
     int? nowSeconds,
     bool Function(String chatId)? canExpire,
   }) async {
-    if (!archiveAutoDelete || archiveRetentionDays == null) return const [];
-    final now = nowSeconds ?? DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    final threshold = now - archiveRetentionDays! * 24 * 60 * 60;
-    final expired = _archived
-        .where((chatId) {
-          if (canExpire != null && !canExpire(chatId)) return false;
-          final anchor = archiveAnchor == 'activity'
-              ? (_activityAt[chatId] ?? _archivedAt[chatId])
-              : _archivedAt[chatId];
-          return (anchor ?? now) <= threshold;
-        })
-        .toList(growable: false);
+    final expired = expiredArchivedChatIds(
+      nowSeconds: nowSeconds,
+      canExpire: canExpire,
+    );
     if (expired.isEmpty) return const [];
     for (final chatId in expired) {
       _archived.remove(chatId);
@@ -534,6 +560,24 @@ class ChatOrganizationStore {
     revision.value++;
     await _save();
     return expired;
+  }
+
+  List<String> expiredArchivedChatIds({
+    int? nowSeconds,
+    bool Function(String chatId)? canExpire,
+  }) {
+    if (!archiveAutoDelete || archiveRetentionDays == null) return const [];
+    final now = nowSeconds ?? DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final threshold = now - archiveRetentionDays! * 24 * 60 * 60;
+    return _archived
+        .where((chatId) {
+          if (canExpire != null && !canExpire(chatId)) return false;
+          final anchor = archiveAnchor == 'activity'
+              ? (_activityAt[chatId] ?? _archivedAt[chatId])
+              : _archivedAt[chatId];
+          return (anchor ?? now) <= threshold;
+        })
+        .toList(growable: false);
   }
 
   Future<void> setInFolder(String folderId, String chatId, bool value) async {
@@ -705,6 +749,8 @@ class ChatOrganizationStore {
           'templates': _templates.map(
             (key, value) => MapEntry(key, value.toJson()),
           ),
+          'chat_sort_mode': chatSortMode,
+          'manual_order': _manualOrder,
           'archive_auto_delete': archiveAutoDelete,
           'archive_retention_days': archiveRetentionDays,
           'archive_anchor': archiveAnchor,

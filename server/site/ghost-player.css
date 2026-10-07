@@ -1,0 +1,379 @@
+/* GhostEcos global player shell.
+ * The shell is shared by GhostSound, GhostSocial and GhostChat.  Apps only
+ * provide track data; the visual layer and controls stay in one component.
+ */
+#ghost-global-player {
+  --gp-bg: transparent;
+  --gp-border: rgba(255, 255, 255, .18);
+  --gp-text: #f1f3f5;
+  --gp-sub: #aeb5bd;
+  --gp-muted: #737b85;
+  --gp-accent: #d7dbe0;
+  --gp-accent-strong: #9da4ad;
+  position: fixed;
+  left: auto;
+  right: 18px;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  z-index: 1200;
+  width: min(430px, calc(100vw - 36px));
+  display: none;
+  color: var(--gp-text);
+  font-family: inherit;
+  transform: none;
+  pointer-events: none;
+}
+
+#ghost-global-player.gp-open {
+  display: block;
+  pointer-events: auto;
+  animation: ghostPlayerIn .38s cubic-bezier(.16, 1, .3, 1) both;
+}
+
+#ghost-global-player .gp-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 11px;
+  border: 1px solid var(--gp-border);
+  border-radius: 17px;
+  background: var(--gp-bg);
+  box-shadow: 0 18px 55px rgba(0, 0, 0, .28);
+  -webkit-backdrop-filter: blur(26px) saturate(115%);
+  backdrop-filter: blur(26px) saturate(115%);
+}
+
+#ghost-global-player .gp-track-link {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+  padding: 4px;
+  border: 0;
+  border-radius: 12px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background .2s ease;
+}
+
+#ghost-global-player .gp-track-link:hover,
+#ghost-global-player .gp-track-link:focus-visible {
+  outline: none;
+  background: rgba(255, 255, 255, .06);
+}
+
+#ghost-global-player .gp-art {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .045);
+  background-position: center;
+  background-size: cover;
+  box-shadow: none;
+}
+
+#ghost-global-player .gp-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+#ghost-global-player .gp-art-placeholder {
+  color: var(--gp-sub);
+  font-size: 22px;
+  opacity: .72;
+}
+
+#ghost-global-player .gp-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+#ghost-global-player .gp-now {
+  margin-bottom: 5px;
+  color: var(--gp-muted);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .16em;
+}
+
+#ghost-global-player .gp-title,
+#ghost-global-player .gp-artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#ghost-global-player .gp-title {
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+#ghost-global-player .gp-artist {
+  margin-top: 3px;
+  color: var(--gp-sub);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+#ghost-global-player .gp-core {
+  min-width: 0;
+}
+
+#ghost-global-player .gp-controls {
+  display: flex;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+}
+
+#ghost-global-player button {
+  font: inherit;
+}
+
+#ghost-global-player .gp-control,
+#ghost-global-player .gp-action {
+  display: grid;
+  place-items: center;
+  width: 29px;
+  height: 29px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--gp-sub);
+  background: transparent;
+  cursor: pointer;
+  transition: color .2s ease, background .2s ease, transform .2s ease;
+}
+
+#ghost-global-player .gp-control:hover,
+#ghost-global-player .gp-action:hover,
+#ghost-global-player .gp-control:focus-visible,
+#ghost-global-player .gp-action:focus-visible {
+  outline: none;
+  color: #fff;
+  background: rgba(255, 255, 255, .08);
+  transform: scale(1.07);
+}
+
+#ghost-global-player .gp-control svg,
+#ghost-global-player .gp-action svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+}
+
+#ghost-global-player .gp-control svg {
+  fill: currentColor;
+}
+
+#ghost-global-player .gp-play {
+  width: 36px;
+  height: 36px;
+  color: var(--gp-text);
+  background: rgba(255, 255, 255, .07);
+  box-shadow: none;
+}
+
+#ghost-global-player .gp-play:hover,
+#ghost-global-player .gp-play:focus-visible {
+  background: rgba(255, 255, 255, .14);
+  box-shadow: none;
+}
+
+#ghost-global-player .gp-play svg {
+  width: 16px;
+  height: 16px;
+}
+
+#ghost-global-player .gp-timeline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+}
+
+#ghost-global-player .gp-time {
+  min-width: 28px;
+  color: var(--gp-muted);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+#ghost-global-player .gp-time:last-child {
+  text-align: right;
+}
+
+#ghost-global-player .gp-progress {
+  position: relative;
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .11);
+  cursor: pointer;
+}
+
+#ghost-global-player .gp-progress-fill {
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--gp-accent);
+  transition: width .1s linear;
+}
+
+#ghost-global-player .gp-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+#ghost-global-player .gp-volume {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#ghost-global-player .gp-volume input {
+  width: 58px;
+  height: 16px;
+  accent-color: var(--gp-accent);
+  cursor: pointer;
+}
+
+#ghost-global-player .gp-action-open {
+  width: auto;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid var(--gp-border);
+  border-radius: 9px;
+  color: var(--gp-sub);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+#ghost-global-player .gp-action-open svg {
+  width: 14px;
+  height: 14px;
+}
+
+#ghost-global-player .gp-remote-note {
+  display: none;
+  margin-top: 3px;
+  color: var(--gp-muted);
+  font-size: 9px;
+}
+
+#ghost-global-player.gp-remote .gp-remote-note {
+  display: block;
+}
+
+#ghost-global-player button:disabled,
+#ghost-global-player input:disabled {
+  cursor: not-allowed;
+  opacity: .34;
+}
+
+body.ghost-player-visible {
+  --ghost-player-height: 72px;
+}
+
+@keyframes ghostPlayerIn {
+  from { opacity: 0; transform: translateY(12px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 900px) {
+  #ghost-global-player {
+    top: calc(8px + env(safe-area-inset-top));
+    right: 8px;
+    bottom: auto;
+    width: calc(100vw - 16px);
+  }
+
+  #ghost-global-player .gp-shell {
+    display: flex;
+    gap: 8px;
+    min-height: 48px;
+    padding: 6px 8px;
+    border-radius: 14px;
+  }
+
+  #ghost-global-player .gp-art {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+  }
+
+  #ghost-global-player .gp-track-link {
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 8px;
+  }
+
+  #ghost-global-player .gp-copy {
+    min-width: 0;
+  }
+
+  #ghost-global-player .gp-now,
+  #ghost-global-player .gp-artist,
+  #ghost-global-player .gp-remote-note,
+  #ghost-global-player .gp-timeline,
+  #ghost-global-player .gp-controls .gp-control:not(.gp-play),
+  #ghost-global-player .gp-volume,
+  #ghost-global-player .gp-action-open span {
+    display: none;
+  }
+
+  #ghost-global-player .gp-title {
+    max-width: 34vw;
+    font-size: 11px;
+  }
+
+  #ghost-global-player .gp-core,
+  #ghost-global-player .gp-controls,
+  #ghost-global-player .gp-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+  }
+
+  #ghost-global-player .gp-controls,
+  #ghost-global-player .gp-actions {
+    height: auto;
+  }
+
+  #ghost-global-player .gp-play {
+    width: 32px;
+    height: 32px;
+  }
+
+  #ghost-global-player .gp-action-open {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #ghost-global-player.gp-open,
+  #ghost-global-player .gp-control,
+  #ghost-global-player .gp-action,
+  #ghost-global-player .gp-track-link {
+    animation: none;
+    transition: none;
+  }
+}

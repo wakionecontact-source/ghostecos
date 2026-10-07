@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GhostEcos — приватная экосистема</title>
+<meta name="description" content="GhostEcos — экосистема независимых приватных продуктов: мессенджер GhostChat, социальная сеть GhostSocial и собственная экономика. Сквозное шифрование, ноль логов.">
+<style>
+  :root {
+    --ink:#0b0714; --ink2:#120c1f; --ink3:#180f2a;
+    --paper:#f1ecf7; --dim:#cfc7dd; --muted:#938aa8; --faint:#6a6180;
+    --line:rgba(241,236,247,.10); --line-hi:rgba(241,236,247,.2);
+    --violet:#7c3aed; --iris:#a78bfa; --iris-ink:#c9bcff;
+    --serif:"Iowan Old Style","Baskerville","Palatino Linotype","Book Antiqua",Georgia,serif;
+    --sans:-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono","JetBrains Mono",Consolas,monospace;
+  }
+  *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{background:var(--ink);color:var(--paper);font-family:var(--sans);font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden;cursor:none}
+  a{color:inherit;text-decoration:none}
+  ::selection{background:var(--violet);color:#fff}
+  .wrap{max-width:1200px;margin:0 auto;padding:0 44px}
+  .ava{border-radius:12px;display:block}
+
+  /* ── кастомный курсор ── */
+  #cur{position:fixed;left:0;top:0;width:10px;height:10px;border-radius:50%;background:var(--iris);pointer-events:none;z-index:9999;transform:translate(-50%,-50%);mix-blend-mode:screen}
+  #cur-glow{position:fixed;left:0;top:0;width:420px;height:420px;border-radius:50%;pointer-events:none;z-index:0;transform:translate(-50%,-50%);background:radial-gradient(circle,rgba(124,58,237,.16),transparent 60%);transition:width .3s,height .3s}
+
+  /* ── анимированный фон: аура ── */
+  .bg{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+  .bg .orb{position:absolute;border-radius:50%;filter:blur(70px);opacity:.5;will-change:transform}
+  .orb1{width:520px;height:520px;background:#4c1d95;top:-120px;left:-120px;animation:drift1 22s ease-in-out infinite}
+  .orb2{width:460px;height:460px;background:#6d28d9;bottom:-140px;right:-100px;animation:drift2 26s ease-in-out infinite}
+  .orb3{width:380px;height:380px;background:#7c3aed;top:40%;left:55%;opacity:.35;animation:drift3 30s ease-in-out infinite}
+  @keyframes drift1{0%,100%{transform:translate(0,0)}50%{transform:translate(70px,60px)}}
+  @keyframes drift2{0%,100%{transform:translate(0,0)}50%{transform:translate(-60px,-50px)}}
+  @keyframes drift3{0%,100%{transform:translate(0,0)}50%{transform:translate(50px,-70px)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;mix-blend-mode:overlay}
+
+  /* ── reveal при скролле ── */
+  .rv{opacity:0;transform:translateY(38px);transition:opacity .9s cubic-bezier(.16,1,.3,1),transform .9s cubic-bezier(.16,1,.3,1)}
+  .rv.in{opacity:1;transform:none}
+  .rv.d1{transition-delay:.08s}.rv.d2{transition-delay:.16s}.rv.d3{transition-delay:.24s}.rv.d4{transition-delay:.32s}
+
+  header{position:fixed;top:0;left:0;right:0;z-index:50;transition:background .4s,border-color .4s;border-bottom:1px solid transparent}
+  header.scrolled{background:rgba(11,7,20,.7);backdrop-filter:blur(16px);border-bottom:1px solid var(--line)}
+  .nav{display:flex;align-items:center;justify-content:space-between;height:76px}
+  .brand{display:inline-flex;align-items:center;gap:12px}
+  .brand .ava{width:32px;height:32px;border-radius:9px}
+  .brand-name{font-family:var(--serif);font-size:21px;font-weight:600}
+  .nav-links{display:flex;gap:30px}
+  .nav-links a{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);position:relative;transition:color .2s;padding:4px 0}
+  .nav-links a::after{content:"";position:absolute;left:0;bottom:0;width:0;height:1px;background:var(--iris);transition:width .3s}
+  .nav-links a:hover{color:var(--paper)}.nav-links a:hover::after{width:100%}
+  .nav-cta{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--paper);border:1px solid var(--line-hi);padding:10px 18px;transition:.25s;border-radius:2px}
+  .nav-cta:hover{border-color:var(--iris);color:var(--iris-ink);box-shadow:0 0 24px rgba(124,58,237,.25)}
+
+  /* ── HERO ── */
+  .hero{position:relative;z-index:2;min-height:100vh;display:flex;flex-direction:column;justify-content:center;padding:140px 0 90px}
+  .overline{font-family:var(--mono);font-size:11px;letter-spacing:.26em;text-transform:uppercase;color:var(--iris-ink);display:flex;align-items:center;gap:14px;margin-bottom:34px}
+  .overline .dot{width:7px;height:7px;border-radius:50%;background:var(--iris);box-shadow:0 0 14px var(--iris);animation:blink 2.4s infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+  h1{font-family:var(--serif);font-weight:500;font-size:clamp(48px,7.6vw,104px);line-height:1;letter-spacing:-.02em;max-width:14ch}
+  h1 .line{display:block;overflow:hidden}
+  h1 .word{display:inline-block;transform:translateY(110%);animation:rise .9s cubic-bezier(.16,1,.3,1) forwards}
+  h1 em{font-style:italic;color:var(--iris-ink);text-shadow:0 0 40px rgba(124,58,237,.4)}
+  @keyframes rise{to{transform:translateY(0)}}
+  .lede{margin-top:34px;max-width:540px;font-size:18px;line-height:1.75;color:var(--dim)}
+  .cta-row{display:flex;gap:16px;margin-top:44px}
+  .btn{position:relative;display:inline-flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;padding:17px 30px;cursor:pointer;border-radius:3px;overflow:hidden;transition:transform .2s cubic-bezier(.34,1.56,.64,1)}
+  .btn-solid{background:var(--paper);color:var(--ink)}
+  .btn-solid .fill{position:absolute;inset:0;background:linear-gradient(90deg,var(--violet),var(--iris));transform:translateY(101%);transition:transform .35s cubic-bezier(.16,1,.3,1);z-index:0}
+  .btn-solid:hover .fill{transform:translateY(0)}
+  .btn-solid:hover{color:#fff}
+  .btn-solid span{position:relative;z-index:1}
+  .btn-ghost{border:1px solid var(--line-hi);color:var(--paper)}
+  .btn-ghost:hover{border-color:var(--iris);color:var(--iris-ink);box-shadow:0 0 26px rgba(124,58,237,.22)}
+  .hero-ghost{position:absolute;right:4%;top:18%;width:clamp(180px,22vw,300px);z-index:1;opacity:.9;animation:floaty 7s ease-in-out infinite;filter:drop-shadow(0 0 40px rgba(124,58,237,.45))}
+  @keyframes floaty{0%,100%{transform:translateY(0) rotate(-3deg)}50%{transform:translateY(-26px) rotate(3deg)}}
+
+  .stats{position:relative;z-index:2;display:grid;grid-template-columns:repeat(4,1fr);margin-top:90px;border-top:1px solid var(--line)}
+  .stat{padding:30px 24px 0 0}
+  .stat+.stat{padding-left:24px;border-left:1px solid var(--line)}
+  .stat-num{font-family:var(--serif);font-size:40px;font-weight:500;line-height:1;margin-bottom:8px}
+  .stat-num.v{color:var(--iris-ink)}
+  .stat-label{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+
+  /* ── секции ── */
+  section{position:relative;z-index:2;padding:110px 0}
+  .sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:24px;margin-bottom:56px}
+  .sec-tag{font-family:var(--mono);font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:var(--iris);margin-bottom:18px}
+  h2{font-family:var(--serif);font-weight:500;font-size:clamp(32px,4.8vw,56px);line-height:1.06;letter-spacing:-.015em}
+  .sec-note{max-width:440px;color:var(--muted);font-size:15px;line-height:1.7}
+
+  /* ── каталог ── */
+  .catalog{border-top:1px solid var(--line)}
+  .crow{display:grid;grid-template-columns:70px 1fr auto;gap:30px;padding:42px 0;border-bottom:1px solid var(--line);align-items:start;position:relative;transition:background .4s}
+  .crow::before{content:"";position:absolute;left:-20px;right:-20px;top:0;bottom:0;background:linear-gradient(90deg,rgba(124,58,237,.06),transparent);opacity:0;transition:opacity .4s;pointer-events:none}
+  .crow:hover::before{opacity:1}
+  .crow:hover .row-index{color:var(--iris-ink)}
+  .crow:hover h3{transform:translateX(8px)}
+  .crow:hover .c-arrow{transform:translate(6px,-6px);color:var(--iris-ink)}
+  .row-index{font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:.1em;transition:color .3s}
+  .row-title{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  h3{font-family:var(--serif);font-weight:500;font-size:32px;transition:transform .35s cubic-bezier(.16,1,.3,1)}
+  .tag{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;padding:4px 10px;border:1px solid var(--line);color:var(--muted)}
+  .tag.live{color:var(--iris-ink);border-color:rgba(167,139,250,.4)}
+  .row-desc{color:var(--dim);font-size:15px;line-height:1.7;margin-top:14px;max-width:520px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+  .chip{font-family:var(--mono);font-size:10.5px;color:var(--muted);padding:6px 11px;border:1px solid var(--line);background:var(--ink2)}
+  .c-arrow{font-family:var(--serif);font-size:34px;color:var(--muted);transition:.3s}
+
+  /* ── принципы ── */
+  .p-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .p-cell{position:relative;background:var(--ink2);border:1px solid var(--line);border-radius:16px;padding:38px;min-height:210px;overflow:hidden;transition:transform .35s cubic-bezier(.16,1,.3,1),border-color .35s}
+  .p-cell::after{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--violet),var(--iris));transform:scaleX(0);transform-origin:left;transition:transform .45s}
+  .p-cell:hover{transform:translateY(-6px);border-color:var(--line-hi)}
+  .p-cell:hover::after{transform:scaleX(1)}
+  .p-cell:hover .p-num{color:var(--iris-ink)}
+  .p-num{font-family:var(--serif);font-style:italic;font-size:24px;color:var(--faint);margin-bottom:20px;transition:color .3s}
+  .p-cell h3{font-family:var(--serif);font-weight:500;font-size:22px;margin-bottom:10px}
+  .p-cell p{color:var(--muted);font-size:14.5px;line-height:1.7}
+
+  /* ── экономика ── */
+  .economy{display:grid;grid-template-columns:1.2fr 1fr;gap:70px;align-items:center}
+  .coin{display:flex;justify-content:center;position:relative}
+  .coin svg{width:240px;height:240px;animation:spin 40s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .coin .center{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-style:italic;font-size:38px;color:var(--iris-ink)}
+  .economy-note{display:inline-flex;align-items:center;gap:10px;margin-top:28px;font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);padding:11px 15px;border-radius:2px}
+
+  /* ── сообщество ── */
+  .community{text-align:center}
+  .community .sec-tag{justify-content:center}
+  .community h2{margin-bottom:18px}
+  .community p{color:var(--muted);max-width:480px;margin:0 auto 44px;font-size:15px;line-height:1.7}
+  .community .btn{margin:0 auto}
+
+  /* ── marquee ── */
+  .marquee{border-top:1px solid var(--line);border-bottom:1px solid var(--line);overflow:hidden;padding:22px 0;position:relative;z-index:2}
+  .marquee-track{display:flex;gap:60px;white-space:nowrap;width:max-content;animation:scroll 30s linear infinite}
+  .marquee span{font-family:var(--serif);font-style:italic;font-size:22px;color:var(--faint)}
+  .marquee span b{color:var(--iris);font-weight:400}
+  @keyframes scroll{to{transform:translateX(-50%)}}
+
+  footer{border-top:1px solid var(--line);padding:60px 0;position:relative;z-index:2}
+  .foot{display:flex;justify-content:space-between;align-items:flex-start;gap:40px;flex-wrap:wrap}
+  .foot-brand{display:flex;align-items:center;gap:10px}
+  .foot-brand .ava{width:28px;height:28px;border-radius:8px}
+  .foot-brand span{font-family:var(--serif);font-size:18px}
+  .foot-copy{color:var(--muted);font-size:13px;max-width:260px}
+  .foot-links{display:flex;gap:26px;flex-wrap:wrap}
+  .foot-links a{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);transition:color .2s}
+  .foot-links a:hover{color:var(--paper)}
+  .foot-meta{width:100%;margin-top:44px;padding-top:22px;border-top:1px solid var(--line);display:flex;justify-content:space-between}
+  .foot-meta span{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+
+  @media(max-width:880px){
+    .wrap{padding:0 24px}
+    .nav-links{display:none}
+    body{cursor:auto}
+    #cur,#cur-glow{display:none}
+    .hero-ghost{display:none}
+    .stats{grid-template-columns:1fr 1fr}
+    .stat:nth-child(3){border-left:0}
+    .stat:nth-child(1),.stat:nth-child(2){border-bottom:1px solid var(--line);padding-bottom:24px}
+    .crow{grid-template-columns:1fr;gap:18px}
+    .p-grid{grid-template-columns:1fr}
+    .economy{grid-template-columns:1fr;gap:44px}
+    .coin{justify-content:center}
+  }
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.rv{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+
+<div id="cur-glow"></div>
+<div id="cur"></div>
+<div class="bg"><div class="orb orb1"></div><div class="orb orb2"></div><div class="orb orb3"></div></div>
+<svg class="grain" aria-hidden="true"><filter id="g"><feTurbulence type="fractalNoise" baseFrequency="0.82" numOctaves="3" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter><rect width="100%" height="100%" filter="url(#g)"/></svg>
+
+<header id="hdr">
+  <div class="wrap nav">
+    <a class="brand" href="#top"><img class="ava" src="ava.jpg" alt="GhostEcos"><span class="brand-name">GhostEcos</span></a>
+    <nav class="nav-links"><a href="#products">Продукты</a><a href="#principles">Принципы</a><a href="#economy">Экономика</a><a href="#community">Сообщество</a></nav>
+    <a class="nav-cta" href="https://t.me/waki_one" target="_blank" rel="noopener">Telegram ↗</a>
+  </div>
+</header>
+
+<div class="hero" id="top">
+  <svg class="hero-ghost" viewBox="0 0 48 60" fill="none" aria-hidden="true">
+    <path d="M24 3C13.5 3 6 11 6 21v33l4.5-4.5L15 54l4.5-4.5L24 54l4.5-4.5L33 54l4.5-4.5L42 54V21C42 11 34.5 3 24 3Z" fill="#a78bfa"/>
+    <ellipse cx="17" cy="22" rx="4" ry="4.5" fill="#0b0714" opacity=".5"/>
+    <ellipse cx="31" cy="22" rx="4" ry="4.5" fill="#0b0714" opacity=".5"/>
+  </svg>
+  <div class="wrap">
+    <div class="overline rv in"><span class="dot"></span> Приватная экосистема · 2026</div>
+    <h1>
+      <span class="line"><span class="word" style="animation-delay:.1s">Мессенджер,</span></span>
+      <span class="line"><span class="word" style="animation-delay:.25s">который <em>не знает</em>,</span></span>
+      <span class="line"><span class="word" style="animation-delay:.4s">кто вы.</span></span>
+    </h1>
+    <p class="lede rv in d2">Сквозное шифрование как в Signal, каналы как в Telegram, своя экономика и игры. Один аккаунт — все сервисы. Ноль логов, ноль метаданных.</p>
+    <div class="cta-row rv in d3">
+      <a class="btn btn-solid" href="/chat/"><span class="fill"></span><span>Открыть GhostChat →</span></a>
+      <a class="btn btn-ghost" href="#products"><span>Что внутри</span></a>
+    </div>
+    <div class="stats">
+      <div class="stat rv"><div class="stat-num v" data-n="E2E">E2E</div><div class="stat-label">P-256 ECDH + AES-GCM</div></div>
+      <div class="stat rv d1"><div class="stat-num" data-n="5">0</div><div class="stat-label">продуктов экосистемы</div></div>
+      <div class="stat rv d2"><div class="stat-num" data-n="18">0</div><div class="stat-label">площадка без банов</div></div>
+      <div class="stat rv d3"><div class="stat-num" data-n="3">0</div><div class="stat-label">валюты + NFT</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="marquee">
+  <div class="marquee-track">
+    <span>GhostChat <b>·</b> GhostSocial <b>·</b> gost-экономика <b>·</b> E2E шифрование <b>·</b> ноль логов <b>·</b> mesh-будущее <b>·</b></span>
+    <span>GhostChat <b>·</b> GhostSocial <b>·</b> gost-экономика <b>·</b> E2E шифрование <b>·</b> ноль логов <b>·</b> mesh-будущее <b>·</b></span>
+  </div>
+</div>
+
+<section id="products">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="rv"><div class="sec-tag">01 — Продукты</div><h2>Части одного целого.</h2></div>
+      <p class="sec-note rv d1">Каждый продукт самостоятелен, но вместе они — приватная альтернатива привычным сервисам.</p>
+    </div>
+    <div class="catalog">
+      <div class="crow rv">
+        <div class="row-index">01</div>
+        <div>
+          <div class="row-title"><h3>GhostChat</h3><span class="tag live">Android · открытая бета</span></div>
+          <p class="row-desc">Приватный мессенджер со сквозным шифрованием. Ключи не покидают устройство, сервер видит только зашифрованные данные. Работает даже по локальной сети без интернета.</p>
+          <div class="chips"><span class="chip">X25519 + AES-256-GCM</span><span class="chip">LAN-режим</span><span class="chip">Группы и файлы</span></div>
+        </div>
+        <a class="c-arrow" href="/lend/ghostchat/">↗</a>
+      </div>
+      <div class="crow rv d1">
+        <div class="row-index">02</div>
+        <div>
+          <div class="row-title"><h3>GhostSocial</h3><span class="tag">Веб · прототип</span></div>
+          <p class="row-desc">Анонимная социальная сеть. Лента, посты с медиа и профили — без привязки к настоящему имени и без слежки за действиями. Открывается прямо в браузере.</p>
+          <div class="chips"><span class="chip">Лента и посты</span><span class="chip">Без реальных имён</span><span class="chip">gost-экономика</span></div>
+        </div>
+        <a class="c-arrow" href="/social">↗</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="principles">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="rv"><div class="sec-tag">02 — Принципы</div><h2>Почему GhostEcos.</h2></div>
+      <p class="sec-note rv d1">Одни и те же правила во всех продуктах экосистемы. Без исключений.</p>
+    </div>
+    <div class="p-grid">
+      <div class="p-cell rv"><div class="p-num">01</div><h3>Сквозное шифрование</h3><p>Контент шифруется на устройстве. Ключи никогда не покидают вас — сервер бессилен прочитать.</p></div>
+      <div class="p-cell rv d1"><div class="p-num">02</div><h3>Ноль метаданных</h3><p>Никаких логов «кто с кем и когда». Сервер хранит только зашифрованные блобы — и не дольше нужного.</p></div>
+      <div class="p-cell rv d2"><div class="p-num">03</div><h3>Независимость</h3><p>Свой сервер, свой код, своя инфраструктура. Никаких больших корпораций между вами и собеседником.</p></div>
+      <div class="p-cell rv d3"><div class="p-num">04</div><h3>Mesh-будущее</h3><p>Следующий шаг — децентрализованная mesh-сеть: устройства соединяются напрямую, без серверов вовсе.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="economy">
+  <div class="wrap">
+    <div class="economy">
+      <div class="rv">
+        <div class="sec-tag">03 — Экономика</div>
+        <h2>Своя валюта. <em style="color:var(--iris-ink);font-style:italic;">gost.</em></h2>
+        <p class="sec-note" style="margin-top:18px;max-width:480px">Внутри экосистемы зарождается собственная экономика. Первая валюта — <b style="color:var(--paper)">gost</b> — стартует в GhostSocial как «семечко» будущей системы. Дальше будет больше.</p>
+        <div class="economy-note">В разработке · не финансовый инструмент</div>
+      </div>
+      <div class="coin rv d1">
+        <svg viewBox="0 0 240 240" aria-hidden="true">
+          <circle cx="120" cy="120" r="116" fill="none" stroke="#a78bfa" stroke-opacity=".12" stroke-width="1"/>
+          <circle cx="120" cy="120" r="98" fill="none" stroke="#a78bfa" stroke-opacity=".25" stroke-width="1"/>
+          <circle cx="120" cy="120" r="80" fill="none" stroke="#7c3aed" stroke-opacity=".55" stroke-width="1.2"/>
+          <g><circle cx="120" cy="40" r="3" fill="#c9bcff"/><circle cx="120" cy="200" r="3" fill="#c9bcff"/></g>
+          <circle cx="120" cy="120" r="62" fill="none" stroke="#7c3aed" stroke-opacity=".2" stroke-width="1" stroke-dasharray="4 8"/>
+        </svg>
+        <div class="center">gost</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="community" class="community">
+  <div class="wrap">
+    <div class="sec-tag rv">04 — Сообщество</div>
+    <h2 class="rv d1">Следите за разработкой.</h2>
+    <p class="rv d2">Новости, ранний доступ, раздача приложений и стройка экосистемы — всё в Telegram-канале.</p>
+    <a class="btn btn-solid rv d3" href="https://t.me/waki_one" target="_blank" rel="noopener"><span class="fill"></span><span>@waki_one →</span></a>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <div class="foot-brand"><img class="ava" src="ava.jpg" alt=""><span>GhostEcos</span></div>
+      <p class="foot-copy">Экосистема приватных продуктов. Без слежки, без компромиссов.</p>
+      <div class="foot-links"><a href="/privacy">Политика</a><a href="/terms">Условия</a><a href="https://github.com/wakionecontact-source/ghostecos" target="_blank" rel="noopener">GitHub</a></div>
+    </div>
+    <div class="foot-meta"><span>GhostEcos · 2026</span><span>Encrypted by design</span></div>
+  </div>
+</footer>
+
+<script>
+  // курсор
+  const cur = document.getElementById('cur'), glow = document.getElementById('cur-glow');
+  let mx=innerWidth/2, my=innerHeight/2, cx=mx, cy=my;
+  addEventListener('mousemove', e => { mx=e.clientX; my=e.clientY; });
+  (function loop(){
+    cx += (mx-cx)*.18; cy += (my-cy)*.18;
+    cur.style.left = mx+'px'; cur.style.top = my+'px';
+    glow.style.left = cx+'px'; glow.style.top = cy+'px';
+    requestAnimationFrame(loop);
+  })();
+
+  // шапка при скролле
+  const hdr = document.getElementById('hdr');
+  addEventListener('scroll', () => hdr.classList.toggle('scrolled', scrollY>40));
+
+  // reveal
+  const io = new IntersectionObserver(es => es.forEach(e => {
+    if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); }
+  }), {threshold:.12});
+  document.querySelectorAll('.rv').forEach(el => io.observe(el));
+
+  // счётчики
+  const cnt = new IntersectionObserver(es => es.forEach(e => {
+    if(!e.isIntersecting) return;
+    const el = e.target, target = el.dataset.n;
+    if(!/^\d+$/.test(target)) return;
+    const end = +target, t0 = performance.now(), dur = 1400;
+    (function tick(t){
+      const p = Math.min((t-t0)/dur, 1), ease = 1-Math.pow(1-p,3);
+      el.textContent = Math.round(end*ease);
+      if(p<1) requestAnimationFrame(tick); else el.textContent = end;
+    })(t0);
+    cnt.unobserve(el);
+  }), {threshold:.6});
+  document.querySelectorAll('.stat-num[data-n]').forEach(el => cnt.observe(el));
+
+  // магнитные кнопки
+  document.querySelectorAll('.btn').forEach(b => {
+    b.addEventListener('mousemove', e => {
+      const r = b.getBoundingClientRect();
+      const x = (e.clientX-r.left-r.width/2)*.25, y = (e.clientY-r.top-r.height/2)*.35;
+      b.style.transform = `translate(${x}px,${y}px)`;
+    });
+    b.addEventListener('mouseleave', () => b.style.transform = '');
+  });
+
+  // параллакс орбов
+  addEventListener('scroll', () => {
+    const y = scrollY;
+    document.querySelector('.orb1').style.transform = `translate(0,${y*.12}px)`;
+    document.querySelector('.orb2').style.transform = `translate(0,${-y*.1}px)`;
+  });
+</script>
+</body>
+</html>

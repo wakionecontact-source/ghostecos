@@ -1,0 +1,1 @@
+"""Shared GhostEcos account boundary."""

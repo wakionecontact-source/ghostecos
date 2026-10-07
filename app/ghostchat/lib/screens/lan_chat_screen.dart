@@ -30,11 +30,14 @@ import '../widgets/send_fly_animation.dart';
 import '../widgets/toast_overlay.dart';
 import '../widgets/video_player_viewer.dart';
 import '../services/lan_chat_store.dart';
+import '../services/chat_repo.dart';
+import '../core/local/app_logger.dart';
 import '../core/local/lan_settings.dart';
 import '../core/local/local_hub.dart';
 import '../core/local/local_transport.dart';
 import '../core/local/lan_message_codec.dart';
 import 'custom_camera_screen.dart';
+import 'chat_picker_screen.dart';
 
 const _maxLanFileBytes =
     10 * 1024 * 1024; // 10MB — best-effort P2P, без прогресс-бара
@@ -734,6 +737,65 @@ class _LanChatScreenState extends State<LanChatScreen> {
     });
   }
 
+  Future<void> _forwardSelected() async {
+    final selected = _messages
+        .where(
+          (message) =>
+              _selectedIds.contains(message.msgId) && !message.isControl,
+        )
+        .toList(growable: false);
+    if (selected.isEmpty) return;
+    final targets = await Navigator.of(context).push<Set<String>>(
+      MaterialPageRoute(
+        builder: (_) => const ChatPickerScreen(title: 'Переслать в чат'),
+      ),
+    );
+    if (!mounted || targets == null || targets.isEmpty) return;
+    var sent = 0;
+    var failed = 0;
+    for (final target in targets) {
+      // Local LAN and bookmark chats have their own message stores and cannot
+      // be addressed through the account DM endpoint.
+      if (target.startsWith('lan:') || target.startsWith('bm:')) continue;
+      for (final message in selected) {
+        try {
+          final label = '↪ ${widget.displayName}';
+          if (message.hasFile) {
+            final caption = message.text.trim().isEmpty
+                ? label
+                : '$label\n${message.text.trim()}';
+            await ChatRepo.instance.sendDmFile(
+              toUsername: target,
+              bytes: message.fileBytes!,
+              mime: message.fileMime ?? 'application/octet-stream',
+              fileName: message.fileName!,
+              caption: caption,
+            );
+          } else if (message.text.trim().isNotEmpty) {
+            await ChatRepo.instance.sendDmText(
+              target,
+              '$label\n${message.text.trim()}',
+            );
+          } else {
+            continue;
+          }
+          sent++;
+        } catch (error) {
+          failed++;
+          appLog.warn('lan', 'Forward from LAN chat failed: $error');
+        }
+      }
+    }
+    if (!mounted) return;
+    setState(() => _selectedIds.clear());
+    toast.show(
+      sent > 0
+          ? 'Переслано сообщений: $sent${failed > 0 ? ', ошибок: $failed' : ''}'
+          : 'Не удалось переслать выбранные сообщения',
+      level: failed > 0 && sent == 0 ? ToastLevel.error : ToastLevel.info,
+    );
+  }
+
   bool get _allSelectedPinned {
     final selected = _messages.where(
       (message) => _selectedIds.contains(message.msgId),
@@ -949,6 +1011,14 @@ class _LanChatScreenState extends State<LanChatScreen> {
             tooltip: 'Редактировать',
             onPressed: _editSelected,
           ),
+        IconButton(
+          icon: Icon(
+            CupertinoIcons.arrowshape_turn_up_right,
+            color: GE.primary,
+          ),
+          tooltip: 'Переслать',
+          onPressed: _forwardSelected,
+        ),
         IconButton(
           icon: Icon(
             _allSelectedPinned ? CupertinoIcons.pin_slash : CupertinoIcons.pin,

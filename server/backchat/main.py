@@ -87,7 +87,7 @@ _HEARTBEAT_TIMEOUT = 15  # seconds of silence before marking offline
 
 # ── File relay constants ───────────────────────────────────────────────────
 UPLOAD_DIR       = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "uploads")
-FILE_EXPIRE_SECS = 1800          # 30 minutes
+FILE_EXPIRE_SECS = 5 * 24 * 60 * 60  # 5 days
 FILE_MAX_BYTES   = 100 * 1024 * 1024  # 100 MB
 _os.makedirs(UPLOAD_DIR, exist_ok=True)
 

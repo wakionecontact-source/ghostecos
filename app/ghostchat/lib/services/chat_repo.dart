@@ -11,8 +11,12 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:isolate';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pointycastle/export.dart';
@@ -97,6 +101,158 @@ int? _createdAtMillis(dynamic value) {
     ).millisecondsSinceEpoch;
   }
   return null;
+}
+
+const int _dmFileChunkSize = 1024 * 1024;
+const int _dmFileChunkedThreshold = 8 * 1024 * 1024;
+const int _dmFileMaxPlainBytes = 500 * 1024 * 1024;
+const String _dmFileChunkFormat = 'aes-gcm-chunked-v1';
+
+Uint8List _dmChunkNonce(Uint8List prefix, int index) {
+  final nonce = Uint8List(12)..setRange(0, 4, prefix);
+  ByteData.sublistView(nonce).setUint64(4, index, Endian.big);
+  return nonce;
+}
+
+Uint8List _dmChunkAad(int index, int fileSize) {
+  final label = utf8.encode('GhostChat/DM-file/chunked-v1');
+  final aad = Uint8List(label.length + 16)..setRange(0, label.length, label);
+  final view = ByteData.sublistView(aad);
+  view.setUint64(label.length, index, Endian.big);
+  view.setUint64(label.length + 8, fileSize, Endian.big);
+  return aad;
+}
+
+Future<Uint8List> _readFileChunk(RandomAccessFile file, int length) async {
+  final parts = <List<int>>[];
+  var total = 0;
+  while (total < length) {
+    final part = await file.read(length - total);
+    if (part.isEmpty) break;
+    parts.add(part);
+    total += part.length;
+  }
+  final result = Uint8List(total);
+  var offset = 0;
+  for (final part in parts) {
+    result.setRange(offset, offset + part.length, part);
+    offset += part.length;
+  }
+  return result;
+}
+
+Future<int> _encryptDmFileChunked(Map<String, dynamic> args) async {
+  final source = File(args['source'] as String);
+  final output = File(args['output'] as String);
+  final key = args['key'] as Uint8List;
+  final noncePrefix = args['nonce_prefix'] as Uint8List;
+  final fileSize = args['file_size'] as int;
+  final chunkSize = args['chunk_size'] as int;
+  final progressPort = args['progress_port'] as SendPort?;
+  if (key.length != 32 ||
+      noncePrefix.length != 4 ||
+      fileSize <= 0 ||
+      fileSize > _dmFileMaxPlainBytes ||
+      chunkSize <= 0 ||
+      chunkSize > _dmFileChunkSize) {
+    throw const FormatException('Некорректные параметры потокового шифрования');
+  }
+  await output.parent.create(recursive: true);
+  final input = await source.open();
+  final sink = await output.open(mode: FileMode.write);
+  var offset = 0;
+  var index = 0;
+  try {
+    while (offset < fileSize) {
+      final expected = min(chunkSize, fileSize - offset);
+      final clear = await _readFileChunk(input, expected);
+      if (clear.length != expected) {
+        throw const FormatException(
+          'Исходный файл изменился во время отправки',
+        );
+      }
+      final cipher = GCMBlockCipher(AESEngine())
+        ..init(
+          true,
+          AEADParameters(
+            KeyParameter(key),
+            128,
+            _dmChunkNonce(noncePrefix, index),
+            _dmChunkAad(index, fileSize),
+          ),
+        );
+      await sink.writeFrom(cipher.process(clear));
+      offset += clear.length;
+      index++;
+      progressPort?.send(offset);
+    }
+    if ((await input.read(1)).isNotEmpty) {
+      throw const FormatException('Исходный файл изменился во время отправки');
+    }
+    await sink.flush();
+    return offset;
+  } finally {
+    await input.close();
+    await sink.close();
+  }
+}
+
+Future<int> _decryptDmFileChunked(Map<String, dynamic> args) async {
+  final source = File(args['source'] as String);
+  final output = File(args['output'] as String);
+  final key = args['key'] as Uint8List;
+  final noncePrefix = args['nonce_prefix'] as Uint8List;
+  final fileSize = args['file_size'] as int;
+  final chunkSize = args['chunk_size'] as int;
+  if (key.length != 32 ||
+      noncePrefix.length != 4 ||
+      fileSize <= 0 ||
+      fileSize > _dmFileMaxPlainBytes ||
+      chunkSize <= 0 ||
+      chunkSize > _dmFileChunkSize) {
+    throw const FormatException('Некорректные параметры потоковой расшифровки');
+  }
+  final chunks = (fileSize + chunkSize - 1) ~/ chunkSize;
+  final expectedEncryptedSize = fileSize + chunks * 16;
+  if (await source.length() != expectedEncryptedSize) {
+    throw const FormatException('Зашифрованный файл повреждён или обрезан');
+  }
+  await output.parent.create(recursive: true);
+  final input = await source.open();
+  final sink = await output.open(mode: FileMode.write);
+  var offset = 0;
+  var index = 0;
+  try {
+    while (offset < fileSize) {
+      final clearLength = min(chunkSize, fileSize - offset);
+      final encrypted = await _readFileChunk(input, clearLength + 16);
+      if (encrypted.length != clearLength + 16) {
+        throw const FormatException('Зашифрованный файл повреждён или обрезан');
+      }
+      final cipher = GCMBlockCipher(AESEngine())
+        ..init(
+          false,
+          AEADParameters(
+            KeyParameter(key),
+            128,
+            _dmChunkNonce(noncePrefix, index),
+            _dmChunkAad(index, fileSize),
+          ),
+        );
+      final clear = cipher.process(encrypted);
+      if (clear.length != clearLength) {
+        throw const FormatException('Не совпал размер расшифрованного блока');
+      }
+      await sink.writeFrom(clear);
+      offset += clear.length;
+      index++;
+    }
+    await sink.flush();
+    return offset;
+  } finally {
+    await input.close();
+    await sink.close();
+  }
 }
 
 /// Итог синхронизации ключей — UI (KeyGate) реагирует:
@@ -193,10 +349,8 @@ class ChatRepo {
   final _db = DbService.instance;
 
   // Keep the general message guard compatible with the 16,000-character API
-  // contract. The current production validator has an additional 4,000-char
-  // base64 helper limit, so media envelopes use the smaller budget below.
+  // contract.
   static const _maxChatCiphertextChars = 15_000;
-  static const _maxMediaCiphertextChars = 3_800;
 
   // ── v2 (Signal-style: Ed25519 identity + X25519 device, per-device sealed) ──
   bool _v2Published = false;
@@ -1044,29 +1198,25 @@ class ChatRepo {
           if (password == null || password.isEmpty) {
             return KeySyncOutcome.needPassword;
           }
-          late final String recovered;
           try {
-            recovered = base64Encode(
-              await _crypto.importServerPriv(
-                state.encryptedPrivateKey!,
-                state.keySalt!,
-                password,
-                account: account,
-                keyKdf: state.keyKdf,
-                keyFormat: state.keyFormat,
-              ),
+            await _crypto.importServerPriv(
+              state.encryptedPrivateKey!,
+              state.keySalt!,
+              password,
+              account: account,
+              keyKdf: state.keyKdf,
+              keyFormat: state.keyFormat,
+              expectedPublicKeyB64: state.publicKey,
             );
-          } catch (e) {
-            appLog.warn('security', 'server key recovery failed: $e');
-            return KeySyncOutcome.needPassword;
-          }
-          if (recovered != state.publicKey) {
-            await _crypto.deleteStoredKeys(account: account);
+          } on ServerKeyMismatchException {
             appLog.warn(
               'security',
               'server key recovery public-key verification failed',
             );
             return KeySyncOutcome.keyMismatch;
+          } catch (e) {
+            appLog.warn('security', 'server key recovery failed: $e');
+            return KeySyncOutcome.needPassword;
           }
           // Старые production-записи могли сохранить blob без metadata.
           // После успешной проверки пароля безопасно перезаписываем копию в
@@ -1131,37 +1281,27 @@ class ChatRepo {
       if (normalized == 'local' && state.hasServerCopy) {
         final serverPub = state.publicKey;
         if (serverPub == null || serverPub.isEmpty) return KeySyncOutcome.error;
-        final recovered = base64Encode(
-          await _crypto.importServerPriv(
-            state.encryptedPrivateKey!,
-            state.keySalt!,
-            password,
-            account: account,
-            keyKdf: state.keyKdf,
-            keyFormat: state.keyFormat,
-          ),
+        await _crypto.importServerPriv(
+          state.encryptedPrivateKey!,
+          state.keySalt!,
+          password,
+          account: account,
+          keyKdf: state.keyKdf,
+          keyFormat: state.keyFormat,
+          expectedPublicKeyB64: serverPub,
         );
-        if (recovered != serverPub) {
-          await _crypto.deleteStoredKeys(account: account);
-          return KeySyncOutcome.needPassword;
-        }
       } else if (normalized == 'server' && state.hasServerCopy) {
         final serverPub = state.publicKey;
         if (serverPub == null || serverPub.isEmpty) return KeySyncOutcome.error;
-        final recovered = base64Encode(
-          await _crypto.importServerPriv(
-            state.encryptedPrivateKey!,
-            state.keySalt!,
-            password,
-            account: account,
-            keyKdf: state.keyKdf,
-            keyFormat: state.keyFormat,
-          ),
+        await _crypto.importServerPriv(
+          state.encryptedPrivateKey!,
+          state.keySalt!,
+          password,
+          account: account,
+          keyKdf: state.keyKdf,
+          keyFormat: state.keyFormat,
+          expectedPublicKeyB64: serverPub,
         );
-        if (recovered != serverPub) {
-          await _crypto.deleteStoredKeys(account: account);
-          return KeySyncOutcome.needPassword;
-        }
       } else {
         // In local mode this loads existing secure-storage material; if none
         // exists, ensureKeys creates a new pair explicitly at this point.
@@ -1186,6 +1326,9 @@ class ChatRepo {
       await _saveKeySetupMode(normalized);
       keySyncNotifier.value = KeySyncOutcome.ok;
       return KeySyncOutcome.ok;
+    } on ServerKeyMismatchException {
+      appLog.warn('security', 'server key blob does not match account key');
+      return KeySyncOutcome.keyMismatch;
     } catch (e) {
       appLog.warn('security', 'key storage mode change failed: $e');
       return KeySyncOutcome.error;
@@ -1580,23 +1723,16 @@ class ChatRepo {
     if (hasServerPub && hasServerCopy) {
       if (password == null) return KeySyncOutcome.needPassword;
       try {
-        final recovered = base64Encode(
-          await _crypto.importServerPriv(
-            encPriv,
-            keySalt,
-            password,
-            account: _myUsername,
-            keyKdf: keyKdf,
-            keyFormat: keyFormat,
-          ),
+        await _crypto.importServerPriv(
+          encPriv,
+          keySalt,
+          password,
+          account: _myUsername,
+          keyKdf: keyKdf,
+          keyFormat: keyFormat,
+          expectedPublicKeyB64: serverPub,
         );
         _peerPubCache.clear();
-        if (recovered != serverPub) {
-          // Восстановленный приватник не даёт серверный pub — битый блоб
-          // (например наша же старая заглушка). Нужен ручной перезалив.
-          appLog.warn('chat', 'recovered pub != server pub (битый блоб?)');
-          return KeySyncOutcome.needPassword;
-        }
         if (keyKdf != CryptoService.serverKeyKdfArgon2id ||
             keyFormat != CryptoService.serverKeyFormatV2) {
           await _uploadServerKey(
@@ -1607,6 +1743,9 @@ class ChatRepo {
         }
         appLog.info('chat', 'server-режим: приватник восстановлен с сервера');
         return KeySyncOutcome.ok;
+      } on ServerKeyMismatchException {
+        appLog.warn('security', 'server key blob does not match account key');
+        return KeySyncOutcome.keyMismatch;
       } catch (e) {
         appLog.warn('chat', 'importServerPriv failed (пароль?): $e');
         return KeySyncOutcome.needPassword;
@@ -2110,6 +2249,7 @@ class ChatRepo {
                 saltB64: salt,
                 password: recoveryPassword,
                 account: account,
+                expectedIdentityPubB64: serverIdentity,
               );
               identityMatches = listEquals(
                 base64Decode(serverIdentity),
@@ -2551,6 +2691,7 @@ class ChatRepo {
     int? replyTo,
     String? replyPreview,
     String? forwardedFrom,
+    int? forwardedThoughtExpiresAt,
     List<MessageButton> userButtons = const [],
   }) async {
     // Оптимистичный пузырь уже создан в sendDmText (мгновенно). Здесь только
@@ -2581,6 +2722,9 @@ class ChatRepo {
     if (connMode == ConnectionMode.server) peerKeys = null;
 
     if (userButtons.isEmpty &&
+        replyTo == null &&
+        forwardedFrom == null &&
+        forwardedThoughtExpiresAt == null &&
         peerKeys != null &&
         triangleService.hasSession(toUsername)) {
       final sentViaP2p = await triangleService.sendText(
@@ -2619,6 +2763,8 @@ class ChatRepo {
           'reply_preview': replyPreview,
         if (forwardedFrom != null && forwardedFrom.isNotEmpty)
           'forwarded_from': forwardedFrom,
+        if (forwardedThoughtExpiresAt != null)
+          'forwarded_thought_expires_at': forwardedThoughtExpiresAt,
         if (userButtons.isNotEmpty)
           'user_buttons': MessageButton.encodeList(userButtons),
       };
@@ -2885,6 +3031,8 @@ class ChatRepo {
       replyTo: payload['reply_to'] as int?,
       replyPreview: payload['reply_preview'] as String?,
       forwardedFrom: payload['forwarded_from'] as String?,
+      forwardedThoughtExpiresAt:
+          (payload['forwarded_thought_expires_at'] as num?)?.toInt(),
       userButtons: MessageButton.parseList(payload['user_buttons']),
       filePayload: isFile
           ? {
@@ -3292,6 +3440,8 @@ class ChatRepo {
       replyTo: env['reply_to'] is int ? env['reply_to'] as int : null,
       replyPreview: env['reply_preview'] as String?,
       forwardedFrom: env['forwarded_from'] as String?,
+      forwardedThoughtExpiresAt: (env['forwarded_thought_expires_at'] as num?)
+          ?.toInt(),
       userButtons: MessageButton.parseList(env['user_buttons']),
       filePayload: isFile
           ? {
@@ -3384,7 +3534,36 @@ class ChatRepo {
     String? sourcePath, // путь к видео для сжатия (video_compress)
     Uint8List? thumbnail, // первый кадр (png) — показываем ДО загрузки
     String? localPath, // локальный файл — превью/проигрывание ПОКА грузится
+    String? caption,
   }) async {
+    if (bytes.length > _dmFileChunkedThreshold) {
+      final dir = await getTemporaryDirectory();
+      final extension = p.extension(fileName);
+      final source = File(
+        p.join(
+          dir.path,
+          'gc_dm_source_${DateTime.now().microsecondsSinceEpoch}$extension',
+        ),
+      );
+      await source.writeAsBytes(bytes, flush: true);
+      try {
+        await sendDmFileFromPath(
+          toUsername: toUsername,
+          sourcePath: sourcePath ?? source.path,
+          mime: mime,
+          fileName: fileName,
+          voice: voice,
+          duration: duration,
+          waveform: waveform,
+          thumbnail: thumbnail,
+          localPath: localPath,
+          caption: caption,
+        );
+      } finally {
+        if (await source.exists()) await source.delete();
+      }
+      return;
+    }
     if (isPeerBlocked(toUsername)) {
       throw StateError('Пользователь заблокирован');
     }
@@ -3403,6 +3582,7 @@ class ChatRepo {
     await _forgetChatDeleted(toUsername);
     final isVideo = mime.toLowerCase().startsWith('video/');
     final mediaDuration = duration > 0 && (voice || isVideo) ? duration : null;
+    final cleanCaption = caption?.trim() ?? '';
     appLog.info(
       'file',
       'outgoing ${voice ? 'voice' : 'file'} to @$toUsername: $fileName (${bytes.length} bytes)',
@@ -3416,7 +3596,7 @@ class ChatRepo {
         sid: tempSidId,
         peer: toUsername,
         fromMe: true,
-        text: '',
+        text: cleanCaption,
         createdAt: DateTime.now().toUtc().toIso8601String(),
         pending: true,
         tempSid: tmpKey,
@@ -3495,6 +3675,7 @@ class ChatRepo {
       // blob уже зашифрован AES и сервер никогда не получает ключ от payload.
       final payload = <String, dynamic>{
         'type': voice ? 'voice' : 'file',
+        if (cleanCaption.isNotEmpty) 'text': cleanCaption,
         'file_id': fileId,
         'file_name': fileName,
         'mime': mime,
@@ -3582,6 +3763,329 @@ class ChatRepo {
     }
   }
 
+  /// Потоковая отправка крупного вложения. На устройстве в памяти находится
+  /// только один блок; на сервер загружается ciphertext-файл, а SQLite хранит
+  /// только путь и размер.
+  Future<void> sendDmFileFromPath({
+    required String toUsername,
+    required String sourcePath,
+    required String mime,
+    required String fileName,
+    bool voice = false,
+    int duration = 0,
+    List<double>? waveform,
+    Uint8List? thumbnail,
+    String? localPath,
+    String? caption,
+  }) async {
+    final sourceFile = File(sourcePath);
+    if (!await sourceFile.exists()) throw StateError('Файл больше недоступен');
+    final sourceSize = await sourceFile.length();
+    if (sourceSize <= 0) throw StateError('Пустой файл');
+    if (sourceSize <= _dmFileChunkedThreshold) {
+      await sendDmFile(
+        toUsername: toUsername,
+        bytes: await sourceFile.readAsBytes(),
+        mime: mime,
+        fileName: fileName,
+        voice: voice,
+        duration: duration,
+        waveform: waveform,
+        thumbnail: thumbnail,
+        sourcePath: sourcePath,
+        localPath: localPath,
+        caption: caption,
+      );
+      return;
+    }
+    if (sourceSize > _dmFileMaxPlainBytes) {
+      throw StateError('Лимит личного вложения — 500 МБ');
+    }
+    if (isPeerBlocked(toUsername)) {
+      throw StateError('Пользователь заблокирован');
+    }
+    try {
+      if (await isPeerBot(toUsername)) {
+        throw StateError(
+          'Вложения для ботов пока не поддерживаются — отправь сообщение текстом',
+        );
+      }
+    } catch (e) {
+      if (_isMissingPeerKeysError(e)) {
+        throw StateError('У @$toUsername нет E2E-ключей');
+      }
+      rethrow;
+    }
+    await _forgetChatDeleted(toUsername);
+
+    final isVideo = mime.toLowerCase().startsWith('video/');
+    final mediaDuration = duration > 0 && (voice || isVideo) ? duration : null;
+    final cleanCaption = caption?.trim() ?? '';
+    final tempSidId = -DateTime.now().microsecondsSinceEpoch;
+    final tmpKey = 'tmp-$tempSidId';
+    final thumbB64 = thumbnail != null ? base64Encode(thumbnail) : null;
+    await _db.upsertMessage(
+      StoredMessage(
+        sid: tempSidId,
+        peer: toUsername,
+        fromMe: true,
+        text: cleanCaption,
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+        pending: true,
+        tempSid: tmpKey,
+        filePayload: {
+          'file_name': fileName,
+          'mime': mime,
+          'size': sourceSize,
+          if (thumbB64 != null) 'thumb': thumbB64,
+          if (localPath != null) '_local': localPath,
+          if (voice) 'voice': true,
+          if (mediaDuration != null) 'duration': mediaDuration,
+          if (voice && waveform != null) 'waveform': waveform,
+        },
+      ),
+    );
+    await _refreshMessages(toUsername);
+    await _bumpDialog(
+      toUsername,
+      lastText: _filePreview(mime: mime, fileName: fileName, voice: voice),
+      fromMe: true,
+    );
+
+    String? encryptedPath;
+    String? compressedVideoPath;
+    try {
+      var uploadPath = sourcePath;
+      var plainSize = sourceSize;
+      var progressBase = 0.0;
+      if (isVideo && sourceSize > 6 * 1024 * 1024) {
+        progressBase = 0.5;
+        final subscription = VideoCompress.compressProgress$.subscribe((p) {
+          uploadProgress(tmpKey).value = (p / 100) * 0.5;
+        });
+        try {
+          final info = await VideoCompress.compressVideo(
+            sourcePath,
+            quality: VideoQuality.LowQuality,
+            deleteOrigin: false,
+          ).timeout(const Duration(minutes: 10));
+          if (info?.file != null) {
+            uploadPath = info!.file!.path;
+            if (uploadPath != sourcePath) compressedVideoPath = uploadPath;
+            plainSize = await File(uploadPath).length();
+          }
+        } finally {
+          subscription.unsubscribe();
+        }
+        uploadProgress(tmpKey).value = 0.5;
+      }
+      if (plainSize <= 0 || plainSize > _dmFileMaxPlainBytes) {
+        throw StateError('Лимит личного вложения — 500 МБ');
+      }
+
+      final aesKey = _randomBytes(32);
+      final noncePrefix = _randomBytes(4);
+      final tempDirectory = await getTemporaryDirectory();
+      encryptedPath = p.join(
+        tempDirectory.path,
+        'gc_dm_encrypted_${DateTime.now().microsecondsSinceEpoch}.bin',
+      );
+      final encryptionSpan = (1 - progressBase) * 0.15;
+      final encryptionStart = progressBase;
+      final encryptionProgress = ReceivePort();
+      final encryptionSubscription = encryptionProgress.listen((message) {
+        if (message is int && plainSize > 0) {
+          uploadProgress(tmpKey).value =
+              encryptionStart + (message / plainSize) * encryptionSpan;
+        }
+      });
+      try {
+        await compute(_encryptDmFileChunked, <String, dynamic>{
+          'source': uploadPath,
+          'output': encryptedPath,
+          'key': aesKey,
+          'nonce_prefix': noncePrefix,
+          'file_size': plainSize,
+          'chunk_size': _dmFileChunkSize,
+          'progress_port': encryptionProgress.sendPort,
+        });
+      } finally {
+        await encryptionSubscription.cancel();
+        encryptionProgress.close();
+      }
+
+      final uploadProgressStart = progressBase + encryptionSpan;
+      final uploaded = await _api.uploadFileFromPath(
+        toUsername: toUsername,
+        encryptedPath: encryptedPath,
+        onSendProgress: (sent, total) {
+          if (total > 0) {
+            uploadProgress(tmpKey).value =
+                uploadProgressStart +
+                (sent / total) * (1 - uploadProgressStart);
+          }
+        },
+      );
+      final fileId = (uploaded['file_id'] as num).toInt();
+      _pendingMediaTempKeys[fileId] = tmpKey;
+      final cachedPlainPath = await _db.cachePlainFileFromPath(
+        fileId: fileId.toString(),
+        sourcePath: uploadPath,
+        mime: mime,
+        extension: p.extension(fileName),
+      );
+
+      final payload = <String, dynamic>{
+        'type': voice ? 'voice' : 'file',
+        if (cleanCaption.isNotEmpty) 'text': cleanCaption,
+        'file_id': fileId,
+        'file_name': fileName,
+        'mime': mime,
+        'size': plainSize,
+        'key': base64Encode(aesKey),
+        'iv': base64Encode(noncePrefix),
+        'crypto_format': _dmFileChunkFormat,
+        'chunk_size': _dmFileChunkSize,
+        if (thumbB64 != null) 'thumb': thumbB64,
+        if (voice) 'voice': true,
+        if (mediaDuration != null) 'duration': mediaDuration,
+        if (voice && waveform != null) 'waveform': waveform,
+      };
+      final v2keys = await getPeerV2Keys(toUsername, forceRefresh: true);
+      if (v2keys == null) throw StateError('У @$toUsername нет V2-ключей');
+      final realSid = await _sendV2Payload(
+        toUsername: toUsername,
+        payload: payload,
+        keys: v2keys,
+      );
+      final createdAt = DateTime.now().toUtc().toIso8601String();
+      await _db.promoteOptimistic(
+        peer: toUsername,
+        tempSid: tmpKey,
+        realSid: realSid,
+        createdAt: createdAt,
+      );
+      await _db.updateMessageFlags(toUsername, realSid, {
+        'file_payload': jsonEncode({
+          ...payload,
+          '_local': cachedPlainPath,
+          if (voice) 'voice': 1,
+        }),
+        'delivered': 1,
+      });
+      _pendingMediaTempKeys.remove(fileId);
+      appLog.info(
+        'file',
+        'outgoing streamed file accepted by server: @$toUsername sid=$realSid file=$fileId size=$plainSize',
+      );
+      await _refreshMessages(toUsername);
+      await _refreshDialogs();
+    } catch (e) {
+      final compactError = _compactMediaSendError(e);
+      appLog.warn('chat', '[sendDmFileFromPath] $compactError');
+      _pendingMediaTempKeys.removeWhere((_, key) => key == tmpKey);
+      await _markOptimisticSendFailed(peer: toUsername, sid: tempSidId);
+      if (compactError != e.toString()) throw StateError(compactError);
+      rethrow;
+    } finally {
+      for (final tempPath in [encryptedPath, compressedVideoPath]) {
+        if (tempPath == null) continue;
+        try {
+          final file = File(tempPath);
+          if (await file.exists()) await file.delete();
+        } catch (error) {
+          appLog.warn('file', 'temporary media cleanup failed: $error');
+        }
+      }
+      _uploadProgress.remove(tmpKey);
+    }
+  }
+
+  /// Расшифровывает потоковое вложение в постоянный локальный файл.
+  /// Возвращает null для старого формата; тот остаётся на пути decryptMediaBlob.
+  Future<String?> decryptMediaToPath(StoredMessage message) async {
+    final payload = message.filePayload;
+    if (payload?['crypto_format'] != _dmFileChunkFormat) return null;
+    final rawFileId = payload?['file_id'];
+    final fileId = rawFileId is num
+        ? rawFileId.toInt()
+        : int.tryParse(rawFileId?.toString() ?? '');
+    final fileSize = (payload?['size'] as num?)?.toInt();
+    final chunkSize = (payload?['chunk_size'] as num?)?.toInt();
+    final keyB64 = payload?['key']?.toString();
+    final nonceB64 = payload?['iv']?.toString();
+    if (fileId == null ||
+        fileSize == null ||
+        fileSize <= 0 ||
+        fileSize > _dmFileMaxPlainBytes ||
+        chunkSize != _dmFileChunkSize ||
+        keyB64 == null ||
+        nonceB64 == null) {
+      throw const FormatException('Некорректные данные потокового вложения');
+    }
+
+    if (message.fromMe) {
+      final local = payload?['_local']?.toString();
+      if (local != null && local.isNotEmpty && await File(local).exists()) {
+        return local;
+      }
+    }
+    final cachedPath = await _db.getCachedPlainPath(fileId.toString());
+    if (cachedPath != null) return cachedPath;
+    // A known-expired server copy must not hide a plaintext copy already
+    // cached on this device, but it should prevent another network request.
+    if (payload?['expired'] == true) return null;
+
+    final key = Uint8List.fromList(base64Decode(keyB64));
+    final noncePrefix = Uint8List.fromList(base64Decode(nonceB64));
+    if (key.length != 32 || noncePrefix.length != 4) {
+      throw const FormatException('Некорректный ключ потокового вложения');
+    }
+    final tempDirectory = await getTemporaryDirectory();
+    final encryptedPath = p.join(
+      tempDirectory.path,
+      'gc_dm_download_${DateTime.now().microsecondsSinceEpoch}.bin',
+    );
+    final clearTempPath = await _db.newPlainCacheTempPath(fileId.toString());
+    try {
+      final found = await _api.downloadFileToPath(
+        fileId: fileId,
+        destinationPath: encryptedPath,
+      );
+      if (!found) {
+        final expiredPayload = Map<String, dynamic>.from(payload!)
+          ..['expired'] = true;
+        payload['expired'] = true;
+        await _db.updateMessageFlags(message.peer, message.sid, {
+          'file_payload': jsonEncode(expiredPayload),
+        });
+        return null;
+      }
+      await compute(_decryptDmFileChunked, <String, dynamic>{
+        'source': encryptedPath,
+        'output': clearTempPath,
+        'key': key,
+        'nonce_prefix': noncePrefix,
+        'file_size': fileSize,
+        'chunk_size': chunkSize,
+      });
+      return await _db.commitPlainCacheTemp(
+        fileId: fileId.toString(),
+        tempPath: clearTempPath,
+        size: fileSize,
+        mime: payload?['mime']?.toString(),
+        extension: p.extension(payload?['file_name']?.toString() ?? ''),
+      );
+    } catch (_) {
+      final clearTemp = File(clearTempPath);
+      if (await clearTemp.exists()) await clearTemp.delete();
+      rethrow;
+    } finally {
+      final encrypted = File(encryptedPath);
+      if (await encrypted.exists()) await encrypted.delete();
+    }
+  }
+
   /// Расшифровать encrypted blob медиа-сообщения. Возвращает plaintext bytes.
   // RAM-кэш расшифрованных медиа (по file_id): повторный просмотр и СВОЁ медиа
   // открываются мгновенно — без скачивания и повторной расшифровки. Ограничен.
@@ -3598,6 +4102,13 @@ class ChatRepo {
   Future<Uint8List?> decryptMediaBlob(StoredMessage m) async {
     final fp = m.filePayload;
     if (fp == null) return null;
+    if (fp['crypto_format'] == _dmFileChunkFormat) {
+      final path = await decryptMediaToPath(m);
+      if (path == null || await File(path).length() > _dmFileChunkedThreshold) {
+        return null;
+      }
+      return File(path).readAsBytes();
+    }
     final rawFileId = fp['file_id'];
     final fileId = rawFileId is num
         ? rawFileId.toInt()
@@ -3615,6 +4126,7 @@ class ChatRepo {
       _plainCachePut(fileId, persistedPlain);
       return persistedPlain;
     }
+    if (fp['expired'] == true) return null;
 
     Uint8List aesKey;
     Uint8List iv;
@@ -3643,7 +4155,14 @@ class ChatRepo {
       appLog.warn('chat', '[decryptMediaBlob] encrypted fetch failed: $e');
       return null;
     }
-    if (encBytes == null) return null;
+    if (encBytes == null) {
+      final expiredPayload = Map<String, dynamic>.from(fp)..['expired'] = true;
+      fp['expired'] = true;
+      await _db.updateMessageFlags(m.peer, m.sid, {
+        'file_payload': jsonEncode(expiredPayload),
+      });
+      return null;
+    }
     try {
       final plain = await decryptBytes(encBytes);
       await _db.cachePlainFile(
@@ -3919,6 +4438,8 @@ class ChatRepo {
     required Future<void> Function(Map<String, dynamic>) onPreparedRequest,
     int? replyTo,
     String? replyPreview,
+    String? forwardedFrom,
+    int? forwardedThoughtExpiresAt,
     Map<String, dynamic>? preparedRequest,
     List<MessageButton> userButtons = const [],
   }) async {
@@ -3934,6 +4455,10 @@ class ChatRepo {
         if (replyTo != null) 'reply_to': replyTo,
         if (replyPreview != null && replyPreview.isNotEmpty)
           'reply_preview': replyPreview,
+        if (forwardedFrom != null && forwardedFrom.isNotEmpty)
+          'forwarded_from': forwardedFrom,
+        if (forwardedThoughtExpiresAt != null)
+          'forwarded_thought_expires_at': forwardedThoughtExpiresAt,
         if (userButtons.isNotEmpty)
           'user_buttons': MessageButton.encodeList(userButtons),
       });
@@ -3988,6 +4513,7 @@ class ChatRepo {
     int? replyTo,
     String? replyPreview,
     String? forwardedFrom,
+    int? forwardedThoughtExpiresAt,
     List<MessageButton> userButtons = const [],
   }) async {
     final trimmed = text.trim();
@@ -4018,6 +4544,8 @@ class ChatRepo {
         if (replyTo != null) 'reply_to': replyTo,
         if (replyPreview != null) 'reply_preview': replyPreview,
         if (forwardedFrom != null) 'forwarded_from': forwardedFrom,
+        if (forwardedThoughtExpiresAt != null)
+          'forwarded_thought_expires_at': forwardedThoughtExpiresAt,
         if (userButtons.isNotEmpty)
           'user_buttons': MessageButton.encodeList(userButtons),
       },
@@ -4032,6 +4560,7 @@ class ChatRepo {
         replyTo: replyTo,
         replyPreview: replyPreview,
         forwardedFrom: forwardedFrom,
+        forwardedThoughtExpiresAt: forwardedThoughtExpiresAt,
         userButtons: userButtons
             .where((button) => button.isValid)
             .take(MessageButton.maxCount)
@@ -4090,6 +4619,9 @@ class ChatRepo {
             replyTo: int.tryParse(draft['reply_to']?.toString() ?? ''),
             replyPreview: draft['reply_preview']?.toString(),
             forwardedFrom: draft['forwarded_from']?.toString(),
+            forwardedThoughtExpiresAt: int.tryParse(
+              draft['forwarded_thought_expires_at']?.toString() ?? '',
+            ),
             userButtons: userButtons,
             generation: generation,
             savePreparedRequest: (request) =>
@@ -4153,6 +4685,7 @@ class ChatRepo {
     int? replyTo,
     String? replyPreview,
     String? forwardedFrom,
+    int? forwardedThoughtExpiresAt,
     List<MessageButton> userButtons = const [],
   }) async {
     if (!_isCurrentSession(generation)) return;
@@ -4299,6 +4832,7 @@ class ChatRepo {
             replyTo: replyTo,
             replyPreview: replyPreview,
             forwardedFrom: forwardedFrom,
+            forwardedThoughtExpiresAt: forwardedThoughtExpiresAt,
             userButtons: userButtons,
           );
         }
@@ -4310,6 +4844,8 @@ class ChatRepo {
         onPreparedRequest: savePreparedRequest,
         replyTo: replyTo,
         replyPreview: replyPreview,
+        forwardedFrom: forwardedFrom,
+        forwardedThoughtExpiresAt: forwardedThoughtExpiresAt,
         userButtons: userButtons,
       );
     } catch (e) {
@@ -4749,6 +5285,8 @@ class ChatRepo {
       forwardedFrom: payload['forwarded_from'] is String
           ? payload['forwarded_from'] as String
           : null,
+      forwardedThoughtExpiresAt:
+          (payload['forwarded_thought_expires_at'] as num?)?.toInt(),
       userButtons: MessageButton.parseList(payload['user_buttons']),
       replyMarkup: !isMine && botPlain != null
           ? BotReplyMarkup.tryParse(payload['reply_markup'])
@@ -4765,6 +5303,10 @@ class ChatRepo {
               'size': payload['size'] is int ? payload['size'] as int : 0,
               'key': payload['key'] is String ? payload['key'] as String : '',
               'iv': payload['iv'] is String ? payload['iv'] as String : '',
+              if (payload['crypto_format'] is String)
+                'crypto_format': payload['crypto_format'],
+              if (payload['chunk_size'] is num)
+                'chunk_size': (payload['chunk_size'] as num).toInt(),
               if (payload['thumb'] != null) 'thumb': payload['thumb'],
               if (type == 'voice') 'voice': true,
               if (durationSec != null) 'duration': durationSec,
@@ -5095,12 +5637,28 @@ class ChatRepo {
         ? (_myUsername ?? await AuthService.username() ?? '')
         : original.peer;
     if (original.filePayload != null) {
-      // Перешифровываем blob новым ключом для нового адресата
-      final plainBytes = await decryptMediaBlob(original);
-      if (plainBytes == null)
-        throw Exception('Не удалось расшифровать оригинал');
       final fp = original.filePayload!;
       final isVoice = fp['voice'] == true || fp['voice'] == 1;
+      if (fp['crypto_format'] == _dmFileChunkFormat) {
+        final plainPath = await decryptMediaToPath(original);
+        if (plainPath == null) {
+          throw Exception('Не удалось расшифровать оригинал');
+        }
+        await sendDmFileFromPath(
+          toUsername: toUsername,
+          sourcePath: plainPath,
+          localPath: plainPath,
+          mime: fp['mime'] as String? ?? 'application/octet-stream',
+          fileName: fp['file_name'] as String? ?? 'file',
+          voice: isVoice,
+          duration: (fp['duration'] as int?) ?? 0,
+        );
+        return;
+      }
+      final plainBytes = await decryptMediaBlob(original);
+      if (plainBytes == null) {
+        throw Exception('Не удалось расшифровать оригинал');
+      }
       await sendDmFile(
         toUsername: toUsername,
         bytes: plainBytes,
@@ -5112,7 +5670,12 @@ class ChatRepo {
       // forwarded_from-метку добавим в текстовом отдельном сообщении (UX мейл)
       return;
     }
-    await sendDmText(toUsername, original.text, forwardedFrom: originalAuthor);
+    await sendDmText(
+      toUsername,
+      original.text,
+      forwardedFrom: originalAuthor,
+      forwardedThoughtExpiresAt: original.forwardedThoughtExpiresAt,
+    );
   }
 
   Map<String, dynamic> _parsePayload(String raw) {

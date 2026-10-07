@@ -659,6 +659,45 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_vless:
+    dependency: "direct main"
+    description:
+      name: flutter_vless
+      sha256: ccda63e67218c99f134a338d904264b9772bf289966fafb5067801d547b27f51
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.6"
+  flutter_vless_android:
+    dependency: "direct overridden"
+    description:
+      path: "packages/flutter_vless_android"
+      relative: true
+    source: path
+    version: "1.1.6"
+  flutter_vless_macos:
+    dependency: transitive
+    description:
+      name: flutter_vless_macos
+      sha256: eac0c6508c44d757a9d5b2e4c21d8ea8da01e79c9c6e4fffdd0d4981bef17f9a
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.6"
+  flutter_vless_platform_interface:
+    dependency: transitive
+    description:
+      name: flutter_vless_platform_interface
+      sha256: ead87ef2dc5987d7e3a83c9554a27ba7f8e914e9b2b72477eda3ba0b639fe7e8
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.2"
+  flutter_vless_windows:
+    dependency: transitive
+    description:
+      name: flutter_vless_windows
+      sha256: a5cf5c0525a0a5d876e9cff7d921e3ff75c50d7b2ae8768cc976ffc5e8b7357a
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.6"
   flutter_web_plugins:
     dependency: transitive
     description: flutter

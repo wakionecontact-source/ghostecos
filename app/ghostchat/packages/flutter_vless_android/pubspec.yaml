@@ -1,0 +1,31 @@
+name: flutter_vless_android
+description: Android implementation of the flutter_vless plugin.
+version: 1.1.6
+homepage: https://tfox.dev
+repository: https://github.com/XIIIFOX/flutter_vless
+issue_tracker: https://github.com/XIIIFOX/flutter_vless/issues
+documentation: https://github.com/XIIIFOX/flutter_vless/blob/main/doc/platform/android.md
+funding:
+  - https://tfox.dev
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+  flutter: '>=3.3.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_vless_platform_interface: ^1.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  plugin:
+    implements: flutter_vless_platform_interface
+    platforms:
+      android:
+        package: com.github.tfox.flutter_vless
+        pluginClass: FlutterVlessPlugin

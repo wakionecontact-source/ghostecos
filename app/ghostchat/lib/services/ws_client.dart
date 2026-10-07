@@ -17,8 +17,9 @@ import 'dart:io';
 import 'dart:math';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/status.dart' as wsstatus;
-import '../theme.dart';
+import 'api_client.dart';
 import 'auth_service.dart';
+import 'proxy_http_client.dart';
 import '../core/local/app_logger.dart';
 
 /// Ошибка RPC-вызова (сервер ответил `<type>.err`).
@@ -44,11 +45,16 @@ class WsClient {
   static final WsClient instance = WsClient._();
 
   IOWebSocketChannel? _ch;
+  HttpClient? _socketHttpClient;
+  HttpClient? _connectingHttpClient;
   bool _authFail = false;
+  bool _connecting = false;
+  bool _restartRequested = false;
   Timer? _pingTimer;
   Timer? _pongTimeout;
   Timer? _reconnectTimer;
   int _reconnectDelay = 1000;
+  int _endpointOffset = 0;
   DateTime _lastRecv = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _lastPing = DateTime.fromMillisecondsSinceEpoch(0);
 
@@ -64,27 +70,81 @@ class WsClient {
 
   /// Запустить или переподключиться. Если уже подключён — no-op.
   Future<void> connect() async {
-    if (_authFail) return;
-    if (_ch != null) return;
-    final token = await AuthService.token();
-    if (token == null || token.isEmpty) return;
-    final deviceId = await AuthService.deviceId();
-    final url =
-        '${GE.wsUrl}?token=${Uri.encodeComponent(token)}'
-        '&device_id=${Uri.encodeComponent(deviceId)}';
+    if (_authFail || _ch != null || _connecting) return;
+    _connecting = true;
     try {
-      final socket = await WebSocket.connect(url);
-      _ch = IOWebSocketChannel(socket);
-      _reconnectDelay = 1000;
-      _lastRecv = DateTime.now();
-      _connectedCtrl.add(true);
-      _ch!.stream.listen(_onMessage, onDone: _onClose, onError: _onError);
-      _startHeartbeat();
-      appLog.info('ws', 'connected');
-    } catch (e) {
-      appLog.warn('ws', 'connect failed: $e');
-      _scheduleReconnect();
+      final token = await AuthService.token();
+      if (token == null || token.isEmpty) return;
+      final deviceId = await AuthService.deviceId();
+      final endpoints = await ApiClient().webSocketEndpointCandidates();
+      if (endpoints.isEmpty) return;
+      final start = _endpointOffset % endpoints.length;
+
+      for (var attempt = 0; attempt < endpoints.length; attempt++) {
+        final endpointIndex = (start + attempt) % endpoints.length;
+        final endpoint = endpoints[endpointIndex];
+        final url = endpoint.replace(
+          queryParameters: {'token': token, 'device_id': deviceId},
+        );
+        final httpClient = ProxyHttpClient.create();
+        _connectingHttpClient = httpClient;
+        try {
+          final socket = await WebSocket.connect(
+            url.toString(),
+            customClient: httpClient,
+          ).timeout(const Duration(seconds: 15));
+          if (_restartRequested) {
+            httpClient.close(force: true);
+            _connectingHttpClient = null;
+            break;
+          }
+          _connectingHttpClient = null;
+          _socketHttpClient = httpClient;
+          _endpointOffset = endpointIndex;
+          _ch = IOWebSocketChannel(socket);
+          _reconnectDelay = 1000;
+          _lastRecv = DateTime.now();
+          _connectedCtrl.add(true);
+          _ch!.stream.listen(_onMessage, onDone: _onClose, onError: _onError);
+          _startHeartbeat();
+          appLog.info('ws', 'connected host=${endpoint.host}');
+          return;
+        } catch (_) {
+          httpClient.close(force: true);
+          if (identical(_connectingHttpClient, httpClient)) {
+            _connectingHttpClient = null;
+          }
+          appLog.warn('ws', 'connect failed host=${endpoint.host}');
+          if (_restartRequested) break;
+        }
+      }
+      if (!_restartRequested) {
+        _endpointOffset = (start + 1) % endpoints.length;
+        _scheduleReconnect();
+      }
+    } catch (error) {
+      appLog.warn('ws', 'connection setup failed: ${error.runtimeType}');
+      if (!_restartRequested) _scheduleReconnect();
+    } finally {
+      _connecting = false;
+      if (_restartRequested && !_authFail) {
+        _restartRequested = false;
+        _reconnectTimer?.cancel();
+        _reconnectTimer = null;
+        unawaited(connect());
+      }
     }
+  }
+
+  /// Reopens the socket after the app proxy or Android VPN route changes.
+  void reconnectForNetworkChange() {
+    if (_authFail) return;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _reconnectDelay = 1000;
+    if (_connecting) _restartRequested = true;
+    _cleanup();
+    if (!_connecting) unawaited(connect());
   }
 
   void _startHeartbeat() {
@@ -147,7 +207,9 @@ class WsClient {
   }
 
   void _onClose() {
-    final code = _ch?.closeCode;
+    final channel = _ch;
+    if (channel == null) return;
+    final code = channel.closeCode;
     appLog.info('ws', 'closed code=$code');
     if (code == 4401 || code == 4403) {
       unawaited(
@@ -156,27 +218,33 @@ class WsClient {
         ),
       );
       _authFail = true;
-      _connectedCtrl.add(false);
+      _cleanup();
       return;
     }
     if (code == 1008) {
       _authFail = true;
-      _connectedCtrl.add(false);
+      _cleanup();
       return;
     }
+    _advanceEndpoint();
     _cleanup();
     _scheduleReconnect();
   }
 
-  void _onError(dynamic e) {
-    appLog.warn('ws', 'error: $e');
+  void _onError(dynamic _) {
+    appLog.warn('ws', 'socket error');
     _kill('error');
   }
 
   void _kill(String reason) {
     appLog.warn('ws', 'kill: $reason');
+    _advanceEndpoint();
     _cleanup();
     _scheduleReconnect();
+  }
+
+  void _advanceEndpoint() {
+    _endpointOffset++;
   }
 
   void _cleanup() {
@@ -186,6 +254,10 @@ class WsClient {
       _ch?.sink.close(wsstatus.normalClosure);
     } catch (_) {}
     _ch = null;
+    _socketHttpClient?.close(force: true);
+    _socketHttpClient = null;
+    _connectingHttpClient?.close(force: true);
+    _connectingHttpClient = null;
     _connectedCtrl.add(false);
     // Не оставляем RPC висеть до таймаута — соединение уже мертво, дальше
     // reconnect может занять секунды, а caller ждёт ответ прямо сейчас.

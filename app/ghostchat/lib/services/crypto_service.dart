@@ -20,6 +20,10 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:pointycastle/export.dart';
 import '../core/local/app_logger.dart';
 
+class ServerKeyMismatchException implements Exception {
+  const ServerKeyMismatchException();
+}
+
 class CryptoService {
   CryptoService._();
   static final CryptoService instance = CryptoService._();
@@ -421,6 +425,7 @@ class CryptoService {
     String? account,
     String? keyKdf,
     String? keyFormat,
+    String? expectedPublicKeyB64,
   }) async {
     final normalized = _requireAccount(account);
     if (password.isEmpty) throw ArgumentError('password must not be empty');
@@ -473,6 +478,12 @@ class CryptoService {
     final d = _decodeBigInt(_pkcs8ToD(pkcs8));
     _validatePrivateScalar(d);
     final pubRaw = _pubRawFromD(d);
+    if (expectedPublicKeyB64 != null &&
+        base64Encode(pubRaw) != expectedPublicKeyB64) {
+      // Verify the account binding before mutating either memory or secure
+      // storage. A stale/corrupt server blob must not replace a good local key.
+      throw const ServerKeyMismatchException();
+    }
     _privD = d;
     _myPubRaw = pubRaw;
     _myPub = _rawToPub(pubRaw);

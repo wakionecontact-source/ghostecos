@@ -73,7 +73,8 @@ class _UnifiedChatEntry {
       : DateTime.fromMillisecondsSinceEpoch((room!.updatedAt ?? 0) * 1000);
 }
 
-class _ChatListScreenState extends State<ChatListScreen> {
+class _ChatListScreenState extends State<ChatListScreen>
+    with WidgetsBindingObserver {
   // static — переживает пересоздание виджета при каждом возврате на вкладку
   // Чатов, второй раз в рамках сессии SharedPreferences грузить не надо.
   static SharedPreferences? _cachedPrefs;
@@ -90,6 +91,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
   final _searchFocus = FocusNode();
   Timer? _debounce;
   Timer? _botStatusTimer;
+  Timer? _archiveExpiryTimer;
+  bool _checkingArchiveExpiry = false;
+  final Set<String> _promptedExpiredArchives = <String>{};
   SearchOutcome? _searchResults;
   RoomPreview? _roomLinkResult;
   RoomLinkTarget? _roomLinkTarget;
@@ -101,6 +105,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     ChatHeaderSettings.instance.modeNotifier.addListener(
       _onChatHeaderTitleChanged,
     );
@@ -111,6 +116,12 @@ class _ChatListScreenState extends State<ChatListScreen> {
       _onRemoteSettingsChanged,
     );
     AppSecurityStore.instance.revision.addListener(_onSecurityChanged);
+    _archiveExpiryTimer = Timer.periodic(const Duration(minutes: 15), (_) {
+      if (_initialized &&
+          WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+        unawaited(_expireArchivedChats());
+      }
+    });
     unawaited(ChatHeaderSettings.instance.load());
     _init();
   }
@@ -131,6 +142,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
     if (mounted) setState(() {});
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _initialized) {
+      unawaited(_expireArchivedChats());
+    }
+  }
+
   bool get _compactChatList =>
       RemoteSettingsService.instance.valueForIds(
         'appearance.chat_list',
@@ -147,13 +165,14 @@ class _ChatListScreenState extends State<ChatListScreen> {
     if (!widget.isGuest) unawaited(RoomService.instance.startSessionSync());
     _prefs ??= _cachedPrefs ??= await SharedPreferences.getInstance();
     await DialogSettingsStore.instance.load();
-    await _expireArchivedChats();
     if (mounted) {
       setState(() => _initialized = true);
       if (_searchCtrl.text.trim().isNotEmpty) {
         _onSearchChanged(_searchCtrl.text);
       }
     }
+    await WidgetsBinding.instance.endOfFrame;
+    if (mounted) await _expireArchivedChats();
     unawaited(_warmBotBadges());
     unawaited(_warmChatProfiles());
     _botStatusTimer ??= Timer.periodic(
@@ -163,39 +182,187 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   Future<void> _expireArchivedChats() async {
-    final store = ChatOrganizationStore.instance;
-    final expired = await store.expireArchived(
-      canExpire: store.canSeeChatInActiveScenario,
-    );
-    if (expired.isEmpty) return;
-    for (final chatId in expired) {
-      try {
-        if (chatId.startsWith(roomDialogPrefix)) {
-          // Room history is server-owned and must not be erased by a local
-          // archive policy. The organization entry is still removed.
+    if (_checkingArchiveExpiry) return;
+    _checkingArchiveExpiry = true;
+    try {
+      final store = ChatOrganizationStore.instance;
+      final candidates = store
+          .expiredArchivedChatIds(canExpire: store.canSeeChatInActiveScenario)
+          .where((id) => !_promptedExpiredArchives.contains(id))
+          .toList();
+      if (candidates.isEmpty) return;
+      final choices = <String, String>{};
+      for (final chatId in candidates) {
+        final isLocalOnly =
+            chatId.startsWith(roomDialogPrefix) ||
+            chatId.startsWith(lanDialogPrefix) ||
+            chatId.startsWith(bookmarkDialogPrefix);
+        if (isLocalOnly) {
+          choices[chatId] = 'local';
           continue;
         }
-        if (chatId.startsWith(lanDialogPrefix)) {
-          await LanChatStore.instance.clearChat(
-            chatId.substring(lanDialogPrefix.length),
-          );
-        } else if (chatId.startsWith(bookmarkDialogPrefix)) {
-          await BookmarkStore.instance.clearBookmark(
-            chatId.substring(bookmarkDialogPrefix.length),
-          );
-        } else {
-          await ChatRepo.instance.clearChat(chatId);
-          if (store.archiveDeleteMode == 'contact') {
-            await ContactService.instance.remove(chatId);
-          }
+        final choice = await _chooseExpiredArchiveAction(chatId);
+        if (!mounted) return;
+        if (choice == 'local' || choice == 'contact') choices[chatId] = choice!;
+        if (choice == 'keep' || choice == null) {
+          _promptedExpiredArchives.add(chatId);
         }
-      } catch (_) {
-        appLog.warn(
-          'chat_list',
-          'Не удалось очистить просроченный архивный чат',
-        );
       }
+      final expired = await store.expireArchived(
+        canExpire: (chatId) =>
+            choices.containsKey(chatId) &&
+            store.canSeeChatInActiveScenario(chatId),
+      );
+      if (expired.isEmpty) return;
+      for (final chatId in expired) {
+        try {
+          if (chatId.startsWith(roomDialogPrefix)) {
+            // Room history is server-owned and must not be erased by a local
+            // archive policy. The organization entry is still removed.
+            continue;
+          }
+          if (chatId.startsWith(lanDialogPrefix)) {
+            await LanChatStore.instance.clearChat(
+              chatId.substring(lanDialogPrefix.length),
+            );
+          } else if (chatId.startsWith(bookmarkDialogPrefix)) {
+            await BookmarkStore.instance.clearBookmark(
+              chatId.substring(bookmarkDialogPrefix.length),
+            );
+          } else {
+            await ChatRepo.instance.clearChat(chatId);
+            if (choices[chatId] == 'contact') {
+              await ContactService.instance.remove(chatId);
+            }
+          }
+        } catch (_) {
+          appLog.warn(
+            'chat_list',
+            'Не удалось очистить просроченный архивный чат',
+          );
+        }
+      }
+    } finally {
+      _checkingArchiveExpiry = false;
     }
+  }
+
+  Future<void> _editArchivePolicy() async {
+    final store = ChatOrganizationStore.instance;
+    int? days = store.archiveRetentionDays;
+    var anchor = store.archiveAnchor;
+    final result = await showDialog<({int? days, String anchor})>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: GE.bgDeep,
+          title: const Text('Срок хранения архива'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Удалять архивированные переписки через:'),
+              DropdownButton<int?>(
+                value: days,
+                isExpanded: true,
+                items: [
+                  const DropdownMenuItem<int?>(
+                    value: null,
+                    child: Text('Бессрочно'),
+                  ),
+                  for (final value in [1, 3, 7, 30, 90])
+                    DropdownMenuItem<int?>(
+                      value: value,
+                      child: Text('$value ${value == 1 ? 'день' : 'дней'}'),
+                    ),
+                ],
+                onChanged: (value) => setDialogState(() => days = value),
+              ),
+              const SizedBox(height: 8),
+              const Text('Считать срок от:'),
+              DropdownButton<String>(
+                value: anchor,
+                isExpanded: true,
+                items: const [
+                  DropdownMenuItem(
+                    value: 'archived_at',
+                    child: Text('Момента архивации'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'activity',
+                    child: Text('Последней активности'),
+                  ),
+                ],
+                onChanged: (value) =>
+                    setDialogState(() => anchor = value ?? anchor),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'По истечении срока приложение предложит удалить переписку или контакт.',
+                style: TextStyle(color: GE.sub, fontSize: 12),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, (days: days, anchor: anchor)),
+              child: const Text('Сохранить'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null) return;
+    await store.setArchivePolicy(
+      autoDelete: result.days != null,
+      retentionDays: result.days,
+      anchor: result.anchor,
+      deleteMode: store.archiveDeleteMode,
+    );
+  }
+
+  Future<String?> _chooseExpiredArchiveAction(String chatId) {
+    final username = chatId.trim().replaceFirst(RegExp(r'^@'), '');
+    final defaultMode = ChatOrganizationStore.instance.archiveDeleteMode;
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: GE.bgDeep,
+        title: const Text('Срок архива истёк'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Что сделать с перепиской @$username?',
+              style: TextStyle(color: GE.text),
+            ),
+            const SizedBox(height: 14),
+            OutlinedButton(
+              onPressed: () => Navigator.pop(dialogContext, 'local'),
+              child: const Text('Удалить только переписку'),
+            ),
+            FilledButton(
+              autofocus: defaultMode == 'contact',
+              onPressed: () => Navigator.pop(dialogContext, 'contact'),
+              child: const Text('Удалить контакт и переписку'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, 'keep'),
+            child: const Text('Оставить в архиве'),
+          ),
+        ],
+      ),
+    );
   }
 
   Map<String, dynamic>? _profileForDialog(String username) =>
@@ -522,8 +689,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _debounce?.cancel();
     _botStatusTimer?.cancel();
+    _archiveExpiryTimer?.cancel();
     _searchCtrl.dispose();
     _searchFocus.dispose();
     ChatHeaderSettings.instance.modeNotifier.removeListener(
@@ -1128,7 +1297,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
           child: ListView.separated(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
             scrollDirection: Axis.horizontal,
-            itemCount: folders.length + 1,
+            itemCount: folders.length + 2,
             separatorBuilder: (_, _) => const SizedBox(width: 7),
             itemBuilder: (context, index) {
               if (index == folders.length) {
@@ -1136,6 +1305,37 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   tooltip: 'Новая группа чатов',
                   onPressed: _createChatFolder,
                   icon: Icon(CupertinoIcons.plus, color: GE.primary),
+                );
+              }
+              if (index == folders.length + 1) {
+                return PopupMenuButton<String>(
+                  tooltip: 'Сортировка и архив',
+                  initialValue: store.chatSortMode,
+                  onSelected: (mode) {
+                    if (mode == 'archive_policy') {
+                      unawaited(_editArchivePolicy());
+                    } else {
+                      unawaited(store.setChatSortMode(mode));
+                    }
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(
+                      value: 'activity',
+                      child: Text('По последнему сообщению'),
+                    ),
+                    PopupMenuItem(value: 'manual', child: Text('Вручную')),
+                    PopupMenuDivider(),
+                    PopupMenuItem(
+                      value: 'archive_policy',
+                      child: Text('Настроить архив'),
+                    ),
+                  ],
+                  icon: Icon(
+                    store.chatSortMode == 'manual'
+                        ? Icons.sort
+                        : CupertinoIcons.arrow_up_arrow_down,
+                    color: GE.primary,
+                  ),
                 );
               }
               final item = folders[index];
@@ -1286,6 +1486,33 @@ class _ChatListScreenState extends State<ChatListScreen> {
                       .map(_UnifiedChatEntry.dialog),
                   ...rest,
                 ];
+                if (organization.chatSortMode == 'manual') {
+                  final savedOrder = organization.manualOrderFor(activeFolder);
+                  final order = {
+                    for (var index = 0; index < savedOrder.length; index++)
+                      savedOrder[index]: index,
+                  };
+                  all.sort((a, b) {
+                    final pin =
+                        (DialogSettingsStore.instance.isPinned(b.key) ? 1 : 0)
+                            .compareTo(
+                              DialogSettingsStore.instance.isPinned(a.key)
+                                  ? 1
+                                  : 0,
+                            );
+                    if (pin != 0) return pin;
+                    final aOrder = order[a.key] ?? 0x7fffffff;
+                    final bOrder = order[b.key] ?? 0x7fffffff;
+                    if (aOrder != bOrder) return aOrder.compareTo(bOrder);
+                    final aLast = a.room == null
+                        ? a.lastAt
+                        : RoomService.instance.lastActivityFor(a.room!);
+                    final bLast = b.room == null
+                        ? b.lastAt
+                        : RoomService.instance.lastActivityFor(b.room!);
+                    return bLast.compareTo(aLast);
+                  });
+                }
                 final folderRows = activeFolder == 'archive'
                     ? const <ChatOrganizationFolder>[]
                     : organization.visibleFolders
@@ -1318,73 +1545,134 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   return total;
                 }
 
+                Widget buildChatEntry(_UnifiedChatEntry entry) {
+                  final room = entry.room;
+                  if (room != null) {
+                    final key = roomDialogKey(room);
+                    return _RoomDialogTile(
+                      room,
+                      selected: _selectedChats.contains(key),
+                      selectionMode: _selectedChats.isNotEmpty,
+                      onSelect: () => _toggleChatSelection(key),
+                      onReturn: _refresh,
+                    );
+                  }
+                  final d = entry.dialog!;
+                  if (d.username.startsWith(bookmarkDialogPrefix)) {
+                    return _BookmarkDialogTile(
+                      d,
+                      selected: _selectedChats.contains(d.username),
+                      selectionMode: _selectedChats.isNotEmpty,
+                      onSelect: () => _toggleChatSelection(d.username),
+                      onReturn: _refresh,
+                    );
+                  }
+                  if (d.username.startsWith(lanDialogPrefix)) {
+                    return _LanDialogTile(
+                      d,
+                      selected: _selectedChats.contains(d.username),
+                      selectionMode: _selectedChats.isNotEmpty,
+                      onSelect: () => _toggleChatSelection(d.username),
+                      onReturn: _refresh,
+                    );
+                  }
+                  return _DialogTile(
+                    d,
+                    profile: _profileForDialog(d.username),
+                    prefs: _prefs,
+                    compact: _compactChatList,
+                    selected: _selectedChats.contains(d.username),
+                    selectionMode: _selectedChats.isNotEmpty,
+                    onSelect: () => _toggleChatSelection(d.username),
+                    onReturn: _refresh,
+                  );
+                }
+
+                Widget buildRow(int index) {
+                  if (index < folderRows.length) {
+                    final folder = folderRows[index];
+                    return _ChatFolderTile(
+                      folder: folder,
+                      unread: folderUnread(folder),
+                      onTap: () => organization.select(folder.id),
+                      onLongPress: () => _openFolderMenu(folder),
+                    );
+                  }
+                  return buildChatEntry(all[index - folderRows.length]);
+                }
+
+                final list = organization.chatSortMode == 'manual'
+                    ? ReorderableListView.builder(
+                        buildDefaultDragHandles: false,
+                        padding: EdgeInsets.fromLTRB(
+                          8,
+                          4,
+                          8,
+                          120 + MediaQuery.of(context).padding.bottom,
+                        ),
+                        itemCount: folderRows.length + all.length,
+                        itemBuilder: (context, index) {
+                          if (index < folderRows.length) {
+                            final folder = folderRows[index];
+                            return KeyedSubtree(
+                              key: ValueKey('folder:${folder.id}'),
+                              child: Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: buildRow(index),
+                              ),
+                            );
+                          }
+                          final chatIndex = index - folderRows.length;
+                          final entry = all[chatIndex];
+                          return ReorderableDelayedDragStartListener(
+                            key: ValueKey('chat:${entry.key}'),
+                            index: index,
+                            child: Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: buildChatEntry(entry),
+                            ),
+                          );
+                        },
+                        onReorder: (oldIndex, newIndex) {
+                          if (oldIndex < folderRows.length ||
+                              newIndex < folderRows.length) {
+                            return;
+                          }
+                          if (newIndex > oldIndex) newIndex--;
+                          final oldChatIndex = oldIndex - folderRows.length;
+                          final newChatIndex = newIndex - folderRows.length;
+                          if (oldChatIndex < 0 ||
+                              oldChatIndex >= all.length ||
+                              newChatIndex < 0 ||
+                              newChatIndex >= all.length) {
+                            return;
+                          }
+                          final order = all.map((entry) => entry.key).toList();
+                          final moved = order.removeAt(oldChatIndex);
+                          order.insert(newChatIndex, moved);
+                          unawaited(
+                            organization.setManualOrder(activeFolder, order),
+                          );
+                        },
+                      )
+                    : ListView.separated(
+                        padding: EdgeInsets.fromLTRB(
+                          8,
+                          4,
+                          8,
+                          120 + MediaQuery.of(context).padding.bottom,
+                        ),
+                        itemCount: folderRows.length + all.length,
+                        separatorBuilder: (_, _) => const SizedBox(height: 4),
+                        itemBuilder: (_, index) => buildRow(index),
+                      );
+
                 return RefreshIndicator(
                   color: GE.primary,
                   onRefresh: widget.isGuest
                       ? () async {}
                       : ChatRepo.instance.fetchPending,
-                  child: ListView.separated(
-                    padding: EdgeInsets.fromLTRB(
-                      8,
-                      4,
-                      8,
-                      120 + MediaQuery.of(context).padding.bottom,
-                    ),
-                    itemCount: folderRows.length + all.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 4),
-                    itemBuilder: (_, i) {
-                      if (i < folderRows.length) {
-                        final folder = folderRows[i];
-                        return _ChatFolderTile(
-                          folder: folder,
-                          unread: folderUnread(folder),
-                          onTap: () => organization.select(folder.id),
-                          onLongPress: () => _openFolderMenu(folder),
-                        );
-                      }
-                      final entry = all[i - folderRows.length];
-                      final room = entry.room;
-                      if (room != null) {
-                        final key = roomDialogKey(room);
-                        return _RoomDialogTile(
-                          room,
-                          selected: _selectedChats.contains(key),
-                          selectionMode: _selectedChats.isNotEmpty,
-                          onSelect: () => _toggleChatSelection(key),
-                          onReturn: _refresh,
-                        );
-                      }
-                      final d = entry.dialog!;
-                      if (d.username.startsWith(bookmarkDialogPrefix)) {
-                        return _BookmarkDialogTile(
-                          d,
-                          selected: _selectedChats.contains(d.username),
-                          selectionMode: _selectedChats.isNotEmpty,
-                          onSelect: () => _toggleChatSelection(d.username),
-                          onReturn: _refresh,
-                        );
-                      }
-                      if (d.username.startsWith(lanDialogPrefix)) {
-                        return _LanDialogTile(
-                          d,
-                          selected: _selectedChats.contains(d.username),
-                          selectionMode: _selectedChats.isNotEmpty,
-                          onSelect: () => _toggleChatSelection(d.username),
-                          onReturn: _refresh,
-                        );
-                      }
-                      return _DialogTile(
-                        d,
-                        profile: _profileForDialog(d.username),
-                        prefs: _prefs,
-                        compact: _compactChatList,
-                        selected: _selectedChats.contains(d.username),
-                        selectionMode: _selectedChats.isNotEmpty,
-                        onSelect: () => _toggleChatSelection(d.username),
-                        onReturn: _refresh,
-                      );
-                    },
-                  ),
+                  child: list,
                 );
               },
             );
@@ -2116,6 +2404,37 @@ class _DialogTile extends StatelessWidget {
       profile?['is_bot'] == true ||
       ChatRepo.instance.isPeerBotCached(d.username);
 
+  String? get _dailyStatusEmoji {
+    if ((profile?['daily_status'] as String?)?.isNotEmpty != true) return null;
+    final isEternal = profile?['daily_status_eternal'] == true;
+    final rawExpiry = profile?['daily_status_expires_at'];
+    final rawSetAt = profile?['daily_status_set_at'];
+    final setAt = rawSetAt is num
+        ? rawSetAt.toInt()
+        : int.tryParse(rawSetAt?.toString() ?? '');
+    final expiresAt = rawExpiry is num
+        ? rawExpiry.toInt()
+        : setAt == null
+        ? null
+        : setAt + 86400;
+    if (!isEternal &&
+        (expiresAt == null ||
+            DateTime.now().millisecondsSinceEpoch ~/ 1000 >= expiresAt)) {
+      return null;
+    }
+    return switch (profile?['daily_status_mood']) {
+      'joy' => '😊',
+      'sad' => '😢',
+      'fire' => '🔥',
+      'love' => '❤️',
+      'tired' => '😴',
+      'chill' => '🧊',
+      'angry' => '😠',
+      'surprised' => '😮',
+      _ => null,
+    };
+  }
+
   bool get _isPinned => DialogSettingsStore.instance.isPinned(d.username);
   bool get _isMuted => NotificationSettings.instance.isMuted(d.username);
 
@@ -2339,6 +2658,7 @@ class _DialogTile extends StatelessWidget {
     final hasUnread = d.unread > 0;
     final pinned = _isPinned;
     final muted = _isMuted;
+    final statusEmoji = _dailyStatusEmoji;
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 6, vertical: compact ? 3 : 5),
       child: GlassCard(
@@ -2491,6 +2811,14 @@ class _DialogTile extends StatelessWidget {
                                 ),
                               ),
                             ),
+                            if (statusEmoji != null)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 4),
+                                child: Text(
+                                  statusEmoji,
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                              ),
                             if (pinned)
                               Padding(
                                 padding: const EdgeInsets.only(left: 5),

@@ -1,0 +1,13 @@
+flutter_vless_android
+
+Copyright (c) 2024-2026 13FOX Studio / tfox.dev.
+
+This package is the Android implementation of the official flutter_vless
+project maintained by 13FOX Studio.
+
+Official project: https://github.com/XIIIFOX/flutter_vless
+Official publisher: https://pub.dev/publishers/tfox.dev
+Website: https://tfox.dev
+
+Redistributions, forks, and derived packages must preserve the copyright notice
+and MIT license notice where required by the license.

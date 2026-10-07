@@ -24,10 +24,12 @@ class LogsScreen extends StatefulWidget {
 }
 
 class _LogsScreenState extends State<LogsScreen> {
-  bool _closingForSafeMode = false;
+  bool _closingForScopeChange = false;
+  String? _scopeIdAtOpen;
   final _scrollCtrl = ScrollController();
   final _searchCtrl = TextEditingController();
   StreamSubscription<LogEntry>? _sub;
+  StreamSubscription<void>? _privacySub;
   List<LogEntry> _logs = [];
   String _filter = 'all';
   String _searchQuery = '';
@@ -99,10 +101,15 @@ class _LogsScreenState extends State<LogsScreen> {
     super.initState();
     AppSecurityStore.instance.revision.addListener(_onSecurityChanged);
     _searchCtrl.addListener(_onSearchChanged);
+    _scopeIdAtOpen = AppSecurityStore.instance.activeScenarioId;
     _logs = List.of(appLog.entries);
     if (widget.focusLogId != null) _showDebug = true;
     _sub = appLog.onLog.listen((entry) {
-      if (!mounted) return;
+      if (!mounted ||
+          !appLog.isVisibleInCurrentContext(entry) ||
+          entry.protectedScopeId != _scopeIdAtOpen) {
+        return;
+      }
       setState(() => _logs.add(entry));
       if (_autoScroll) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -112,30 +119,35 @@ class _LogsScreenState extends State<LogsScreen> {
         });
       }
     });
+    _privacySub = appLog.onPrivacyChanged.listen((_) {
+      if (!mounted) return;
+      setState(() => _logs = List.of(appLog.entries));
+    });
     if (widget.focusLogId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _revealFocusedLog());
     }
   }
 
   void _onSecurityChanged() {
-    if (!mounted || !AppSecurityStore.instance.isInSafeMode) return;
-    _closeForSafeMode();
+    if (!mounted ||
+        AppSecurityStore.instance.activeScenarioId == _scopeIdAtOpen) {
+      return;
+    }
+    _closeForScopeChange();
   }
 
-  void _closeForSafeMode() {
-    if (_closingForSafeMode) return;
-    _closingForSafeMode = true;
+  void _closeForScopeChange() {
+    if (_closingForScopeChange) return;
+    _closingForScopeChange = true;
+    _logs.clear();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (!AppSecurityStore.instance.isInSafeMode) {
-        _closingForSafeMode = false;
-        return;
-      }
       final navigator = Navigator.of(context);
       if (navigator.canPop()) {
         navigator.pop();
       } else {
-        _closingForSafeMode = false;
+        setState(() {});
+        _closingForScopeChange = false;
       }
     });
   }
@@ -144,6 +156,7 @@ class _LogsScreenState extends State<LogsScreen> {
   void dispose() {
     AppSecurityStore.instance.revision.removeListener(_onSecurityChanged);
     _sub?.cancel();
+    _privacySub?.cancel();
     _highlightTimer?.cancel();
     _searchCtrl
       ..removeListener(_onSearchChanged)
@@ -446,10 +459,6 @@ class _LogsScreenState extends State<LogsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (AppSecurityStore.instance.isInSafeMode) {
-      _closeForSafeMode();
-      return const SizedBox.shrink();
-    }
     final filtered = _filtered;
     return MeshBackground(
       child: Scaffold(

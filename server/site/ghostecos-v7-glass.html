@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GhostEcos — приватная экосистема</title>
+<meta name="description" content="GhostEcos — экосистема независимых приватных продуктов: мессенджер GhostChat, социальная сеть GhostSocial и собственная экономика. Сквозное шифрование, ноль логов.">
+<style>
+  :root {
+    --violet:#8b5cf6; --iris:#a78bfa;
+    --sans:-apple-system,"SF Pro Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono",Monaco,Consolas,monospace;
+  }
+  *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:var(--sans);font-size:16px;line-height:1.5;overflow-x:hidden;
+    -webkit-font-smoothing:antialiased;user-select:none;
+    background:#000;color:#fff;
+  }
+  a{color:inherit;text-decoration:none}
+  ::selection{background:var(--violet);color:#fff}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 32px}
+
+  /* ══════ ЖИВОЙ ФОН — медленные плавающие ауры ══════ */
+  .bg{position:fixed;inset:0;z-index:-2}
+  .bg .orb{position:absolute;border-radius:50%;filter:blur(90px);will-change:transform}
+  .orb1{width:70vw;height:60vh;background:#4c1d95;top:-25vh;left:-15vw;animation:drift 28s ease-in-out infinite}
+  .orb2{width:60vw;height:50vh;background:#6d28d9;bottom:-20vh;right:-10vw;animation:drift 32s ease-in-out infinite reverse}
+  .orb3{width:50vw;height:40vh;background:#8b5cf6;top:45%;left:50%;animation:drift 36s ease-in-out infinite}
+  @keyframes drift{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(8vw,4vh) scale(1.15)}66%{transform:translate(-4vw,-6vh) scale(.9)}}
+  .grain{position:fixed;inset:0;z-index:2;pointer-events:none;opacity:.04;mix-blend-mode:overlay}
+
+  /* ══════ NAV — жидкое стекло ══════ */
+  header{
+    position:fixed;top:0;left:0;right:0;z-index:50;
+    background:rgba(0,0,0,0);
+    backdrop-filter:blur(32px) saturate(180%);
+    -webkit-backdrop-filter:blur(32px) saturate(180%);
+    border-bottom:0.5px solid rgba(255,255,255,.14);
+    box-shadow:
+      inset 0 0.5px 0 rgba(255,255,255,.18),
+      0 2px 24px rgba(0,0,0,.4);
+  }
+  .nav{display:flex;align-items:center;justify-content:space-between;height:68px}
+  .brand{display:flex;align-items:center;gap:12px;font-weight:700;font-size:17px;letter-spacing:-.02em}
+  .brand .ava{width:32px;height:32px;border-radius:10px;box-shadow:0 0 20px rgba(139,92,246,.5)}
+  .brand em{font-style:normal;color:var(--iris)}
+  .nav-links{display:flex;gap:28px}
+  .nav-links a{font-size:13px;font-weight:500;color:rgba(255,255,255,.65);transition:color .2s;letter-spacing:-.01em}
+  .nav-links a:hover{color:#fff}
+
+  /* nav-cta — pill liquid glass */
+  .nav-cta{
+    font-size:13px;font-weight:600;letter-spacing:-.01em;
+    padding:9px 18px;border-radius:999px;color:#fff;
+    position:relative;isolation:isolate;
+    background:transparent;
+    backdrop-filter:blur(12px) saturate(160%) brightness(1.08);
+    -webkit-backdrop-filter:blur(12px) saturate(160%) brightness(1.08);
+    border:1px solid rgba(255,255,255,.24);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.45),
+      inset 0 -1px 0 rgba(139,92,246,.25),
+      0 4px 16px rgba(0,0,0,.3);
+    transition:transform .2s,box-shadow .2s;
+  }
+  .nav-cta::after{
+    content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:1;
+    background:linear-gradient(180deg,rgba(255,255,255,.35) 0%,rgba(255,255,255,.04) 35%,transparent 55%,rgba(139,92,246,.12) 100%);
+  }
+  .nav-cta:hover{transform:translateY(-1px);box-shadow:inset 0 1px 0 rgba(255,255,255,.5),0 8px 28px rgba(139,92,246,.4)}
+  .nav-cta>span{position:relative;z-index:2}
+
+  /* ══════ HERO ══════ */
+  .hero{min-height:100vh;display:flex;align-items:center;padding:130px 0 80px;position:relative;z-index:3}
+  .hero-grid{display:grid;grid-template-columns:1fr .9fr;gap:50px;align-items:center}
+
+  .badge{
+    display:inline-flex;align-items:center;gap:8px;margin-bottom:24px;
+    font-size:12px;font-weight:600;letter-spacing:.04em;color:var(--iris);
+    padding:6px 14px;border-radius:999px;
+    background:transparent;
+    backdrop-filter:blur(8px) saturate(140%);
+    -webkit-backdrop-filter:blur(8px) saturate(140%);
+    border:1px solid rgba(167,139,250,.35);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.2);
+  }
+  .badge .dot{width:5px;height:5px;border-radius:50%;background:var(--iris);animation:blink 2.4s infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+  h1{font-size:clamp(44px,6.6vw,82px);font-weight:800;line-height:1.02;letter-spacing:-.04em}
+  h1 .grad{
+    background:linear-gradient(100deg,#cbbdfe 0%,var(--iris) 30%,#f0e6ff 55%,var(--iris) 80%);
+    background-size:200% auto;-webkit-background-clip:text;background-clip:text;color:transparent;
+    animation:shine 7s linear infinite;
+  }
+  @keyframes shine{to{background-position:200% 0}}
+  .sub{margin-top:24px;max-width:500px;font-size:17px;line-height:1.7;color:rgba(255,255,255,.6)}
+  .cta-row{display:flex;gap:12px;margin-top:34px;flex-wrap:wrap}
+
+  /* кнопки — liquid glass pill */
+  .btn{
+    position:relative;isolation:isolate;
+    display:inline-flex;align-items:center;gap:8px;
+    font-weight:600;font-size:14px;letter-spacing:-.01em;
+    padding:14px 26px;border-radius:999px;cursor:pointer;
+    background:transparent;
+    backdrop-filter:blur(14px) saturate(160%) brightness(1.06);
+    -webkit-backdrop-filter:blur(14px) saturate(160%) brightness(1.06);
+    border:1px solid rgba(255,255,255,.24);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.50),
+      inset 0 -1px 0 rgba(255,255,255,.08),
+      0 6px 24px rgba(0,0,0,.35);
+    overflow:hidden;
+    transition:transform .2s cubic-bezier(.34,1.56,.64,1),
+               box-shadow .25s, border-color .25s;
+  }
+  .btn::after{
+    content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:1;
+    background:linear-gradient(180deg,rgba(255,255,255,.48) 0%,rgba(255,255,255,.06) 30%,transparent 55%,rgba(139,92,246,.08) 100%);
+  }
+  .btn:hover{transform:translateY(-2px);border-color:rgba(139,92,246,.6);box-shadow:inset 0 1px 0 rgba(255,255,255,.55),0 14px 40px rgba(139,92,246,.35)}
+  .btn>span{position:relative;z-index:2}
+  .btn.fill>span{color:var(--iris);font-weight:700}
+  .btn.primary>span{color:#fff;font-weight:700}
+  .btn.primary{border-color:rgba(167,139,250,.55);box-shadow:inset 0 1px 0 rgba(255,255,255,.55),inset 0 -1px 0 rgba(139,92,246,.35),0 6px 28px rgba(139,92,246,.35)}
+  .btn.primary:hover{border-color:rgba(167,139,250,.8);box-shadow:inset 0 1px 0 rgba(255,255,255,.6),0 18px 48px rgba(139,92,246,.5)}
+
+  /* ══════ ПРИЗРАК В СТЕКЛЯННОЙ СФЕРЕ ══════ */
+  .glass-sphere{
+    position:relative;width:100%;max-width:420px;aspect-ratio:1;margin:0 auto;
+    display:flex;align-items:center;justify-content:center;
+  }
+  /* слой сильной рефракции по краям */
+  .sphere-bg{
+    position:absolute;inset:0;border-radius:50%;
+    backdrop-filter:blur(60px) saturate(200%) brightness(1.1);
+    -webkit-backdrop-filter:blur(60px) saturate(200%) brightness(1.1);
+    border:1px solid rgba(255,255,255,.18);
+    box-shadow:
+      inset 0 2px 0 rgba(255,255,255,.35),
+      inset 0 -2px 0 rgba(255,255,255,.06),
+      inset 2px 0 0 rgba(255,255,255,.06),
+      inset -2px 0 0 rgba(255,255,255,.06),
+      0 20px 60px rgba(0,0,0,.5);
+    -webkit-mask:radial-gradient(ellipse 65% 65% at 50% 50%,transparent 0%,transparent 45%,#000 85%,#000 100%);
+            mask:radial-gradient(ellipse 65% 65% at 50% 50%,transparent 0%,transparent 45%,#000 85%,#000 100%);
+  }
+  .sphere-highlight{
+    position:absolute;inset:12px;border-radius:50%;pointer-events:none;z-index:3;
+    background:radial-gradient(ellipse 55% 40% at 30% 28%,rgba(255,255,255,.22),transparent 60%),
+               radial-gradient(ellipse 70% 60% at 70% 75%,rgba(139,92,246,.18),transparent 55%);
+    mix-blend-mode:screen;
+  }
+  .sphere-ghost{
+    position:relative;z-index:2;width:55%;animation:floaty 6s ease-in-out infinite;
+    filter:drop-shadow(0 20px 40px rgba(109,40,217,.45));
+  }
+  @keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-14px)}}
+
+  /* ══════ GLASS CARDS ══════ */
+  .glass-card{
+    position:relative;isolation:isolate;
+    background:transparent;
+    backdrop-filter:blur(22px) saturate(160%);
+    -webkit-backdrop-filter:blur(22px) saturate(160%);
+    border:1px solid rgba(255,255,255,.14);
+    border-radius:22px;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.28),
+      inset 0 -1px 0 rgba(255,255,255,.06),
+      inset 0 0 0 .5px rgba(255,255,255,.06),
+      0 12px 40px rgba(0,0,0,.45);
+  }
+  /* краевой blur — центр чистый, края размыты */
+  .glass-card::before{
+    content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:-1;
+    backdrop-filter:blur(44px) saturate(170%) brightness(1.04);
+    -webkit-backdrop-filter:blur(44px) saturate(170%) brightness(1.04);
+    -webkit-mask:radial-gradient(ellipse 72% 72% at 50% 50%,transparent 0%,transparent 50%,#000 92%,#000 100%);
+            mask:radial-gradient(ellipse 72% 72% at 50% 50%,transparent 0%,transparent 50%,#000 92%,#000 100%);
+  }
+  /* specular highlight */
+  .glass-card::after{
+    content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:1;
+    background:linear-gradient(170deg,rgba(255,255,255,.35) 0%,rgba(255,255,255,.05) 25%,transparent 55%,rgba(139,92,246,.06) 100%);
+    mix-blend-mode:overlay;
+  }
+  .glass-card>.inner{position:relative;z-index:2;padding:32px}
+  .glass-card:hover{box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 20px 56px rgba(0,0,0,.5),0 0 0 1px rgba(139,92,246,.2);}
+
+  /* ══════ SECTIONS ══════ */
+  section{padding:100px 0;position:relative;z-index:3}
+  .sec-tag{
+    font-size:13px;font-weight:600;letter-spacing:.08em;color:var(--iris);
+    text-transform:uppercase;margin-bottom:14px;
+  }
+  h2{font-size:clamp(32px,4.6vw,52px);font-weight:800;letter-spacing:-.04em;line-height:1.08}
+  .sec-note{max-width:440px;color:rgba(255,255,255,.5);font-size:15px;line-height:1.65;margin-top:10px}
+  .sec-head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:50px;flex-wrap:wrap}
+
+  .cards-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  .prod-title{font-size:24px;font-weight:800;letter-spacing:-.03em;margin-bottom:10px}
+  .prod-desc{color:rgba(255,255,255,.5);font-size:14.5px;line-height:1.65;margin-bottom:20px}
+  .prod-tags{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+  .prod-tags span{
+    font-size:12px;font-weight:500;color:rgba(255,255,255,.6);
+    padding:5px 10px;border-radius:999px;
+    background:transparent;
+    backdrop-filter:blur(6px);
+    -webkit-backdrop-filter:blur(6px);
+    border:1px solid rgba(255,255,255,.12);
+  }
+  .prod-link{font-size:14px;font-weight:600;color:var(--iris);display:inline-flex;align-items:center;gap:6px;transition:gap .2s}
+  .prod-link:hover{gap:12px}
+
+  .feat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+  .f-cell{text-align:center}
+  .f-num{font-size:32px;font-weight:800;color:var(--iris);margin-bottom:10px}
+  .f-cell h4{font-size:16px;font-weight:700;margin-bottom:6px}
+  .f-cell p{color:rgba(255,255,255,.45);font-size:13px;line-height:1.55}
+
+  /* ══════ GLASS PILLS (фильтры/чипы) ══════ */
+  .glass-pill{
+    position:relative;isolation:isolate;
+    display:inline-flex;align-items:center;gap:8px;
+    padding:10px 18px;border-radius:999px;
+    background:transparent;
+    backdrop-filter:blur(10px) saturate(150%) brightness(1.05);
+    -webkit-backdrop-filter:blur(10px) saturate(150%) brightness(1.05);
+    border:1px solid rgba(255,255,255,.2);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.45),
+      inset 0 -1px 0 rgba(255,255,255,.08),
+      inset 0 0 0 .5px rgba(255,255,255,.08),
+      0 4px 16px rgba(0,0,0,.28);
+    transition:transform .2s,box-shadow .2s;
+  }
+  .glass-pill::after{
+    content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:1;
+    background:linear-gradient(180deg,rgba(255,255,255,.38) 0%,rgba(255,255,255,.05) 35%,transparent 60%,rgba(139,92,246,.06) 100%);
+    mix-blend-mode:overlay;
+  }
+  .glass-pill>*{position:relative;z-index:2}
+  .glass-pill:hover{transform:translateY(-1px);box-shadow:inset 0 1px 0 rgba(255,255,255,.5),0 6px 20px rgba(139,92,246,.25)}
+  .glass-pill.active{border-color:rgba(139,92,246,.55);box-shadow:inset 0 1px 0 rgba(255,255,255,.5),0 0 22px rgba(139,92,246,.35)}
+
+  /* ══════ КОИН-СТЕКЛО ══════ */
+  .coin-glass{
+    position:relative;width:220px;height:220px;margin:0 auto;
+    background:transparent;
+    backdrop-filter:blur(18px) saturate(160%);
+    -webkit-backdrop-filter:blur(18px) saturate(160%);
+    border:1px solid rgba(255,255,255,.18);
+    border-radius:50%;
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:
+      inset 0 2px 0 rgba(255,255,255,.3),
+      inset 0 -2px 0 rgba(255,255,255,.06),
+      0 16px 48px rgba(0,0,0,.5);
+    animation:floaty 5s ease-in-out infinite;
+  }
+  .coin-glass::before{
+    content:'';position:absolute;inset:8px;border-radius:50%;
+    border:1px dashed rgba(167,139,250,.3);
+    animation:spin 30s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .coin-glass .val{
+    position:relative;z-index:1;font-size:38px;font-weight:800;font-style:italic;
+    background:linear-gradient(100deg,var(--iris),#e9d5ff);-webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .coin-glass::after{
+    content:'';position:absolute;inset:6px;border-radius:50%;pointer-events:none;
+    background:radial-gradient(ellipse 50% 35% at 30% 25%,rgba(255,255,255,.3),transparent 60%),
+               radial-gradient(ellipse 60% 50% at 75% 80%,rgba(139,92,246,.25),transparent 55%);
+  }
+
+  .community{text-align:center}
+  .community h2{margin-bottom:14px}
+  .community p{color:rgba(255,255,255,.5);max-width:440px;margin:0 auto 36px;font-size:15px;line-height:1.65}
+
+  footer{border-top:.5px solid rgba(255,255,255,.1);padding:50px 0;position:relative;z-index:3;
+    backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);}
+  .foot{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:24px}
+  .foot-brand{display:flex;align-items:center;gap:10px;font-weight:700}
+  .foot-brand .ava{width:26px;height:26px;border-radius:8px}
+  .foot-links{display:flex;gap:22px}
+  .foot-links a{font-size:13px;color:rgba(255,255,255,.4);transition:color .2s}
+  .foot-links a:hover{color:rgba(255,255,255,.8)}
+  .foot-meta{width:100%;margin-top:32px;padding-top:18px;border-top:.5px solid rgba(255,255,255,.08);display:flex;justify-content:space-between;font-size:11px;color:rgba(255,255,255,.25)}
+
+  /* анимации reveal */
+  .rv{opacity:0;transform:translateY(30px);filter:blur(6px);transition:opacity .8s cubic-bezier(.16,1,.3,1),transform .8s cubic-bezier(.16,1,.3,1),filter .8s cubic-bezier(.16,1,.3,1)}
+  .rv.in{opacity:1;transform:none;filter:blur(0)}
+  .d1{transition-delay:.08s}.d2{transition-delay:.16s}.d3{transition-delay:.24s}.d4{transition-delay:.32s}
+
+  @media(max-width:900px){
+    .wrap{padding:0 20px}
+    .nav-links{display:none}
+    .hero-grid,.cards-grid,.feat-grid{grid-template-columns:1fr}
+    .glass-sphere{max-width:300px}
+  }
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.rv{opacity:1;transform:none;filter:none}}
+</style>
+</head>
+<body>
+
+<div class="bg"><div class="orb orb1"></div><div class="orb orb2"></div><div class="orb orb3"></div></div>
+<svg class="grain" aria-hidden="true"><filter id="g"><feTurbulence type="fractalNoise" baseFrequency="0.82" numOctaves="3" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter><rect width="100%" height="100%" filter="url(#g)"/></svg>
+
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="#top"><img class="ava" src="ava.jpg" alt="GhostEcos"><span>Ghost<em>Ecos</em></span></a>
+    <nav class="nav-links"><a href="#products">Продукты</a><a href="#principles">Принципы</a><a href="#economy">Экономика</a><a href="#community">Сообщество</a></nav>
+    <a class="nav-cta" href="https://t.me/waki_one" target="_blank" rel="noopener"><span>Telegram</span></a>
+  </div>
+</header>
+
+<div class="hero" id="top">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="badge"><span class="dot"></span> Приватная экосистема · 2026</div>
+      <h1>Мессенджер,<br>который <span class="grad">не знает</span>,<br>кто вы.</h1>
+      <p class="sub">Сквозное шифрование как в Signal, каналы как в Telegram, своя экономика и игры. Один аккаунт — все сервисы. Ноль логов, ноль метаданных.</p>
+      <div class="cta-row">
+        <a class="btn primary" href="/chat/"><span>Открыть GhostChat →</span></a>
+        <a class="btn fill" href="#products"><span>Что внутри</span></a>
+      </div>
+    </div>
+    <div class="glass-sphere">
+      <div class="sphere-bg"></div>
+      <div class="sphere-highlight"></div>
+      <svg class="sphere-ghost" viewBox="0 0 48 60" fill="none">
+        <defs><linearGradient id="gg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f0e6ff"/><stop offset=".5" stop-color="#a78bfa"/><stop offset="1" stop-color="#7c3aed"/></linearGradient></defs>
+        <path d="M24 3C13.5 3 6 11 6 21v33l4.5-4.5L15 54l4.5-4.5L24 54l4.5-4.5L33 54l4.5-4.5L42 54V21C42 11 34.5 3 24 3Z" fill="url(#gg)"/>
+        <ellipse cx="17" cy="22" rx="4" ry="4.5" fill="#000" opacity=".5"/>
+        <ellipse cx="31" cy="22" rx="4" ry="4.5" fill="#000" opacity=".5"/>
+        <circle cx="18.5" cy="20.5" r="1.4" fill="#fff" opacity=".8"/>
+        <circle cx="32.5" cy="20.5" r="1.4" fill="#fff" opacity=".8"/>
+      </svg>
+    </div>
+  </div>
+</div>
+
+<section id="products">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="rv"><div class="sec-tag">Продукты</div><h2>Части одного<br>целого.</h2></div>
+      <p class="sec-note rv d1">Каждый продукт самостоятелен, но вместе они — приватная альтернатива привычным сервисам.</p>
+    </div>
+    <div class="cards-grid">
+      <a class="glass-card rv" href="/lend/ghostchat/">
+        <div class="inner">
+          <div class="prod-title">GhostChat</div>
+          <div class="glass-pill active" style="margin-bottom:16px">Android · открытая бета</div>
+          <p class="prod-desc">Приватный мессенджер со сквозным шифрованием. Ключи не покидают устройство, сервер видит только зашифрованные данные. Работает даже по локальной сети без интернета.</p>
+          <div class="prod-tags"><span>X25519 + AES-256-GCM</span><span>LAN-режим</span><span>Группы и файлы</span></div>
+          <span class="prod-link">Подробнее →</span>
+        </div>
+      </a>
+      <a class="glass-card rv d1" href="/social">
+        <div class="inner">
+          <div class="prod-title">GhostSocial</div>
+          <div class="glass-pill" style="margin-bottom:16px">Веб · прототип</div>
+          <p class="prod-desc">Анонимная социальная сеть. Лента, посты с медиа и профили — без привязки к настоящему имени и без слежки за действиями. Открывается прямо в браузере.</p>
+          <div class="prod-tags"><span>Лента и посты</span><span>Без реальных имён</span><span>gost-экономика</span></div>
+          <span class="prod-link">Открыть →</span>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<section id="principles">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="rv"><div class="sec-tag">Принципы</div><h2>Почему<br>GhostEcos.</h2></div>
+      <p class="sec-note rv d1">Одни и те же правила во всех продуктах экосистемы. Без исключений.</p>
+    </div>
+    <div class="feat-grid">
+      <div class="f-cell rv"><div class="f-num">01</div><h4>Сквозное шифрование</h4><p>Контент шифруется на устройстве. Ключи не покидают вас.</p></div>
+      <div class="f-cell rv d1"><div class="f-num">02</div><h4>Ноль метаданных</h4><p>Никаких логов «кто с кем и когда».</p></div>
+      <div class="f-cell rv d2"><div class="f-num">03</div><h4>Независимость</h4><p>Свой сервер, свой код, своя инфраструктура.</p></div>
+      <div class="f-cell rv d3"><div class="f-num">04</div><h4>Mesh-будущее</h4><p>Устройства напрямую, без серверов.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="economy">
+  <div class="wrap" style="display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center;">
+    <div class="rv">
+      <div class="sec-tag">Экономика</div>
+      <h2>Своя валюта. <span style="font-style:italic;background:linear-gradient(100deg,var(--iris),#e9d5ff);-webkit-background-clip:text;background-clip:text;color:transparent">gost.</span></h2>
+      <p class="sec-note">Внутри экосистемы зарождается собственная экономика. Первая валюта — <b style="color:#fff">gost</b> — стартует в GhostSocial как «семечко» будущей системы.</p>
+      <div style="margin-top:20px;display:inline-flex;gap:8px;align-items:center;color:rgba(255,255,255,.35);font-size:13px">
+        <span class="glass-pill">В разработке · не финансовый инструмент</span>
+      </div>
+    </div>
+    <div class="coin-glass rv d1"><span class="val">gost</span></div>
+  </div>
+</section>
+
+<section id="community" class="community">
+  <div class="wrap">
+    <div class="sec-tag rv">Сообщество</div>
+    <h2 class="rv d1">Следите за разработкой.</h2>
+    <p class="rv d2">Новости, ранний доступ, раздача приложений и стройка экосистемы — всё в Telegram-канале.</p>
+    <a class="btn primary rv d3" href="https://t.me/waki_one" target="_blank" rel="noopener"><span>@waki_one →</span></a>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <div class="foot-brand"><img class="ava" src="ava.jpg" alt=""><span>GhostEcos</span></div>
+      <div class="foot-links"><a href="/privacy">Политика</a><a href="/terms">Условия</a><a href="https://github.com/wakionecontact-source/ghostecos" target="_blank" rel="noopener">GitHub</a></div>
+    </div>
+    <div class="foot-meta"><span>GhostEcos · 2026</span><span>Encrypted by design</span></div>
+  </div>
+</footer>
+
+<script>
+  const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}}),{threshold:.1});
+  document.querySelectorAll('.rv').forEach(el=>io.observe(el));
+
+  // параллакс сферы
+  const sphere=document.querySelector('.glass-sphere');
+  if(sphere)document.querySelector('.hero').addEventListener('mousemove',e=>{
+    const r=sphere.getBoundingClientRect();
+    const x=(e.clientX-r.left-r.width/2)/r.width*18;
+    const y=(e.clientY-r.top-r.height/2)/r.height*18;
+    sphere.querySelector('.sphere-ghost').style.transform=`translate(${x}px,${y}px)`;
+    sphere.querySelector('.sphere-highlight').style.transform=`translate(${x*.6}px,${y*.6}px)`;
+  });
+</script>
+</body>
+</html>

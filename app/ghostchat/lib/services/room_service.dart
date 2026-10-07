@@ -1060,6 +1060,66 @@ class RoomService {
     await _api.chatDelete('/v2/rooms/${room.roomType}/${room.id}/invite-links');
   }
 
+  Future<RoomSummary> transferOwnership(
+    RoomSummary room, {
+    required String username,
+    required String password,
+  }) async {
+    final normalized = username
+        .trim()
+        .replaceFirst(RegExp(r'^@+'), '')
+        .toLowerCase();
+    if (normalized.length < 3 || normalized.length > 64) {
+      throw const FormatException('Проверьте username нового владельца');
+    }
+    final context =
+        'room-owner-transfer:${room.roomType}:${room.id}:$normalized';
+    final proof = await _api.createOwnPasswordChallengeProof(
+      password,
+      context: context,
+    );
+    final raw = await _api
+        .chatPost('/v2/rooms/${room.roomType}/${room.id}/transfer-owner', {
+          'username': normalized,
+          'challenge_id': proof.challengeId,
+          'proof': proof.clientProof,
+        });
+    final map = Map<String, dynamic>.from(raw as Map);
+    if (!_api.verifyOwnPasswordServerProof(
+      proof.expectedServerProof,
+      map['server_proof'],
+    )) {
+      throw StateError('Не удалось подтвердить передачу комнаты сервером');
+    }
+    final updated = RoomSummary.fromMap(map);
+    try {
+      await loadMy();
+    } catch (_) {
+      // The ownership change has already succeeded; let the screen reflect it
+      // even if refreshing the room list is temporarily unavailable.
+    }
+    return updated;
+  }
+
+  Future<void> leaveRoom(RoomSummary room) async {
+    await _api.chatPost('/v2/rooms/${room.roomType}/${room.id}/leave');
+    try {
+      await loadMy();
+    } catch (_) {
+      // The caller closes this room; the list refresh can run on next entry.
+    }
+  }
+
+  Future<void> deleteRoom(RoomSummary room) async {
+    await _api.chatDelete('/v2/rooms/${room.roomType}/${room.id}');
+    try {
+      await loadMy();
+    } catch (_) {
+      // The room is already deleted, so don't turn a stale list into a false
+      // deletion failure for the profile screen.
+    }
+  }
+
   Future<Map<String, dynamic>> redeemInvite(
     String token, {
     String? password,

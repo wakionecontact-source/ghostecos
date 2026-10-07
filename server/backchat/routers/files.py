@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api", tags=["files"])
 
 UPLOAD_DIR       = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")
 FILE_MAX_BYTES   = 50 * 1024 * 1024   # 50 MB
-FILE_EXPIRE_SECS = 1800                # 30 мин
+FILE_EXPIRE_SECS = 5 * 24 * 60 * 60    # 5 дней
 FILE_QUOTA_BYTES = 500 * 1024 * 1024  # 500 MB на пользователя
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)

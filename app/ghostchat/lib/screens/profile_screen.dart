@@ -91,6 +91,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // now opens ProfileMusicLibraryScreen instead.
   bool _musicBusy = false;
   bool _didOpenMusicLibrary = false;
+  Timer? _thoughtExpiryTimer;
 
   bool get _isMe => widget.isOwn || (_profile?['is_me'] as bool?) == true;
   @override
@@ -100,6 +101,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (widget.isOwn) unawaited(_loadCachedOwnUserId());
     if (!widget.isOwn) unawaited(_loadContactState());
     if (_profile != null) {
+      _scheduleThoughtExpiry();
       // Уже тёплый in-memory кэш (этот профиль открывали в текущей сессии
       // приложения) — сеть дёргаем в фоне, без похода на диск.
       _load();
@@ -131,6 +133,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _items = cachedPosts ?? [];
           _loading = false;
         });
+        _scheduleThoughtExpiry();
       }
     }
     await _load();
@@ -198,6 +201,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       });
       ProfileCache.instance.setProfile(widget.username, profile);
       ProfileCache.instance.setPosts(widget.username, items);
+      _scheduleThoughtExpiry();
       _openRequestedMusicLibrary();
     } catch (e) {
       if (!mounted) return;
@@ -276,8 +280,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   void dispose() {
+    _thoughtExpiryTimer?.cancel();
     _scroll.dispose();
     super.dispose();
+  }
+
+  int? _dailyThoughtExpiresAt(Map<String, dynamic> profile) {
+    if (profile['daily_status_eternal'] == true) return null;
+    final rawExpiry = profile['daily_status_expires_at'];
+    if (rawExpiry is num) return rawExpiry.toInt();
+    final rawSetAt = profile['daily_status_set_at'];
+    final setAt = rawSetAt is num
+        ? rawSetAt.toInt()
+        : int.tryParse(rawSetAt?.toString() ?? '');
+    return setAt == null || setAt <= 0 ? null : setAt + 86400;
+  }
+
+  void _scheduleThoughtExpiry() {
+    _thoughtExpiryTimer?.cancel();
+    final profile = _profile;
+    if (profile == null || profile['daily_status_eternal'] == true) return;
+    final expiresAt = _dailyThoughtExpiresAt(profile);
+    if (expiresAt == null) return;
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final remaining = expiresAt - now;
+    if (remaining <= 0) return;
+    _thoughtExpiryTimer = Timer(Duration(seconds: remaining + 1), () {
+      if (mounted) setState(() {});
+    });
   }
 
   // Оптимистично — кнопка и счётчик переключаются мгновенно, без спиннера
@@ -564,6 +594,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final next = Map<String, dynamic>.from(_profile ?? const {});
         next.remove('daily_status');
         next.remove('daily_status_mood');
+        next.remove('daily_status_set_at');
+        next.remove('daily_status_expires_at');
         setState(() => _profile = next);
         ProfileCache.instance.setProfile(widget.username, next);
         return;
@@ -581,8 +613,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final next = Map<String, dynamic>.from(_profile ?? const {});
       next['daily_status'] = response['text'] ?? text;
       next['daily_status_mood'] = response['mood'] ?? result['mood'];
+      next['daily_status_set_at'] = response['set_at'];
+      next['daily_status_expires_at'] = response['expires_at'];
       setState(() => _profile = next);
       ProfileCache.instance.setProfile(widget.username, next);
+      _scheduleThoughtExpiry();
     } catch (error) {
       if (mounted) toast.show('Не удалось сохранить мысль: $error');
     } finally {
@@ -614,7 +649,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  Future<void> _shareThought(String text) async {
+  Future<void> _shareThought(String text, {required int expiresAt}) async {
     final selected = await Navigator.of(context).push<Set<String>>(
       MaterialPageRoute(
         builder: (_) => const ChatPickerScreen(title: 'Поделиться мыслью'),
@@ -625,10 +660,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
     for (final peer in selected) {
       if (peer.startsWith('lan:') || peer.startsWith('bm:')) continue;
       try {
+        if (await ChatRepo.instance.isPeerBot(peer)) continue;
         await ChatRepo.instance.sendDmText(
           peer,
           '💭 $text',
           forwardedFrom: widget.username,
+          forwardedThoughtExpiresAt: expiresAt,
         );
         sent++;
       } catch (error) {
@@ -809,8 +846,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final visibleUsername = p['username'] as String?;
     final repScore = (p['reputation_score'] as num?)?.toInt() ?? 100;
     final repBand = (p['reputation_band'] as String?) ?? 'mid';
-    final dailyStatus = p['daily_status'] as String?;
+    final dailyThoughtExpiresAt = _dailyThoughtExpiresAt(p);
+    final dailyThoughtActive =
+        p['daily_status_eternal'] == true ||
+        (dailyThoughtExpiresAt != null &&
+            DateTime.now().millisecondsSinceEpoch ~/ 1000 <
+                dailyThoughtExpiresAt);
+    final dailyStatus = dailyThoughtActive
+        ? p['daily_status'] as String?
+        : null;
     final dailyMood = p['daily_status_mood'] as String?;
+    final dailyMoodEmoji = dailyThoughtActive
+        ? switch (dailyMood) {
+            'joy' => '😊',
+            'sad' => '😢',
+            'fire' => '🔥',
+            'love' => '❤️',
+            'tired' => '😴',
+            'chill' => '🧊',
+            'angry' => '😠',
+            'surprised' => '😮',
+            _ => null,
+          }
+        : null;
     final thoughtLikes = (p['likes_count'] as num?)?.toInt() ?? 0;
     final thoughtLiked = p['liked_by_me'] == true;
     final amFollowing = (p['am_following'] as bool?) ?? false;
@@ -921,6 +979,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ),
                   ),
+                  if (dailyMoodEmoji != null) ...[
+                    const SizedBox(width: 5),
+                    Text(dailyMoodEmoji, style: const TextStyle(fontSize: 15)),
+                  ],
                 ],
               ),
               const SizedBox(height: 2),
@@ -969,7 +1031,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
             liked: thoughtLiked,
             likeBusy: _thoughtBusy,
             onLike: _toggleThoughtLike,
-            onShare: () => _shareThought(dailyStatus),
+            onShare: dailyThoughtExpiresAt == null
+                ? null
+                : () => _shareThought(
+                    dailyStatus,
+                    expiresAt: dailyThoughtExpiresAt,
+                  ),
             onTap: _isMe
                 ? () => _editDailyThought(
                     initialText: dailyStatus,

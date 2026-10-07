@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1"/>
+<meta name="theme-color" content="#0a0a0f"/>
+<link rel="icon" type="image/jpeg" href="ghogemava.jpg"/>
+<link rel="apple-touch-icon" href="ghogemava.jpg"/>
+<title>GhoGem</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css"/>
+<link rel="stylesheet" href="app.css?v=20261006-matte-ui"/>
+</head>
+<body>
+<script src="/mesh.js"></script>
+<div id="app">
+  <aside class="sidebar solid-panel-strong" id="sidebar">
+    <div class="sb-head">
+      <div class="sb-brand">
+        <span class="sb-brand-mark"><img src="ghogemava.jpg" alt=""/></span>
+        <span class="sb-brand-name">GhoGem</span>
+      </div>
+      <button type="button" class="btn-new matte-button" id="btnNew">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        <span>Новый чат</span>
+      </button>
+    </div>
+    <div class="sb-chats" id="chatList"></div>
+    <div class="sb-foot">
+      <button type="button" class="sb-item" data-view="files">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 015.5 5H10l2 2h6.5A2.5 2.5 0 0121 9.5v7A2.5 2.5 0 0118.5 19h-13A2.5 2.5 0 013 16.5v-9z"/></svg>
+        Файлы
+      </button>
+      <button type="button" class="sb-item" data-view="models">
+        <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/></svg>
+        Модели
+      </button>
+      <button type="button" class="sb-item" data-view="ranking">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M4 19V5M4 19h17"/><path d="M8 15l4-4 3 2 5-6"/><circle cx="8" cy="15" r="1"/><circle cx="12" cy="11" r="1"/><circle cx="15" cy="13" r="1"/><circle cx="20" cy="7" r="1"/></svg>
+        Рейтинг
+      </button>
+      <button type="button" class="sb-item" data-view="contexts">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M5 4.5A2.5 2.5 0 0 1 7.5 2H20v17.5A2.5 2.5 0 0 0 17.5 17H5z"/><path d="M5 4.5v15A2.5 2.5 0 0 0 7.5 22H20"/></svg>
+        Контексты
+      </button>
+      <button type="button" class="sb-item" data-view="settings">
+        <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 13a7.6 7.6 0 000-2l2-1.5-2-3.4-2.3.9a7.6 7.6 0 00-1.7-1L15 3.6h-4l-.4 2.4a7.6 7.6 0 00-1.7 1l-2.3-.9-2 3.4L6.6 11a7.6 7.6 0 000 2l-2 1.5 2 3.4 2.3-.9c.5.4 1.1.75 1.7 1l.4 2.4h4l.4-2.4c.6-.25 1.2-.6 1.7-1l2.3.9 2-3.4-2-1.5z"/></svg>
+        Настройки
+      </button>
+      <div class="user-chip" id="userChip" role="button" tabindex="0" title="Аккаунт">
+        <div class="av" id="userAv">G</div>
+        <div>
+          <div class="un" id="userName">Гость</div>
+          <div class="us" id="userSub">войти через GhostEcos</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+  <div class="backdrop" id="backdrop"></div>
+
+  <main class="main">
+    <header class="top matte-bar">
+      <button type="button" class="icon-only mobile" id="btnMenu" aria-label="Меню">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <button type="button" class="model-btn matte-button" id="modelBtn">
+        <span id="modelLabel">Загрузка…</span>
+        <svg class="ic sm" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="grow"></div>
+      <span class="conn-dot" id="connDot" title="Соединение"></span>
+      <button type="button" class="icon-only" id="btnCanvasToggle" aria-label="Файлы" style="display:none">
+        <svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg>
+      </button>
+    </header>
+
+    <div class="workspace active" id="workspace">
+      <section class="view active" id="view-chat">
+        <div class="msgs" id="msgs">
+          <div class="hero" id="hero">
+            <div class="hero-mark">
+              <img src="ghogemava.jpg" alt="GhoGem"/>
+            </div>
+            <h1>GhoGem</h1>
+            <p>Поиск · код · файлы · HTML — как в боте</p>
+            <div class="sugs" id="sugs"></div>
+          </div>
+        </div>
+        <div class="dock">
+          <div class="box solid-panel">
+            <div class="tools">
+              <button type="button" class="chip matte-button" id="btnSearch" aria-pressed="false">
+                <svg class="ic sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>
+                Поиск
+              </button>
+              <button type="button" class="chip matte-button" id="btnTts" aria-pressed="false" title="Озвучить следующий ответ">
+                <svg class="ic sm" viewBox="0 0 24 24"><path d="M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3z"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg>
+                Озвучка
+              </button>
+              <div class="plus-wrap">
+                <button type="button" class="plus-btn matte-button" id="btnPlus" aria-expanded="false" aria-label="Прикрепить">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                </button>
+                <div class="plus-menu solid-panel-strong" id="plusMenu">
+                  <button type="button" class="plus-item" id="itemFile">
+                    <svg class="ic sm" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 015.5 5H10l2 2h6.5A2.5 2.5 0 0121 9.5v7A2.5 2.5 0 0118.5 19h-13A2.5 2.5 0 013 16.5v-9z"/></svg>
+                    <span>Файл</span>
+                  </button>
+                  <button type="button" class="plus-item" id="itemImage">
+                    <svg class="ic sm" viewBox="0 0 24 24"><path d="M2 8h4l2-3h8l2 3h4v11H2z"/><circle cx="12" cy="13" r="3.5"/></svg>
+                    <span>Изображение</span>
+                  </button>
+                  <button type="button" class="plus-item locked" id="itemAudio" title="Доступно с Premium">
+                    <svg class="ic sm" viewBox="0 0 24 24"><path d="M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3z"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg>
+                    <span>Аудио</span>
+                    <span class="pill-pro">PRO</span>
+                  </button>
+                </div>
+              </div>
+              <input type="file" id="fileInput" accept="image/*,audio/*,.pdf,.txt,.py,.html,.js,.css,.json,.md" hidden/>
+            </div>
+            <textarea id="input" rows="1" placeholder="Сообщение…"></textarea>
+            <button type="button" class="send" id="btnSend" disabled>
+              <svg class="ic" viewBox="0 0 24 24"><path d="M5 12h12M13 6l6 6-6 6"/></svg>
+            </button>
+          </div>
+          <p class="hint">Enter — отправить · Shift+Enter — строка</p>
+        </div>
+      </section>
+
+      <section class="canvas-pane" id="canvasPane">
+        <div class="canvas-top matte-bar">
+          <div class="canvas-tabs" id="canvasTabs"></div>
+          <div class="canvas-actions">
+            <button type="button" class="canvas-mode-btn active" id="canvasCode">Код</button>
+            <button type="button" class="canvas-mode-btn" id="canvasPreview">Просмотр</button>
+            <a class="icon-only" id="canvasDl" download title="Скачать">
+              <svg class="ic sm" viewBox="0 0 24 24"><path d="M12 3v13m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
+            </a>
+            <button type="button" class="icon-only" id="canvasClose" aria-label="Закрыть">
+              <svg class="ic sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="canvas-content">
+          <pre class="canvas-code" id="canvasCodeBox"><code id="canvasCodeInner"></code></pre>
+          <iframe class="canvas-frame" id="canvasFrame" sandbox="allow-scripts allow-forms allow-modals allow-popups" referrerpolicy="no-referrer" style="display:none"></iframe>
+        </div>
+      </section>
+    </div>
+
+    <section class="view" id="view-models">
+      <div class="page models-page">
+        <div class="page-row">
+          <button type="button" class="chip matte-button back-btn" id="btnBackModels">
+            <svg class="ic sm" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg>
+            Назад
+          </button>
+        </div>
+        <h2>Модели</h2>
+        <p class="muted">По провайдерам. Сверху — мощнее. Серые — лимит.</p>
+        <div class="prov-tabs" id="provTabs"></div>
+        <div class="model-list" id="modelList"></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-ranking">
+      <div class="page ranking-page">
+        <div class="page-row">
+          <button type="button" class="chip matte-button back-btn" id="btnBackRanking">
+            <svg class="ic sm" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg>
+            Назад
+          </button>
+          <div class="grow"></div>
+          <button type="button" class="chip matte-button" id="btnRefreshRanking">Обновить</button>
+        </div>
+        <h2>Глобальный рейтинг</h2>
+        <p class="muted">Средний балл по оценкам ответов GhoGem; при равенстве выше модель с большим числом оценок. Модели без оценок не показываются.</p>
+        <div class="ranking-summary" aria-live="polite">
+          <div><strong id="rankingModelCount">—</strong><span>моделей</span></div>
+          <div><strong id="rankingVoteCount">—</strong><span>оценок</span></div>
+        </div>
+        <div class="rating-filters" id="ratingFilters" role="group" aria-label="Фильтр рейтинга">
+          <button type="button" class="prov-tab on" data-rating-filter="all" aria-pressed="true">Все</button>
+          <button type="button" class="prov-tab" data-rating-filter="free" aria-pressed="false">Free</button>
+          <button type="button" class="prov-tab" data-rating-filter="premium" aria-pressed="false">Premium</button>
+          <button type="button" class="prov-tab" data-rating-filter="multimodal" aria-pressed="false">Мультимодальные</button>
+        </div>
+        <div class="ranking-list" id="rankingList"><div class="empty">Загрузка рейтинга…</div></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-files">
+      <div class="page">
+        <div class="page-row">
+          <button type="button" class="chip matte-button back-btn" id="btnBackFiles">
+            <svg class="ic sm" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg>
+            Назад
+          </button>
+          <div class="grow"></div>
+          <h2>Файлы</h2>
+          <div class="grow"></div>
+          <button type="button" class="chip matte-button" id="btnRefreshFiles">Обновить</button>
+        </div>
+        <div class="file-list" id="fileList"><div class="empty">Пока пусто</div></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-contexts">
+      <div class="page">
+        <div class="page-row">
+          <button type="button" class="chip matte-button back-btn" id="btnBackContexts">
+            <svg class="ic sm" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg>
+            Назад
+          </button>
+        </div>
+        <h2>Контексты</h2>
+        <p class="muted">Чаты продуктов GhostEcos хранятся отдельно от обычных чатов GhoGem.</p>
+        <div class="context-tree" id="contextTree"><div class="empty">Загрузка…</div></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-account">
+      <div class="page">
+        <div class="page-row">
+          <button type="button" class="chip matte-button back-btn" id="btnBackAccount">
+            <svg class="ic sm" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg>
+            Назад
+          </button>
+        </div>
+        <h2>Аккаунт</h2>
+        <p class="muted">Один аккаунт GhostEcos — на соцсеть, банк и GhoGem</p>
+        <div id="accountBox"></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-settings">
+      <div class="page">
+        <div class="page-row">
+          <button type="button" class="chip matte-button back-btn" id="btnBackSettings">
+            <svg class="ic sm" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg>
+            Назад
+          </button>
+        </div>
+        <h2>Настройки</h2>
+        <p class="muted">Хранятся локально в этом браузере</p>
+
+        <div class="settings-group solid-panel">
+          <div class="settings-row">
+            <div>
+              <div class="settings-label">Аккаунт GhostEcos</div>
+              <div class="settings-hint" id="settingsAcctHint">Без входа — чаты только на этом устройстве</div>
+            </div>
+            <button type="button" class="chip matte-button" id="btnOpenAccount">Открыть</button>
+          </div>
+        </div>
+
+        <div class="settings-group solid-panel">
+          <div class="settings-row">
+            <div>
+              <div class="settings-label">Фоновая сетка</div>
+              <div class="settings-hint">Анимированный фон mesh</div>
+            </div>
+            <button type="button" class="switch active" id="meshToggle"><span></span></button>
+          </div>
+          <div class="settings-row">
+            <div>
+              <div class="settings-label">Отправка по Enter</div>
+              <div class="settings-hint">Иначе — только Ctrl/Cmd+Enter</div>
+            </div>
+            <button type="button" class="switch active" id="enterToggle"><span></span></button>
+          </div>
+          <div class="settings-row">
+            <div>
+              <div class="settings-label">Плотность интерфейса</div>
+              <div class="settings-hint">Отступы в переписке</div>
+            </div>
+            <div class="segmented" id="densitySwitch">
+              <button type="button" data-value="comfortable" class="active">Обычная</button>
+              <button type="button" data-value="compact">Компактная</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-group solid-panel">
+          <div class="settings-row">
+            <div>
+              <div class="settings-label">Очистить чаты и файлы</div>
+              <div class="settings-hint">Удалить локальную историю на этом устройстве</div>
+            </div>
+            <button type="button" class="chip danger" id="btnResetLocal">Очистить</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-preview">
+      <div class="preview-bar matte-bar">
+        <button type="button" class="chip matte-button" id="btnClosePreview">Назад</button>
+        <span id="previewName" class="preview-name"></span>
+        <div class="grow"></div>
+        <a class="chip matte-button" id="previewDownload" download>Скачать</a>
+      </div>
+      <div class="preview-body">
+        <iframe id="previewFrame" class="preview-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-modals" title="preview" style="display:none"></iframe>
+        <pre class="preview-code" id="previewCodeBox" style="display:none"><code id="previewCodeInner"></code></pre>
+        <div class="preview-media" id="previewMediaBox" style="display:none"></div>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+<script src="app.js?v=20261006-matte-ui"></script>
+</body>
+</html>

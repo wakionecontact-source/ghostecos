@@ -7,6 +7,7 @@ import 'package:flutter/cupertino.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../services/chat_repo.dart';
+import '../services/chat_organization_store.dart';
 import '../services/db_service.dart';
 import '../services/lan_chat_store.dart';
 import '../services/bookmark_store.dart';
@@ -54,6 +55,10 @@ class _ChatPickerScreenState extends State<ChatPickerScreen> {
                               ...bookmarkDialogs,
                             ].where((d) {
                               if (d.username.startsWith('g:')) return false;
+                              if (!ChatOrganizationStore.instance
+                                  .canSeeChatInActiveScenario(d.username)) {
+                                return false;
+                              }
                               return seen.add(d.username);
                             }).toList();
                         if (real.isEmpty) {

@@ -1,0 +1,98 @@
+group 'com.github.tfox.flutter_vless'
+version '1.0'
+
+buildscript {
+    ext.kotlin_version = '2.2.20'
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.1.0'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        def localRuntimeRepo = findProperty('flutterVlessAndroidRuntimeRepo') ?: System.getenv('FLUTTER_VLESS_ANDROID_RUNTIME_REPO')
+        if (localRuntimeRepo) {
+            maven { url uri(localRuntimeRepo) }
+        }
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+android {
+    if (project.android.hasProperty("namespace")) {
+        namespace 'com.github.tfox.flutter_vless'
+    }
+
+    compileSdkVersion 34
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+
+    defaultConfig {
+        minSdkVersion 23
+        targetSdkVersion 35
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        
+        // 16KB page size support for Android 15+
+        ndk {
+            abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
+        }
+    }
+    
+    // Configure 16KB page alignment
+    buildFeatures {
+        prefab true
+    }
+
+    dependencies {
+        testImplementation 'junit:junit:4.13.2'
+        testImplementation 'org.mockito:mockito-core:5.0.0'
+        testImplementation 'org.json:json:20240303'
+        androidTestImplementation 'androidx.test:runner:1.6.2'
+        androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+        unitTests.all {
+            testLogging {
+               events "passed", "skipped", "failed", "standardOut", "standardError"
+               outputs.upToDateWhen {false}
+               showStandardStreams = true
+            }
+        }
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs += 'src/main/kotlin'
+        }
+    }
+    packaging {
+        jniLibs {
+            pickFirsts += ['lib/**/libc++_shared.so']
+        }
+    }
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.code.gson:gson:2.10.1'
+    implementation "dev.tfox.fluttervless:xray-android:${findProperty('flutterVlessXrayRuntimeVersion') ?: '26.9.9-protect1'}"
+}

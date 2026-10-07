@@ -11,7 +11,9 @@ class ProxyHttpClient {
   const ProxyHttpClient._();
 
   static HttpClient create() {
-    final client = HttpClient()..idleTimeout = const Duration(seconds: 3);
+    final client = HttpClient()
+      ..idleTimeout = const Duration(seconds: 3)
+      ..connectionTimeout = const Duration(seconds: 12);
     final settings = NetworkSettings.instance;
     if (!settings.enabledNotifier.value) return client;
 

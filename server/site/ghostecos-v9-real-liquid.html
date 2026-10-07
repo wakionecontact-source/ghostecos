@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GhostEcos — приватная экосистема</title>
+<meta name="description" content="GhostEcos — экосистема независимых приватных продуктов: мессенджер GhostChat, социальная сеть GhostSocial и собственная экономика.">
+<style>
+:root{--violet:#8b5cf6;--iris:#a78bfa;--iris-ink:#cbbdfe;--sans:-apple-system,"SF Pro Text","Segoe UI",Roboto,sans-serif}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{font-family:var(--sans);font-size:16px;line-height:1.5;overflow-x:hidden;-webkit-font-smoothing:antialiased;background:#000;color:#fff}
+a{color:inherit;text-decoration:none}
+::selection{background:var(--violet);color:#fff}
+.wrap{max-width:1100px;margin:0 auto;padding:0 32px;position:relative;z-index:10}
+
+/* ═══════════ ФОН — живой, богатый, чтобы было что преломлять ═══════════ */
+.bg{position:fixed;inset:0;z-index:0;overflow:hidden}
+.bg-layer{position:absolute;inset:-20%;background:radial-gradient(ellipse 60% 50% at 18% 8%,#4c1d95 0%,transparent 50%),radial-gradient(ellipse 50% 60% at 88% 22%,#6d28d9 0%,transparent 50%),radial-gradient(ellipse 55% 45% at 45% 75%,#7c3aed 0%,transparent 50%),radial-gradient(ellipse 40% 50% at 12% 82%,#3b0764 0%,transparent 50%),radial-gradient(ellipse 45% 55% at 92% 92%,#5b21b6 0%,transparent 50%),linear-gradient(170deg,#0a0416 0%,#120826 30%,#0d0520 60%,#0a0315 100%);animation:morph 20s ease-in-out infinite;will-change:transform}
+.bg-layer:nth-child(2){animation-delay:-10s;opacity:.65;mix-blend-mode:screen}
+@keyframes morph{0%,100%{transform:scale(1)translate(0,0)}25%{transform:scale(1.06)translate(2%,1.5%)}50%{transform:scale(.94)translate(-1.5%,-2%)}75%{transform:scale(1.04)translate(1%,2%)}}
+
+.grain{position:fixed;inset:0;z-index:2;pointer-events:none;opacity:.04;mix-blend-mode:overlay}
+
+/* ═══════════ NAV — жидкое стекло ═══════════ */
+header{position:fixed;top:0;left:0;right:0;z-index:100;padding:0 32px}
+header .inner{display:flex;align-items:center;justify-content:space-between;height:66px;position:relative;z-index:2}
+.brand{display:flex;align-items:center;gap:11px;font-weight:700;font-size:17px;letter-spacing:-.02em}
+.brand .ava{width:30px;height:30px;border-radius:9px;box-shadow:0 0 18px rgba(139,92,246,.5)}
+.brand em{font-style:normal;color:var(--iris)}
+.nav-links{display:flex;gap:28px}
+.nav-links a{font-size:13.5px;font-weight:500;color:rgba(255,255,255,.62);transition:color .2s}
+.nav-links a:hover{color:#fff}
+.nav-cta{font-size:13px;font-weight:600;padding:10px 20px;border-radius:999px;color:#fff;position:relative;overflow:hidden;transition:transform .2s cubic-bezier(.34,1.56,.64,1),box-shadow .2s}
+.nav-cta .lg-backdrop{position:absolute;inset:0;z-index:0;border-radius:inherit}
+.nav-cta .lg-content{position:relative;z-index:1}
+.nav-cta:hover{transform:translateY(-1px)}
+
+/* ═══════════ HERO ═══════════ */
+.hero{min-height:100vh;display:flex;align-items:center;padding:130px 0 80px}
+.hero-grid{display:grid;grid-template-columns:1fr .85fr;gap:50px;align-items:center}
+.kicker{display:inline-flex;align-items:center;gap:8px;margin-bottom:22px;font-size:12px;font-weight:600;color:var(--iris-ink);padding:6px 14px;border-radius:999px;position:relative}
+.kicker .lg-backdrop{position:absolute;inset:0;z-index:0;border-radius:inherit}
+.kicker .lg-content{position:relative;z-index:1;display:flex;align-items:center;gap:8px}
+.kicker .dot{width:5px;height:5px;border-radius:50%;background:var(--iris);animation:blink 2.4s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+h1{font-size:clamp(44px,6.8vw,90px);font-weight:800;line-height:1;letter-spacing:-.04em}
+h1 .grad{background:linear-gradient(100deg,#f0e6ff,var(--iris) 40%,#e9d5ff 55%,var(--iris) 80%);background-size:200% auto;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shine 6s linear infinite}
+@keyframes shine{to{background-position:200% 0}}
+.sub{margin-top:22px;max-width:500px;font-size:17px;line-height:1.7;color:rgba(255,255,255,.55)}
+.cta-row{display:flex;gap:12px;margin-top:30px;flex-wrap:wrap}
+
+.btn{display:inline-flex;align-items:center;gap:8px;font-weight:600;font-size:14px;padding:15px 28px;border-radius:999px;color:#fff;position:relative;overflow:hidden;transition:transform .2s cubic-bezier(.34,1.56,.64,1),box-shadow .25s}
+.btn .lg-backdrop{position:absolute;inset:0;z-index:0;border-radius:inherit}
+.btn .lg-content{position:relative;z-index:1}
+.btn:hover{transform:translateY(-2px)}
+
+/* спец highlight поверх стекла */
+.glass-highlight{position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:3;background:linear-gradient(170deg,rgba(255,255,255,.35)0%,rgba(255,255,255,.08)22%,transparent 48%,transparent 68%,rgba(0,0,0,.12)90%,rgba(0,0,0,.22)100%);mix-blend-mode:overlay}
+
+/* ═══════════ СФЕРА ═══════════ */
+.sphere-wrap{position:relative;width:100%;max-width:440px;aspect-ratio:1;margin:0 auto;display:flex;align-items:center;justify-content:center}
+.sphere{position:relative;width:82%;aspect-ratio:1;border-radius:50%;overflow:hidden}
+.sphere .lg-backdrop{position:absolute;inset:0;z-index:0;border-radius:50%}
+.sphere .lg-content{position:relative;z-index:2;display:flex;align-items:center;justify-content:center;width:100%;height:100%}
+.sphere .ghost-svg{width:45%;filter:drop-shadow(0 20px 50px rgba(109,40,217,.55));animation:floaty 6s ease-in-out infinite}
+.sphere .sphere-highlight{position:absolute;inset:0;z-index:3;pointer-events:none;border-radius:50%;background:radial-gradient(ellipse 50% 35% at 28% 22%,rgba(255,255,255,.35),transparent 55%),radial-gradient(ellipse 60% 50% at 75% 80%,rgba(139,92,246,.2),transparent 50%),radial-gradient(ellipse 70% 40% at 50% 95%,rgba(0,0,0,.25),transparent 60%)}
+@keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
+
+/* ═══════════ SECTIONS ═══════════ */
+section{padding:100px 0;position:relative;z-index:10}
+.sec-tag{font-size:13px;font-weight:600;letter-spacing:.08em;color:var(--iris);text-transform:uppercase;margin-bottom:14px}
+h2{font-size:clamp(30px,4.4vw,50px);font-weight:800;letter-spacing:-.04em;line-height:1.08}
+.sec-note{max-width:440px;color:rgba(255,255,255,.45);font-size:15px;line-height:1.65;margin-top:8px}
+.sec-head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:50px;flex-wrap:wrap}
+
+.cards-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.card{position:relative;border-radius:28px;overflow:hidden;padding:34px;transition:box-shadow .3s}
+.card .lg-backdrop{position:absolute;inset:0;z-index:0;border-radius:28px}
+.card .lg-content{position:relative;z-index:2}
+.card-title{font-size:26px;font-weight:800;letter-spacing:-.03em;margin-bottom:10px}
+.card-desc{color:rgba(255,255,255,.45);font-size:14.5px;line-height:1.65;margin-bottom:20px}
+.card-tags{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:22px}
+.card-tags span{font-size:12px;font-weight:500;color:rgba(255,255,255,.5);padding:5px 11px;border-radius:999px;position:relative;overflow:hidden}
+.card-tags span .lg-backdrop{position:absolute;inset:0;z-index:0;border-radius:inherit}
+.card-tags span .lg-content{position:relative;z-index:1}
+.card-link{font-size:14px;font-weight:600;color:var(--iris);display:inline-flex;align-items:center;gap:6px;transition:gap .2s}
+.card-link:hover{gap:12px}
+
+.features{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.feat{position:relative;border-radius:24px;overflow:hidden;padding:28px 24px;text-align:center}
+.feat .lg-backdrop{position:absolute;inset:0;z-index:0;border-radius:24px}
+.feat .lg-content{position:relative;z-index:2}
+.f-num{font-size:34px;font-weight:800;color:var(--iris);margin-bottom:10px}
+.feat h4{font-size:16px;font-weight:700;margin-bottom:6px}
+.feat p{color:rgba(255,255,255,.38);font-size:13px;line-height:1.5}
+
+.community{text-align:center}
+.community h2{margin-bottom:12px}
+.community p{color:rgba(255,255,255,.45);max-width:440px;margin:0 auto 36px;font-size:15px;line-height:1.65}
+
+footer{border-top:1px solid rgba(255,255,255,.1);padding:48px 0;position:relative;overflow:hidden}
+footer .lg-backdrop{position:absolute;inset:0;z-index:0}
+footer .lg-content{position:relative;z-index:2}
+.foot{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:24px}
+.foot-brand{display:flex;align-items:center;gap:10px;font-weight:700}
+.foot-brand .ava{width:26px;height:26px;border-radius:8px}
+.foot-links{display:flex;gap:22px}
+.foot-links a{font-size:13px;color:rgba(255,255,255,.38);transition:color .2s}
+.foot-links a:hover{color:rgba(255,255,255,.75)}
+.foot-meta{width:100%;margin-top:30px;padding-top:18px;border-top:1px solid rgba(255,255,255,.08);display:flex;justify-content:space-between;font-size:11px;color:rgba(255,255,255,.22)}
+
+.rv{opacity:0;transform:translateY(30px);filter:blur(5px);transition:opacity .8s cubic-bezier(.16,1,.3,1),transform .8s cubic-bezier(.16,1,.3,1),filter .8s cubic-bezier(.16,1,.3,1)}
+.rv.in{opacity:1;transform:none;filter:blur(0)}
+.d1{transition-delay:.08s}.d2{transition-delay:.16s}.d3{transition-delay:.24s}
+
+@media(max-width:900px){.wrap{padding:0 20px}.nav-links{display:none}.hero-grid,.cards-grid,.features{grid-template-columns:1fr}.sphere-wrap{max-width:300px}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.rv{opacity:1;transform:none;filter:none}}
+</style>
+</head>
+<body>
+
+<div class="bg"><div class="bg-layer"></div><div class="bg-layer"></div></div>
+<svg class="grain" aria-hidden="true"><filter id="g"><feTurbulence type="fractalNoise" baseFrequency="0.82" numOctaves="3" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter><rect width="100%" height="100%" filter="url(#g)"/></svg>
+
+<header>
+  <div class="inner">
+    <a class="brand" href="#top"><img class="ava" src="ava.jpg" alt="GhostEcos"><span>Ghost<em>Ecos</em></span></a>
+    <nav class="nav-links"><a href="#products">Продукты</a><a href="#principles">Принципы</a><a href="#economy">Экономика</a><a href="#community">Сообщество</a></nav>
+    <div class="nav-cta lg-el" data-lg-depth="8" data-lg-strength="80" data-lg-ca="1" data-lg-blur="12" data-lg-brightness="1.08" data-lg-saturate="1.6">
+      <div class="lg-backdrop"></div>
+      <div class="glass-highlight"></div>
+      <span class="lg-content"><a href="https://t.me/waki_one" target="_blank" rel="noopener">Telegram</a></span>
+    </div>
+  </div>
+</header>
+
+<div class="hero" id="top">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="kicker lg-el" data-lg-depth="6" data-lg-strength="60" data-lg-blur="8" data-lg-brightness="1.05" data-lg-saturate="1.4">
+        <div class="lg-backdrop"></div>
+        <div class="glass-highlight"></div>
+        <span class="lg-content"><span class="dot"></span> Приватная экосистема · 2026</span>
+      </div>
+      <h1>Мессенджер,<br>который <span class="grad">не знает</span>,<br>кто вы.</h1>
+      <p class="sub">Сквозное шифрование как в Signal, каналы как в Telegram, своя экономика и игры. Один аккаунт — все сервисы. Ноль логов.</p>
+      <div class="cta-row">
+        <div class="btn lg-el" data-lg-depth="10" data-lg-strength="90" data-lg-blur="14" data-lg-brightness="1.1" data-lg-saturate="1.8">
+          <div class="lg-backdrop"></div>
+          <div class="glass-highlight"></div>
+          <a class="lg-content" href="/chat/">Открыть GhostChat →</a>
+        </div>
+        <div class="btn lg-el" data-lg-depth="8" data-lg-strength="80" data-lg-blur="12" data-lg-brightness="1.06" data-lg-saturate="1.5">
+          <div class="lg-backdrop"></div>
+          <div class="glass-highlight"></div>
+          <a class="lg-content" href="#products">Что внутри</a>
+        </div>
+      </div>
+    </div>
+    <div class="sphere-wrap">
+      <div class="sphere lg-el" data-lg-depth="20" data-lg-strength="140" data-lg-ca="3" data-lg-blur="0" data-lg-brightness="1.12" data-lg-saturate="2.2">
+        <div class="lg-backdrop"></div>
+        <div class="sphere-highlight"></div>
+        <div class="lg-content">
+          <svg class="ghost-svg" viewBox="0 0 48 60" fill="none">
+            <defs><linearGradient id="gg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f0e6ff"/><stop offset=".5" stop-color="#a78bfa"/><stop offset="1" stop-color="#7c3aed"/></linearGradient></defs>
+            <path d="M24 3C13.5 3 6 11 6 21v33l4.5-4.5L15 54l4.5-4.5L24 54l4.5-4.5L33 54l4.5-4.5L42 54V21C42 11 34.5 3 24 3Z" fill="url(#gg)"/>
+            <ellipse cx="17" cy="22" rx="4" ry="4.5" fill="#000" opacity=".45"/><ellipse cx="31" cy="22" rx="4" ry="4.5" fill="#000" opacity=".45"/>
+            <circle cx="18.5" cy="20.5" r="1.5" fill="#fff" opacity=".85"/><circle cx="32.5" cy="20.5" r="1.5" fill="#fff" opacity=".85"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section id="products">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="rv"><div class="sec-tag">Продукты</div><h2>Части одного<br>целого.</h2></div>
+      <p class="sec-note rv d1">Каждый продукт самостоятелен, но вместе — приватная альтернатива привычным сервисам.</p>
+    </div>
+    <div class="cards-grid">
+      <a class="card lg-el rv" href="/lend/ghostchat/" data-lg-depth="12" data-lg-strength="110" data-lg-ca="1.5" data-lg-blur="0" data-lg-brightness="1.08" data-lg-saturate="1.9">
+        <div class="lg-backdrop"></div>
+        <div class="glass-highlight"></div>
+        <div class="lg-content">
+          <div class="card-title">GhostChat</div>
+          <p class="card-desc">Приватный мессенджер со сквозным шифрованием. Ключи не покидают устройство, сервер видит только зашифрованные данные.</p>
+          <div class="card-tags">
+            <span class="lg-el" data-lg-depth="4" data-lg-strength="50" data-lg-blur="6" data-lg-brightness="1.04" data-lg-saturate="1.3"><span class="lg-backdrop"></span><span class="lg-content">X25519 + AES-256-GCM</span></span>
+            <span class="lg-el" data-lg-depth="4" data-lg-strength="50" data-lg-blur="6" data-lg-brightness="1.04" data-lg-saturate="1.3"><span class="lg-backdrop"></span><span class="lg-content">LAN-режим</span></span>
+            <span class="lg-el" data-lg-depth="4" data-lg-strength="50" data-lg-blur="6" data-lg-brightness="1.04" data-lg-saturate="1.3"><span class="lg-backdrop"></span><span class="lg-content">Группы и файлы</span></span>
+          </div>
+          <span class="card-link">Подробнее →</span>
+        </div>
+      </a>
+      <a class="card lg-el rv d1" href="/social" data-lg-depth="12" data-lg-strength="110" data-lg-ca="1.5" data-lg-blur="0" data-lg-brightness="1.08" data-lg-saturate="1.9">
+        <div class="lg-backdrop"></div>
+        <div class="glass-highlight"></div>
+        <div class="lg-content">
+          <div class="card-title">GhostSocial</div>
+          <p class="card-desc">Анонимная социальная сеть. Лента, посты с медиа и профили — без привязки к имени и без слежки.</p>
+          <div class="card-tags">
+            <span class="lg-el" data-lg-depth="4" data-lg-strength="50" data-lg-blur="6" data-lg-brightness="1.04" data-lg-saturate="1.3"><span class="lg-backdrop"></span><span class="lg-content">Лента и посты</span></span>
+            <span class="lg-el" data-lg-depth="4" data-lg-strength="50" data-lg-blur="6" data-lg-brightness="1.04" data-lg-saturate="1.3"><span class="lg-backdrop"></span><span class="lg-content">Без реальных имён</span></span>
+            <span class="lg-el" data-lg-depth="4" data-lg-strength="50" data-lg-blur="6" data-lg-brightness="1.04" data-lg-saturate="1.3"><span class="lg-backdrop"></span><span class="lg-content">gost-экономика</span></span>
+          </div>
+          <span class="card-link">Открыть →</span>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<section id="principles">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="rv"><div class="sec-tag">Принципы</div><h2>Почему<br>GhostEcos.</h2></div>
+      <p class="sec-note rv d1">Одни и те же правила во всех продуктах экосистемы. Без исключений.</p>
+    </div>
+    <div class="features">
+      <div class="feat lg-el rv" data-lg-depth="10" data-lg-strength="100" data-lg-blur="0" data-lg-brightness="1.06" data-lg-saturate="1.7">
+        <div class="lg-backdrop"></div><div class="glass-highlight"></div>
+        <div class="lg-content"><div class="f-num">01</div><h4>Шифрование</h4><p>Ключи не покидают устройство</p></div>
+      </div>
+      <div class="feat lg-el rv d1" data-lg-depth="10" data-lg-strength="100" data-lg-blur="0" data-lg-brightness="1.06" data-lg-saturate="1.7">
+        <div class="lg-backdrop"></div><div class="glass-highlight"></div>
+        <div class="lg-content"><div class="f-num">02</div><h4>Ноль метаданных</h4><p>Никаких логов</p></div>
+      </div>
+      <div class="feat lg-el rv d2" data-lg-depth="10" data-lg-strength="100" data-lg-blur="0" data-lg-brightness="1.06" data-lg-saturate="1.7">
+        <div class="lg-backdrop"></div><div class="glass-highlight"></div>
+        <div class="lg-content"><div class="f-num">03</div><h4>Независимость</h4><p>Свой сервер и код</p></div>
+      </div>
+      <div class="feat lg-el rv d3" data-lg-depth="10" data-lg-strength="100" data-lg-blur="0" data-lg-brightness="1.06" data-lg-saturate="1.7">
+        <div class="lg-backdrop"></div><div class="glass-highlight"></div>
+        <div class="lg-content"><div class="f-num">04</div><h4>Mesh-будущее</h4><p>Устройства напрямую</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="economy">
+  <div class="wrap" style="display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center">
+    <div class="rv">
+      <div class="sec-tag">Экономика</div>
+      <h2>Своя валюта. <span style="font-style:italic;background:linear-gradient(100deg,var(--iris),#f0e6ff);-webkit-background-clip:text;background-clip:text;color:transparent">gost.</span></h2>
+      <p class="sec-note">Внутри экосистемы зарождается собственная экономика. Первая валюта — <b style="color:#fff">gost</b> — стартует в GhostSocial.</p>
+      <div style="margin-top:18px"><div class="btn lg-el" data-lg-depth="8" data-lg-strength="80" data-lg-blur="12" data-lg-brightness="1.06" data-lg-saturate="1.5" style="cursor:default"><div class="lg-backdrop"></div><div class="glass-highlight"></div><span class="lg-content">В разработке</span></div></div>
+    </div>
+    <div class="sphere-wrap rv d1" style="max-width:300px">
+      <div class="sphere lg-el" data-lg-depth="20" data-lg-strength="140" data-lg-ca="3" data-lg-blur="0" data-lg-brightness="1.12" data-lg-saturate="2.2">
+        <div class="lg-backdrop"></div><div class="sphere-highlight"></div>
+        <div class="lg-content"><span style="font-size:38px;font-weight:800;font-style:italic;background:linear-gradient(100deg,var(--iris),#f0e6ff);-webkit-background-clip:text;background-clip:text;color:transparent">gost</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="community" class="community">
+  <div class="wrap">
+    <div class="sec-tag rv">Сообщество</div>
+    <h2 class="rv d1">Следите за разработкой.</h2>
+    <p class="rv d2">Новости, ранний доступ, раздача приложений и стройка экосистемы — всё в Telegram-канале.</p>
+    <div class="btn lg-el rv d3" data-lg-depth="10" data-lg-strength="90" data-lg-blur="14" data-lg-brightness="1.1" data-lg-saturate="1.8" style="margin:0 auto">
+      <div class="lg-backdrop"></div><div class="glass-highlight"></div>
+      <a class="lg-content" href="https://t.me/waki_one" target="_blank" rel="noopener">@waki_one →</a>
+    </div>
+  </div>
+</section>
+
+<footer class="lg-el" data-lg-depth="8" data-lg-strength="80" data-lg-blur="12" data-lg-brightness="1.06" data-lg-saturate="1.5">
+  <div class="lg-backdrop"></div>
+  <div class="lg-content">
+    <div class="wrap">
+      <div class="foot">
+        <div class="foot-brand"><img class="ava" src="ava.jpg" alt=""><span>GhostEcos</span></div>
+        <div class="foot-links"><a href="/privacy">Политика</a><a href="/terms">Условия</a><a href="https://github.com/wakionecontact-source/ghostecos" target="_blank" rel="noopener">GitHub</a></div>
+      </div>
+      <div class="foot-meta"><span>GhostEcos · 2026</span><span>Encrypted by design</span></div>
+    </div>
+  </div>
+</footer>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  L I Q U I D   G L A S S   E N G I N E
+//  Порт с nikdelvin/liquid-glass — чистая CSS/SVG фильтрация
+//  Механика: кастомная displacement map (градиент от краёв
+//  к центру) + три прохода feDisplacementMap для R/G/B каналов
+//  (хроматическая аберрация) + feBlend screen.
+//  Всё — data URI в backdrop-filter.
+// ═══════════════════════════════════════════════════════════════
+
+function getDisplacementMap(h, w, radius, depth) {
+  const padY = Math.ceil(radius / h * 15);
+  const padX = Math.ceil(radius / w * 15);
+  return 'data:image/svg+xml;utf8,' + encodeURIComponent(
+    `<svg height="${h}" width="${w}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
+      <style>.mix{mix-blend-mode:screen}</style>
+      <defs>
+        <linearGradient id="Y" x1="0" x2="0" y1="${padY}%" y2="${100-padY}%">
+          <stop offset="0%" stop-color="#0F0"/><stop offset="50%" stop-color="#000"/><stop offset="100%" stop-color="#0F0"/>
+        </linearGradient>
+        <linearGradient id="X" x1="${padX}%" x2="${100-padX}%" y1="0" y2="0">
+          <stop offset="0%" stop-color="#F00"/><stop offset="50%" stop-color="#000"/><stop offset="100%" stop-color="#F00"/>
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" height="${h}" width="${w}" fill="#808080"/>
+      <g filter="blur(2px)">
+        <rect x="0" y="0" height="${h}" width="${w}" fill="#000080"/>
+        <rect x="0" y="0" height="${h}" width="${w}" fill="url(#Y)" class="mix"/>
+        <rect x="0" y="0" height="${h}" width="${w}" fill="url(#X)" class="mix"/>
+        <rect x="${depth}" y="${depth}" height="${h-2*depth}" width="${w-2*depth}" fill="#808080" rx="${radius}" ry="${radius}" filter="blur(${depth}px)"/>
+      </g>
+    </svg>`);
+}
+
+function getRefractionFilter(h, w, radius, depth, strength, ca) {
+  const map = getDisplacementMap(h, w, radius, depth);
+  return 'data:image/svg+xml;utf8,' + encodeURIComponent(
+    `<svg height="${h}" width="${w}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="lg" color-interpolation-filters="sRGB">
+          <feImage x="0" y="0" height="${h}" width="${w}" href="${map}" result="map"/>
+          <feDisplacementMap in="SourceGraphic" in2="map" scale="${strength+ca*2}" xChannelSelector="R" yChannelSelector="G"/>
+          <feColorMatrix type="matrix" values="1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0" result="chR"/>
+          <feDisplacementMap in="SourceGraphic" in2="map" scale="${strength+ca}" xChannelSelector="R" yChannelSelector="G"/>
+          <feColorMatrix type="matrix" values="0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 1 0" result="chG"/>
+          <feDisplacementMap in="SourceGraphic" in2="map" scale="${strength}" xChannelSelector="R" yChannelSelector="G"/>
+          <feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 1 0" result="chB"/>
+          <feBlend in="chR" in2="chG" mode="screen"/>
+          <feBlend in2="chB" mode="screen"/>
+        </filter>
+      </defs>
+    </svg>`) + '#lg';
+}
+
+// Проверка поддержки backdrop-filter с url()
+const supportsBfUrl = (() => {
+  const el = document.createElement('div');
+  el.style.cssText = 'backdrop-filter:url(#t)';
+  return el.style.backdropFilter === 'url("#t")' || el.style.backdropFilter === 'url(#t)';
+})();
+
+function applyGlass(el, force) {
+  if (!supportsBfUrl && !force) { el.style.webkitBackdropFilter = 'blur(20px) saturate(180%)'; el.style.backdropFilter = 'blur(20px) saturate(180%)'; return; }
+  const r = el.getBoundingClientRect();
+  const w = Math.round(r.width), h = Math.round(r.height);
+  if (w < 4 || h < 4) return;
+
+  const depth = parseFloat(el.dataset.lgDepth || '10');
+  const strength = parseFloat(el.dataset.lgStrength || '100');
+  const ca = parseFloat(el.dataset.lgCa || '0');
+  const blur = parseFloat(el.dataset.lgBlur || '0');
+  const brightness = parseFloat(el.dataset.lgBrightness || '1.1');
+  const saturate = parseFloat(el.dataset.lgSaturate || '1.5');
+  const radius = parseFloat(getComputedStyle(el).borderRadius || '0');
+
+  const filterUrl = getRefractionFilter(h, w, radius, depth, strength, ca);
+  el.style.backdropFilter = `blur(${blur}px) url('${filterUrl}') blur(${blur}px) brightness(${brightness}) saturate(${saturate})`;
+}
+
+// Применяем на все .lg-el
+const allGlass = document.querySelectorAll('.lg-el');
+allGlass.forEach(el => { applyGlass(el, false); });
+
+// ResizeObserver на каждый
+const ro = new ResizeObserver(entries => {
+  entries.forEach(e => { const el = e.target; if (el.classList.contains('lg-el')) applyGlass(el, false); });
+});
+allGlass.forEach(el => ro.observe(el));
+
+// IntersectionObserver для reveal-анимаций
+const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { threshold: .1 });
+document.querySelectorAll('.rv').forEach(el => io.observe(el));
+
+// Параллакс сферы
+const sw = document.querySelector('.hero .sphere-wrap');
+if (sw) {
+  const sp = sw.querySelector('.sphere .lg-content');
+  document.querySelector('.hero').addEventListener('mousemove', e => {
+    const r = sw.getBoundingClientRect();
+    const x = (e.clientX - r.left - r.width / 2) / r.width * 20;
+    const y = (e.clientY - r.top - r.height / 2) / r.height * 20;
+    sp.style.transform = `translate(${x}px,${y}px)`;
+  });
+  document.querySelector('.hero').addEventListener('mouseleave', () => { sp.style.transform = ''; });
+}
+</script>
+</body>
+</html>

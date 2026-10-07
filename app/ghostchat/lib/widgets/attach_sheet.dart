@@ -36,6 +36,7 @@ class AttachSheet extends StatefulWidget {
   final VoidCallback onWallet; // кошелёк (заглушка до GhostBank)
   /// Режим выбора одного изображения без отправки в чат (например, для обоев).
   final bool selectionOnly;
+  final int maxSelectionCount;
   final Future<void> Function(File file)? onPickedSelect;
   const AttachSheet({
     super.key,
@@ -46,6 +47,7 @@ class AttachSheet extends StatefulWidget {
     required this.onGeo,
     required this.onWallet,
     this.selectionOnly = false,
+    this.maxSelectionCount = 10,
     this.onPickedSelect,
   });
 
@@ -139,6 +141,18 @@ class _AttachSheetState extends State<AttachSheet> {
 
   void _toggle(AssetEntity a) {
     HapticFeedback.selectionClick();
+    if (!_selected.contains(a.id) &&
+        !widget.selectionOnly &&
+        _selected.length >= widget.maxSelectionCount) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(
+          content: Text(
+            'За одну отправку можно выбрать не более ${widget.maxSelectionCount} вложений',
+          ),
+        ),
+      );
+      return;
+    }
     setState(() {
       if (widget.selectionOnly) _selected.clear();
       if (_selected.contains(a.id)) {
@@ -198,20 +212,24 @@ class _AttachSheetState extends State<AttachSheet> {
   Future<void> _send() async {
     if (_selected.isEmpty || _sending) return;
     setState(() => _sending = true);
-    final picked = _assets.where((a) => _selected.contains(a.id)).toList();
-    final items = <AttachItem>[];
-    for (final a in picked) {
-      try {
-        final f = await a.file;
-        if (f != null) items.add(AttachItem(f, a.type == AssetType.video));
-      } catch (_) {}
-    }
-    if (mounted) Navigator.of(context).maybePop();
-    if (items.isEmpty) return;
-    if (widget.selectionOnly && widget.onPickedSelect != null) {
-      await widget.onPickedSelect!(items.first.file);
-    } else {
-      await widget.onPickedSend(items);
+    try {
+      final picked = _assets.where((a) => _selected.contains(a.id)).toList();
+      final items = <AttachItem>[];
+      for (final a in picked) {
+        try {
+          final f = await a.file;
+          if (f != null) items.add(AttachItem(f, a.type == AssetType.video));
+        } catch (_) {}
+      }
+      if (mounted) Navigator.of(context).maybePop();
+      if (items.isEmpty) return;
+      if (widget.selectionOnly && widget.onPickedSelect != null) {
+        await widget.onPickedSelect!(items.first.file);
+      } else {
+        await widget.onPickedSend(items);
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
     }
   }
 

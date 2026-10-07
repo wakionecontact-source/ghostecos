@@ -76,6 +76,7 @@ class StoredMessage {
   final int? replyTo;
   final String? replyPreview;
   final String? forwardedFrom;
+  final int? forwardedThoughtExpiresAt;
 
   /// {file_id, file_name, mime, size, key (b64), iv (b64), voice?, duration?}
   final Map<String, dynamic>? filePayload;
@@ -105,6 +106,7 @@ class StoredMessage {
     this.replyTo,
     this.replyPreview,
     this.forwardedFrom,
+    this.forwardedThoughtExpiresAt,
     this.filePayload,
     this.reactions,
     this.replyMarkup,
@@ -127,6 +129,7 @@ class StoredMessage {
     'reply_to': replyTo,
     'reply_preview': replyPreview,
     'forwarded_from': forwardedFrom,
+    'forwarded_thought_expires_at': forwardedThoughtExpiresAt,
     'file_payload': filePayload != null ? jsonEncode(filePayload) : null,
     'reactions': reactions != null ? jsonEncode(reactions) : null,
     'bot_reply_markup': replyMarkup != null
@@ -153,6 +156,8 @@ class StoredMessage {
     replyTo: m['reply_to'] as int?,
     replyPreview: m['reply_preview'] as String?,
     forwardedFrom: m['forwarded_from'] as String?,
+    forwardedThoughtExpiresAt: (m['forwarded_thought_expires_at'] as num?)
+        ?.toInt(),
     filePayload: m['file_payload'] != null
         ? jsonDecode(m['file_payload'] as String) as Map<String, dynamic>
         : null,
@@ -296,6 +301,7 @@ class DbService {
             reply_to      INTEGER,
             reply_preview TEXT,
             forwarded_from TEXT,
+            forwarded_thought_expires_at INTEGER,
             file_payload  TEXT,
             reactions     TEXT,
             edited        INTEGER NOT NULL DEFAULT 0,
@@ -550,8 +556,18 @@ class DbService {
             );
           }
         }
+        if (oldVersion < 14) {
+          final columns = await db.rawQuery('PRAGMA table_info(messages)');
+          if (!columns.any(
+            (row) => row['name'] == 'forwarded_thought_expires_at',
+          )) {
+            await db.execute(
+              'ALTER TABLE messages ADD COLUMN forwarded_thought_expires_at INTEGER',
+            );
+          }
+        }
       },
-      version: 13,
+      version: 14,
     );
   }
 
@@ -1427,6 +1443,18 @@ class DbService {
   /// успешного открытия изображение/аудио/файл не скачивается и не
   /// расшифровывается заново после перезапуска приложения.
   Future<Uint8List?> getCachedPlainFile(String fileId) async {
+    final path = await getCachedPlainPath(fileId);
+    if (path == null) return null;
+    try {
+      return await File(path).readAsBytes();
+    } catch (e) {
+      appLog.warn('storage', 'plain cache read failed $fileId: $e');
+      await deleteCachedPlainFile(fileId);
+      return null;
+    }
+  }
+
+  Future<String?> getCachedPlainPath(String fileId) async {
     final r = await _safeDb.query(
       'plaincache',
       columns: ['path', 'size'],
@@ -1444,16 +1472,83 @@ class DbService {
         await deleteCachedPlainFile(fileId);
         return null;
       }
-      final bytes = await file.readAsBytes();
-      if (bytes.length != expectedSize) {
+      if (await file.length() != expectedSize) {
         await deleteCachedPlainFile(fileId);
         return null;
       }
-      return bytes;
+      return path;
     } catch (e) {
-      appLog.warn('storage', 'plain cache read failed $fileId: $e');
+      appLog.warn('storage', 'plain cache path failed $fileId: $e');
       await deleteCachedPlainFile(fileId);
       return null;
+    }
+  }
+
+  Future<String> newPlainCacheTempPath(String fileId) async {
+    final dir = await _plainCacheDirectory();
+    return p.join(
+      dir.path,
+      '.$fileId.${DateTime.now().microsecondsSinceEpoch}.tmp',
+    );
+  }
+
+  Future<String> commitPlainCacheTemp({
+    required String fileId,
+    required String tempPath,
+    required int size,
+    required String? mime,
+    String extension = '.bin',
+  }) async {
+    final dir = await _plainCacheDirectory();
+    final safeExtension = RegExp(r'^\.[A-Za-z0-9]{1,10}$').hasMatch(extension)
+        ? extension.toLowerCase()
+        : '.bin';
+    final target = File(p.join(dir.path, '$fileId$safeExtension'));
+    String? previousPath;
+    final previous = await _safeDb.query(
+      'plaincache',
+      columns: ['path'],
+      where: 'file_id = ?',
+      whereArgs: [fileId],
+      limit: 1,
+    );
+    if (previous.isNotEmpty) previousPath = previous.first['path'] as String?;
+    if (await target.exists()) await target.delete();
+    await File(tempPath).rename(target.path);
+    await _safeDb.insert('plaincache', {
+      'file_id': fileId,
+      'path': target.path,
+      'size': size,
+      'mime': mime,
+      'cached_at': DateTime.now().millisecondsSinceEpoch,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    if (previousPath != null && previousPath != target.path) {
+      final old = File(previousPath);
+      if (await old.exists()) await old.delete();
+    }
+    return target.path;
+  }
+
+  Future<String> cachePlainFileFromPath({
+    required String fileId,
+    required String sourcePath,
+    required String? mime,
+    String extension = '.bin',
+  }) async {
+    final tempPath = await newPlainCacheTempPath(fileId);
+    try {
+      final temp = await File(sourcePath).copy(tempPath);
+      return await commitPlainCacheTemp(
+        fileId: fileId,
+        tempPath: temp.path,
+        size: await temp.length(),
+        mime: mime,
+        extension: extension,
+      );
+    } catch (_) {
+      final temp = File(tempPath);
+      if (await temp.exists()) await temp.delete();
+      rethrow;
     }
   }
 

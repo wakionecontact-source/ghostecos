@@ -740,11 +740,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               _row(
                 CupertinoIcons.lock_shield_fill,
-                'Безопасность приложения',
-                'Блок-код и скрытые безопасные среды',
+                'Блокировка приложения',
+                'Код, автоблокировка и биометрия',
                 () => _open(const AppSecurityScreen()),
-                searchTerms:
-                    'безопасность блок код пароль безопасная среда скрытые группы',
+                searchTerms: 'блокировка код пароль автоблокировка биометрия',
                 last: true,
               ),
             ],
@@ -966,8 +965,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   };
 
   bool _matchesSettingsCategory(String key) {
-    if (AppSecurityStore.instance.isInSafeMode &&
-        (key == 'security' || key == 'dev')) {
+    if (AppSecurityStore.instance.isInSafeMode && key == 'security') {
       return false;
     }
     if (_settingsFilter.isEmpty) return true;
@@ -1386,7 +1384,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               .where(_matchesSettingsCategory)
               .toList(growable: false);
           final reorderOrder = safeMode
-              ? order.where((key) => key != 'security' && key != 'dev').toList()
+              ? order.where((key) => key != 'security').toList()
               : order;
           final bottomPad = widget.embedded
               ? 120 + MediaQuery.of(context).padding.bottom
@@ -1411,7 +1409,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       final updated = List<String>.of(order);
                       for (var index = 0; index < updated.length; index++) {
                         final current = updated[index];
-                        if (current == 'security' || current == 'dev') continue;
+                        if (current == 'security') continue;
                         updated[index] = movable[movableIndex++];
                       }
                       SettingsOrder.instance.save(updated);

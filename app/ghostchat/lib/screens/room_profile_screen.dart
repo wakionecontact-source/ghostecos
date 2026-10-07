@@ -12,6 +12,14 @@ import '../widgets/profile_banner.dart';
 import '../widgets/toast_overlay.dart';
 import 'room_edit_screen.dart';
 
+class RoomProfileResult {
+  final RoomSummary? room;
+  final bool closeChat;
+
+  const RoomProfileResult.updated(this.room) : closeChat = false;
+  const RoomProfileResult.closeChat() : room = null, closeChat = true;
+}
+
 class RoomProfileScreen extends StatefulWidget {
   final RoomSummary room;
 
@@ -29,6 +37,7 @@ class _RoomProfileScreenState extends State<RoomProfileScreen> {
   bool _avatarBusy = false;
   bool _linkBusy = false;
   bool _requestsBusy = false;
+  bool _roomActionBusy = false;
   RoomInviteLink? _inviteLink;
   int _pendingRequests = 0;
   String? _error;
@@ -389,7 +398,165 @@ class _RoomProfileScreenState extends State<RoomProfileScreen> {
     }
   }
 
-  void _close() => Navigator.of(context).pop(_room);
+  Future<void> _transferOwnership() async {
+    if (!_isOwner || _roomActionBusy) return;
+    final username = TextEditingController();
+    final password = TextEditingController();
+    try {
+      final values = await showDialog<Map<String, String>>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: GE.bgDeep,
+          scrollable: true,
+          title: Text('Передать владение', style: TextStyle(color: GE.text)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Новый владелец должен уже состоять в комнате. После передачи вы станете администратором.',
+                style: TextStyle(color: GE.sub),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: username,
+                autofocus: true,
+                textInputAction: TextInputAction.next,
+                decoration: const InputDecoration(
+                  labelText: 'Username нового владельца',
+                  prefixText: '@',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: password,
+                obscureText: true,
+                textInputAction: TextInputAction.done,
+                decoration: const InputDecoration(labelText: 'Пароль аккаунта'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, {
+                'username': username.text.trim(),
+                'password': password.text,
+              }),
+              child: const Text('Передать'),
+            ),
+          ],
+        ),
+      );
+      if (values == null || !mounted) return;
+      final usernameValue = values['username']?.trim() ?? '';
+      final passwordValue = values['password'] ?? '';
+      if (usernameValue.replaceFirst(RegExp(r'^@+'), '').length < 3 ||
+          passwordValue.isEmpty) {
+        toast.show('Укажите username участника и пароль аккаунта');
+        return;
+      }
+
+      setState(() => _roomActionBusy = true);
+      final updated = await _service.transferOwnership(
+        _room,
+        username: usernameValue,
+        password: passwordValue,
+      );
+      if (!mounted) return;
+      setState(() {
+        _room = updated;
+        _roomActionBusy = false;
+      });
+      toast.show('Владение комнатой передано');
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _roomActionBusy = false);
+      toast.show('Не удалось передать владение: $error');
+    } finally {
+      username.dispose();
+      password.dispose();
+    }
+  }
+
+  Future<void> _leaveRoom() async {
+    if (_isOwner || _roomActionBusy) return;
+    final leave = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: GE.bgDeep,
+        title: Text('Покинуть комнату?', style: TextStyle(color: GE.text)),
+        content: Text(
+          _room.role == 'admin'
+              ? 'Вы выйдете из комнаты и потеряете роль администратора. При повторном вступлении вы станете участником.'
+              : 'Комната исчезнет из вашего списка. Для приватной комнаты повторное вступление может потребовать приглашение.',
+          style: TextStyle(color: GE.sub),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Покинуть'),
+          ),
+        ],
+      ),
+    );
+    if (leave != true || !mounted) return;
+    setState(() => _roomActionBusy = true);
+    try {
+      await _service.leaveRoom(_room);
+      if (!mounted) return;
+      Navigator.of(context).pop(const RoomProfileResult.closeChat());
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _roomActionBusy = false);
+      toast.show('Не удалось покинуть комнату: $error');
+    }
+  }
+
+  Future<void> _deleteRoom() async {
+    if (!_isOwner || _roomActionBusy) return;
+    final delete = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: GE.bgDeep,
+        title: Text('Удалить комнату?', style: TextStyle(color: GE.text)),
+        content: Text(
+          'Комната, переписка, приглашения и файлы будут удалены с сервера. Копии, уже сохранённые на устройствах участников, останутся.',
+          style: TextStyle(color: GE.sub),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: GE.red),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (delete != true || !mounted) return;
+    setState(() => _roomActionBusy = true);
+    try {
+      await _service.deleteRoom(_room);
+      if (!mounted) return;
+      Navigator.of(context).pop(const RoomProfileResult.closeChat());
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _roomActionBusy = false);
+      toast.show('Не удалось удалить комнату: $error');
+    }
+  }
+
+  void _close() => Navigator.of(context).pop(RoomProfileResult.updated(_room));
 
   @override
   Widget build(BuildContext context) {
@@ -403,7 +570,7 @@ class _RoomProfileScreenState extends State<RoomProfileScreen> {
         ? '${_room.membersCount} участников'
         : (_room.isChannel ? 'Канал' : 'Группа');
 
-    return PopScope<RoomSummary>(
+    return PopScope<RoomProfileResult>(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _close();
@@ -638,6 +805,63 @@ class _RoomProfileScreenState extends State<RoomProfileScreen> {
                           )
                         : const Icon(CupertinoIcons.chevron_right),
                     onTap: _requestsBusy ? null : _openJoinRequests,
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+              if (_isOwner || _room.role != null) ...[
+                GlassCard(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Column(
+                    children: [
+                      if (_isOwner) ...[
+                        ListTile(
+                          leading: Icon(
+                            CupertinoIcons.person_badge_plus,
+                            color: GE.primary,
+                          ),
+                          title: const Text('Передать владение'),
+                          subtitle: const Text(
+                            'Подтверждение паролем аккаунта',
+                          ),
+                          trailing: _roomActionBusy
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(CupertinoIcons.chevron_right),
+                          onTap: _roomActionBusy ? null : _transferOwnership,
+                        ),
+                        ListTile(
+                          leading: Icon(CupertinoIcons.trash, color: GE.red),
+                          title: Text(
+                            'Удалить комнату',
+                            style: TextStyle(color: GE.red),
+                          ),
+                          onTap: _roomActionBusy ? null : _deleteRoom,
+                        ),
+                      ] else
+                        ListTile(
+                          leading: Icon(Icons.logout, color: GE.sub),
+                          title: const Text('Покинуть комнату'),
+                          subtitle: _room.role == 'admin'
+                              ? const Text('Роль администратора будет снята')
+                              : null,
+                          trailing: _roomActionBusy
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(CupertinoIcons.chevron_right),
+                          onTap: _roomActionBusy ? null : _leaveRoom,
+                        ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 16),

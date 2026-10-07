@@ -71,3 +71,45 @@ Thumbs.db
 /ghostchat_*.apk
 /mine.html
 /ghostcraft.html
+
+# ─── Generic Flutter/Dart build & deps (all app folders) ───
+**/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/pubspec.lock.bak
+**/Flutter/ephemeral/
+**/windows/flutter/ephemeral/
+**/macos/Flutter/ephemeral/
+**/ios/Flutter/ephemeral/
+**/*.pdb
+
+# ─── Python deps ───
+**/venv/
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+
+# ─── Node deps ───
+**/node_modules/
+
+# ─── Secrets must never be committed ───
+.env
+.env.*
+!.env.example
+!*.env.example
+*.pem
+*.key
+*_secret.*
+*credentials*
+*.jks
+*.keystore
+*.p12
+
+# ─── Agent/tool session dirs (not project code) ───
+.gigatool/
+.codex-backups/
+
+# ─── GhostChat 1.19.3 — deprecated lib, keep out (only 1.2.2 app is live) ───
+/ghostchat_mobile_lib_1.19.3/

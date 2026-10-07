@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GhostEcos — приватная экосистема</title>
+<meta name="description" content="GhostEcos — экосистема независимых приватных продуктов: мессенджер GhostChat, социальная сеть GhostSocial и собственная экономика. Сквозное шифрование, ноль логов.">
+<style>
+  :root {
+    --ink:        #0f0d0b;
+    --ink-2:      #171310;
+    --ink-3:      #201b16;
+    --paper:      #ede7db;
+    --paper-dim:  #b8ae9e;
+    --muted:      #8f8675;
+    --faint:      #574f43;
+    --line:       rgba(237, 231, 219, 0.12);
+    --line-soft:  rgba(237, 231, 219, 0.07);
+    --accent:     #8b7cf6;
+    --accent-deep:#6f5fd8;
+    --accent-ink: #a99ff7;
+
+    --serif: "Iowan Old Style", "Baskerville", "Palatino Linotype", "Book Antiqua", Georgia, "Times New Roman", serif;
+    --sans:  -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono:  ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, "Liberation Mono", monospace;
+  }
+
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ink);
+    color: var(--paper);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+  }
+
+  ::selection { background: var(--accent); color: var(--ink); }
+
+  ::-webkit-scrollbar { width: 10px; }
+  ::-webkit-scrollbar-track { background: var(--ink); }
+  ::-webkit-scrollbar-thumb { background: #2c261f; border: 2px solid var(--ink); border-radius: 6px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a3229; }
+
+  a { color: inherit; text-decoration: none; }
+
+  .grain {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    pointer-events: none; z-index: 2; opacity: 0.055; mix-blend-mode: overlay;
+  }
+
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 0 40px; }
+
+  .mono {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .hairline { border: 0; height: 1px; background: var(--line); }
+
+  /* ────────── NAV ────────── */
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(15, 13, 11, 0.86);
+    backdrop-filter: saturate(140%);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 72px;
+  }
+  .brand { display: inline-flex; align-items: center; gap: 12px; }
+  .brand svg { height: 30px; width: auto; display: block; }
+  .brand-name {
+    font-family: var(--serif); font-size: 21px; letter-spacing: 0.01em;
+    font-weight: 600; color: var(--paper);
+  }
+  .nav-links { display: flex; gap: 34px; align-items: center; }
+  .nav-links a {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--muted);
+    transition: color 0.18s;
+  }
+  .nav-links a:hover { color: var(--paper); }
+  .nav-cta {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--paper); border: 1px solid var(--line); padding: 10px 16px;
+    transition: border-color 0.18s, color 0.18s;
+  }
+  .nav-cta:hover { border-color: var(--accent); color: var(--accent-ink); }
+
+  /* ────────── HERO ────────── */
+  .hero {
+    position: relative;
+    padding: 108px 0 96px;
+    border-bottom: 1px solid var(--line);
+  }
+  .hero-mark {
+    position: absolute; right: 4%; top: 30px;
+    width: clamp(200px, 30vw, 420px); height: auto; opacity: 0.06; pointer-events: none;
+  }
+  .overline {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.22em;
+    text-transform: uppercase; color: var(--accent-ink);
+    display: flex; align-items: center; gap: 12px; margin-bottom: 34px;
+  }
+  .overline::before { content: ""; width: 34px; height: 1px; background: var(--accent); display: inline-block; }
+  h1 {
+    font-family: var(--serif); font-weight: 500;
+    font-size: clamp(44px, 7.2vw, 92px);
+    line-height: 1.02; letter-spacing: -0.02em;
+    max-width: 16ch;
+  }
+  h1 em {
+    font-style: italic; color: var(--accent-ink);
+  }
+  .lede {
+    margin-top: 34px; max-width: 560px;
+    font-size: 18px; line-height: 1.75; color: var(--paper-dim);
+  }
+  .cta-row { display: flex; gap: 16px; margin-top: 44px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase;
+    padding: 15px 26px; cursor: pointer; transition: transform 0.15s, background 0.18s, border-color 0.18s, color 0.18s;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn-solid { background: var(--paper); color: var(--ink); border: 1px solid var(--paper); }
+  .btn-solid:hover { background: var(--accent-ink); border-color: var(--accent-ink); color: var(--ink); }
+  .btn-ghost { background: transparent; color: var(--paper); border: 1px solid var(--line); }
+  .btn-ghost:hover { border-color: var(--accent); color: var(--accent-ink); }
+
+  .stats {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    margin-top: 84px; border-top: 1px solid var(--line);
+  }
+  .stat { padding: 28px 24px 0 0; }
+  .stat + .stat { padding-left: 24px; border-left: 1px solid var(--line); }
+  .stat-num {
+    font-family: var(--serif); font-size: 34px; font-weight: 500; color: var(--paper);
+    line-height: 1; margin-bottom: 8px;
+  }
+  .stat-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+
+  /* ────────── SECTION SHELL ────────── */
+  section { padding: 96px 0; }
+  .sec-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 56px; gap: 24px; }
+  .sec-index { font-family: var(--mono); font-size: 11px; letter-spacing: 0.2em; color: var(--faint); }
+  .sec-index b { color: var(--accent-ink); font-weight: 400; }
+  h2 {
+    font-family: var(--serif); font-weight: 500;
+    font-size: clamp(30px, 4.4vw, 52px); line-height: 1.08; letter-spacing: -0.015em;
+  }
+  .sec-note { max-width: 440px; color: var(--muted); font-size: 15px; line-height: 1.7; }
+
+  /* ────────── PRODUCTS (catalogue rows) ────────── */
+  .catalog { border-top: 1px solid var(--line); }
+  .row {
+    display: grid; grid-template-columns: 64px 1.2fr 1fr auto;
+    gap: 32px; padding: 40px 0; border-bottom: 1px solid var(--line);
+    align-items: start;
+  }
+  .row-index { font-family: var(--mono); font-size: 12px; color: var(--faint); letter-spacing: 0.1em; }
+  .row-title { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .row-title h3 { font-family: var(--serif); font-weight: 500; font-size: 30px; letter-spacing: -0.01em; }
+  .tag {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+    padding: 4px 9px; border: 1px solid var(--line); color: var(--muted);
+  }
+  .tag.live { color: var(--accent-ink); border-color: rgba(139, 124, 246, 0.35); }
+  .row-desc { color: var(--paper-dim); font-size: 15px; line-height: 1.7; margin-top: 14px; max-width: 480px; }
+  .row-meta { margin-top: 20px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em;
+    color: var(--muted); padding: 6px 10px; border: 1px solid var(--line-soft); background: var(--ink-2);
+  }
+  .row-actions { display: flex; flex-direction: column; gap: 12px; align-items: flex-end; }
+  .link {
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--paper); display: inline-flex; align-items: center; gap: 8px;
+    transition: color 0.18s;
+  }
+  .link:hover { color: var(--accent-ink); }
+  .link .arr { transition: transform 0.18s; }
+  .link:hover .arr { transform: translate(3px, -3px); }
+  .link.sub { color: var(--muted); }
+  .link.sub:hover { color: var(--accent-ink); }
+
+  /* ────────── PRINCIPLES ────────── */
+  .principles { border-top: 1px solid var(--line); }
+  .p-grid { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+  .p-cell {
+    border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    padding: 40px; min-height: 220px;
+  }
+  .p-num { font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em; color: var(--accent-ink); margin-bottom: 26px; }
+  .p-cell h3 { font-family: var(--serif); font-weight: 500; font-size: 23px; margin-bottom: 12px; }
+  .p-cell p { color: var(--muted); font-size: 14.5px; line-height: 1.7; max-width: 420px; }
+
+  /* ────────── ECONOMY ────────── */
+  .economy { display: grid; grid-template-columns: 1.3fr 1fr; gap: 64px; align-items: center; }
+  .coin-fig { display: flex; align-items: center; justify-content: center; }
+  .coin svg { width: 220px; height: 220px; }
+  .economy-note {
+    display: inline-flex; align-items: center; gap: 10px; margin-top: 28px;
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--muted); border: 1px solid var(--line); padding: 10px 14px;
+  }
+
+  /* ────────── COMMUNITY ────────── */
+  .community { text-align: center; border-top: 1px solid var(--line); }
+  .community h2 { margin-bottom: 20px; }
+  .community p { color: var(--muted); max-width: 480px; margin: 0 auto 40px; font-size: 15px; line-height: 1.7; }
+  .community .btn { margin: 0 auto; }
+
+  /* ────────── FOOTER ────────── */
+  footer { border-top: 1px solid var(--line); padding: 56px 0; }
+  .foot {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 40px; flex-wrap: wrap;
+  }
+  .foot-brand { display: flex; align-items: center; gap: 10px; }
+  .foot-brand svg { height: 22px; }
+  .foot-brand span { font-family: var(--serif); font-size: 18px; }
+  .foot-copy { color: var(--muted); font-size: 13px; max-width: 260px; }
+  .foot-links { display: flex; gap: 24px; flex-wrap: wrap; }
+  .foot-links a { font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); transition: color 0.18s; }
+  .foot-links a:hover { color: var(--paper); }
+  .foot-meta { width: 100%; margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--line-soft); display: flex; justify-content: space-between; }
+  .foot-meta span { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); }
+
+  @media (max-width: 880px) {
+    .wrap { padding: 0 24px; }
+    .nav-links { display: none; }
+    .hero { padding: 72px 0 64px; }
+    .stats { grid-template-columns: 1fr 1fr; }
+    .stat:nth-child(3) { border-left: 0; }
+    .stat:nth-child(1), .stat:nth-child(2) { border-bottom: 1px solid var(--line); padding-bottom: 24px; }
+    .row { grid-template-columns: 1fr; gap: 20px; }
+    .row-actions { flex-direction: row; align-items: flex-start; }
+    .p-grid { grid-template-columns: 1fr; }
+    .economy { grid-template-columns: 1fr; gap: 40px; }
+    .coin-fig { order: -1; }
+  }
+</style>
+</head>
+<body>
+
+<svg class="grain" aria-hidden="true">
+  <filter id="g"><feTurbulence type="fractalNoise" baseFrequency="0.82" numOctaves="3" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter>
+  <rect width="100%" height="100%" filter="url(#g)"/>
+</svg>
+
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="#top">
+      <svg viewBox="0 0 48 60" fill="none" aria-hidden="true">
+        <path d="M24 3C13.5 3 6 11 6 21v33l4.5-4.5L15 54l4.5-4.5L24 54l4.5-4.5L33 54l4.5-4.5L42 54V21C42 11 34.5 3 24 3Z" fill="#8b7cf6"/>
+        <ellipse cx="17" cy="22" rx="4" ry="4.5" fill="#0f0d0b" opacity=".5"/>
+        <ellipse cx="31" cy="22" rx="4" ry="4.5" fill="#0f0d0b" opacity=".5"/>
+        <circle cx="18.5" cy="20.5" r="1.3" fill="#ede7db" opacity=".7"/>
+        <circle cx="32.5" cy="20.5" r="1.3" fill="#ede7db" opacity=".7"/>
+      </svg>
+      <span class="brand-name">GhostEcos</span>
+    </a>
+    <nav class="nav-links">
+      <a href="#products">Продукты</a>
+      <a href="#principles">Принципы</a>
+      <a href="#economy">Экономика</a>
+      <a href="#community">Сообщество</a>
+    </nav>
+    <a class="nav-cta" href="https://t.me/waki_one" target="_blank" rel="noopener">Telegram ↗</a>
+  </div>
+</header>
+
+<div class="hero" id="top">
+  <svg class="hero-mark" viewBox="0 0 48 60" fill="none" aria-hidden="true">
+    <path d="M24 3C13.5 3 6 11 6 21v33l4.5-4.5L15 54l4.5-4.5L24 54l4.5-4.5L33 54l4.5-4.5L42 54V21C42 11 34.5 3 24 3Z" fill="#ede7db"/>
+  </svg>
+  <div class="wrap">
+    <div class="overline">Приватная экосистема</div>
+    <h1>Мессенджер, который <em>не знает</em>, кто вы.</h1>
+    <p class="lede">
+      Сквозное шифрование как в Signal, каналы как в Telegram, своя экономика и игры.
+      Один аккаунт — все сервисы. Ноль логов, ноль метаданных, ноль компромиссов.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-solid" href="/chat/">Открыть GhostChat <span class="arr">→</span></a>
+      <a class="btn btn-ghost" href="#products">Что внутри</a>
+    </div>
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-num">E2E</div>
+        <div class="stat-label">P-256 ECDH + AES-GCM</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">5</div>
+        <div class="stat-label">продуктов экосистемы</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">18+</div>
+        <div class="stat-label">площадка без банов</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">3</div>
+        <div class="stat-label">валюты + NFT</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section id="products">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>Части одного целого.</h2>
+      <p class="sec-note">Каждый продукт самостоятелен, но вместе они — приватная альтернатива привычным сервисам.</p>
+    </div>
+    <div class="catalog">
+      <div class="row">
+        <div class="row-index">01</div>
+        <div>
+          <div class="row-title">
+            <h3>GhostChat</h3>
+            <span class="tag live">Android · открытая бета</span>
+          </div>
+          <p class="row-desc">Приватный мессенджер со сквозным шифрованием. Ключи не покидают устройство, сервер видит только зашифрованные данные. Работает даже по локальной сети без интернета.</p>
+          <div class="row-meta">
+            <div class="chips">
+              <span class="chip">X25519 + AES-256-GCM</span>
+              <span class="chip">LAN-режим</span>
+              <span class="chip">Группы и файлы</span>
+            </div>
+          </div>
+        </div>
+        <div class="row-actions">
+          <a class="link" href="/lend/ghostchat/">Подробнее <span class="arr">↗</span></a>
+          <a class="link sub" href="/download/latest">Скачать APK</a>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="row-index">02</div>
+        <div>
+          <div class="row-title">
+            <h3>GhostSocial</h3>
+            <span class="tag">Веб · прототип</span>
+          </div>
+          <p class="row-desc">Анонимная социальная сеть. Лента, посты с медиа и профили — без привязки к настоящему имени и без слежки за действиями. Открывается прямо в браузере.</p>
+          <div class="row-meta">
+            <div class="chips">
+              <span class="chip">Лента и посты</span>
+              <span class="chip">Без реальных имён</span>
+              <span class="chip">gost-экономика</span>
+            </div>
+          </div>
+        </div>
+        <div class="row-actions">
+          <a class="link" href="/social">Открыть <span class="arr">↗</span></a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="principles">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>Почему GhostEcos.</h2>
+      <p class="sec-note">Одни и те же правила во всех продуктах экосистемы. Без исключений.</p>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="p-grid">
+      <div class="p-cell">
+        <div class="p-num">01</div>
+        <h3>Сквозное шифрование</h3>
+        <p>Контент шифруется на устройстве. Ключи никогда не покидают вас — сервер бессилен прочитать.</p>
+      </div>
+      <div class="p-cell">
+        <div class="p-num">02</div>
+        <h3>Ноль метаданных</h3>
+        <p>Никаких логов «кто с кем и когда». Сервер хранит только зашифрованные блобы — и не дольше нужного.</p>
+      </div>
+      <div class="p-cell">
+        <div class="p-num">03</div>
+        <h3>Независимость</h3>
+        <p>Свой сервер, свой код, своя инфраструктура. Никаких больших корпораций между вами и собеседником.</p>
+      </div>
+      <div class="p-cell">
+        <div class="p-num">04</div>
+        <h3>Mesh-будущее</h3>
+        <p>Следующий шаг — децентрализованная mesh-сеть: устройства соединяются напрямую, без серверов вовсе.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="economy">
+  <div class="wrap">
+    <div class="economy">
+      <div>
+        <div class="overline" style="margin-bottom: 22px;">Экономика</div>
+        <h2>Своя валюта. <em style="color: var(--accent-ink); font-style: italic;">gost.</em></h2>
+        <p class="sec-note" style="margin-top: 20px; max-width: 480px;">
+          Внутри экосистемы зарождается собственная экономика. Первая валюта — <b style="color: var(--paper);">gost</b> —
+          стартует в GhostSocial как «семечко» будущей системы. Дальше будет больше.
+        </p>
+        <div class="economy-note">В разработке · не финансовый инструмент</div>
+      </div>
+      <div class="coin-fig">
+        <div class="coin">
+          <svg viewBox="0 0 220 220" aria-hidden="true">
+            <circle cx="110" cy="110" r="104" fill="none" stroke="#ede7db" stroke-opacity="0.14" stroke-width="1"/>
+            <circle cx="110" cy="110" r="88" fill="none" stroke="#ede7db" stroke-opacity="0.22" stroke-width="1"/>
+            <circle cx="110" cy="110" r="72" fill="none" stroke="#8b7cf6" stroke-opacity="0.5" stroke-width="1"/>
+            <circle cx="110" cy="110" r="56" fill="none" stroke="#8b7cf6" stroke-opacity="0.22" stroke-width="1"/>
+            <text x="110" y="118" text-anchor="middle" font-family="Iowan Old Style, Palatino Linotype, Georgia, serif" font-size="34" font-style="italic" fill="#ede7db">gost</text>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="community" class="community">
+  <div class="wrap">
+    <div class="overline" style="justify-content: center; margin-bottom: 26px;">Сообщество</div>
+    <h2>Следите за разработкой.</h2>
+    <p>Новости, ранний доступ, раздача приложений и стройка экосистемы — всё в Telegram-канале.</p>
+    <a class="btn btn-solid" href="https://t.me/waki_one" target="_blank" rel="noopener">@waki_one <span class="arr">→</span></a>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <div class="foot-brand">
+        <svg viewBox="0 0 48 60" fill="none" aria-hidden="true">
+          <path d="M24 3C13.5 3 6 11 6 21v33l4.5-4.5L15 54l4.5-4.5L24 54l4.5-4.5L33 54l4.5-4.5L42 54V21C42 11 34.5 3 24 3Z" fill="#8b7cf6"/>
+          <ellipse cx="17" cy="22" rx="4" ry="4.5" fill="#0f0d0b" opacity=".5"/>
+          <ellipse cx="31" cy="22" rx="4" ry="4.5" fill="#0f0d0b" opacity=".5"/>
+        </svg>
+        <span>GhostEcos</span>
+      </div>
+      <p class="foot-copy">Экосистема приватных продуктов. Без слежки, без компромиссов.</p>
+      <div class="foot-links">
+        <a href="/privacy">Политика</a>
+        <a href="/terms">Условия</a>
+        <a href="https://github.com/wakionecontact-source/ghostecos" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+    <div class="foot-meta">
+      <span>GhostEcos · 2026</span>
+      <span>Encrypted by design</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Последняя версия GhostChat</title>
+  <link rel="stylesheet" href="/download/assets/download.css?v=20260903-2">
+</head>
+<body data-download-version="1.2.1" data-latest-page="true">
+  <main class="download-shell">
+    <nav class="download-nav"><a class="brand" href="/">Ghost<span>Chat</span></a><a class="back-link" href="/download/">К загрузкам</a></nav>
+    <section class="hero">
+      <div class="eyebrow">GhostChat · downloads</div>
+      <h1>Последняя версия</h1>
+      <p class="lead" data-latest-note>Последняя версия GhostChat — открытая бета для Android. После старта будет 10 секунд ожидания и CAPTCHA-проверка.</p>
+      <aside class="install-warning" role="alert" style="margin-top:20px;padding:16px 18px;border:1px solid rgba(245,158,11,.48);background:rgba(245,158,11,.11);border-radius:16px;line-height:1.55;color:var(--text,#f8fafc);"><strong>Важно перед установкой</strong><br>При переходе с GhostChat 1.1.24 или ниже сначала откройте старую версию: Настройки → Ключи шифрования → Зашифровать ключ на сервере. Дождитесь успешного сохранения ключа, затем удалите старую версию и установите v1.2.1.</aside>
+    </section>
+    
+      <section class="download-card" aria-labelledby="download-title">
+        <div class="version-row"><h2 id="download-title">GhostChat v1.2.1</h2><span class="badge">Новейшая</span></div>
+        <p class="card-summary">Звонки, группы и каналы, боты (до 10 активных ботов на пользователя), баннеры и музыка в профилях, контакты, улучшения E2EE V2 и стабильности.</p>
+        <div class="download-meta"><span class="meta-chip">Android APK</span><span class="meta-chip">Open Beta</span><span class="meta-chip">110.3 MB</span><span class="meta-chip">Android 7+</span></div>
+        <div class="download-action">
+          <button class="download-button" id="download-button" type="button">Скачать APK</button>
+          <div class="progress" id="download-progress" aria-hidden="true"><span></span></div>
+          <div class="status" id="download-status" role="status" aria-live="polite"></div>
+          <div class="captcha-panel" id="captcha-panel">
+            <img class="captcha-image" id="captcha-image" alt="CAPTCHA">
+            <div class="captcha-row">
+              <input class="captcha-input" id="captcha-input" maxlength="32" autocomplete="off" placeholder="Код с картинки" aria-label="Код CAPTCHA">
+              <button class="captcha-refresh" id="captcha-refresh" type="button" aria-label="Обновить CAPTCHA">↻</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    <p class="footer-note" id="release-timer"></p>
+  </main>
+  <script src="/download/mesh.js"></script>
+  <script src="/download/assets/download.js?v=20260903-2"></script>
+  <script>
+    window.LIQUID_GLASS_SEL = window.matchMedia('(min-width: 721px)').matches
+      ? '.download-nav, .download-card' : '';
+  </script>
+  <script src="/download/liquid.js"></script>
+</body>
+</html>

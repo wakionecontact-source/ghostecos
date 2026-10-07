@@ -50,6 +50,7 @@ dependencies:
   # ─── Голосовые ───
   record: ^6.1.1                   # запись аудио, новая версия чтоб обойти record_linux баг
   flutter_webrtc: ^1.6.1           # P2P аудио/видео звонки через серверную сигнализацию
+  flutter_vless: ^1.1.6            # VLESS/Xray-профили и Android VPN-туннель
   flutter_background: ^1.3.1       # отдельный Android mediaProjection FGS для показа экрана
   local_auth: ^3.0.2               # вход по биометрии устройства (по желанию)
   audioplayers: ^6.1.0             # воспроизведение
@@ -105,6 +106,11 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   msix: ^3.16.7
   flutter_launcher_icons: ^0.14.4
+
+dependency_overrides:
+  # Локальный Android fork ограничивает VPN только UID GhostChat.
+  flutter_vless_android:
+    path: packages/flutter_vless_android
 
 # Genericiator иконок: запустить `dart run flutter_launcher_icons` после замены
 # assets/icon.png. Создаст mipmap-*, AppIcon.appiconset, Windows favicon.

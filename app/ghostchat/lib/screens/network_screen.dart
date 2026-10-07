@@ -1,8 +1,10 @@
-// Настройки → Сеть: куда реально уходят запросы (одна строка, read-only) +
-// HTTP/SOCKS5-прокси с хостом/портом/типом/ключом. VPN — место зарезервировано
-// на будущее, не реализовано.
+// Настройки → Сеть: куда идут запросы, ручной HTTP/SOCKS5-прокси и Android VLESS.
+import 'dart:async';
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter_vless/flutter_vless.dart';
 import '../theme.dart';
 import '../mesh_background.dart';
 import '../widgets/glass.dart';
@@ -10,6 +12,8 @@ import '../widgets/toast_overlay.dart';
 import '../services/network_settings.dart';
 import '../services/api_client.dart';
 import '../services/theme_service.dart';
+import '../services/vless_service.dart';
+import '../services/ws_client.dart';
 
 class NetworkScreen extends StatefulWidget {
   const NetworkScreen({super.key});
@@ -18,6 +22,12 @@ class NetworkScreen extends StatefulWidget {
 }
 
 class _NetworkScreenState extends State<NetworkScreen> {
+  final _vlessService = VlessService.instance;
+  final _vlessCtrl = TextEditingController();
+  bool _vlessProfileVisible = false;
+  bool _vlessBusy = false;
+  String? _vlessLoadError;
+
   late bool _enabled = NetworkSettings.instance.enabledNotifier.value;
   late bool _checkConnection =
       NetworkSettings.instance.checkConnectionNotifier.value;
@@ -33,11 +43,96 @@ class _NetworkScreenState extends State<NetworkScreen> {
   );
 
   @override
+  void initState() {
+    super.initState();
+    _vlessService.status.addListener(_onVlessStatusChanged);
+    unawaited(_loadVlessProfile());
+  }
+
+  @override
   void dispose() {
+    _vlessService.status.removeListener(_onVlessStatusChanged);
+    _vlessCtrl.dispose();
     _hostCtrl.dispose();
     _portCtrl.dispose();
     _keyCtrl.dispose();
     super.dispose();
+  }
+
+  void _onVlessStatusChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadVlessProfile() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _vlessService.initialize();
+      final profile = await _vlessService.loadSavedProfile();
+      if (!mounted) return;
+      _vlessCtrl.text = profile ?? '';
+      setState(() => _vlessLoadError = null);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _vlessLoadError = 'Не удалось открыть VLESS-профиль.');
+    }
+  }
+
+  bool get _vlessActive {
+    final state = _vlessService.status.value.connectionState;
+    return state == VlessConnectionState.connected ||
+        state == VlessConnectionState.connecting ||
+        state == VlessConnectionState.disconnecting;
+  }
+
+  Future<void> _saveVlessProfile() async {
+    if (_vlessCtrl.text.trim().isEmpty) {
+      toast.show('Вставь ссылку VLESS');
+      return;
+    }
+    try {
+      await _vlessService.saveProfile(_vlessCtrl.text);
+      if (mounted) toast.show('Профиль сохранён в защищённом хранилище');
+    } on FormatException {
+      toast.show('Не удалось разобрать ссылку VLESS');
+    } on ArgumentError {
+      toast.show('Ссылка VLESS некорректна');
+    } catch (_) {
+      toast.show('Не удалось сохранить VLESS-профиль');
+    }
+  }
+
+  Future<void> _connectVless() async {
+    if (_vlessBusy) return;
+    setState(() => _vlessBusy = true);
+    try {
+      await _vlessService.connect(_vlessCtrl.text);
+      if (mounted) toast.show('Запрос на подключение VLESS отправлен');
+    } on VlessPermissionDeniedException {
+      toast.show('Android не разрешил создать VPN-подключение');
+    } on FormatException {
+      toast.show('Не удалось разобрать ссылку VLESS');
+    } on ArgumentError {
+      toast.show('Профиль VLESS некорректен');
+    } catch (_) {
+      toast.show(
+        'Не удалось подключить VLESS. Проверь профиль и разрешение Android.',
+      );
+    } finally {
+      if (mounted) setState(() => _vlessBusy = false);
+    }
+  }
+
+  Future<void> _disconnectVless() async {
+    if (_vlessBusy) return;
+    setState(() => _vlessBusy = true);
+    try {
+      await _vlessService.disconnect();
+      if (mounted) toast.show('VLESS отключён');
+    } catch (_) {
+      toast.show('Не удалось отключить VLESS');
+    } finally {
+      if (mounted) setState(() => _vlessBusy = false);
+    }
   }
 
   Future<void> _save() async {
@@ -58,6 +153,7 @@ class _NetworkScreenState extends State<NetworkScreen> {
       authKey: _keyCtrl.text.trim(),
     );
     ApiClient().applyProxySettings();
+    WsClient.instance.reconnectForNetworkChange();
     if (!mounted) return;
     toast.show('Сохранено');
   }
@@ -257,7 +353,7 @@ class _NetworkScreenState extends State<NetworkScreen> {
             ),
             const SizedBox(height: 24),
             Text(
-              'VPN',
+              'VLESS-туннель',
               style: TextStyle(
                 color: GE.text,
                 fontSize: 13,
@@ -265,36 +361,186 @@ class _NetworkScreenState extends State<NetworkScreen> {
               ),
             ),
             const SizedBox(height: 8),
-            GlassCard(
-              isListSection: true,
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      CupertinoIcons.shield_lefthalf_fill,
-                      size: 20,
-                      color: GE.sub,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'Скоро',
-                        style: TextStyle(color: GE.sub, fontSize: 13),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            if (Platform.isAndroid) _vlessCard() else _vlessUnavailableCard(),
           ],
         ),
       ),
     );
+  }
+
+  Widget _vlessCard() {
+    final active = _vlessActive;
+    return GlassCard(
+      isListSection: true,
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                CupertinoIcons.shield_lefthalf_fill,
+                size: 20,
+                color: GE.primary,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  _vlessStatusLabel(_vlessService.status.value.connectionState),
+                  style: TextStyle(
+                    color: GE.text,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (_vlessBusy)
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: GE.primary,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Туннель охватывает трафик GhostChat, включая звонки. Другие приложения телефона идут напрямую.',
+            style: TextStyle(color: GE.sub, fontSize: 12, height: 1.4),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _vlessCtrl,
+            enabled: !active && !_vlessBusy,
+            obscureText: !_vlessProfileVisible,
+            maxLines: 1,
+            autocorrect: false,
+            enableSuggestions: false,
+            keyboardType: TextInputType.url,
+            style: TextStyle(color: GE.text, fontSize: 13),
+            decoration: InputDecoration(
+              labelText: 'Ссылка VLESS',
+              labelStyle: TextStyle(color: GE.sub),
+              hintText: 'vless://…',
+              hintStyle: TextStyle(color: GE.sub.withValues(alpha: 0.5)),
+              isDense: true,
+              suffixIcon: IconButton(
+                tooltip: _vlessProfileVisible
+                    ? 'Скрыть ссылку'
+                    : 'Показать ссылку',
+                onPressed: active || _vlessBusy
+                    ? null
+                    : () => setState(
+                        () => _vlessProfileVisible = !_vlessProfileVisible,
+                      ),
+                icon: Icon(
+                  _vlessProfileVisible
+                      ? CupertinoIcons.eye_slash
+                      : CupertinoIcons.eye,
+                  color: GE.sub,
+                  size: 18,
+                ),
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: GE.borderStrong),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: GE.borderStrong),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: GE.primary, width: 1.5),
+              ),
+            ),
+          ),
+          if (_vlessLoadError != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _vlessLoadError!,
+              style: TextStyle(color: GE.red, fontSize: 12),
+            ),
+          ],
+          if (active) ...[
+            const SizedBox(height: 10),
+            Text(
+              '↑ ${_formatBytes(_vlessService.status.value.upload)}   ↓ ${_formatBytes(_vlessService.status.value.download)}',
+              style: TextStyle(color: GE.sub, fontSize: 12),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: GlassButton(
+                  label: active ? 'Отключить' : 'Подключить',
+                  primary: !active,
+                  danger: active,
+                  loading: _vlessBusy,
+                  onTap: _vlessBusy
+                      ? null
+                      : active
+                      ? _disconnectVless
+                      : _connectVless,
+                ),
+              ),
+              if (!active) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: GlassButton(
+                    label: 'Сохранить',
+                    onTap: _vlessBusy ? null : _saveVlessProfile,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _vlessUnavailableCard() {
+    return GlassCard(
+      isListSection: true,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Row(
+        children: [
+          Icon(CupertinoIcons.shield_lefthalf_fill, size: 20, color: GE.sub),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'VLESS-туннель доступен в Android-приложении',
+              style: TextStyle(color: GE.sub, fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _vlessStatusLabel(VlessConnectionState state) {
+    return switch (state) {
+      VlessConnectionState.connected => 'VLESS подключён',
+      VlessConnectionState.connecting => 'Подключение VLESS…',
+      VlessConnectionState.disconnected => 'VLESS отключён',
+      VlessConnectionState.disconnecting => 'Отключение VLESS…',
+      VlessConnectionState.unknown => 'Статус VLESS неизвестен',
+    };
+  }
+
+  String _formatBytes(int bytes) {
+    const units = ['Б', 'КБ', 'МБ', 'ГБ'];
+    var value = bytes.toDouble();
+    var unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit++;
+    }
+    return '${value.toStringAsFixed(value >= 10 || unit == 0 ? 0 : 1)} ${units[unit]}';
   }
 
   Widget _typeChip(String label, ProxyType type) {

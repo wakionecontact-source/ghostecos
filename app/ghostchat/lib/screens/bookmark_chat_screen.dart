@@ -747,16 +747,29 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
   }
 
   Future<void> _forwardMessage(BookmarkMessage message) async {
-    final target = await _pickForwardTarget(includeRooms: !message.hasFile);
+    final target = await _pickForwardTarget(includeRooms: true);
     if (target == null || !mounted) return;
     try {
+      final author = await AuthService.username() ?? 'Избранное';
+      final forwardedCaption = message.text.trim().isEmpty
+          ? '↪ $author'
+          : '↪ $author\n${message.text.trim()}';
       if (target.room != null) {
-        final author = await AuthService.username() ?? 'Избранное';
-        await RoomService.instance.sendText(
-          target.room!,
-          message.text,
-          forwardedFrom: author,
-        );
+        if (message.hasFile) {
+          await RoomService.instance.sendAttachment(
+            target.room!,
+            bytes: message.fileBytes!,
+            mime: message.fileMime ?? 'application/octet-stream',
+            fileName: message.fileName ?? 'attachment',
+            caption: forwardedCaption,
+          );
+        } else {
+          await RoomService.instance.sendText(
+            target.room!,
+            message.text,
+            forwardedFrom: author,
+          );
+        }
       } else {
         final username = target.username!;
         if (message.hasFile) {
@@ -764,11 +777,10 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
             toUsername: username,
             bytes: message.fileBytes!,
             mime: message.fileMime ?? 'application/octet-stream',
-            fileName: message.fileName!,
+            fileName: message.fileName ?? 'attachment',
+            caption: forwardedCaption,
           );
-        }
-        if (message.text.isNotEmpty) {
-          final author = await AuthService.username() ?? 'Избранное';
+        } else if (message.text.isNotEmpty) {
           await ChatRepo.instance.sendDmText(
             username,
             message.text,

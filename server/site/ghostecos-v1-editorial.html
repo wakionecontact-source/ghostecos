@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GhostEcos — приватная экосистема</title>
+<meta name="description" content="GhostEcos — экосистема независимых приватных продуктов: мессенджер GhostChat, социальная сеть GhostSocial и собственная экономика. Сквозное шифрование, ноль логов.">
+<style>
+  :root {
+    --ink:        #120d1d;
+    --ink-2:      #181128;
+    --ink-3:      #1f1730;
+    --paper:      #f1ece3;
+    --paper-dim:  #cfc6c2;
+    --muted:      #9d94a6;
+    --faint:      #6b6178;
+    --line:       rgba(241, 236, 227, 0.12);
+    --line-soft:  rgba(241, 236, 227, 0.07);
+    --violet:     #7c3aed;
+    --iris:       #a78bfa;
+    --iris-ink:   #c4b5fd;
+
+    --serif: "Iowan Old Style", "Baskerville", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+    --sans:  -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono:  ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+  }
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body {
+    background: var(--ink); color: var(--paper);
+    font-family: var(--sans); font-size:16px; line-height:1.6;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; overflow-x:hidden;
+  }
+  ::selection { background: var(--violet); color: var(--paper); }
+  a { color:inherit; text-decoration:none; }
+  .wrap { max-width:1200px; margin:0 auto; padding:0 40px; }
+  .grain { position:fixed; inset:0; z-index:2; pointer-events:none; opacity:.05; mix-blend-mode:overlay; }
+  .mono { font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--muted); }
+  .overline {
+    font-family:var(--mono); font-size:11px; letter-spacing:.22em; text-transform:uppercase;
+    color:var(--iris-ink); display:flex; align-items:center; gap:12px; margin-bottom:32px;
+  }
+  .overline::before { content:""; width:34px; height:1px; background:var(--violet); display:inline-block; }
+
+  /* ava */
+  .ava { border-radius:10px; display:block; overflow:hidden; border:1px solid var(--line); box-shadow: inset 0 0 0 1px rgba(255,255,255,.03); }
+
+  header { position:sticky; top:0; z-index:50; background:rgba(18,13,29,.88); backdrop-filter:saturate(140%); border-bottom:1px solid var(--line); }
+  .nav { display:flex; align-items:center; justify-content:space-between; height:74px; }
+  .brand { display:inline-flex; align-items:center; gap:12px; }
+  .brand .ava { width:32px; height:32px; border-radius:8px; }
+  .brand-name { font-family:var(--serif); font-size:21px; font-weight:600; letter-spacing:.01em; }
+  .nav-links { display:flex; gap:32px; align-items:center; }
+  .nav-links a { font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); transition:color .18s; }
+  .nav-links a:hover { color:var(--paper); }
+  .nav-cta { font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--paper); border:1px solid var(--line); padding:10px 16px; transition:border-color .18s,color .18s; }
+  .nav-cta:hover { border-color:var(--iris); color:var(--iris-ink); }
+
+  .hero { display:grid; grid-template-columns: 1.5fr 1fr; gap:64px; padding:104px 0 96px; border-bottom:1px solid var(--line); align-items:center; }
+  h1 { font-family:var(--serif); font-weight:500; font-size:clamp(44px,7vw,88px); line-height:1.02; letter-spacing:-.02em; }
+  h1 em { font-style:italic; color:var(--iris-ink); }
+  .lede { margin-top:32px; max-width:560px; font-size:18px; line-height:1.75; color:var(--paper-dim); }
+  .cta-row { display:flex; gap:16px; margin-top:42px; flex-wrap:wrap; }
+  .btn { display:inline-flex; align-items:center; gap:10px; font-family:var(--mono); font-size:12px; letter-spacing:.12em; text-transform:uppercase; padding:15px 26px; cursor:pointer; transition:transform .15s, background .18s, border-color .18s, color .18s; }
+  .btn:active { transform:translateY(1px); }
+  .btn-solid { background:var(--paper); color:var(--ink); border:1px solid var(--paper); }
+  .btn-solid:hover { background:var(--iris-ink); border-color:var(--iris-ink); color:var(--ink); }
+  .btn-ghost { background:transparent; color:var(--paper); border:1px solid var(--line); }
+  .btn-ghost:hover { border-color:var(--violet); color:var(--iris-ink); }
+  .plate { position:relative; }
+  .plate .ava { width:100%; max-width:340px; margin:0 auto; border-radius:16px; }
+  .plate figcaption { font-family:var(--mono); font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--faint); margin-top:14px; display:flex; justify-content:space-between; }
+
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); margin-top:88px; border-top:1px solid var(--line); }
+  .stat { padding:28px 24px 0 0; }
+  .stat + .stat { padding-left:24px; border-left:1px solid var(--line); }
+  .stat-num { font-family:var(--serif); font-size:34px; font-weight:500; line-height:1; margin-bottom:8px; }
+  .stat-num.violet { color:var(--iris-ink); }
+  .stat-label { font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
+
+  section { padding:96px 0; }
+  .sec-head { display:flex; align-items:baseline; justify-content:space-between; gap:24px; margin-bottom:56px; }
+  h2 { font-family:var(--serif); font-weight:500; font-size:clamp(30px,4.4vw,52px); line-height:1.08; letter-spacing:-.015em; }
+  .sec-note { max-width:440px; color:var(--muted); font-size:15px; line-height:1.7; }
+
+  .catalog { border-top:1px solid var(--line); }
+  .row { display:grid; grid-template-columns:64px 1.2fr auto; gap:32px; padding:40px 0; border-bottom:1px solid var(--line); align-items:start; }
+  .row-index { font-family:var(--mono); font-size:12px; color:var(--iris-ink); letter-spacing:.1em; }
+  .row-title { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  .row-title h3 { font-family:var(--serif); font-weight:500; font-size:30px; }
+  .tag { font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase; padding:4px 9px; border:1px solid var(--line); color:var(--muted); }
+  .tag.live { color:var(--iris-ink); border-color:rgba(167,139,250,.35); }
+  .row-desc { color:var(--paper-dim); font-size:15px; line-height:1.7; margin-top:14px; max-width:480px; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:20px; }
+  .chip { font-family:var(--mono); font-size:10.5px; letter-spacing:.04em; color:var(--muted); padding:6px 10px; border:1px solid var(--line-soft); background:var(--ink-2); }
+  .row-actions { display:flex; flex-direction:column; gap:12px; align-items:flex-end; }
+  .link { font-family:var(--mono); font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:var(--paper); display:inline-flex; align-items:center; gap:8px; transition:color .18s; }
+  .link:hover { color:var(--iris-ink); }
+  .link .arr { transition:transform .18s; }
+  .link:hover .arr { transform:translate(3px,-3px); }
+  .link.sub { color:var(--muted); }
+  .link.sub:hover { color:var(--iris-ink); }
+
+  .p-grid { display:grid; grid-template-columns:1fr 1fr; border-top:1px solid var(--line); border-left:1px solid var(--line); }
+  .p-cell { border-right:1px solid var(--line); border-bottom:1px solid var(--line); padding:40px; min-height:220px; }
+  .p-num { font-family:var(--mono); font-size:11px; letter-spacing:.18em; color:var(--iris-ink); margin-bottom:26px; }
+  .p-cell h3 { font-family:var(--serif); font-weight:500; font-size:23px; margin-bottom:12px; }
+  .p-cell p { color:var(--muted); font-size:14.5px; line-height:1.7; max-width:420px; }
+
+  .economy { display:grid; grid-template-columns:1.3fr 1fr; gap:64px; align-items:center; }
+  .coin svg { width:220px; height:220px; }
+  .economy-note { display:inline-flex; align-items:center; gap:10px; margin-top:28px; font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); border:1px solid var(--line); padding:10px 14px; }
+
+  .community { text-align:center; border-top:1px solid var(--line); }
+  .community .overline { justify-content:center; margin-bottom:26px; }
+  .community h2 { margin-bottom:20px; }
+  .community p { color:var(--muted); max-width:480px; margin:0 auto 40px; font-size:15px; line-height:1.7; }
+  .community .btn { margin:0 auto; }
+
+  footer { border-top:1px solid var(--line); padding:56px 0; }
+  .foot { display:flex; justify-content:space-between; align-items:flex-start; gap:40px; flex-wrap:wrap; }
+  .foot-brand { display:flex; align-items:center; gap:10px; }
+  .foot-brand .ava { width:26px; height:26px; border-radius:7px; }
+  .foot-brand span { font-family:var(--serif); font-size:18px; }
+  .foot-copy { color:var(--muted); font-size:13px; max-width:260px; }
+  .foot-links { display:flex; gap:24px; flex-wrap:wrap; }
+  .foot-links a { font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); transition:color .18s; }
+  .foot-links a:hover { color:var(--paper); }
+  .foot-meta { width:100%; margin-top:40px; padding-top:24px; border-top:1px solid var(--line-soft); display:flex; justify-content:space-between; }
+  .foot-meta span { font-family:var(--mono); font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); }
+
+  @media (max-width:880px) {
+    .wrap { padding:0 24px; }
+    .nav-links { display:none; }
+    .hero { grid-template-columns:1fr; padding:64px 0 64px; gap:48px; }
+    .plate .ava { max-width:280px; margin:0; }
+    .stats { grid-template-columns:1fr 1fr; }
+    .stat:nth-child(3) { border-left:0; }
+    .stat:nth-child(1), .stat:nth-child(2) { border-bottom:1px solid var(--line); padding-bottom:24px; }
+    .row { grid-template-columns:1fr; gap:20px; }
+    .row-actions { flex-direction:row; align-items:flex-start; }
+    .p-grid { grid-template-columns:1fr; }
+    .economy { grid-template-columns:1fr; gap:40px; }
+    .coin { text-align:center; }
+  }
+</style>
+</head>
+<body>
+<svg class="grain" aria-hidden="true"><filter id="g"><feTurbulence type="fractalNoise" baseFrequency="0.82" numOctaves="3" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter><rect width="100%" height="100%" filter="url(#g)"/></svg>
+
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="#top">
+      <img class="ava" src="ava.jpg" alt="GhostEcos">
+      <span class="brand-name">GhostEcos</span>
+    </a>
+    <nav class="nav-links">
+      <a href="#products">Продукты</a>
+      <a href="#principles">Принципы</a>
+      <a href="#economy">Экономика</a>
+      <a href="#community">Сообщество</a>
+    </nav>
+    <a class="nav-cta" href="https://t.me/waki_one" target="_blank" rel="noopener">Telegram ↗</a>
+  </div>
+</header>
+
+<div class="wrap" id="top">
+  <div class="hero">
+    <div>
+      <div class="overline">Приватная экосистема</div>
+      <h1>Мессенджер, который <em>не знает</em>, кто вы.</h1>
+      <p class="lede">Сквозное шифрование как в Signal, каналы как в Telegram, своя экономика и игры. Один аккаунт — все сервисы. Ноль логов, ноль метаданных, ноль компромиссов.</p>
+      <div class="cta-row">
+        <a class="btn btn-solid" href="/chat/">Открыть GhostChat <span>→</span></a>
+        <a class="btn btn-ghost" href="#products">Что внутри</a>
+      </div>
+    </div>
+    <figure class="plate">
+      <img class="ava" src="ava.jpg" alt="Призрак GhostEcos">
+      <figcaption><span>MARK / 01</span><span>Est. 2026</span></figcaption>
+    </figure>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="stat-num violet">E2E</div><div class="stat-label">P-256 ECDH + AES-GCM</div></div>
+    <div class="stat"><div class="stat-num">5</div><div class="stat-label">продуктов экосистемы</div></div>
+    <div class="stat"><div class="stat-num">18+</div><div class="stat-label">площадка без банов</div></div>
+    <div class="stat"><div class="stat-num">3</div><div class="stat-label">валюты + NFT</div></div>
+  </div>
+</div>
+
+<section id="products">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>Части одного целого.</h2>
+      <p class="sec-note">Каждый продукт самостоятелен, но вместе они — приватная альтернатива привычным сервисам.</p>
+    </div>
+    <div class="catalog">
+      <div class="row">
+        <div class="row-index">01</div>
+        <div>
+          <div class="row-title"><h3>GhostChat</h3><span class="tag live">Android · открытая бета</span></div>
+          <p class="row-desc">Приватный мессенджер со сквозным шифрованием. Ключи не покидают устройство, сервер видит только зашифрованные данные. Работает даже по локальной сети без интернета.</p>
+          <div class="chips"><span class="chip">X25519 + AES-256-GCM</span><span class="chip">LAN-режим</span><span class="chip">Группы и файлы</span></div>
+        </div>
+        <div class="row-actions">
+          <a class="link" href="/lend/ghostchat/">Подробнее <span class="arr">↗</span></a>
+          <a class="link sub" href="/download/latest">Скачать APK</a>
+        </div>
+      </div>
+      <div class="row">
+        <div class="row-index">02</div>
+        <div>
+          <div class="row-title"><h3>GhostSocial</h3><span class="tag">Веб · прототип</span></div>
+          <p class="row-desc">Анонимная социальная сеть. Лента, посты с медиа и профили — без привязки к настоящему имени и без слежки за действиями. Открывается прямо в браузере.</p>
+          <div class="chips"><span class="chip">Лента и посты</span><span class="chip">Без реальных имён</span><span class="chip">gost-экономика</span></div>
+        </div>
+        <div class="row-actions"><a class="link" href="/social">Открыть <span class="arr">↗</span></a></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="principles">
+  <div class="wrap">
+    <div class="sec-head"><h2>Почему GhostEcos.</h2><p class="sec-note">Одни и те же правила во всех продуктах экосистемы. Без исключений.</p></div>
+    <div class="p-grid">
+      <div class="p-cell"><div class="p-num">01</div><h3>Сквозное шифрование</h3><p>Контент шифруется на устройстве. Ключи никогда не покидают вас — сервер бессилен прочитать.</p></div>
+      <div class="p-cell"><div class="p-num">02</div><h3>Ноль метаданных</h3><p>Никаких логов «кто с кем и когда». Сервер хранит только зашифрованные блобы — и не дольше нужного.</p></div>
+      <div class="p-cell"><div class="p-num">03</div><h3>Независимость</h3><p>Свой сервер, свой код, своя инфраструктура. Никаких больших корпораций между вами и собеседником.</p></div>
+      <div class="p-cell"><div class="p-num">04</div><h3>Mesh-будущее</h3><p>Следующий шаг — децентрализованная mesh-сеть: устройства соединяются напрямую, без серверов вовсе.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="economy">
+  <div class="wrap">
+    <div class="economy">
+      <div>
+        <div class="overline">Экономика</div>
+        <h2>Своя валюта. <em style="color:var(--iris-ink);font-style:italic;">gost.</em></h2>
+        <p class="sec-note" style="margin-top:20px;max-width:480px;">Внутри экосистемы зарождается собственная экономика. Первая валюта — <b style="color:var(--paper);">gost</b> — стартует в GhostSocial как «семечко» будущей системы. Дальше будет больше.</p>
+        <div class="economy-note">В разработке · не финансовый инструмент</div>
+      </div>
+      <div class="coin">
+        <svg viewBox="0 0 220 220" aria-hidden="true">
+          <circle cx="110" cy="110" r="104" fill="none" stroke="#a78bfa" stroke-opacity=".18" stroke-width="1"/>
+          <circle cx="110" cy="110" r="86" fill="none" stroke="#a78bfa" stroke-opacity=".3" stroke-width="1"/>
+          <circle cx="110" cy="110" r="68" fill="none" stroke="#7c3aed" stroke-opacity=".6" stroke-width="1.2"/>
+          <circle cx="110" cy="110" r="50" fill="none" stroke="#7c3aed" stroke-opacity=".25" stroke-width="1"/>
+          <text x="110" y="119" text-anchor="middle" font-family="Iowan Old Style, Palatino Linotype, Georgia, serif" font-size="34" font-style="italic" fill="#c4b5fd">gost</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="community" class="community">
+  <div class="wrap">
+    <div class="overline">Сообщество</div>
+    <h2>Следите за разработкой.</h2>
+    <p>Новости, ранний доступ, раздача приложений и стройка экосистемы — всё в Telegram-канале.</p>
+    <a class="btn btn-solid" href="https://t.me/waki_one" target="_blank" rel="noopener">@waki_one <span>→</span></a>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <div class="foot-brand"><img class="ava" src="ava.jpg" alt=""><span>GhostEcos</span></div>
+      <p class="foot-copy">Экосистема приватных продуктов. Без слежки, без компромиссов.</p>
+      <div class="foot-links"><a href="/privacy">Политика</a><a href="/terms">Условия</a><a href="https://github.com/wakionecontact-source/ghostecos" target="_blank" rel="noopener">GitHub</a></div>
+    </div>
+    <div class="foot-meta"><span>GhostEcos · 2026</span><span>Encrypted by design</span></div>
+  </div>
+</footer>
+</body>
+</html>

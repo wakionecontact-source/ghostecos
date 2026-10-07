@@ -1,0 +1,645 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b0b10">
+  <title>GhoGem 2.0 — preview</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0b10;
+      --panel: #111118;
+      --panel-2: #17171f;
+      --panel-3: #1d1c27;
+      --border: #292832;
+      --border-hi: #393744;
+      --panel-hover: #191820;
+      --panel-active: #211a2d;
+      --text: #f4f1fa;
+      --muted: #a19bad;
+      --dim: #716b7c;
+      --violet: #a77aff;
+      --violet-hi: #c0a0ff;
+      --green: #8bd5b4;
+      --amber: #f0c58c;
+      --radius: 16px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; }
+    body {
+      min-height: 100vh; color: var(--text);
+      background: var(--bg);
+    }
+    button, input, textarea { color: inherit; font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
+    .app { display: grid; grid-template-columns: 246px minmax(0,1fr); min-height: 100vh; }
+    .sidebar {
+      display: flex; flex-direction: column; min-height: 100vh; padding: 20px 14px 16px;
+      background: #101016; border-right: 1px solid var(--border);
+    }
+    .brand { display: flex; align-items: center; gap: 11px; padding: 0 8px 26px; }
+    .brand-mark {
+      width: 37px; height: 37px; display: grid; place-items: center; border-radius: 12px;
+      color: white; font-size: 19px; font-weight: 800;
+      background: #875bc9;
+    }
+    .brand-name { font-size: 16px; font-weight: 750; letter-spacing: -.035em; }
+    .brand-version { display: block; margin-top: 3px; color: var(--dim); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+    .new-chat {
+      display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 43px;
+      margin-bottom: 23px; border: 1px solid #59467a; border-radius: 12px;
+      background: #211a2d; color: #e9ddff; font-size: 12.5px; font-weight: 650;
+      transition: background .18s, border-color .18s, transform .18s;
+    }
+    .new-chat:hover { transform: translateY(-1px); background: #2a2038; border-color: #7962a0; }
+    .plus { font-size: 19px; line-height: 1; font-weight: 400; }
+    .nav-label { padding: 0 10px 9px; color: #656071; font-size: 9px; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
+    .nav { display: grid; gap: 4px; }
+    .nav-button {
+      display: flex; align-items: center; gap: 11px; width: 100%; padding: 10px 11px;
+      border: 1px solid transparent; border-radius: 10px; background: transparent; color: #a7a1b0;
+      text-align: left; font-size: 12px; font-weight: 560; transition: background .16s, color .16s, border-color .16s;
+    }
+    .nav-button:hover { background: var(--panel-hover); color: var(--text); }
+    .nav-button.active { color: #f0e8ff; background: var(--panel-active); border-color: #49375f; }
+    .nav-icon { width: 19px; height: 19px; display: grid; place-items: center; color: #92899e; font-size: 15px; }
+    .nav-button.active .nav-icon { color: var(--violet-hi); }
+    .side-spacer { flex: 1; min-height: 25px; }
+    .side-note { margin: 12px 4px 14px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+    .side-note-title { margin-bottom: 5px; font-size: 11px; font-weight: 680; }
+    .side-note-copy { color: var(--dim); font-size: 10px; line-height: 1.55; }
+    .profile { display: flex; align-items: center; gap: 10px; padding: 10px 8px 0; border-top: 1px solid var(--border); }
+    .avatar { width: 31px; height: 31px; display: grid; place-items: center; border-radius: 10px; background: #352a45; color: #e5d1ff; font-size: 11px; font-weight: 750; }
+    .profile-name { font-size: 11px; font-weight: 620; }
+    .profile-sub { margin-top: 3px; color: var(--dim); font-size: 9px; }
+    .main { min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
+    .topbar {
+      height: 64px; flex: 0 0 64px; display: flex; align-items: center; gap: 13px; padding: 0 30px;
+      border-bottom: 1px solid var(--border); background: var(--bg);
+      position: sticky; top: 0; z-index: 4;
+    }
+    .menu-toggle { display: none; }
+    .crumb { color: #777183; font-size: 9px; font-weight: 720; letter-spacing: .12em; text-transform: uppercase; }
+    .topbar-spacer { flex: 1; }
+    .connection { display: flex; align-items: center; gap: 7px; color: #908a98; font-size: 10px; }
+    .connection i { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
+    .model-pill {
+      display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 11px;
+      border: 1px solid var(--border-hi); border-radius: 10px; background: var(--panel);
+      color: #d8d2df; font-size: 10.5px; font-weight: 610;
+    }
+    .model-pill .spark { color: var(--violet-hi); font-size: 14px; }
+    .preview-pill { padding: 5px 8px; border: 1px solid #59482f; border-radius: 7px; background: #292116; color: #dfbd91; font-size: 8px; font-weight: 800; letter-spacing: .1em; }
+    .screen { display: none; flex: 1; min-height: 0; }
+    .screen.active { display: flex; flex-direction: column; }
+    .screen-scroll { flex: 1; width: 100%; overflow-y: auto; padding: 32px 34px 46px; }
+    .content { width: min(100%, 1000px); margin: 0 auto; }
+    .page-eyebrow { margin-bottom: 10px; color: var(--violet-hi); font-size: 9px; font-weight: 750; letter-spacing: .15em; text-transform: uppercase; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 10px; font-size: clamp(25px,3.5vw,38px); line-height: 1.13; font-weight: 720; letter-spacing: -.05em; }
+    h2 { margin-bottom: 7px; font-size: 26px; letter-spacing: -.045em; }
+    .lead { max-width: 560px; margin-bottom: 25px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    .chat-screen { min-height: calc(100vh - 64px); }
+    .chat-screen .screen-scroll { display: flex; flex-direction: column; padding-bottom: 15px; }
+    .chat-thread { width: min(100%, 790px); flex: 1; margin: 0 auto; display: flex; flex-direction: column; }
+    .welcome { margin: auto 0; padding: 18px 0 30px; }
+    .welcome-mark {
+      width: 49px; height: 49px; display: grid; place-items: center; margin-bottom: 23px; border-radius: 16px;
+      background: #211a2d;
+      border: 1px solid #49375f; color: #d1b9ff; font-size: 22px;
+    }
+    .welcome h1 { max-width: 620px; }
+    .welcome .lead { margin-bottom: 27px; }
+    .prompt-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; max-width: 710px; }
+    .prompt-card {
+      min-height: 71px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 13px;
+      background: var(--panel); text-align: left; transition: transform .16s, background .16s, border-color .16s;
+    }
+    .prompt-card:hover { transform: translateY(-2px); background: var(--panel-hover); border-color: #59467a; }
+    .prompt-title { margin-bottom: 5px; color: #e8e2ef; font-size: 11px; font-weight: 650; }
+    .prompt-copy { color: var(--dim); font-size: 9.5px; line-height: 1.4; }
+    .messages { display: grid; gap: 18px; padding: 8px 0 22px; }
+    .message { display: grid; grid-template-columns: 27px minmax(0,1fr); gap: 11px; align-items: start; animation: rise .2s ease-out; }
+    @keyframes rise { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    .message-avatar { width: 26px; height: 26px; display: grid; place-items: center; border: 1px solid var(--border-hi); border-radius: 9px; color: #c9b3f2; background: #211a2d; font-size: 11px; font-weight: 800; }
+    .message.user .message-avatar { color: #bcb6c6; background: var(--panel-2); }
+    .message-body { min-width: 0; padding-top: 4px; }
+    .message-role { margin-bottom: 6px; color: #777183; font-size: 9px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+    .message-text { color: #ded9e5; font-size: 12px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .composer-wrap { width: min(100%,790px); margin: 10px auto 0; }
+    .composer {
+      display: grid; grid-template-columns: 34px minmax(0,1fr) 37px; align-items: end; gap: 7px;
+      padding: 9px; border: 1px solid #493c5c; border-radius: 17px;
+      background: #15141c;
+    }
+    .attach, .send {
+      width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 10px;
+      background: transparent; color: #928a9d; font-size: 17px;
+    }
+    .attach:hover { background: var(--panel-hover); color: white; }
+    .send { background: #875bc9; color: #fff; font-size: 14px; }
+    .send:hover { filter: brightness(1.08); }
+    .composer textarea { width: 100%; min-height: 34px; max-height: 130px; resize: none; padding: 8px 5px; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 11.5px; line-height: 1.5; }
+    .composer textarea::placeholder { color: #736e7b; }
+    .composer-caption { display: flex; justify-content: space-between; gap: 10px; padding: 7px 4px 0; color: #686273; font-size: 8px; }
+    .demo-disclaimer { color: #c3a77f; }
+    .page-head { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
+    .page-head .lead { margin-bottom: 0; }
+    .subtle-button, .filter-button, .arena-vote {
+      border: 1px solid var(--border-hi); border-radius: 9px; background: var(--panel);
+      color: #d7d1df; font-size: 10px; font-weight: 620; transition: .16s;
+    }
+    .subtle-button { padding: 9px 12px; white-space: nowrap; }
+    .subtle-button:hover, .filter-button:hover { border-color: #59467a; background: #211a2d; }
+    .ranking-stats { display: flex; gap: 8px; margin: 0 0 17px; }
+    .stat { min-width: 118px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--panel); }
+    .stat strong { display: block; margin-bottom: 3px; font-size: 15px; font-variant-numeric: tabular-nums; }
+    .stat span { color: var(--dim); font-size: 8.5px; }
+    .filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 11px; }
+    .filter-button { padding: 7px 11px; color: #9891a2; }
+    .filter-button.active { border-color: #59467a; background: #211a2d; color: #e5d7ff; }
+    .ranking-list, .model-list { display: grid; gap: 8px; }
+    .rank-card {
+      display: grid; grid-template-columns: 35px minmax(0,1fr) auto; align-items: center; gap: 12px;
+      padding: 12px 14px; border: 1px solid var(--border); border-radius: 13px; background: var(--panel);
+      transition: border-color .16s, background .16s;
+    }
+    .rank-card:hover, .model-card:hover { border-color: #59467a; background: var(--panel-hover); }
+    .rank-num { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; background: var(--panel-2); color: #aaa3b2; font-size: 10px; font-weight: 760; font-variant-numeric: tabular-nums; }
+    .rank-num.top { background: #332919; color: #eac993; }
+    .rank-main { min-width: 0; }
+    .rank-titleline { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .rank-titleline strong { font-size: 11px; font-weight: 670; }
+    .tag { padding: 3px 6px; border: 1px solid var(--border); border-radius: 5px; color: #aaa3b2; font-size: 7px; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
+    .tag.premium { border-color: #59482f; color: #ddb987; background: #292116; }
+    .tag.multi { border-color: #35445b; color: #a9c0e4; }
+    .rank-meta { margin-top: 3px; color: #777183; font-size: 8.5px; }
+    .rank-dist { display: flex; gap: 5px; max-width: 330px; margin-top: 8px; }
+    .dist-cell { display: flex; flex: 1; align-items: center; gap: 3px; color: #827b8c; font-size: 7px; font-variant-numeric: tabular-nums; }
+    .dist-cell .bar { height: 3px; flex: 1; border-radius: 8px; background: #393744; overflow: hidden; }
+    .dist-cell .bar i { display: block; height: 100%; border-radius: inherit; background: #9970df; }
+    .rank-score { display: grid; grid-template-columns: auto auto; align-items: baseline; column-gap: 3px; white-space: nowrap; }
+    .rank-score strong { font-size: 20px; font-weight: 750; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+    .rank-score span { color: #716b7c; font-size: 9px; }
+    .rank-score small { grid-column: 1/-1; margin-top: 1px; color: #777183; font-size: 8px; text-align: right; }
+    .model-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; }
+    .model-card { padding: 14px; border: 1px solid var(--border); border-radius: 13px; background: var(--panel); transition: border-color .16s, background .16s; }
+    .model-name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 11px; font-weight: 680; }
+    .model-provider { margin-top: 5px; color: #827b8c; font-size: 8.5px; }
+    .model-data { display: flex; gap: 13px; margin-top: 12px; color: #b9b1c3; font-size: 9px; }
+    .model-data span { color: #777183; }
+    .arena-box { padding: 16px; border: 1px solid var(--border); border-radius: 15px; background: var(--panel); }
+    .arena-label { margin-bottom: 7px; color: #857d90; font-size: 8px; font-weight: 750; letter-spacing: .11em; text-transform: uppercase; }
+    .arena-box textarea { display: block; width: 100%; min-height: 72px; resize: vertical; padding: 11px; border: 1px solid var(--border); border-radius: 10px; background: #0c0c11; font-size: 11px; line-height: 1.5; }
+    .arena-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+    .arena-hint { color: #766f80; font-size: 8.5px; }
+    .arena-go { padding: 9px 12px; border: 0; border-radius: 9px; background: #875bc9; color: white; font-size: 9px; font-weight: 680; }
+    .arena-results { display: none; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; margin-top: 12px; }
+    .arena-results.visible { display: grid; }
+    .answer-card { min-width: 0; padding: 13px; border: 1px solid var(--border); border-radius: 12px; background: #0c0c11; }
+    .answer-head { display: flex; align-items: center; justify-content: space-between; gap: 7px; margin-bottom: 9px; }
+    .answer-head strong { font-size: 10px; }
+    .blind-tag { color: #9b88bf; font-size: 7px; font-weight: 750; letter-spacing: .09em; }
+    .answer-copy { color: #bbb4c3; font-size: 9.5px; line-height: 1.65; }
+    .vote-row { display: none; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+    .vote-row.visible { display: flex; }
+    .arena-vote { padding: 8px 10px; font-size: 8.5px; }
+    .arena-vote:hover { border-color: #59467a; color: #eee5fc; background: #211a2d; }
+    .arena-result-note { display: none; margin-top: 11px; padding: 10px; border: 1px solid #315340; border-radius: 9px; background: #17241c; color: #add7c0; font-size: 9px; line-height: 1.5; }
+    .arena-result-note.visible { display: block; }
+    .empty { padding: 24px; border: 1px dashed var(--border-hi); border-radius: 12px; color: #8b8494; font-size: 10px; text-align: center; line-height: 1.6; }
+    .mobile-scrim { display: none; }
+    @media (max-width: 900px) {
+      .app { grid-template-columns: 218px minmax(0,1fr); }
+      .sidebar { padding-inline: 11px; }
+      .topbar { padding-inline: 22px; }
+      .screen-scroll { padding-inline: 23px; }
+    }
+    @media (max-width: 680px) {
+      .app { display: block; }
+      .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 10; width: min(278px,84vw); min-height: 100dvh; transform: translateX(-105%); transition: transform .24s ease; }
+      body.menu-open .sidebar { transform: translateX(0); }
+      .mobile-scrim { position: fixed; inset: 0; z-index: 9; background: #08080c; opacity: .78; }
+      body.menu-open .mobile-scrim { display: block; }
+      .main { min-height: 100dvh; }
+      .topbar { height: 56px; flex-basis: 56px; gap: 9px; padding-inline: 13px; }
+      .menu-toggle { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 9px; background: var(--panel); color: #d7d0df; }
+      .crumb { font-size: 8px; }
+      .connection { display: none; }
+      .model-pill { min-height: 31px; max-width: 145px; padding-inline: 8px; overflow: hidden; font-size: 8.5px; white-space: nowrap; }
+      .model-pill span:last-child { overflow: hidden; text-overflow: ellipsis; }
+      .screen-scroll { padding: 22px 15px 26px; }
+      .chat-screen { min-height: calc(100dvh - 56px); }
+      .chat-screen .screen-scroll { padding-bottom: 12px; }
+      .welcome { padding: 20px 0 22px; }
+      .welcome-mark { width: 43px; height: 43px; margin-bottom: 18px; }
+      .welcome .lead { margin-bottom: 20px; }
+      .prompt-grid { gap: 7px; }
+      .prompt-card { min-height: 70px; padding: 10px; }
+      .prompt-title { font-size: 9.5px; }
+      .prompt-copy { font-size: 8px; }
+      .composer-wrap { margin-top: 8px; }
+      .composer-caption { font-size: 7px; }
+      .page-head { align-items: start; flex-direction: column; gap: 12px; }
+      .page-head .subtle-button { align-self: flex-start; }
+      .model-grid, .arena-results { grid-template-columns: 1fr; }
+      .rank-card { grid-template-columns: 27px minmax(0,1fr); gap: 8px; padding: 10px; }
+      .rank-num { width: 25px; height: 25px; }
+      .rank-score { grid-column: 2; grid-row: 2; justify-content: start; margin-top: 6px; }
+      .rank-score small { text-align: left; }
+      .rank-dist { max-width: none; }
+      .ranking-stats .stat { min-width: 0; flex: 1; }
+    }
+    @media (max-width: 380px) {
+      .prompt-grid { grid-template-columns: 1fr; }
+      .prompt-card { min-height: 57px; }
+      .preview-pill { display: none; }
+      .rank-dist { gap: 3px; }
+      .dist-cell { gap: 2px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar" aria-label="Главное меню">
+      <div class="brand">
+        <div class="brand-mark">g</div>
+        <div><div class="brand-name">GhoGem</div><span class="brand-version">Preview · 2.0</span></div>
+      </div>
+      <button class="new-chat" id="newChat"><span class="plus">＋</span> Новый диалог</button>
+      <div class="nav-label">Пространство</div>
+      <nav class="nav">
+        <button class="nav-button active" data-view="chat"><span class="nav-icon">⌂</span>Чат</button>
+        <button class="nav-button" data-view="models"><span class="nav-icon">✳</span>Модели</button>
+        <button class="nav-button" data-view="ranking"><span class="nav-icon">↗</span>Рейтинг</button>
+        <button class="nav-button" data-view="arena"><span class="nav-icon">◈</span>Arena</button>
+      </nav>
+      <div class="side-spacer"></div>
+      <div class="side-note">
+        <div class="side-note-title">GhoGem 2.0</div>
+        <div class="side-note-copy">Новый интерфейс для общения с моделями, их сравнения и изучения общего рейтинга.</div>
+      </div>
+      <div class="profile">
+        <div class="avatar">G</div>
+        <div><div class="profile-name">Гостевой просмотр</div><div class="profile-sub">Демо без входа</div></div>
+      </div>
+    </aside>
+    <div class="mobile-scrim" id="scrim"></div>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="menu-toggle" id="menuToggle" aria-label="Открыть меню">☰</button>
+        <div class="crumb">GhoGem <span style="color:#4d4857">/</span> <span id="sectionName">Чат</span></div>
+        <div class="topbar-spacer"></div>
+        <span class="connection"><i></i> Демо-режим</span>
+        <div class="model-pill"><span class="spark">✦</span><span id="currentModel">Модель не выбрана</span><span style="color:#70697a">⌄</span></div>
+        <span class="preview-pill">DESIGN PREVIEW</span>
+      </header>
+
+      <section class="screen chat-screen active" id="view-chat">
+        <div class="screen-scroll">
+          <div class="chat-thread" id="chatThread">
+            <div class="welcome" id="welcome">
+              <div class="welcome-mark">✳</div>
+              <div class="page-eyebrow">Ваше пространство идей</div>
+              <h1>Думай. Спрашивай.<br>Создавай.</h1>
+              <p class="lead">Один спокойный интерфейс для работы с ИИ. Выбирай модель, исследуй сложные вопросы и продолжай с того места, где остановился.</p>
+              <div class="prompt-grid">
+                <button class="prompt-card" data-prompt="Помоги разложить мою идею на первые конкретные шаги">
+                  <div class="prompt-title">Продумать идею</div><div class="prompt-copy">Разложить задачу на выполнимые шаги</div>
+                </button>
+                <button class="prompt-card" data-prompt="Объясни сложную тему простыми словами и приведи пример">
+                  <div class="prompt-title">Разобраться в теме</div><div class="prompt-copy">Получить ясное объяснение с примером</div>
+                </button>
+                <button class="prompt-card" data-prompt="Проверь этот текст и предложи более ясную версию">
+                  <div class="prompt-title">Улучшить текст</div><div class="prompt-copy">Сделать формулировки точнее и короче</div>
+                </button>
+                <button class="prompt-card" data-prompt="Сравни два подхода к решению этой задачи">
+                  <div class="prompt-title">Сравнить варианты</div><div class="prompt-copy">Взвесить плюсы, минусы и ограничения</div>
+                </button>
+              </div>
+            </div>
+            <div class="messages" id="messages" aria-live="polite"></div>
+          </div>
+          <div class="composer-wrap">
+            <form class="composer" id="chatForm">
+              <button class="attach" type="button" aria-label="Прикрепить файл" title="В preview файлы не загружаются">＋</button>
+              <textarea id="chatInput" rows="1" placeholder="Спроси что угодно…" aria-label="Сообщение"></textarea>
+              <button class="send" type="submit" aria-label="Отправить">↑</button>
+            </form>
+            <div class="composer-caption"><span>Enter — отправить · Shift+Enter — новая строка</span><span class="demo-disclaimer">Ответы в этом preview демонстрационные</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="view-models">
+        <div class="screen-scroll"><div class="content">
+          <div class="page-head">
+            <div><div class="page-eyebrow">Каталог</div><h2>Модели</h2><p class="lead">Сравнивай доступные модели и выбирай подходящую под задачу.</p></div>
+            <button class="subtle-button" id="refreshModels">Обновить список</button>
+          </div>
+          <div class="filters" id="modelFilters">
+            <button class="filter-button active" data-model-filter="all">Все</button>
+            <button class="filter-button" data-model-filter="free">Free</button>
+            <button class="filter-button" data-model-filter="premium">Premium</button>
+          </div>
+          <div class="model-list" id="modelList"><div class="empty">Загружаю каталог моделей…</div></div>
+        </div></div>
+      </section>
+
+      <section class="screen" id="view-ranking">
+        <div class="screen-scroll"><div class="content">
+          <div class="page-head">
+            <div><div class="page-eyebrow">Оценки пользователей</div><h2>Глобальный рейтинг</h2><p class="lead">Модели отсортированы по среднему баллу, затем по числу оценок. Здесь учитываются реальные оценки ответов.</p></div>
+            <button class="subtle-button" id="refreshRanking">Обновить рейтинг</button>
+          </div>
+          <div class="ranking-stats">
+            <div class="stat"><strong id="rankingModels">—</strong><span>моделей с оценками</span></div>
+            <div class="stat"><strong id="rankingVotes">—</strong><span>оценок ответов</span></div>
+          </div>
+          <div class="filters" id="ratingFilters">
+            <button class="filter-button active" data-rating-filter="all">Все</button>
+            <button class="filter-button" data-rating-filter="free">Free</button>
+            <button class="filter-button" data-rating-filter="premium">Premium</button>
+            <button class="filter-button" data-rating-filter="multimodal">Мультимодальные</button>
+          </div>
+          <div class="ranking-list" id="rankingList"><div class="empty">Загружаю оценки…</div></div>
+        </div></div>
+      </section>
+
+      <section class="screen" id="view-arena">
+        <div class="screen-scroll"><div class="content">
+          <div class="page-head">
+            <div><div class="page-eyebrow">Слепое сравнение</div><h2>GhoGem Arena</h2><p class="lead">Два ответа на один запрос. Сначала выбери лучший, затем откроются названия моделей.</p></div>
+          </div>
+          <div class="arena-box">
+            <div class="arena-label">Твой запрос</div>
+            <textarea id="arenaPrompt" placeholder="Напиши вопрос для сравнения моделей…">Объясни простыми словами, почему небо кажется голубым.</textarea>
+            <div class="arena-actions"><span class="arena-hint">В этом preview ответы и голос показаны для демонстрации.</span><button class="arena-go" type="button" id="runArena">Показать сравнение</button></div>
+              <div class="arena-results" id="arenaResults">
+              <article class="answer-card"><div class="answer-head"><strong id="answerALabel">Ответ A</strong><span class="blind-tag">АНОНИМНО</span></div><div class="answer-copy">Солнечный свет кажется белым, но состоит из разных цветов. Воздух сильнее рассеивает короткие синие волны, поэтому они приходят к нам со всех сторон и окрашивают небо.</div></article>
+              <article class="answer-card"><div class="answer-head"><strong id="answerBLabel">Ответ B</strong><span class="blind-tag">АНОНИМНО</span></div><div class="answer-copy">В атмосфере есть крошечные молекулы. Они отклоняют синий свет сильнее, чем красный. Когда мы смотрим вверх, рассеянный синий свет встречается с нами по всему небу.</div></article>
+            </div>
+            <div class="vote-row" id="voteRow">
+              <button class="arena-vote" data-vote="a">A лучше</button>
+              <button class="arena-vote" data-vote="b">B лучше</button>
+              <button class="arena-vote" data-vote="tie">Одинаково</button>
+              <button class="arena-vote" data-vote="bad">Оба ответа мимо</button>
+            </div>
+            <div class="arena-result-note" id="arenaNote">Это демонстрация интерфейса: голос не сохраняется, реальные названия моделей не раскрываются.</div>
+          </div>
+        </div></div>
+      </section>
+    </main>
+  </div>
+  <script>
+    (function () {
+      "use strict";
+      var API = "/ghogem-api";
+      var models = [];
+      var ranking = [];
+      var modelFilter = "all";
+      var ratingFilter = "all";
+
+      function $(selector) { return document.querySelector(selector); }
+      function esc(value) {
+        return String(value == null ? "" : value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+      }
+      function plural(n, one, few, many) {
+        var x = Math.abs(Number(n)) % 100;
+        var last = x % 10;
+        if (x > 10 && x < 20) return many;
+        if (last > 1 && last < 5) return few;
+        if (last === 1) return one;
+        return many;
+      }
+      async function get(path) {
+        var response = await fetch(API + path, { credentials: "same-origin", headers: { "Accept": "application/json" }, cache: "no-store" });
+        var data = await response.json();
+        if (!response.ok) throw new Error(data.detail || data.error || "HTTP " + response.status);
+        return data;
+      }
+      function setView(name) {
+        document.querySelectorAll(".screen").forEach(function (el) { el.classList.toggle("active", el.id === "view-" + name); });
+        document.querySelectorAll(".nav-button").forEach(function (el) { el.classList.toggle("active", el.getAttribute("data-view") === name); });
+        var labels = { chat: "Чат", models: "Модели", ranking: "Рейтинг", arena: "Arena" };
+        $("#sectionName").textContent = labels[name] || "GhoGem";
+        document.body.classList.remove("menu-open");
+        if (name === "models") loadModels();
+        if (name === "ranking") loadRanking();
+      }
+      document.querySelectorAll(".nav-button").forEach(function (button) {
+        button.addEventListener("click", function () { setView(button.getAttribute("data-view")); });
+      });
+      $("#menuToggle").addEventListener("click", function () { document.body.classList.toggle("menu-open"); });
+      $("#scrim").addEventListener("click", function () { document.body.classList.remove("menu-open"); });
+
+      function appendMessage(role, text) {
+        var row = document.createElement("div");
+        row.className = "message " + role;
+        var avatar = document.createElement("div");
+        avatar.className = "message-avatar";
+        avatar.textContent = role === "user" ? "Я" : "g";
+        var body = document.createElement("div");
+        body.className = "message-body";
+        var label = document.createElement("div");
+        label.className = "message-role";
+        label.textContent = role === "user" ? "Вы" : "GhoGem · демо";
+        var content = document.createElement("div");
+        content.className = "message-text";
+        content.textContent = text;
+        body.appendChild(label);
+        body.appendChild(content);
+        row.appendChild(avatar);
+        row.appendChild(body);
+        $("#messages").appendChild(row);
+        row.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+      function sendMessage(text) {
+        var prompt = String(text || "").trim();
+        if (!prompt) return;
+        $("#welcome").style.display = "none";
+        appendMessage("user", prompt);
+        $("#chatInput").value = "";
+        $("#chatInput").style.height = "34px";
+        window.setTimeout(function () {
+          appendMessage("assistant", "Это демонстрационный ответ для preview-интерфейса. В рабочей версии здесь появится ответ выбранной модели с потоковой генерацией, инструментами и оценкой.");
+        }, 380);
+      }
+      $("#chatForm").addEventListener("submit", function (event) {
+        event.preventDefault();
+        sendMessage($("#chatInput").value);
+      });
+      $("#chatInput").addEventListener("input", function () {
+        this.style.height = "34px";
+        this.style.height = Math.min(this.scrollHeight, 130) + "px";
+      });
+      $("#chatInput").addEventListener("keydown", function (event) {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          $("#chatForm").requestSubmit();
+        }
+      });
+      document.querySelectorAll("[data-prompt]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          $("#chatInput").value = button.getAttribute("data-prompt") || "";
+          $("#chatInput").focus();
+        });
+      });
+      $("#newChat").addEventListener("click", function () {
+        $("#messages").innerHTML = "";
+        $("#welcome").style.display = "";
+        $("#chatInput").value = "";
+        setView("chat");
+      });
+
+      async function loadModels() {
+        var box = $("#modelList");
+        if (!box) return;
+        if (!models.length) box.innerHTML = '<div class="empty">Загружаю каталог моделей…</div>';
+        try {
+          var data = await get("/models");
+          models = [];
+          Object.keys(data.providers || {}).forEach(function (provider) {
+            (data.providers[provider] || []).forEach(function (model) {
+              models.push({
+                key: model.key, name: model.name || model.key, provider: provider,
+                premium: !!model.premium, multimodal: !!model.multimodal,
+                creator: model.creator || "", rating: model.rating || {},
+                params: model.params_label || (model.params_b ? model.params_b + "B" : "")
+              });
+            });
+          });
+          models.sort(function (a, b) {
+            var av = Number(a.rating.average || 0), bv = Number(b.rating.average || 0);
+            return bv - av || a.name.localeCompare(b.name);
+          });
+          var current = models.find(function (model) { return model.key === data.current; }) || models[0];
+          if (current) {
+            $("#currentModel").textContent = current.name;
+          }
+          renderModels();
+        } catch (error) {
+          box.innerHTML = '<div class="empty">Каталог сейчас недоступен.<br>' + esc(error.message) + '</div>';
+        }
+      }
+      function renderModels() {
+        var box = $("#modelList");
+        if (!box) return;
+        var list = models.filter(function (model) {
+          if (modelFilter === "free") return !model.premium;
+          if (modelFilter === "premium") return model.premium;
+          return true;
+        });
+        if (!list.length) {
+          box.innerHTML = models.length ? '<div class="empty">В этой категории моделей нет.</div>' : '<div class="empty">Каталог пока недоступен.</div>';
+          return;
+        }
+        box.innerHTML = '<div class="model-grid">' + list.map(function (model) {
+          var average = model.rating.average == null ? "—" : Number(model.rating.average).toFixed(2).replace(".", ",");
+          var votes = Number(model.rating.votes || 0);
+          return '<article class="model-card"><div class="model-name">' + esc(model.name) +
+            (model.premium ? '<span class="tag premium">Premium</span>' : '<span class="tag">Free</span>') +
+            (model.multimodal ? '<span class="tag multi">Мультимодальная</span>' : '') +
+            '</div><div class="model-provider">' + esc(model.creator) + (model.creator ? ' · ' : '') + esc(model.provider) +
+            '</div><div class="model-data"><div><strong>' + average + '</strong> <span>средняя оценка</span></div><div><strong>' +
+            votes.toLocaleString("ru-RU") + '</strong> <span>' + plural(votes, "голос", "голоса", "голосов") + '</span></div></div></article>';
+        }).join("") + '</div>';
+      }
+      document.querySelectorAll("[data-model-filter]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          modelFilter = button.getAttribute("data-model-filter") || "all";
+          document.querySelectorAll("[data-model-filter]").forEach(function (item) { item.classList.toggle("active", item === button); });
+          renderModels();
+        });
+      });
+      $("#refreshModels").addEventListener("click", loadModels);
+
+      async function loadRanking() {
+        var box = $("#rankingList");
+        if (!box) return;
+        if (!ranking.length) box.innerHTML = '<div class="empty">Загружаю оценки…</div>';
+        try {
+          var data = await get("/ratings/ranking");
+          ranking = Array.isArray(data.models) ? data.models : [];
+          $("#rankingModels").textContent = Number(data.models_count || 0).toLocaleString("ru-RU");
+          $("#rankingVotes").textContent = Number(data.votes_count || 0).toLocaleString("ru-RU");
+          renderRanking();
+        } catch (error) {
+          box.innerHTML = '<div class="empty">Не удалось загрузить глобальный рейтинг.<br>' + esc(error.message) + '</div>';
+        }
+      }
+      function renderRanking() {
+        var box = $("#rankingList");
+        var list = ranking.filter(function (item) {
+          if (ratingFilter === "free") return !item.premium;
+          if (ratingFilter === "premium") return !!item.premium;
+          if (ratingFilter === "multimodal") return !!item.multimodal;
+          return true;
+        });
+        if (!list.length) {
+          box.innerHTML = ranking.length ? '<div class="empty">По этому фильтру пока нет оценённых моделей.</div>' : '<div class="empty">Пока нет сохранённых оценок.</div>';
+          return;
+        }
+        box.innerHTML = list.map(function (item) {
+          var rating = item.rating || {};
+          var votes = Number(rating.votes || 0);
+          var average = rating.average == null ? "—" : Number(rating.average).toFixed(2).replace(".", ",");
+          var distribution = Array.isArray(rating.distribution) ? rating.distribution : [];
+          var bars = [1,2,3,4,5].map(function (score, index) {
+            var count = Number(distribution[index] || 0);
+            var width = votes ? Math.max(0, Math.min(100, count / votes * 100)) : 0;
+            return '<div class="dist-cell" title="' + score + '/5: ' + count + '"><span>' + score + '</span><div class="bar"><i style="width:' + width + '%"></i></div><span>' + count + '</span></div>';
+          }).join("");
+          var tags = item.premium ? '<span class="tag premium">Premium</span>' : '<span class="tag">Free</span>';
+          if (item.multimodal) tags += '<span class="tag multi">Мультимодальная</span>';
+          var meta = [item.creator, item.provider, item.params_label].filter(Boolean).map(esc).join(" · ");
+          var rank = Number(item.rank || 0);
+          return '<article class="rank-card"><div class="rank-num' + (rank === 1 ? ' top' : '') + '">' + rank +
+            '</div><div class="rank-main"><div class="rank-titleline"><strong>' + esc(item.name || item.key) + '</strong>' + tags +
+            '</div><div class="rank-meta">' + (meta || esc(item.key || "")) + ' · ' + esc(item.status_label || "Статус неизвестен") +
+            '</div><div class="rank-dist">' + bars + '</div></div><div class="rank-score"><strong>' + average +
+            '</strong><span>/ 5</span><small>' + votes.toLocaleString("ru-RU") + ' ' + plural(votes, "оценка", "оценки", "оценок") +
+            '</small></div></article>';
+        }).join("");
+      }
+      document.querySelectorAll("[data-rating-filter]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          ratingFilter = button.getAttribute("data-rating-filter") || "all";
+          document.querySelectorAll("[data-rating-filter]").forEach(function (item) { item.classList.toggle("active", item === button); });
+          renderRanking();
+        });
+      });
+      $("#refreshRanking").addEventListener("click", loadRanking);
+
+      $("#runArena").addEventListener("click", function () {
+        var prompt = $("#arenaPrompt").value.trim();
+        if (!prompt) { $("#arenaPrompt").focus(); return; }
+        $("#arenaResults").classList.add("visible");
+        $("#voteRow").classList.add("visible");
+        $("#arenaNote").classList.remove("visible");
+        $("#answerALabel").textContent = "Ответ A";
+        $("#answerBLabel").textContent = "Ответ B";
+      });
+      document.querySelectorAll("[data-vote]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          var vote = button.getAttribute("data-vote");
+          $("#answerALabel").textContent = "Ответ A · демо-модель 1";
+          $("#answerBLabel").textContent = "Ответ B · демо-модель 2";
+          var message = vote === "a" ? "Выбран ответ A." : vote === "b" ? "Выбран ответ B." : vote === "tie" ? "Ответы оценены как равные." : "Оба ответа получили отрицательную оценку.";
+          $("#arenaNote").textContent = message + " Это только демонстрация: голос не записан в рейтинг.";
+          $("#arenaNote").classList.add("visible");
+        });
+      });
+
+      loadModels();
+    })();
+  </script>
+</body>
+</html>

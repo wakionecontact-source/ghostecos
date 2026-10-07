@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GhostEcos — приватная экосистема</title>
+<meta name="description" content="GhostEcos — экосистема независимых приватных продуктов: мессенджер GhostChat, социальная сеть GhostSocial и собственная экономика.">
+<style>
+:root{--violet:#8b5cf6;--iris:#a78bfa;--iris-ink:#cbbdfe;--sans:-apple-system,"SF Pro Text","Segoe UI",Roboto,sans-serif}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{font-family:var(--sans);font-size:16px;line-height:1.5;overflow-x:hidden;-webkit-font-smoothing:antialiased;background:#000;color:#fff}
+a{color:inherit;text-decoration:none}
+::selection{background:var(--violet);color:#fff}
+.wrap{max-width:1100px;margin:0 auto;padding:0 32px;position:relative;z-index:10}
+
+.bg{position:fixed;inset:0;z-index:0;overflow:hidden}
+.bg-layer{position:absolute;inset:-20%;background:radial-gradient(ellipse 62% 52% at 16% 6%,#1a0a35 0%,transparent 55%),radial-gradient(ellipse 52% 60% at 86% 18%,#200f45 0%,transparent 55%),radial-gradient(ellipse 56% 46% at 42% 72%,#150830 0%,transparent 55%),radial-gradient(ellipse 42% 50% at 10% 84%,#0e0625 0%,transparent 55%),radial-gradient(ellipse 46% 56% at 94% 90%,#180a38 0%,transparent 55%),radial-gradient(ellipse 30% 30% at 60% 10%,#251550 0%,transparent 55%),linear-gradient(170deg,#020010 0%,#050318 30%,#030018 60%,#01000a 100%);animation:morph 30s ease-in-out infinite;will-change:transform}
+.bg-layer:nth-child(2){animation-delay:-15s;opacity:.45;mix-blend-mode:screen}
+@keyframes morph{0%,100%{transform:scale(1)translate(0,0)rotate(0)}25%{transform:scale(1.04)translate(1.5%,1%)rotate(.3deg)}50%{transform:scale(.96)translate(-1%,-1.5%)rotate(-.2deg)}75%{transform:scale(1.03)translate(.8%,1.2%)rotate(.2deg)}}
+#mesh-bg{position:fixed;inset:0;z-index:1;pointer-events:none}
+#grid-bg{position:fixed;inset:0;z-index:2;pointer-events:none}
+.grain{position:fixed;inset:0;z-index:3;pointer-events:none;opacity:.04;mix-blend-mode:overlay}
+
+.lg-el{position:relative;overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(0,0,0,.28),inset 1px 0 0 rgba(255,255,255,.08),inset -1px 0 0 rgba(255,255,255,.08),0 12px 44px rgba(0,0,0,.5)}
+.lg-el .lg-backdrop{position:absolute;inset:0;z-index:0;border-radius:inherit}
+.lg-el .lg-content{position:relative;z-index:2}
+.glass-light{position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:3;overflow:hidden}
+.glass-light .bevel{position:absolute;inset:0;background:linear-gradient(170deg,rgba(255,255,255,.26)0%,rgba(255,255,255,.05)22%,transparent 46%,transparent 66%,rgba(0,0,0,.12)88%,rgba(0,0,0,.24)100%);mix-blend-mode:overlay}
+.glass-light .sheen{position:absolute;inset:0;background:radial-gradient(circle at var(--lx,28%) var(--ly,18%),rgba(255,255,255,.30)0%,rgba(255,255,255,.07)32%,transparent 58%);mix-blend-mode:screen;opacity:0;transition:opacity .45s}
+.lg-el:hover .glass-light .sheen{opacity:1}
+.glass-light .sweep{display:none}
+@keyframes sweep{0%{background-position:130% 0}55%,100%{background-position:-130% 0}}
+.tilt{transition:transform .3s cubic-bezier(.22,1.2,.36,1),box-shadow .3s}
+
+header{position:fixed;top:0;left:0;right:0;z-index:100;padding:0 32px}
+header .inner{display:flex;align-items:center;justify-content:space-between;height:66px;position:relative;z-index:2}
+.brand{display:flex;align-items:center;gap:11px;font-weight:700;font-size:17px;letter-spacing:-.02em}
+.brand .ava{width:30px;height:30px;border-radius:9px;box-shadow:0 0 18px rgba(139,92,246,.5)}
+.brand em{font-style:normal;color:var(--iris)}
+.nav-links{display:flex;gap:28px}
+.nav-links a{font-size:13.5px;font-weight:500;color:rgba(255,255,255,.62);transition:color .2s}
+.nav-links a:hover{color:#fff}
+.nav-cta{font-size:13px;font-weight:600;padding:10px 20px;border-radius:999px;color:#fff;transition:transform .2s cubic-bezier(.34,1.56,.64,1)}
+.nav-cta:hover{transform:translateY(-1px)}
+
+.hero{min-height:100vh;display:flex;align-items:center;padding:130px 0 80px}
+.hero-grid{display:grid;grid-template-columns:1fr .85fr;gap:50px;align-items:center}
+.kicker{display:inline-flex;align-items:center;gap:8px;margin-bottom:22px;font-size:12px;font-weight:600;color:var(--iris-ink);padding:6px 14px;border-radius:999px}
+.kicker .lg-content{display:flex;align-items:center;gap:8px}
+.kicker .dot{width:5px;height:5px;border-radius:50%;background:var(--iris);animation:blink 2.4s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+h1{font-size:clamp(44px,6.8vw,90px);font-weight:800;line-height:1;letter-spacing:-.04em}
+h1 .grad{background:linear-gradient(100deg,#f0e6ff,var(--iris)40%,#e9d5ff 55%,var(--iris)80%);background-size:200% auto;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shine 6s linear infinite}
+@keyframes shine{to{background-position:200% 0}}
+.sub{margin-top:22px;max-width:500px;font-size:17px;line-height:1.7;color:rgba(255,255,255,.55)}
+.cta-row{display:flex;gap:12px;margin-top:30px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:8px;font-weight:600;font-size:14px;padding:15px 28px;border-radius:999px;color:#fff;transition:transform .2s cubic-bezier(.34,1.56,.64,1)}
+.btn:hover{transform:translateY(-2px)}
+
+.sphere-wrap{position:relative;width:100%;max-width:440px;aspect-ratio:1;margin:0 auto;display:flex;align-items:center;justify-content:center}
+.sphere{position:relative;width:82%;aspect-ratio:1;border-radius:50%}
+.sphere .lg-content{display:flex;align-items:center;justify-content:center;width:100%;height:100%;transition:transform .2s ease-out}
+.sphere .ghost-svg{width:45%;filter:drop-shadow(0 20px 50px rgba(109,40,217,.55));animation:floaty 6s ease-in-out infinite}
+@keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
+.sphere .sphere-light{position:absolute;inset:0;z-index:3;pointer-events:none;border-radius:50%;background:radial-gradient(ellipse 46% 32% at 30% 24%,rgba(255,255,255,.42),transparent 58%),radial-gradient(ellipse 40% 30% at 64% 18%,rgba(255,255,255,.14),transparent 60%),radial-gradient(ellipse 62% 48% at 78% 82%,rgba(139,92,246,.22),transparent 52%),radial-gradient(ellipse 70% 42% at 50% 96%,rgba(0,0,0,.30),transparent 62%)}
+.sphere .sphere-sweep{display:none}
+.sphere .glint{position:absolute;z-index:5;width:7px;height:7px;border-radius:50%;pointer-events:none;background:#fff;box-shadow:0 0 14px 5px rgba(255,255,255,.45);mix-blend-mode:screen;opacity:0;transition:opacity .4s}
+.sphere-wrap:hover .glint{opacity:1}
+
+section{padding:100px 0;position:relative;z-index:10}
+.sec-tag{font-size:13px;font-weight:600;letter-spacing:.08em;color:var(--iris);text-transform:uppercase;margin-bottom:14px}
+h2{font-size:clamp(30px,4.4vw,50px);font-weight:800;letter-spacing:-.04em;line-height:1.08}
+.sec-note{max-width:440px;color:rgba(255,255,255,.45);font-size:15px;line-height:1.65;margin-top:8px}
+.sec-head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:50px;flex-wrap:wrap}
+.cards-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.card{border-radius:28px;padding:34px;height:100%;display:block}
+.card-title{font-size:26px;font-weight:800;letter-spacing:-.03em;margin-bottom:10px}
+.card-desc{color:rgba(255,255,255,.45);font-size:14.5px;line-height:1.65;margin-bottom:20px}
+.card-tags{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:22px}
+.card-tags span{font-size:12px;font-weight:500;color:rgba(255,255,255,.5);padding:5px 11px;border-radius:999px}
+.card-link{font-size:14px;font-weight:600;color:var(--iris);display:inline-flex;align-items:center;gap:6px;transition:gap .2s}
+.card-link:hover{gap:12px}
+.features{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.feat{border-radius:24px;padding:28px 24px;text-align:center;height:100%}
+.f-num{font-size:34px;font-weight:800;color:var(--iris);margin-bottom:10px}
+.feat h4{font-size:16px;font-weight:700;margin-bottom:6px}
+.feat p{color:rgba(255,255,255,.38);font-size:13px;line-height:1.5}
+.community{text-align:center}
+.community h2{margin-bottom:12px}
+.community p{color:rgba(255,255,255,.45);max-width:440px;margin:0 auto 36px;font-size:15px;line-height:1.65}
+footer{border-top:1px solid rgba(255,255,255,.1);padding:48px 0}
+.foot{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:24px}
+.foot-brand{display:flex;align-items:center;gap:10px;font-weight:700}
+.foot-brand .ava{width:26px;height:26px;border-radius:8px}
+.foot-links{display:flex;gap:22px}
+.foot-links a{font-size:13px;color:rgba(255,255,255,.38);transition:color .2s}
+.foot-links a:hover{color:rgba(255,255,255,.75)}
+.foot-meta{width:100%;margin-top:30px;padding-top:18px;border-top:1px solid rgba(255,255,255,.08);display:flex;justify-content:space-between;font-size:11px;color:rgba(255,255,255,.22)}
+
+.rv{opacity:0;transform:translateY(30px);filter:blur(5px);transition:opacity .8s cubic-bezier(.16,1,.3,1),transform .8s cubic-bezier(.16,1,.3,1),filter .8s cubic-bezier(.16,1,.3,1)}
+.rv.in{opacity:1;transform:none;filter:blur(0)}
+.d1{transition-delay:.08s}.d2{transition-delay:.16s}.d3{transition-delay:.24s}
+@media(max-width:900px){.wrap{padding:0 20px}.nav-links{display:none}.hero-grid,.cards-grid,.features{grid-template-columns:1fr}.sphere-wrap{max-width:300px}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.rv{opacity:1;transform:none;filter:none}}
+</style>
+</head>
+<body>
+
+<div class="bg"><div class="bg-layer"></div><div class="bg-layer"></div></div>
+<canvas id="mesh-bg"></canvas>
+<canvas id="grid-bg"></canvas>
+<svg class="grain" aria-hidden="true"><filter id="g"><feTurbulence type="fractalNoise" baseFrequency="0.82" numOctaves="3" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter><rect width="100%" height="100%" filter="url(#g)"/></svg>
+
+<header>
+  <div class="inner">
+    <a class="brand" href="#top"><img class="ava" src="ava.jpg" alt="GhostEcos"><span>Ghost<em>Ecos</em></span></a>
+    <nav class="nav-links"><a href="#products">Продукты</a><a href="#principles">Принципы</a><a href="#economy">Экономика</a><a href="#community">Сообщество</a></nav>
+    <div class="nav-cta lg-el" data-lg-pct="14" data-lg-str="60" data-lg-ca="0.4" data-lg-blur="8" data-lg-bright="1.08" data-lg-sat="1.7">
+      <div class="lg-backdrop"></div><div class="glass-light"><div class="bevel"></div><div class="sheen"></div><div class="sweep"></div></div>
+      <span class="lg-content"><a href="https://t.me/waki_one" target="_blank" rel="noopener">Telegram</a></span>
+    </div>
+  </div>
+</header>
+
+<div class="hero" id="top">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="kicker lg-el" data-lg-pct="10" data-lg-str="45" data-lg-blur="6" data-lg-bright="1.05" data-lg-sat="1.5">
+        <div class="lg-backdrop"></div><div class="glass-light"><div class="bevel"></div><div class="sheen"></div><div class="sweep"></div></div>
+        <span class="lg-content"><span class="dot"></span> Приватная экосистема · 2026</span>
+      </div>
+      <h1>Мессенджер,<br>который <span class="grad">не знает</span>,<br>кто вы.</h1>
+      <p class="sub">Сквозное шифрование как в Signal, каналы как в Telegram, своя экономика и игры. Один аккаунт — все сервисы. Ноль логов.</p>
+      <div class="cta-row">
+        <div class="btn lg-el" data-lg-pct="10" data-lg-str="70" data-lg-blur="10" data-lg-bright="1.1" data-lg-sat="1.9">
+          <div class="lg-backdrop"></div><div class="glass-light"><div class="bevel"></div><div class="sheen"></div><div class="sweep"></div></div>
+          <a class="lg-content" href="/chat/">Открыть GhostChat →</a>
+        </div>
+        <div class="btn lg-el" data-lg-pct="10" data-lg-str="55" data-lg-blur="8" data-lg-bright="1.06" data-lg-sat="1.6">
+          <div class="lg-backdrop"></div><div class="glass-light"><div class="bevel"></div><div class="sheen"></div><div class="sweep"></div></div>
+          <a class="lg-content" href="#products">Что внутри</a>
+        </div>
+      </div>
+    </div>
+    <div class="sphere-wrap">
+      <div class="sphere lg-el tilt" data-lg-pct="28" data-lg-str="130" data-lg-ca="2" data-lg-blur="0" data-lg-bright="1.14" data-lg-sat="2.4" data-lg-breathe="12" data-lg-hover="30" data-lg-tilt="10">
+        <div class="lg-backdrop"></div><div class="sphere-light"></div><div class="sphere-sweep"></div><div class="glint"></div>
+        <div class="lg-content"><svg class="ghost-svg" viewBox="0 0 48 60" fill="none"><defs><linearGradient id="gg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f0e6ff"/><stop offset=".5" stop-color="#a78bfa"/><stop offset="1" stop-color="#7c3aed"/></linearGradient></defs><path d="M24 3C13.5 3 6 11 6 21v33l4.5-4.5L15 54l4.5-4.5L24 54l4.5-4.5L33 54l4.5-4.5L42 54V21C42 11 34.5 3 24 3Z" fill="url(#gg)"/><ellipse cx="17" cy="22" rx="4" ry="4.5" fill="#000" opacity=".45"/><ellipse cx="31" cy="22" rx="4" ry="4.5" fill="#000" opacity=".45"/><circle cx="18.5" cy="20.5" r="1.5" fill="#fff" opacity=".85"/><circle cx="32.5" cy="20.5" r="1.5" fill="#fff" opacity=".85"/></svg></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section id="products">
+  <div class="wrap">
+    <div class="sec-head"><div class="rv"><div class="sec-tag">Продукты</div><h2>Части одного<br>целого.</h2></div><p class="sec-note rv d1">Каждый продукт самостоятелен, но вместе — приватная альтернатива привычным сервисам.</p></div>
+    <div class="cards-grid">
+      <div class="rv"><a class="card lg-el tilt" href="/lend/ghostchat/" data-lg-pct="12" data-lg-str="95" data-lg-ca="1" data-lg-blur="0" data-lg-bright="1.08" data-lg-sat="2" data-lg-hover="20" data-lg-tilt="6">
+        <div class="lg-backdrop"></div><div class="glass-light"><div class="bevel"></div><div class="sheen"></div><div class="sweep"></div></div>
+        <div class="lg-content"><div class="card-title">GhostChat</div><p class="card-desc">Приватный мессенджер со сквозным шифрованием. Ключи не покидают устройство, сервер видит только зашифрованные данные.</p>
+        <div class="card-tags"><span class="lg-el" data-lg-pct="10" data-lg-str="35" data-lg-blur="4" data-lg-bright="1.03" data-lg-sat="1.4"><span class="lg-backdrop"></span><span class="lg-content">X25519 + AES-256-GCM</span></span><span class="lg-el" data-lg-pct="10" data-lg-str="35" data-lg-blur="4" data-lg-bright="1.03" data-lg-sat="1.4"><span class="lg-backdrop"></span><span class="lg-content">LAN-режим</span></span><span class="lg-el" data-lg-pct="10" data-lg-str="35" data-lg-blur="4" data-lg-bright="1.03" data-lg-sat="1.4"><span class="lg-backdrop"></span><span class="lg-content">Группы и файлы</span></span></div>
+        <span class="card-link">Подробнее →</span></div></a></div>
+      <div class="rv d1"><a class="card lg-el tilt" href="/social" data-lg-pct="12" data-lg-str="95" data-lg-ca="1" data-lg-blur="0" data-lg-bright="1.08" data-lg-sat="2" data-lg-hover="20" data-lg-tilt="6">
+        <div class="lg-backdrop"></div><div class="glass-light"><div class="bevel"></div><div class="sheen"></div><div class="sweep"></div></div>
+        <div class="lg-content"><div class="card-title">GhostSocial</div><p class="card-desc">Анонимная социальная сеть. Лента, посты с медиа и профили — без привязки к имени и без слежки.</p>
+        <div class="card-tags"><span class="lg-el" data-lg-pct="10" data-lg-str="35" data-lg-blur="4" data-lg-bright="1.03" data-lg-sat="1.4"><span class="lg-backdrop"></span><span class="lg-content">Лента и посты</span></span><span class="lg-el" data-lg-pct="10" data-lg-str="35" data-lg-blur="4" data-lg-bright="1.03" data-lg-sat="1.4"><span class="lg-backdrop"></span><span class="lg-content">Без реальных имён</span></span><span class="lg-el" data-lg-pct="10" data-lg-str="35" data-lg-blur="4" data-lg-bright="1.03" data-lg-sat="1.4"><span class="lg-backdrop"></span><span class="lg-content">gost-экономика</span></span></div>
+        <span class="card-link">Открыть →</span></div></a></div>
+    </div>
+  </div>
+</section>
+
+<section id="principles">
+  <div class="wrap">
+    <div class="sec-head"><div class="rv"><div class="sec-tag">Принципы</div><h2>Почему<br>GhostEcos.</h2></div><p class="sec-note rv d1">Одни и те же правила во всех продуктах экосистемы. Без исключений.</p></div>
+    <div class="features">
+      <div class="rv"><div class="feat lg-el tilt" data-lg-pct="12" data-lg-str="80" data-lg-blur="0" data-lg-bright="1.06" data-lg-sat="1.8" data-lg-hover="16" data-lg-tilt="5"><div class="lg-backdrop"></div><div class="glass-light"><div class="bevel"></div><div class="sheen"></div><div class="sweep"></div></div><div class="lg-content"><div class="f-num">01</div><h4>Шифрование</h4><p>Ключи не покидают устройство</p></div></div></div>
+      <div class="rv d1"><div class="feat lg-el tilt" data-lg-pct="12" data-lg-str="80" data-lg-blur="0" data-lg-bright="1.06" data-lg-sat="1.8" data-lg-hover="16" data-lg-tilt="5"><div class="lg-backdrop"></div><div class="glass-light"><div class="bevel"></div><div class="sheen"></div><div class="sweep"></div></div><div class="lg-content"><div class="f-num">02</div><h4>Ноль метаданных</h4><p>Никаких логов</p></div></div></div>
+      <div class="rv d2"><div class="feat lg-el tilt" data-lg-pct="12" data-lg-str="80" data-lg-blur="0" data-lg-bright="1.06" data-lg-sat="1.8" data-lg-hover="16" data-lg-tilt="5"><div class="lg-backdrop"></div><div class="glass-light"><div class="bevel"></div><div class="sheen"></div><div class="sweep"></div></div><div class="lg-content"><div class="f-num">03</div><h4>Независимость</h4><p>Свой сервер и код</p></div></div></div>
+      <div class="rv d3"><div class="feat lg-el tilt" data-lg-pct="12" data-lg-str="80" data-lg-blur="0" data-lg-bright="1.06" data-lg-sat="1.8" data-lg-hover="16" data-lg-tilt="5"><div class="lg-backdrop"></div><div class="glass-light"><div class="bevel"></div><div class="sheen"></div><div class="sweep"></div></div><div class="lg-content"><div class="f-num">04</div><h4>Mesh-будущее</h4><p>Устройства напрямую</p></div></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="economy">
+  <div class="wrap" style="display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center">
+    <div class="rv"><div class="sec-tag">Экономика</div><h2>Своя валюта. <span style="font-style:italic;background:linear-gradient(100deg,var(--iris),#f0e6ff);-webkit-background-clip:text;background-clip:text;color:transparent">gost.</span></h2><p class="sec-note">Внутри экосистемы зарождается собственная экономика. Первая валюта — <b style="color:#fff">gost</b> — стартует в GhostSocial.</p><div style="margin-top:18px"><div class="btn lg-el" data-lg-pct="10" data-lg-str="55" data-lg-blur="8" data-lg-bright="1.06" data-lg-sat="1.6" style="cursor:default"><div class="lg-backdrop"></div><div class="glass-light"><div class="bevel"></div><div class="sheen"></div><div class="sweep"></div></div><span class="lg-content">В разработке</span></div></div></div>
+    <div class="rv d1"><div class="sphere-wrap" style="max-width:300px"><div class="sphere lg-el tilt" data-lg-pct="28" data-lg-str="130" data-lg-ca="2" data-lg-blur="0" data-lg-bright="1.14" data-lg-sat="2.4" data-lg-breathe="10" data-lg-hover="30" data-lg-tilt="8"><div class="lg-backdrop"></div><div class="sphere-light"></div><div class="sphere-sweep"></div><div class="glint"></div><div class="lg-content"><span style="font-size:38px;font-weight:800;font-style:italic;background:linear-gradient(100deg,var(--iris),#f0e6ff);-webkit-background-clip:text;background-clip:text;color:transparent">gost</span></div></div></div></div>
+  </div>
+</section>
+
+<section id="community" class="community">
+  <div class="wrap"><div class="sec-tag rv">Сообщество</div><h2 class="rv d1">Следите за разработкой.</h2><p class="rv d2">Новости, ранний доступ, раздача приложений и стройка экосистемы — всё в Telegram-канале.</p><div class="rv d3"><div class="btn lg-el" data-lg-pct="10" data-lg-str="70" data-lg-blur="10" data-lg-bright="1.1" data-lg-sat="1.9" style="margin:0 auto"><div class="lg-backdrop"></div><div class="glass-light"><div class="bevel"></div><div class="sheen"></div><div class="sweep"></div></div><a class="lg-content" href="https://t.me/waki_one" target="_blank" rel="noopener">@waki_one →</a></div></div></div>
+</section>
+
+<footer class="lg-el" data-lg-pct="10" data-lg-str="55" data-lg-blur="8" data-lg-bright="1.06" data-lg-sat="1.6" style="border-radius:0"><div class="lg-backdrop"></div><div class="glass-light"><div class="bevel"></div></div><div class="lg-content"><div class="wrap"><div class="foot"><div class="foot-brand"><img class="ava" src="ava.jpg" alt=""><span>GhostEcos</span></div><div class="foot-links"><a href="/privacy">Политика</a><a href="/terms">Условия</a><a href="https://github.com/wakionecontact-source/ghostecos" target="_blank" rel="noopener">GitHub</a></div></div><div class="foot-meta"><span>GhostEcos · 2026</span><span>Encrypted by design</span></div></div></div></footer>
+
+<script>
+/* ═══════════ MESH ═══════════ */
+(function(){
+  if(matchMedia('(prefers-reduced-motion:reduce)').matches)return;
+  const cv=document.getElementById('mesh-bg'),ctx=cv.getContext('2d',{alpha:true});
+  let W=0,H=0,ps=[];
+  const mouse={x:-9999,y:-9999,on:false},DOT='rgba(168,85,247,.65)',LINE='168,85,247';
+  function spawn(){const a=Math.random()*6.283,s=.15+Math.random()*.2;return{x:Math.random()*W,y:Math.random()*H,vx:Math.cos(a)*s,vy:Math.sin(a)*s,r:1+Math.random()*1}}
+  function resize(){W=innerWidth;H=innerHeight;cv.width=W;cv.height=H;cv.style.width=W+'px';cv.style.height=H+'px';const want=Math.max(14,Math.min(Math.round(W*H/34000),30));if(ps.length===0)for(let i=0;i<want;i++)ps.push(spawn());else if(ps.length<want)for(let i=ps.length;i<want;i++)ps.push(spawn());else ps.length=want}
+  addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY;mouse.on=true},{passive:true});
+  addEventListener('mouseout',()=>{mouse.on=false},{passive:true});
+  const LD=100,LD2=LD*LD,MD=120,MD2=MD*MD,MAXS=2;let n=0;
+  function tick(){if(W!==innerWidth||H!==innerHeight)resize();ctx.clearRect(0,0,W,H);for(const p of ps){if(mouse.on){const dx=p.x-mouse.x,dy=p.y-mouse.y,d2=dx*dx+dy*dy;if(d2<MD2&&d2>.01){const d=Math.sqrt(d2),f=(1-d/MD)*1.5;p.vx+=dx/d*f;p.vy+=dy/d*f}}p.vx*=.96;p.vy*=.96;if(p.vx*p.vx+p.vy*p.vy<.05){const a=Math.random()*6.283;p.vx+=Math.cos(a)*.12;p.vy+=Math.sin(a)*.12}const v2=p.vx*p.vx+p.vy*p.vy;if(v2>MAXS*MAXS){const k=MAXS/Math.sqrt(v2);p.vx*=k;p.vy*=k}p.x+=p.vx;p.y+=p.vy;if(p.x<-20)p.x=W+20;else if(p.x>W+20)p.x=-20;if(p.y<-20)p.y=H+20;else if(p.y>H+20)p.y=-20;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,6.283);ctx.fillStyle=DOT;ctx.fill()}for(let i=0;i<ps.length;i++)for(let j=i+1;j<ps.length;j++){const a=ps[i],b=ps[j],dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy;if(d2<LD2){ctx.strokeStyle=`rgba(${LINE},${((1-d2/LD2)*.55).toFixed(3)})`;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke()}}if(mouse.on)for(const p of ps){const dx=p.x-mouse.x,dy=p.y-mouse.y,d2=dx*dx+dy*dy;if(d2<MD2){ctx.strokeStyle=`rgba(${LINE},${((1-d2/MD2)*.8).toFixed(3)})`;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(mouse.x,mouse.y);ctx.lineTo(p.x,p.y);ctx.stroke()}}requestAnimationFrame(()=>{if(++n%2===0)tick();else requestAnimationFrame(tick)})}
+  resize();tick();
+})();
+
+/* ═══════════ GRID (сетка за мышью и скроллом) ═══════════ */
+(function grid(){
+  if(matchMedia('(prefers-reduced-motion:reduce)').matches)return;
+  const cv=document.getElementById('grid-bg'),ctx=cv.getContext('2d',{alpha:true});
+  let W=0,H=0,S=50,ox=0,oy=0,mx=-999,my=-999;
+  function resize(){W=innerWidth;H=innerHeight;cv.width=W;cv.height=H;cv.style.width=W+'px';cv.style.height=H+'px'}
+  addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY},{passive:true});
+  addEventListener('mouseout',()=>{mx=-999;my=-999},{passive:true});
+  /* скролл сдвигает координаты сетки */
+  let scrollY=scrollY2=scrollY;
+  addEventListener('scroll',()=>{scrollY2=scrollY},{passive:true});
+  let running=true;
+  document.addEventListener('visibilitychange',()=>{running=!document.hidden});
+  function tick(){
+    if(W!==innerWidth||H!==innerHeight)resize();
+    /* плавное следование сетки за скроллом */
+    scrollY+=(scrollY2-scrollY)*.08;
+    const ofx=scrollY*.15%S,ofy=scrollY*.08%S;
+    ctx.clearRect(0,0,W,H);
+    /* вертикальные */
+    for(let x=-ofx;x<W+S;x+=S){
+      let a=.07;
+      if(mx>-999){
+        const dx=Math.abs(x-mx),d=Math.min(dx/S,1);
+        a=.07+d*.25;
+      }
+      ctx.strokeStyle=`rgba(139,92,246,${a.toFixed(3)})`;
+      ctx.lineWidth=.5;
+      ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();
+    }
+    /* горизонтальные */
+    for(let y=-ofy;y<H+S;y+=S){
+      let a=.07;
+      if(my>-999){
+        const dy=Math.abs(y-my),d=Math.min(dy/S,1);
+        a=.07+d*.25;
+      }
+      ctx.strokeStyle=`rgba(139,92,246,${a.toFixed(3)})`;
+      ctx.lineWidth=.5;
+      ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();
+    }
+    if(running)requestAnimationFrame(tick);
+  }
+  resize();tick();
+})();
+
+/* ═══════════ LIQUID GLASS ENGINE v4 (оптимизированный) ═══════════
+   Принцип: фильтр генерируется ОДИН раз на элемент и больше
+   не пересобирается. Никаких per-frame обновлений силы —
+   вся «живость» (дыхание/ховер) на CSS-transform, а не на
+   пересборке backdrop-filter (это была главная причина лагов).
+   ═══════════════════════════════════════════════════════════ */
+
+function lensMap(h,w,radius,depthPx){
+  const padY=Math.ceil((radius/h*100)||0),padX=Math.ceil((radius/w*100)||0);
+  return 'data:image/svg+xml;utf8,'+encodeURIComponent(
+  `<svg height="${h}" width="${w}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
+    <style>.mix{mix-blend-mode:screen}</style>
+    <defs>
+      <linearGradient id="Y" x1="0" x2="0" y1="${padY}%" y2="${100-padY}%">
+        <stop offset="0%" stop-color="#0F0"/><stop offset="50%" stop-color="#000"/><stop offset="100%" stop-color="#0F0"/>
+      </linearGradient>
+      <linearGradient id="X" x1="${padX}%" x2="${100-padX}%" y1="0" y2="0">
+        <stop offset="0%" stop-color="#F00"/><stop offset="50%" stop-color="#000"/><stop offset="100%" stop-color="#F00"/>
+      </linearGradient>
+    </defs>
+    <rect width="${w}" height="${h}" fill="#808080"/>
+    <g filter="blur(2px)">
+      <rect width="${w}" height="${h}" fill="#000080"/>
+      <rect width="${w}" height="${h}" fill="url(#Y)" class="mix"/>
+      <rect width="${w}" height="${h}" fill="url(#X)" class="mix"/>
+      <rect x="${depthPx*.5}" y="${depthPx*.5}" height="${h-depthPx}" width="${w-depthPx}" fill="#808080" rx="${radius}" ry="${radius}" filter="blur(${depthPx*.7}px)" opacity=".85"/>
+      <rect x="${depthPx}" y="${depthPx}" height="${h-2*depthPx}" width="${w-2*depthPx}" fill="#808080" rx="${radius}" ry="${radius}" filter="blur(${depthPx}px)"/>
+    </g>
+  </svg>`);
+}
+
+function refractionFilter(h,w,radius,depthPx,strength,ca){
+  const key=[h,w,Math.round(radius),Math.round(depthPx),Math.round(strength),ca.toFixed(2)].join('|');
+  if(refractionFilter._c.has(key))return refractionFilter._c.get(key);
+  const map=lensMap(h,w,radius,depthPx);
+  const s=Math.round(strength);
+  let url;
+  if(ca<0.5){
+    /* один проход — без RGB-расщепления, быстрее в 3 раза */
+    url='data:image/svg+xml;utf8,'+encodeURIComponent(
+    `<svg height="${h}" width="${w}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
+      <defs><filter id="lg" color-interpolation-filters="sRGB">
+        <feImage x="0" y="0" height="${h}" width="${w}" href="${map}" result="map"/>
+        <feDisplacementMap in="SourceGraphic" in2="map" scale="${s}" xChannelSelector="R" yChannelSelector="G"/>
+      </filter></defs>
+    </svg>`)+'#lg';
+  } else {
+    const sR=s+ca*2,sG=s+ca,sB=s;
+    url='data:image/svg+xml;utf8,'+encodeURIComponent(
+    `<svg height="${h}" width="${w}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
+      <defs><filter id="lg" color-interpolation-filters="sRGB">
+        <feImage x="0" y="0" height="${h}" width="${w}" href="${map}" result="map"/>
+        <feDisplacementMap in="SourceGraphic" in2="map" scale="${sR}" xChannelSelector="R" yChannelSelector="G"/>
+        <feColorMatrix type="matrix" values="1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0" result="chR"/>
+        <feDisplacementMap in="SourceGraphic" in2="map" scale="${sG}" xChannelSelector="R" yChannelSelector="G"/>
+        <feColorMatrix type="matrix" values="0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 1 0" result="chG"/>
+        <feDisplacementMap in="SourceGraphic" in2="map" scale="${sB}" xChannelSelector="R" yChannelSelector="G"/>
+        <feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 1 0" result="chB"/>
+        <feComposite in="chR" in2="chG" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" result="rg"/>
+        <feComposite in="rg" in2="chB" operator="arithmetic" k1="0" k2="1" k3="1" k4="0"/>
+      </filter></defs>
+    </svg>`)+'#lg';
+  }
+  refractionFilter._c.set(key,url);
+  return url;
+}
+refractionFilter._c=new Map();
+
+const supportsBfUrl=(()=>{const d=document.createElement('div');d.style.cssText='backdrop-filter:url(#t)';return d.style.backdropFilter==='url("#t")'||d.style.backdropFilter==='url(#t)'})();
+
+/* Размеры батчим до 8px — резко повышает попадания в кэш при ресайзе */
+function batch(n){return Math.round(n/8)*8}
+
+const states=[...document.querySelectorAll('.lg-el')].map(el=>{
+  const st={
+    el,
+    pct:parseFloat(el.dataset.lgPct||'12'),
+    str:parseFloat(el.dataset.lgStr||'80'),
+    ca:parseFloat(el.dataset.lgCa||'0'),
+    blur:parseFloat(el.dataset.lgBlur||'0'),
+    bright:parseFloat(el.dataset.lgBright||'1.06'),
+    sat:parseFloat(el.dataset.lgSat||'1.8'),
+    lastSig:null,
+    rect:null,
+    content:el.querySelector('.lg-content'),
+    isSphere:el.classList.contains('sphere')
+  };
+  /* rect кэшируется на mouseenter, а не дёргается на каждый mousemove (forced layout) */
+  el.addEventListener('mouseenter',()=>{st.rect=el.getBoundingClientRect()});
+  el.addEventListener('mousemove',e=>{
+    const r=st.rect||(st.rect=el.getBoundingClientRect());
+    const px=((e.clientX-r.left)/r.width*100).toFixed(1),py=((e.clientY-r.top)/r.height*100).toFixed(1);
+    el.style.setProperty('--lx',px+'%');el.style.setProperty('--ly',py+'%');
+    const T=parseFloat(el.dataset.lgTilt||'0');
+    if(T){
+      const rx=((e.clientY-r.top)/r.height-.5)*-T,ry=((e.clientX-r.left)/r.width-.5)*T;
+      /* tilt на контент-слой, а не на стекло — backdrop НЕ пересчитывается */
+      const target=st.isSphere?el:(st.content||el);
+      target.style.transform=`perspective(900px) rotateX(${rx.toFixed(2)}deg) rotateY(${ry.toFixed(2)}deg)`;
+    }
+    const g=el.querySelector('.glint');if(g){g.style.left=`calc(${px}% - 3px)`;g.style.top=`calc(${py}% - 3px)`}
+  });
+  el.addEventListener('mouseleave',()=>{
+    st.rect=null;
+    (st.isSphere?el:(st.content||el)).style.transform='';
+    el.style.setProperty('--lx','28%');el.style.setProperty('--ly','18%');
+  });
+  return st;
+});
+
+function apply(st,force){
+  if(!supportsBfUrl||!st.el.isConnected){if(force&&st.el.isConnected)st.el.style.backdropFilter=`blur(${st.blur+8}px) saturate(${st.sat}) brightness(${st.bright})`;return}
+  const r=st.el.getBoundingClientRect();
+  const w=batch(r.width),h=batch(r.height);
+  if(w<10||h<10)return;
+  /* Тяжёлая рефракция (feDisplacementMap) — только крупным элементам.
+     Мелкие (кнопки/чипы/бейдж/футер) получают GPU-blur — иначе CPU-фильтр
+     пересчитывается на них каждый кадр из-за анимированного фона. */
+  if(!st.el.matches('.card, .feat, .sphere')){
+    if(force)st.el.style.backdropFilter=`blur(${st.blur||12}px)`;
+    return;
+  }
+  const radiusPx=batch(parseFloat(getComputedStyle(st.el).borderRadius)||0);
+  const depthPx=Math.max(8,batch(Math.min(w,h)*st.pct/100));
+  const sig=[w,h,radiusPx,depthPx,Math.round(st.str),st.ca.toFixed(2)].join('|');
+  if(!force&&sig===st.lastSig)return;
+  st.lastSig=sig;
+  const url=refractionFilter(h,w,radiusPx,depthPx,st.str,st.ca);
+  const blurPart=st.blur>0?`blur(${st.blur}px) `:'';
+  st.el.style.backdropFilter=`${blurPart}url('${url}')${blurPart?' '+blurPart:''}`;
+}
+
+/* генерация ТОЛЬКО на старте и при ресайзе (debounced) */
+states.forEach(st=>apply(st,true));
+let rT;
+addEventListener('resize',()=>{clearTimeout(rT);rT=setTimeout(()=>states.forEach(st=>{st.lastSig=null;apply(st,true)}),200)});
+
+/* reveal */
+const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);setTimeout(()=>e.target.classList.remove('rv'),900)}}),{threshold:.1});
+document.querySelectorAll('.rv').forEach(el=>io.observe(el));
+
+/* параллакс контента сферы — throttle через rAF */
+const sw=document.querySelector('.hero .sphere-wrap');
+if(sw){const sp=sw.querySelector('.sphere .lg-content');let raf=0;document.querySelector('.hero').addEventListener('mousemove',e=>{if(raf)return;raf=requestAnimationFrame(()=>{raf=0;const r=sw.getBoundingClientRect();sp.style.transform=`translate(${(e.clientX-r.left-r.width/2)/r.width*22}px,${(e.clientY-r.top-r.height/2)/r.height*22}px)`})});document.querySelector('.hero').addEventListener('mouseleave',()=>{sp.style.transform=''})}
+</script>
+</body>
+</html>

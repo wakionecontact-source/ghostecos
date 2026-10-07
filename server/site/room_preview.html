@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GhostChat — предпросмотр комнаты</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #05030b;
+      --surface: rgba(14, 10, 24, .76);
+      --surface-strong: rgba(23, 16, 38, .9);
+      --line: rgba(205, 172, 255, .18);
+      --line-soft: rgba(205, 172, 255, .1);
+      --text: #f7f1ff;
+      --sub: #b6a8ca;
+      --purple: #ad68ff;
+      --purple-strong: #7c3aed;
+      --danger: #ff7892;
+    }
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      overflow-x: hidden;
+      color: var(--text);
+      background: var(--bg);
+      font: 15px/1.45 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+      position: relative;
+    }
+    #mesh-bg {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      width: 100%;
+      height: 100%;
+      opacity: .58;
+      pointer-events: none;
+    }
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(72% 54% at 12% 0%, rgba(124, 58, 237, .2), transparent 70%),
+        radial-gradient(70% 60% at 100% 100%, rgba(168, 85, 247, .14), transparent 68%),
+        linear-gradient(180deg, rgba(5, 3, 11, .25), rgba(5, 3, 11, .7));
+    }
+    a { color: inherit; }
+    .shell { position: relative; z-index: 1; width: min(760px, 100%); margin: 0 auto; padding: 22px 16px 52px; }
+    .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+    .brand { font-weight: 800; letter-spacing: .02em; }
+    .brand span { color: var(--purple); }
+    .top-link { color: var(--sub); font-size: 13px; text-decoration: none; }
+    .top-link:hover { color: var(--text); }
+    .page-card { border: 1px solid var(--line); border-radius: 28px; background: var(--surface); box-shadow: 0 24px 80px rgba(0, 0, 0, .35); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }
+    .hero { padding: 26px 24px 24px; text-align: center; }
+    .avatar { position: relative; display: grid; place-items: center; width: 112px; height: 112px; margin: 0 auto 16px; overflow: hidden; border: 1px solid rgba(255, 255, 255, .18); border-radius: 28px; background: linear-gradient(135deg, #7c3aed, #a855f7); }
+    .avatar img, .message-avatar img { width: 100%; height: 100%; display: block; object-fit: cover; }
+    .generated { background: linear-gradient(135deg, #7c3aed, #a855f7); }
+    .avatar-fallback-icon { width: 44%; height: 44%; color: #fff; fill: currentColor; opacity: .98; }
+    .avatar-letter { color: #fff; font-size: 42px; font-weight: 850; letter-spacing: -.06em; }
+    .title { font-size: 28px; font-weight: 820; letter-spacing: -.025em; }
+    .handle { margin-top: 3px; color: var(--purple); }
+    .chips { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin: 16px 0 7px; }
+    .chip { padding: 6px 11px; border: 1px solid var(--line-soft); border-radius: 99px; background: rgba(169, 104, 255, .12); color: #e7d8ff; font-size: 12px; }
+    .about { max-width: 590px; margin: 16px auto 0; color: var(--sub); white-space: pre-wrap; }
+    .actions { display: flex; gap: 10px; margin-top: 19px; }
+    .button { flex: 1; min-height: 46px; padding: 0 15px; border: 0; border-radius: 14px; color: #fff; background: linear-gradient(110deg, var(--purple-strong), var(--purple)); box-shadow: 0 10px 28px rgba(124, 58, 237, .2); cursor: pointer; font-size: 14px; font-weight: 750; }
+    .button.secondary { border: 1px solid var(--line); color: var(--text); background: rgba(255, 255, 255, .035); box-shadow: none; }
+    .button:hover { filter: brightness(1.08); }
+    .button:disabled { opacity: .5; cursor: wait; }
+    .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 30px 3px 12px; }
+    .section-title { font-size: 19px; font-weight: 800; letter-spacing: -.015em; }
+    .message-count { color: var(--sub); font-size: 12px; }
+    .messages { display: flex; flex-direction: column; gap: 14px; padding: 2px 2px 10px; }
+    .message { display: flex; align-items: flex-end; gap: 10px; max-width: 94%; }
+    .message-avatar { flex: 0 0 36px; width: 36px; height: 36px; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: linear-gradient(135deg, #0f172a, #7c3aed); }
+    .message-avatar.generated { border-color: rgba(255, 255, 255, .13); }
+    .message-avatar .avatar-letter { font-size: 14px; }
+    .message-avatar .avatar-fallback-icon { width: 52%; height: 52%; }
+    .message-stack { min-width: 0; max-width: calc(100% - 46px); }
+    .msg-meta { display: flex; align-items: baseline; gap: 8px; padding: 0 10px 4px; }
+    .msg-author { overflow: hidden; color: #d8c5f3; font-size: 12px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+    .msg-time { color: #8d7da4; font-size: 11px; white-space: nowrap; }
+    .bubble { padding: 10px 13px; border: 1px solid var(--line-soft); border-radius: 18px 18px 18px 6px; background: var(--surface-strong); box-shadow: 0 10px 26px rgba(0, 0, 0, .18); }
+    .msg-text { overflow-wrap: anywhere; white-space: pre-wrap; }
+    .msg-text a { color: #d2aaff; text-decoration: none; }
+    .msg-text a:hover { text-decoration: underline; }
+    .empty, .muted { color: var(--sub); text-align: center; }
+    .empty { padding: 28px 16px; border: 1px dashed var(--line); border-radius: 18px; background: rgba(14, 10, 24, .42); }
+    .error { padding: 22px; color: var(--danger); text-align: center; }
+    .hidden { display: none; }
+    .footer { margin-top: 25px; color: #88799c; font-size: 12px; text-align: center; }
+    @media (max-width: 520px) { .shell { padding-top: 16px; } .top-link { font-size: 12px; } .hero { padding: 22px 17px 19px; } .title { font-size: 24px; } .actions { flex-direction: column; } .button { width: 100%; } .message { max-width: 98%; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="top"><div class="brand">Ghost<span>Chat</span></div><a class="top-link" href="/chat/">Открыть веб-чат</a></div>
+    <section id="loading" class="page-card hero muted">Загружаем предпросмотр…</section>
+    <section id="error" class="page-card error hidden"></section>
+    <section id="content" class="hidden">
+      <div class="page-card hero">
+        <div id="avatar" class="avatar"></div>
+        <div id="title" class="title"></div>
+        <div id="handle" class="handle"></div>
+        <div id="chips" class="chips"></div>
+        <div id="about" class="about"></div>
+        <div class="actions"><button id="primary" class="button"></button><button id="download" class="button secondary">Скачать GhostChat</button></div>
+        <div id="status" class="muted" style="margin-top:10px"></div>
+      </div>
+      <div class="section-heading"><div class="section-title">Сообщения</div><div id="message-count" class="message-count"></div></div>
+      <div id="messages" class="messages"></div>
+    </section>
+    <div class="footer">Публичный профиль комнаты GhostChat</div>
+  </main>
+  <script src="/mesh.js"></script>
+  <script>
+    const $ = id => document.getElementById(id);
+    const cookieToken = (document.cookie.match(/(?:^|;\s*)gs_token=([^;]+)/) || [])[1];
+    const token = localStorage.getItem('ghost_token') || localStorage.getItem('gs_token') || localStorage.getItem('access_token') || (cookieToken ? decodeURIComponent(cookieToken) : null);
+    const headers = token ? { Authorization: 'Bearer ' + token } : {};
+    const path = location.pathname.split('/').filter(Boolean);
+    const invite = path[0] === 'invite' && path[1] ? path[1] : null;
+    const username = !invite && path.length === 2 && (path[0] === 'c' || path[0] === 'g') ? path[1] : null;
+    const endpoint = invite ? '/api/chat/v2/rooms/invite-links/preview/' + encodeURIComponent(invite) : username ? '/api/chat/v2/rooms/public/' + encodeURIComponent(username) : null;
+    const appFallbackMode = new URLSearchParams(location.search).has('app_fallback');
+    const appAttemptKey = 'ghostchat:auto-open:' + location.pathname;
+    function tryOpenGhostChat() {
+      if (!/Android/i.test(navigator.userAgent) || appFallbackMode) return;
+      try { if (sessionStorage.getItem(appAttemptKey) === '1') return; sessionStorage.setItem(appAttemptKey, '1'); } catch (_) {}
+      const currentUrl = encodeURIComponent(location.href);
+      const fallbackUrl = new URL(location.href); fallbackUrl.searchParams.set('app_fallback', '1');
+      const intent = 'intent://open?url=' + currentUrl + '#Intent;scheme=ghostchat;package=online.ghost_chat.chat;component=online.ghost_chat.chat/online.ghost_chat.ghost.MainActivity;S.browser_fallback_url=' + encodeURIComponent(fallbackUrl.href) + ';end';
+      window.setTimeout(() => { if (document.visibilityState === 'visible') window.location.href = intent; }, 180);
+    }
+    const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    const safeUrl = value => { try { const url = new URL(value, location.origin); return url.origin === location.origin && (url.pathname.startsWith('/media/') || url.protocol === 'https:') ? url.href : null; } catch (_) { return null; } };
+    const hash = value => [...String(value || 'GhostChat')].reduce((acc, char) => ((acc * 31) + char.charCodeAt(0)) >>> 0, 7);
+    const firstLetter = value => [...String(value || 'G')].find(char => /[\p{L}\p{N}]/u.test(char))?.toUpperCase() || 'G';
+    const linkify = text => { let value = esc(text); value = value.replace(/(https?:\/\/[^\s<]+)/g, match => '<a href="' + esc(match) + '" target="_blank" rel="noopener noreferrer">' + esc(match) + '</a>'); return value.replace(/(^|[^\w])#([\wА-Яа-яЁё_]{1,30})/gu, '$1<a href="/social#tag=$2">#$2</a>'); };
+    const roomType = room => room.room_type === 'channel' ? 'Канал' : 'Группа';
+    const avatarKind = room => room.room_type === 'channel'
+      ? room.visibility === 'public' ? 'channel' : 'lock'
+      : 'group';
+    const formatTime = value => { const number = Number(value); if (!Number.isFinite(number) || number <= 0) return ''; const date = new Date(number < 100000000000 ? number * 1000 : number); return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(date); };
+    function fallbackIcon(kind) {
+      const icons = {
+        group: '<svg class="avatar-fallback-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.25 11a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5Zm7.5-.75a2.75 2.75 0 1 0 0-5.5 2.75 2.75 0 0 0 0 5.5ZM2.5 19.5v-1.25c0-2.9 2.55-5.25 5.75-5.25S14 15.35 14 18.25v1.25H2.5Zm11.25 0v-1.1c0-1.35-.48-2.6-1.3-3.6.98-.82 2.27-1.3 3.8-1.3 2.9 0 5.25 2.05 5.25 4.6v1.4h-7.75Z"/></svg>',
+        channel: '<svg class="avatar-fallback-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 14.2a3.2 3.2 0 1 1 2 0V20h-2v-5.8ZM4.65 10.4a7.35 7.35 0 0 1 0-4.8l1.75.72a5.45 5.45 0 0 0 0 3.36l-1.75.72Zm14.7 0-1.75-.72a5.45 5.45 0 0 0 0-3.36l1.75-.72a7.35 7.35 0 0 1 0 4.8ZM1.5 11.7a10.8 10.8 0 0 1 0-7.4l1.78.72a8.9 8.9 0 0 0 0 5.96l-1.78.72Zm21 0-1.78-.72a8.9 8.9 0 0 0 0-5.96l1.78-.72a10.8 10.8 0 0 1 0 7.4Z"/></svg>',
+        lock: '<svg class="avatar-fallback-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7.5a5 5 0 0 1 10 0V10h1.25A1.75 1.75 0 0 1 20 11.75v8.5A1.75 1.75 0 0 1 18.25 22H5.75A1.75 1.75 0 0 1 4 20.25v-8.5A1.75 1.75 0 0 1 5.75 10H7Zm2 0h6V7.5a3 3 0 0 0-6 0V10Z"/></svg>',
+      };
+      return icons[kind] || '';
+    }
+    function fillGeneratedAvatar(element, name, kind) {
+      element.classList.add('generated'); element.replaceChildren();
+      if (kind === 'group' || kind === 'channel' || kind === 'lock') { element.innerHTML = fallbackIcon(kind); return; }
+      const letter = document.createElement('span'); letter.className = 'avatar-letter'; letter.textContent = firstLetter(name); element.append(letter);
+    }
+    function makeAvatar(name, url, kind, large) {
+      const element = document.createElement('div'); element.className = large ? 'avatar' : 'message-avatar';
+      const safe = safeUrl(url);
+      if (safe) {
+        const image = document.createElement('img'); image.src = safe; image.alt = '';
+        const fallback = () => { if (!element.classList.contains('generated')) fillGeneratedAvatar(element, name, kind); };
+        image.addEventListener('error', fallback, { once: true });
+        image.addEventListener('load', () => { if (!image.naturalWidth) fallback(); }, { once: true });
+        element.append(image); return element;
+      }
+      fillGeneratedAvatar(element, name, kind); return element;
+    }
+    function showError(message) { $('loading').classList.add('hidden'); $('error').textContent = message; $('error').classList.remove('hidden'); }
+    tryOpenGhostChat();
+    function render(data) {
+      const room = data.room || data; const title = room.title || 'GhostChat'; const publicRoom = room.visibility === 'public';
+      const roomAvatar = makeAvatar(title, room.avatar_url, avatarKind(room), true); roomAvatar.id = 'avatar'; $('avatar').replaceWith(roomAvatar);
+      $('loading').classList.add('hidden'); $('content').classList.remove('hidden'); $('title').textContent = title; $('handle').textContent = room.username ? '@' + room.username : '';
+      $('chips').replaceChildren(...[roomType(room), publicRoom ? 'Публичная' : 'Приватная', (room.members_count || 0) + ' участников'].map(text => Object.assign(document.createElement('span'), { className: 'chip', textContent: text })));
+      $('about').textContent = room.about || ''; $('about').classList.toggle('hidden', !room.about);
+      const primary = $('primary'); primary.textContent = data.is_member ? 'Перейти' : invite ? 'Принять приглашение' : 'Вступить'; primary.onclick = () => joinOrOpen(data, room, primary); $('download').onclick = () => location.href = '/download/latest';
+      if (invite && data.expires_at) $('status').textContent = 'Ссылка действует ограниченное время.';
+      const messages = Array.isArray(data.messages) ? data.messages : []; $('message-count').textContent = messages.length ? messages.length + ' последних' : '';
+      const heading = document.querySelector('.section-heading'); const box = $('messages'); box.replaceChildren();
+      heading.classList.toggle('hidden', !publicRoom); box.classList.toggle('hidden', !publicRoom);
+      if (!publicRoom) { if (!invite) $('status').textContent = 'Содержимое приватной комнаты скрыто до вступления.'; return; }
+      if (!messages.length) { const empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = publicRoom ? 'Сообщений пока нет.' : 'Сообщения доступны после принятия приглашения.'; box.append(empty); return; }
+      messages.forEach(item => {
+        let payload = {}; try { payload = JSON.parse(item.payload || '{}'); } catch (_) {}
+        const name = item.sender_display_name || item.sender_username || 'Участник'; const row = document.createElement('article'); row.className = 'message';
+        const avatar = makeAvatar(name, item.sender_avatar_url, 'user', false); const stack = document.createElement('div'); stack.className = 'message-stack'; const meta = document.createElement('div'); meta.className = 'msg-meta';
+        const author = document.createElement('span'); author.className = 'msg-author'; author.textContent = name; meta.append(author); const time = formatTime(item.created_at);
+        if (time) { const timeNode = document.createElement('time'); timeNode.className = 'msg-time'; timeNode.textContent = time; meta.append(timeNode); }
+        const bubble = document.createElement('div'); bubble.className = 'bubble'; const text = document.createElement('div'); text.className = 'msg-text'; text.innerHTML = linkify(payload.text || payload.caption || payload.body || 'Сообщение'); bubble.append(text); stack.append(meta, bubble); row.append(avatar, stack); box.append(row);
+      });
+    }
+    async function joinOrOpen(data, room, button) {
+      if (data.is_member) { location.href = '/chat/?room=' + encodeURIComponent(room.room_type + ':' + room.id); return; }
+      button.disabled = true;
+      try {
+        let response;
+        if (invite) response = await fetch('/api/chat/v2/rooms/invite-links/redeem', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ token: invite }) });
+        else response = await fetch('/api/chat/v2/rooms/' + encodeURIComponent(room.room_type) + '/' + encodeURIComponent(room.id) + '/request-join', { method: 'POST', headers });
+        if (response.status === 401 || response.status === 403) { location.href = '/chat/?' + (invite ? 'invite=' + encodeURIComponent(invite) : 'room=' + encodeURIComponent(room.room_type + ':' + room.id)); return; }
+        const result = await response.json(); if (!response.ok) throw new Error(result.detail || 'Не удалось выполнить действие');
+        if (result.status === 'requested') { $('status').textContent = 'Заявка отправлена владельцу.'; button.textContent = 'Заявка отправлена'; } else location.href = '/chat/?room=' + encodeURIComponent(room.room_type + ':' + room.id);
+      } catch (error) { $('status').textContent = error.message || 'Не удалось выполнить действие'; button.disabled = false; }
+    }
+    (async () => { if (!endpoint) { showError('Ссылка на комнату недействительна.'); return; } try { const response = await fetch(endpoint, { headers }); if (!response.ok) throw new Error(response.status === 404 ? 'Комната не найдена' : response.status === 410 ? 'Ссылка истекла' : 'Предпросмотр недоступен'); render(await response.json()); } catch (error) { showError(error.message || 'Предпросмотр недоступен'); } })();
+  </script>
+</body>
+</html>
