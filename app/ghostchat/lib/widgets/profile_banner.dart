@@ -8,7 +8,7 @@ import '../theme.dart';
 import '../services/theme_service.dart';
 import 'color_picker_panel.dart';
 
-const _defaultBannerBackground = Color(0xFF020617);
+const _defaultBannerBackground = GE.bg;
 
 /// A small, server-safe description of a profile/channel/group banner.
 ///
@@ -338,7 +338,7 @@ class ProfileBanner extends StatelessWidget {
   static Gradient _gradientFor(ProfileBannerConfig config) {
     if (config.type == 'lights') {
       return const LinearGradient(
-        colors: [Color(0xFF020617), Color(0xFF020617)],
+        colors: [GE.bg, GE.bg],
       );
     }
     if (!config.isGradient) {
@@ -1031,7 +1031,7 @@ class _ProfileBannerEditorSheetState extends State<_ProfileBannerEditorSheet> {
                     decoration: BoxDecoration(
                       color: _colors[index],
                       shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 1.5),
+                      border: Border.all(color: GE.text, width: 1.5),
                     ),
                   ),
                   const SizedBox(height: 2),
@@ -1073,7 +1073,7 @@ class _ProfileBannerEditorSheetState extends State<_ProfileBannerEditorSheet> {
                 decoration: BoxDecoration(
                   color: _colors[index],
                   shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 2),
+                  border: Border.all(color: GE.text, width: 2),
                 ),
               ),
               const SizedBox(width: 10),
@@ -1140,7 +1140,7 @@ class _ProfileBannerEditorSheetState extends State<_ProfileBannerEditorSheet> {
           decoration: BoxDecoration(
             color: _backgroundColor,
             shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 2),
+            border: Border.all(color: GE.text, width: 2),
           ),
         ),
         const SizedBox(width: 10),
@@ -1297,7 +1297,7 @@ class _BannerHandlesPainter extends CustomPainter {
         canvas,
         source,
         color: color,
-        borderColor: Colors.white,
+        borderColor: GE.text,
         active: activeLightIndex == index,
         index: index,
       );
@@ -1317,7 +1317,7 @@ class _BannerHandlesPainter extends CustomPainter {
       center,
       outerRadius,
       Paint()
-        ..color = Colors.black.withValues(alpha: 0.38)
+        ..color = GE.shadow.withValues(alpha: 0.38)
         ..style = PaintingStyle.fill,
     );
     canvas.drawCircle(
@@ -1341,7 +1341,7 @@ class _BannerHandlesPainter extends CustomPainter {
         text: TextSpan(
           text: '${index + 1}',
           style: const TextStyle(
-            color: Colors.black,
+            color: GE.shadow,
             fontSize: 10,
             fontWeight: FontWeight.w900,
           ),

@@ -264,7 +264,7 @@ class _WrappedScreenState extends State<WrappedScreen> {
             child: Text(
               name.isNotEmpty ? name[0].toUpperCase() : '?',
               style: const TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.w800, fontSize: 22),
+                  color: GE.text, fontWeight: FontWeight.w800, fontSize: 22),
             ),
           ),
           const SizedBox(width: 12),
@@ -298,7 +298,7 @@ class _WrappedScreenState extends State<WrappedScreen> {
   Widget _heroChip(String text, IconData icon) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.30),
+          color: GE.shadow.withValues(alpha: 0.30),
           borderRadius: BorderRadius.circular(999),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -509,11 +509,11 @@ class _WrappedScreenState extends State<WrappedScreen> {
     'eyes': CupertinoIcons.eye_fill,
   };
   static const _glyphColor = {
-    'heart': Color(0xFFef4444),
-    'fire': Color(0xFFf97316),
-    'laugh': Color(0xFFfacc15),
-    'sad': Color(0xFF60a5fa),
-    'clap': Color(0xFFfb923c),
-    'eyes': Color(0xFFa855f7),
+    'heart': GE.reactionHeart,
+    'fire': GE.reactionFire,
+    'laugh': GE.reactionLaugh,
+    'sad': GE.reactionSad,
+    'clap': GE.reactionClap,
+    'eyes': GE.primary,
   };
 }

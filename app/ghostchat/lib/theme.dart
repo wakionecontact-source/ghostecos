@@ -1,7 +1,8 @@
-// Палитра и тема экосистемы Ghost. Поля цвета — static (НЕ const), чтобы
-// ThemeService мог переключать палитру на лету.
+// Палитра и тема экосистемы Ghost. Цвета — константы единой палитры
+// (лендинг / v2 social). Переключение тем отключено (ThemeService.themesEnabled).
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'design/app_palette.dart';
 import 'services/performance_service.dart';
 
 class GE {
@@ -17,29 +18,55 @@ class GE {
   static const wsUrl = 'wss://ghostecos.duckdns.org/api/soc/ws';
   static const appName = 'GhostChat';
 
-  // ── Цвета (по умолчанию — Полночь, перезаписываются ThemeService) ──────
-  static Color bg = const Color(0xFF020617);
-  static Color bgDeep = const Color(0xFF060A1A);
-  static Color surface = const Color(0xCC0F172A);
-  static Color border = const Color(0x14FFFFFF);
-  static Color borderStrong = const Color(0x21FFFFFF);
-  static Color primary = const Color(0xFFA855F7);
-  static Color primary2 = const Color(0xFF7C3AED);
-  static Color text = const Color(0xFFF1F5F9);
-  static Color sub = const Color(0xFF94A3B8);
-  static Color muted = const Color(0xFF64748B);
-  static Color green = const Color(0xFF4ADE80);
-  static Color yellow = const Color(0xFFFBBF24);
-  static Color red = const Color(0xFFF87171);
-  static Color blue = const Color(0xFF22D3EE);
+  // ── Цвета: единая палитра (лендинг / v2 social) ────────────────────────
+  static const Color bg = AppPalette.bg;
+  static const Color bgDeep = AppPalette.bgDeep;
+  static const Color surface = AppPalette.surface;
+  static const Color surfaceElevated = AppPalette.surfaceElevated;
+  static const Color surfacePressed = AppPalette.surfacePressed;
+  static const Color border = AppPalette.border;
+  static const Color borderStrong = AppPalette.borderStrong;
+  static const Color primary = AppPalette.accent;
+  static const Color primary2 = AppPalette.accentDeep;
+  static const Color accentSoft = AppPalette.accentSoft;
+  static const Color onAccent = AppPalette.onAccent;
+  static const Color text = AppPalette.text;
+  static const Color sub = AppPalette.textSecondary;
+  static const Color muted = AppPalette.textMuted;
+  static const Color green = AppPalette.success;
+  static const Color yellow = AppPalette.warning;
+  static const Color red = AppPalette.danger;
+  static const Color blue = AppPalette.info;
 
-  // ── Glass-параметры ─────────────────────────────────────────────────────
-  static Color glassFill = const Color(0x4D0F172A);
-  static Color glassBorder = const Color(0x33FFFFFF);
-  static Color glowFill = const Color(0x33A855F7);
-  static Brightness currentBrightness = Brightness.dark;
+  // ── Реакции соцсети ────────────────────────────────────────────────────
+  static const Color reactionHeart = AppPalette.reactionHeart;
+  static const Color reactionFire = AppPalette.reactionFire;
+  static const Color reactionLaugh = AppPalette.reactionLaugh;
+  static const Color reactionSad = AppPalette.reactionSad;
+  static const Color reactionClap = AppPalette.reactionClap;
+  static const Color reactionEyes = AppPalette.reactionEyes;
+  static const Color scrim = AppPalette.scrim;
+  static const Color shadow = AppPalette.shadow;
 
-  /// Размытие фона за карточкой (sigma для BackdropFilter).
+  // ── Оверлеи и скримы (замена Colors.white*/Colors.black*) ───────────────
+  static const Color overlayWeak = AppPalette.overlayWeak;
+  static const Color overlayMedium = AppPalette.overlayMedium;
+  static const Color overlayStrong = AppPalette.overlayStrong;
+  static const Color scrimFaint = AppPalette.scrimFaint;
+  static const Color scrimDim = AppPalette.scrimDim;
+  static const Color scrimMedium = AppPalette.scrimMedium;
+  static const Color scrimSoft = AppPalette.scrimSoft;
+  static const Color scrimStrong = AppPalette.scrimStrong;
+  static const Color scrimHeavy = AppPalette.scrimHeavy;
+  static const Color scrimDeep = AppPalette.scrimDeep;
+
+  // ── Glass-параметры (только точечные поверхности) ──────────────────────
+  static const Color glassFill = AppPalette.glassFill;
+  static const Color glassBorder = AppPalette.glassBorder;
+  static const Color glowFill = AppPalette.glow;
+  static const Brightness currentBrightness = Brightness.dark;
+
+  /// Размытие фона за стеклянной поверхностью (sigma для BackdropFilter).
   static const glassBlur = 18.0;
 
   /// Толщина бордера стекла.
@@ -81,7 +108,7 @@ class GE {
       seedColor: primary,
       brightness: currentBrightness,
       surface: bg,
-      surfaceContainerHighest: glassFill,
+      surfaceContainerHighest: surfaceElevated,
     ),
     textTheme: TextTheme(
       bodyMedium: TextStyle(color: text, fontSize: 14, height: 1.45),

@@ -223,12 +223,12 @@ class _SvPainter extends CustomPainter {
     // Фон: чистый цвет (S=1,V=1)
     final baseColor = HSVColor.fromAHSV(1, hue, 1, 1).toColor();
     // Горизонтальный градиент: белый → цвет
-    final hGrad = LinearGradient(colors: [Colors.white, baseColor]);
+    final hGrad = LinearGradient(colors: [GE.text, baseColor]);
     // Вертикальный градиент: прозрачный → чёрный
     final vGrad = LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [Colors.transparent, Colors.black]);
+        colors: [Colors.transparent, GE.shadow]);
 
     canvas.drawRect(rect, Paint()..shader = hGrad.createShader(rect));
     canvas.drawRect(rect, Paint()..shader = vGrad.createShader(rect));
@@ -240,7 +240,7 @@ class _SvPainter extends CustomPainter {
         Offset(cx, cy),
         8,
         Paint()
-          ..color = Colors.white
+          ..color = GE.text
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2);
     canvas.drawCircle(Offset(cx, cy), 6,
@@ -303,7 +303,7 @@ class _HuePainter extends CustomPainter {
         Offset(cx, sz.height / 2),
         sz.height / 2 + 1,
         Paint()
-          ..color = Colors.white
+          ..color = GE.text
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2);
     canvas.drawCircle(Offset(cx, sz.height / 2), sz.height / 2 - 2,

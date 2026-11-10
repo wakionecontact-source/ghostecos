@@ -234,7 +234,7 @@ class _GhostVideoViewerState extends State<GhostVideoViewer>
     final backgroundAlpha = (1 - (_dragY.abs() / 400)).clamp(0.0, 1.0);
     final controller = _controller;
     return Scaffold(
-      backgroundColor: Colors.black.withValues(alpha: backgroundAlpha),
+      backgroundColor: GE.shadow.withValues(alpha: backgroundAlpha),
       body: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: _toggleControls,
@@ -258,7 +258,7 @@ class _GhostVideoViewerState extends State<GhostVideoViewer>
               child: Transform.translate(
                 offset: Offset(0, _dragY),
                 child: controller == null
-                    ? const CircularProgressIndicator(color: Colors.white)
+                    ? const CircularProgressIndicator(color: GE.text)
                     : ValueListenableBuilder<VideoPlayerValue>(
                         valueListenable: controller,
                         builder: (_, value, _) {
@@ -267,7 +267,7 @@ class _GhostVideoViewerState extends State<GhostVideoViewer>
                           }
                           if (!value.isInitialized) {
                             return const CircularProgressIndicator(
-                              color: Colors.white,
+                              color: GE.text,
                             );
                           }
                           return _videoSurface(controller, value);
@@ -298,7 +298,7 @@ class _GhostVideoViewerState extends State<GhostVideoViewer>
                       height: 34,
                       child: CircularProgressIndicator(
                         strokeWidth: 2.5,
-                        color: Colors.white,
+                        color: GE.text,
                       ),
                     ),
                   );
@@ -353,7 +353,7 @@ class _GhostVideoViewerState extends State<GhostVideoViewer>
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  color: Colors.white,
+                  color: GE.text,
                   fontSize: 15,
                   fontWeight: FontWeight.w600,
                 ),
@@ -393,7 +393,7 @@ class _GhostVideoViewerState extends State<GhostVideoViewer>
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Colors.transparent, Color(0xE6000000)],
+            colors: [Colors.transparent, GE.scrimDeep],
           ),
         ),
         child: Padding(
@@ -435,7 +435,7 @@ class _GhostVideoViewerState extends State<GhostVideoViewer>
                 children: [
                   Text(
                     _format(value.position),
-                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                    style: const TextStyle(color: GE.text, fontSize: 12),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
@@ -448,8 +448,8 @@ class _GhostVideoViewerState extends State<GhostVideoViewer>
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         colors: VideoProgressColors(
                           playedColor: GE.primary,
-                          bufferedColor: Colors.white54,
-                          backgroundColor: Colors.white24,
+                          bufferedColor: GE.muted,
+                          backgroundColor: GE.overlayWeak,
                         ),
                       ),
                     ),
@@ -457,7 +457,7 @@ class _GhostVideoViewerState extends State<GhostVideoViewer>
                   const SizedBox(width: 8),
                   Text(
                     _format(value.duration),
-                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                    style: const TextStyle(color: GE.text, fontSize: 12),
                   ),
                 ],
               ),
@@ -480,9 +480,9 @@ class _GhostVideoViewerState extends State<GhostVideoViewer>
       child: IconButton(
         tooltip: tooltip,
         onPressed: onPressed,
-        icon: Icon(icon, color: Colors.white, size: iconSize),
+        icon: Icon(icon, color: GE.text, size: iconSize),
         style: IconButton.styleFrom(
-          backgroundColor: Colors.black54,
+          backgroundColor: GE.scrimSoft,
           shape: const CircleBorder(),
         ),
       ),
@@ -496,9 +496,9 @@ class _GhostVideoViewerState extends State<GhostVideoViewer>
   }) {
     return IconButton(
       onPressed: onPressed,
-      icon: Icon(icon, color: Colors.white, size: 28),
+      icon: Icon(icon, color: GE.text, size: 28),
       style: IconButton.styleFrom(
-        backgroundColor: Colors.black45,
+        backgroundColor: GE.scrimMedium,
         shape: const CircleBorder(),
       ),
     );
@@ -513,14 +513,14 @@ class _GhostVideoViewerState extends State<GhostVideoViewer>
         children: [
           const Icon(
             CupertinoIcons.exclamationmark_triangle,
-            color: Colors.white70,
+            color: GE.sub,
             size: 44,
           ),
           const SizedBox(height: 12),
           const Text(
             'Не удалось воспроизвести видео',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white, fontSize: 16),
+            style: TextStyle(color: GE.text, fontSize: 16),
           ),
           if (details?.isNotEmpty == true) ...[
             const SizedBox(height: 6),
@@ -529,7 +529,7 @@ class _GhostVideoViewerState extends State<GhostVideoViewer>
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white54, fontSize: 11),
+              style: const TextStyle(color: GE.muted, fontSize: 11),
             ),
           ],
           const SizedBox(height: 18),

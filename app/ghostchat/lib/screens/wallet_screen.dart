@@ -172,10 +172,10 @@ class _WalletScreenState extends State<WalletScreen> {
             child: Stack(
               alignment: Alignment.center,
               children: [
-                Icon(icon, color: Colors.white.withValues(alpha: 0.35), size: 30),
+                Icon(icon, color: GE.text.withValues(alpha: 0.35), size: 30),
                 Text(letter,
                     style: const TextStyle(
-                        color: Colors.white,
+                        color: GE.text,
                         fontSize: 22,
                         fontWeight: FontWeight.w900,
                         letterSpacing: -0.5)),

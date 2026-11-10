@@ -664,7 +664,7 @@ class _GhostSoundCatalogScreenState extends State<GhostSoundCatalogScreen> {
             borderRadius: BorderRadius.circular(16),
             gradient: LinearGradient(colors: [GE.primary2, GE.primary]),
           ),
-          child: const Icon(CupertinoIcons.music_note_2, color: Colors.white),
+          child: const Icon(CupertinoIcons.music_note_2, color: GE.text),
         ),
         const SizedBox(width: 12),
         Expanded(

@@ -142,14 +142,14 @@ class _MiniskaCreateScreenState extends State<MiniskaCreateScreen> {
                     Container(
                       height: 200,
                       decoration: BoxDecoration(
-                        color: Colors.black54,
+                        color: GE.scrimSoft,
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(CupertinoIcons.play_circle_fill,
-                              color: Colors.white70, size: 56),
+                              color: GE.sub, size: 56),
                           const SizedBox(height: 6),
                           Text(_videoName ?? 'video',
                               style: TextStyle(color: GE.sub, fontSize: 11)),

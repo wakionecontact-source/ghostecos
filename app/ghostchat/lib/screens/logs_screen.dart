@@ -432,11 +432,11 @@ class _LogsScreenState extends State<LogsScreen> {
   Color _categoryColor(String cat) {
     switch (cat) {
       case 'lan':
-        return const Color(0xFF22C55E);
+        return GE.green;
       case 'bt':
-        return const Color(0xFF60A5FA);
+        return GE.reactionSad;
       case 'wifi_direct':
-        return const Color(0xFF34D399);
+        return GE.green;
       case 'api':
         return GE.blue;
       case 'auth':
@@ -444,11 +444,11 @@ class _LogsScreenState extends State<LogsScreen> {
       case 'chat':
         return GE.primary;
       case 'db':
-        return const Color(0xFFF59E0B);
+        return GE.yellow;
       case 'crypto':
-        return const Color(0xFFFB7185);
+        return GE.red;
       case 'storage':
-        return const Color(0xFFA78BFA);
+        return GE.primary;
       case 'flutter':
       case 'runtime':
         return GE.red;
@@ -732,7 +732,7 @@ class _LogsScreenState extends State<LogsScreen> {
         border: Border.all(color: GE.glassBorder),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.22),
+            color: GE.shadow.withValues(alpha: 0.22),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),

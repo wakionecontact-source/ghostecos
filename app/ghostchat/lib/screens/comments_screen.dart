@@ -439,12 +439,12 @@ class _CommentsScreenState extends State<CommentsScreen> {
                                 height: 14,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: Colors.white,
+                                  color: GE.text,
                                 ),
                               )
                             : const Icon(
                                 CupertinoIcons.paperplane_fill,
-                                color: Colors.white,
+                                color: GE.text,
                                 size: 16,
                               ),
                       ),
@@ -723,12 +723,12 @@ class _CommentRow extends StatelessWidget {
     'eyes': CupertinoIcons.eye_fill,
   };
   static const _iconColor = {
-    'heart': Color(0xFFef4444), // red
-    'fire': Color(0xFFf97316), // orange
-    'laugh': Color(0xFFfacc15), // yellow
-    'sad': Color(0xFF60a5fa), // blue
-    'clap': Color(0xFFfb923c), // amber
-    'eyes': Color(0xFFa855f7), // purple
+    'heart': GE.reactionHeart, // red
+    'fire': GE.reactionFire, // orange
+    'laugh': GE.reactionLaugh, // yellow
+    'sad': GE.reactionSad, // blue
+    'clap': GE.reactionClap, // amber
+    'eyes': GE.primary, // purple
   };
   Widget _emojiIcon(String key, {double size = 16, Color? overrideColor}) {
     return Icon(
@@ -828,7 +828,7 @@ class _CommentRow extends StatelessWidget {
               child: Text(
                 display.isNotEmpty ? display[0].toUpperCase() : '?',
                 style: const TextStyle(
-                  color: Colors.white,
+                  color: GE.text,
                   fontWeight: FontWeight.w700,
                   fontSize: 12,
                 ),

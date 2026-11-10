@@ -7,6 +7,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 
+import 'package:ghost/theme.dart';
 class MarqueeText extends StatefulWidget {
   final String text;
   final TextStyle style;
@@ -111,8 +112,8 @@ class _MarqueeTextState extends State<MarqueeText>
                 end: Alignment.centerRight,
                 colors: const [
                   Colors.transparent,
-                  Colors.white,
-                  Colors.white,
+                  GE.text,
+                  GE.text,
                   Colors.transparent,
                 ],
                 stops: [0.0, stopFrac, 1 - stopFrac, 1.0],

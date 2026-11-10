@@ -180,14 +180,14 @@ class SupportScreen extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Colors.orange.withValues(alpha: 0.10),
+              color: GE.yellow.withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.orange.withValues(alpha: 0.30)),
+              border: Border.all(color: GE.yellow.withValues(alpha: 0.30)),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.lock_open, color: Colors.orange, size: 18),
+                const Icon(Icons.lock_open, color: GE.yellow, size: 18),
                 const SizedBox(width: 9),
                 Expanded(
                   child: Text(

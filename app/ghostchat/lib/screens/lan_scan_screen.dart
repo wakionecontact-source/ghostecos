@@ -526,7 +526,7 @@ class _LanScanScreenState extends State<LanScanScreen>
             IgnorePointer(
               child: ShaderMask(
                 shaderCallback: (rect) => const RadialGradient(
-                  colors: [Colors.white, Colors.white, Colors.transparent],
+                  colors: [GE.text, GE.text, Colors.transparent],
                   stops: [0.0, 0.5, 1.0],
                 ).createShader(rect),
                 blendMode: BlendMode.dstIn,
@@ -573,7 +573,7 @@ class _LanScanScreenState extends State<LanScanScreen>
                                       ? CupertinoIcons
                                             .antenna_radiowaves_left_right
                                       : CupertinoIcons.search),
-                            color: Colors.white,
+                            color: GE.text,
                             size: 26,
                           ),
                         ),

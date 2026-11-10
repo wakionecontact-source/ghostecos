@@ -219,7 +219,7 @@ class _NftScreenState extends State<NftScreen> with TickerProviderStateMixin {
           textAlign: TextAlign.center,
           maxLines: 2, overflow: TextOverflow.ellipsis,
           style: const TextStyle(
-            color: Colors.white,
+            color: GE.text,
             fontSize: 13,
             fontWeight: FontWeight.w900,
             letterSpacing: 0.4,
@@ -297,7 +297,7 @@ class _NftScreenState extends State<NftScreen> with TickerProviderStateMixin {
             child: Text(
               '$price $currency',
               style: const TextStyle(
-                color: Colors.white,
+                color: GE.text,
                 fontSize: 12,
                 fontWeight: FontWeight.w800,
               ),

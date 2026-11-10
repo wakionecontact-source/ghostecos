@@ -167,7 +167,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                         ],
                       ),
                       border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.22),
+                        color: GE.text.withValues(alpha: 0.22),
                         width: 1,
                       ),
                     ),
@@ -222,14 +222,14 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                           0.55,
                           ShaderMask(
                             shaderCallback: (b) => LinearGradient(
-                              colors: [Colors.white, GE.primary],
+                              colors: [GE.text, GE.primary],
                             ).createShader(b),
                             child: const Text(
                               'GhostChat',
                               style: TextStyle(
                                 fontSize: 34,
                                 fontWeight: FontWeight.w800,
-                                color: Colors.white,
+                                color: GE.text,
                                 letterSpacing: -0.5,
                               ),
                             ),

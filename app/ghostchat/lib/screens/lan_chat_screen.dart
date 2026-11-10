@@ -529,9 +529,9 @@ class _LanChatScreenState extends State<LanChatScreen> {
         if (!mounted) return;
         await showDialog<void>(
           context: context,
-          barrierColor: Colors.black87,
+          barrierColor: GE.scrimStrong,
           builder: (_) => Dialog(
-            backgroundColor: Colors.black,
+            backgroundColor: GE.shadow,
             insetPadding: EdgeInsets.zero,
             child: InteractiveViewer(child: Image.file(f, fit: BoxFit.contain)),
           ),
@@ -1147,13 +1147,13 @@ class _LanChatScreenState extends State<LanChatScreen> {
         return const Icon(
           CupertinoIcons.floppy_disk,
           size: 12,
-          color: Colors.white54,
+          color: GE.muted,
         );
       case LanMsgStatus.delivered:
         return const Icon(
           CupertinoIcons.checkmark,
           size: 13,
-          color: Colors.white70,
+          color: GE.sub,
         );
       case LanMsgStatus.read:
         return Icon(Icons.done_all, size: 14, color: GE.blue);
@@ -1326,14 +1326,14 @@ class _LanChatScreenState extends State<LanChatScreen> {
                       children: [
                         Icon(
                           CupertinoIcons.pin_fill,
-                          color: m.fromMe ? Colors.white70 : GE.primary,
+                          color: m.fromMe ? GE.sub : GE.primary,
                           size: 11,
                         ),
                         const SizedBox(width: 4),
                         Text(
                           'Закреплено на этом устройстве',
                           style: TextStyle(
-                            color: m.fromMe ? Colors.white70 : GE.sub,
+                            color: m.fromMe ? GE.sub : GE.sub,
                             fontSize: 10,
                           ),
                         ),
@@ -1349,13 +1349,13 @@ class _LanChatScreenState extends State<LanChatScreen> {
                       vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: (m.fromMe ? Colors.white : GE.primary).withValues(
+                      color: (m.fromMe ? GE.text : GE.primary).withValues(
                         alpha: 0.14,
                       ),
                       borderRadius: BorderRadius.circular(7),
                       border: Border(
                         left: BorderSide(
-                          color: m.fromMe ? Colors.white70 : GE.primary,
+                          color: m.fromMe ? GE.sub : GE.primary,
                           width: 2,
                         ),
                       ),
@@ -1365,7 +1365,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: m.fromMe ? Colors.white70 : GE.sub,
+                        color: m.fromMe ? GE.sub : GE.sub,
                         fontSize: 11,
                       ),
                     ),
@@ -1381,7 +1381,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
                   EmojiText(
                     m.text,
                     style: TextStyle(
-                      color: m.fromMe ? Colors.white : GE.text,
+                      color: m.fromMe ? GE.text : GE.text,
                       fontSize: 14,
                     ),
                   ),
@@ -1394,7 +1394,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
                       vertical: 2,
                     ),
                     decoration: BoxDecoration(
-                      color: (m.fromMe ? Colors.white : GE.primary).withValues(
+                      color: (m.fromMe ? GE.text : GE.primary).withValues(
                         alpha: 0.18,
                       ),
                       borderRadius: BorderRadius.circular(10),
@@ -1412,7 +1412,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
                     Text(
                       '${m.editedAt == null ? '' : 'изменено · '}$hh:$mm',
                       style: TextStyle(
-                        color: m.fromMe ? Colors.white70 : GE.sub,
+                        color: m.fromMe ? GE.sub : GE.sub,
                         fontSize: 10,
                       ),
                     ),
@@ -1446,7 +1446,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
         width: 220,
         height: 130,
         decoration: BoxDecoration(
-          color: Colors.black26,
+          color: GE.scrimFaint,
           borderRadius: BorderRadius.circular(9),
         ),
         child: Stack(
@@ -1454,7 +1454,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
           children: [
             Icon(
               CupertinoIcons.play_circle_fill,
-              color: m.fromMe ? Colors.white : GE.primary,
+              color: m.fromMe ? GE.text : GE.primary,
               size: 44,
             ),
             Positioned(
@@ -1466,7 +1466,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: m.fromMe ? Colors.white : GE.text,
+                  color: m.fromMe ? GE.text : GE.text,
                   fontSize: 11,
                 ),
               ),
@@ -1480,7 +1480,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
       children: [
         Icon(
           CupertinoIcons.doc,
-          color: m.fromMe ? Colors.white : GE.text,
+          color: m.fromMe ? GE.text : GE.text,
           size: 18,
         ),
         const SizedBox(width: 6),
@@ -1488,7 +1488,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
           child: Text(
             m.fileName ?? 'Файл',
             style: TextStyle(
-              color: m.fromMe ? Colors.white : GE.text,
+              color: m.fromMe ? GE.text : GE.text,
               fontSize: 13,
               decoration: TextDecoration.underline,
             ),

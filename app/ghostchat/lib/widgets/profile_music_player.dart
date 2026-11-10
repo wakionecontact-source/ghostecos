@@ -92,7 +92,7 @@ class ProfileMusicPlayer extends StatelessWidget {
                 // even when a saved banner colour contains alpha.
                 ColoredBox(color: GE.surface),
                 _mirroredBannerBackground(72),
-                ColoredBox(color: Colors.black.withValues(alpha: 0.14)),
+                ColoredBox(color: GE.shadow.withValues(alpha: 0.14)),
                 Padding(
                   padding: const EdgeInsets.all(7),
                   child: SizedBox(
@@ -204,7 +204,7 @@ class ProfileMusicPlayer extends StatelessWidget {
                 children: [
                   ColoredBox(color: GE.surface),
                   _mirroredBannerBackground(32),
-                  ColoredBox(color: Colors.black.withValues(alpha: 0.14)),
+                  ColoredBox(color: GE.shadow.withValues(alpha: 0.14)),
                   Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,

@@ -1129,7 +1129,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: const Text(
                 'GhostSocial',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: GE.text,
                   fontSize: 13,
                   fontWeight: FontWeight.w800,
                 ),
@@ -1240,7 +1240,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           fit: StackFit.expand,
           children: [
             MirroredProfileBanner(banner: banner, height: 56),
-            ColoredBox(color: Colors.black.withValues(alpha: 0.08)),
+            ColoredBox(color: GE.shadow.withValues(alpha: 0.08)),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 18),
               child: Row(
@@ -1540,7 +1540,7 @@ class _ProfilePostTile extends StatelessWidget {
               Container(
                 height: 90,
                 decoration: BoxDecoration(
-                  color: Colors.black54,
+                  color: GE.scrimSoft,
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: GE.red.withValues(alpha: 0.3)),
                 ),
@@ -1898,7 +1898,7 @@ class _DailyThoughtBubble extends StatelessWidget {
                   children: [
                     Icon(
                       liked ? CupertinoIcons.heart_fill : CupertinoIcons.heart,
-                      color: liked ? Colors.pinkAccent : GE.sub,
+                      color: liked ? GE.primary : GE.sub,
                       size: 16,
                     ),
                     if (likes > 0) ...[

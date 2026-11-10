@@ -13,6 +13,7 @@ import '../home/home_shell.dart';
 import 'device_trust_wait_screen.dart';
 import 'register_screen.dart';
 
+import 'package:ghost/theme.dart';
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -153,7 +154,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           height: 22,
                           child: CircularProgressIndicator(
                             strokeWidth: 2.4,
-                            color: Colors.white,
+                            color: GE.text,
                           ),
                         )
                       : const Text('Войти'),

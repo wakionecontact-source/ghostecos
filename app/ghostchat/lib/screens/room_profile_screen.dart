@@ -634,12 +634,12 @@ class _RoomProfileScreenState extends State<RoomProfileScreen> {
                                     height: 18,
                                     child: CircularProgressIndicator(
                                       strokeWidth: 2,
-                                      color: Colors.white,
+                                      color: GE.text,
                                     ),
                                   )
                                 : const Icon(
                                     CupertinoIcons.camera_fill,
-                                    color: Colors.white,
+                                    color: GE.text,
                                     size: 18,
                                   ),
                           ),

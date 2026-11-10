@@ -1219,7 +1219,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             child: const Icon(
                               CupertinoIcons.camera,
                               size: 13,
-                              color: Colors.white,
+                              color: GE.text,
                             ),
                           ),
                         ),
@@ -2640,6 +2640,7 @@ class _AppearanceScreenState extends State<_AppearanceScreen> {
       'Тема и стиль',
       'Основная тема, стиль поверхностей и скругление',
       'style',
+      disabled: true,
     ),
     _appearanceRow(
       CupertinoIcons.person_crop_rectangle,
@@ -2664,6 +2665,7 @@ class _AppearanceScreenState extends State<_AppearanceScreen> {
       'Анимированный фон',
       'Mesh-фон, скорость и реакция на касание',
       'background',
+      disabled: true,
     ),
     _appearanceRow(
       CupertinoIcons.chat_bubble_2,
@@ -2685,27 +2687,66 @@ class _AppearanceScreenState extends State<_AppearanceScreen> {
     ),
   ];
 
+  Widget _unavailableNotice() => Container(
+    margin: const EdgeInsets.only(bottom: 16),
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+    decoration: BoxDecoration(
+      color: GE.surfaceElevated,
+      borderRadius: BorderRadius.circular(GE.radiusSm),
+    ),
+    child: Row(
+      children: [
+        Icon(CupertinoIcons.lock, size: 16, color: GE.muted),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            'Временно недоступно: в редизайне одна палитра',
+            style: TextStyle(color: GE.sub, fontSize: 12),
+          ),
+        ),
+      ],
+    ),
+  );
+
   Widget _appearanceRow(
     IconData icon,
     String title,
     String description,
-    String panel,
-  ) => GlassCard(
+    String panel, {
+    bool disabled = false,
+  }) => GlassCard(
     isListSection: true,
     padding: EdgeInsets.zero,
     child: ListTile(
-      leading: Icon(icon, color: GE.primary),
-      title: Text(title, style: TextStyle(color: GE.text, fontSize: 14)),
-      subtitle: ThemeService.instance.showDetailedDescriptions
+      leading: Icon(icon, color: disabled ? GE.muted : GE.primary),
+      title: Text(
+        title,
+        style: TextStyle(
+          color: disabled ? GE.muted : GE.text,
+          fontSize: 14,
+        ),
+      ),
+      subtitle: disabled
+          ? Text(
+              'Временно недоступно',
+              style: TextStyle(color: GE.muted, fontSize: 11),
+            )
+          : ThemeService.instance.showDetailedDescriptions
           ? Text(description, style: TextStyle(color: GE.sub, fontSize: 11))
           : null,
-      trailing: Icon(CupertinoIcons.chevron_right, color: GE.sub),
-      onTap: () => setState(() => _panel = panel),
+      trailing: Icon(
+        disabled ? CupertinoIcons.lock : CupertinoIcons.chevron_right,
+        color: disabled ? GE.muted : GE.sub,
+      ),
+      onTap: disabled
+          ? () => toast.show('Временно недоступно')
+          : () => setState(() => _panel = panel),
     ),
   );
 
   List<Widget> _appearancePanel(String panel) => [
     if (panel == 'style') ...[
+      if (!ThemeService.themesEnabled) _unavailableNotice(),
       _sectionTitle('Стиль'),
       _StyleSwitcher(),
       const SizedBox(height: 20),
@@ -2745,6 +2786,7 @@ class _AppearanceScreenState extends State<_AppearanceScreen> {
       const _AudioPlayerAppearanceControls(),
     ],
     if (panel == 'background') ...[
+      _unavailableNotice(),
       _sectionTitle('Анимированный фон'),
       _MeshToggleRow(),
       const SizedBox(height: 8),

@@ -55,7 +55,7 @@ class OfficialBadge extends StatelessWidget {
       ),
       child: Icon(
         CupertinoIcons.checkmark,
-        color: Colors.white,
+        color: GE.text,
         size: size * 0.62,
       ),
     ),

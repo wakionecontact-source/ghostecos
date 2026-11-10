@@ -21,12 +21,11 @@ import '../services/theme_service.dart';
 import '../theme.dart';
 import 'liquid_glass.dart';
 
-/// true в плоских стилях или в низком качестве GUI профиля энергосбережения.
-/// В обоих случаях карточки/кнопки/поля рисуются без BackdropFilter,
-/// градиентов и glow. Все виджеты этого файла читают флаг при каждом build().
-bool get _flat =>
-    ThemeService.instance.styleNotifier.value != ThemeStyle.vivid ||
-    PerformanceService.instance.reducedEffects;
+/// Редизайн: глобальное «жидкое/матовое стекло» выключено — оно лагало и
+/// выглядело грязно на списках. Все поверхности этого файла рисуются плоскими:
+/// сплошная заливка, без BackdropFilter, градиентов, glow и рамок.
+/// Точечное матовое стекло (навбар, шиты) выносится отдельным виджетом позже.
+bool get _flat => true;
 
 /// true только в ThemeStyle.traditional — тоже плоский (без blur), как
 /// minimal/mono, но карточки/кнопки получают мягкую нейтральную тень вместо
@@ -40,7 +39,7 @@ bool get _traditional =>
 /// в iOS тень нейтральная, не подсвечивается цветом кнопки/карточки).
 List<BoxShadow> _softShadow({double blur = 16, double dy = 4}) => [
   BoxShadow(
-    color: (GE.currentBrightness == Brightness.dark ? Colors.black : GE.muted)
+    color: (GE.currentBrightness == Brightness.dark ? GE.shadow : GE.muted)
         .withValues(
           alpha: GE.currentBrightness == Brightness.dark ? 0.45 : 0.14,
         ),
@@ -325,7 +324,7 @@ class _GhostSwitchState extends State<GhostSwitch>
           }
           final colorT = (knobX / _travel).clamp(0.0, 1.0);
           final trackColor = Color.lerp(
-            Colors.white.withValues(alpha: 0.10),
+            GE.text.withValues(alpha: 0.10),
             active,
             colorT,
           )!;
@@ -350,7 +349,7 @@ class _GhostSwitchState extends State<GhostSwitch>
                       width: _knob,
                       height: _knob,
                       decoration: const BoxDecoration(
-                        color: Colors.white,
+                        color: GE.text,
                         shape: BoxShape.circle,
                       ),
                     ),
@@ -440,21 +439,21 @@ class _GlassTokens {
     end: Alignment.bottomRight,
     colors: strong
         ? [
-            Colors.white.withValues(alpha: 0.07),
-            Colors.white.withValues(alpha: 0.02),
-            Colors.white.withValues(alpha: 0.01),
+            GE.text.withValues(alpha: 0.07),
+            GE.text.withValues(alpha: 0.02),
+            GE.text.withValues(alpha: 0.01),
           ]
         : [
-            Colors.white.withValues(alpha: 0.045),
-            Colors.white.withValues(alpha: 0.014),
-            Colors.white.withValues(alpha: 0.008),
+            GE.text.withValues(alpha: 0.045),
+            GE.text.withValues(alpha: 0.014),
+            GE.text.withValues(alpha: 0.008),
           ],
     stops: const [0.0, 0.55, 1.0],
   );
 
   static List<BoxShadow> shadow({bool strong = false}) => [
     BoxShadow(
-      color: Colors.black.withValues(alpha: strong ? 0.45 : 0.30),
+      color: GE.shadow.withValues(alpha: strong ? 0.45 : 0.30),
       blurRadius: strong ? 32 : 18,
       offset: Offset(0, strong ? 10 : 6),
     ),
@@ -560,31 +559,19 @@ class GlassCard extends StatelessWidget {
       if (onTap != null) bare = PressScale(onTap: onTap, child: bare);
       return bare;
     }
-    if (_flat && !liquidGlassEnabled && !matteGlassEnabled) {
-      // Минимализм: сплошная заливка + тонкая рамка, без blur/градиента/тени.
+    if (_flat) {
+      // Редизайн: сплошная поверхность без blur/градиента/тени и без рамок.
       Widget flatCard = DecoratedBox(
         decoration: BoxDecoration(
-          color: fillOverride ?? GE.surface,
+          color: fillOverride ?? (strong ? GE.surfaceElevated : GE.surface),
           borderRadius: radiusObj,
-          border: Border.all(color: GE.border, width: 1),
         ),
         child: Padding(padding: padding, child: child),
       );
       if (onTap != null) {
         flatCard = PressScale(onTap: onTap, child: flatCard);
       }
-      final clipped = ClipRRect(borderRadius: radiusObj, child: flatCard);
-      if (!_traditional) return clipped;
-      // Традиционный — та же плоская заливка, что и в минимализме, плюс
-      // мягкая нейтральная тень СНАРУЖИ клипа (иначе обрежется по границе
-      // карточки) вместо цветного glow/blur — "айфоновский" объём.
-      return DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: radiusObj,
-          boxShadow: _softShadow(),
-        ),
-        child: clipped,
-      );
+      return ClipRRect(borderRadius: radiusObj, child: flatCard);
     }
     final base =
         fillOverride ??
@@ -666,7 +653,7 @@ class GlassCard extends StatelessWidget {
           borderRadius: radiusObj,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(
+              color: GE.shadow.withValues(
                 alpha: LiquidGlassEngine.cardShadowOpacity,
               ),
               blurRadius: LiquidGlassEngine.cardShadowBlur,
@@ -686,9 +673,9 @@ class GlassCard extends StatelessWidget {
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
         colors: [
-          Color.alphaBlend(Colors.white.withValues(alpha: 0.05), base),
+          Color.alphaBlend(GE.text.withValues(alpha: 0.05), base),
           base,
-          Color.alphaBlend(Colors.black.withValues(alpha: 0.10), base),
+          Color.alphaBlend(GE.shadow.withValues(alpha: 0.10), base),
         ],
         stops: const [0.0, 0.5, 1.0],
       ),
@@ -822,7 +809,7 @@ class GlassButton extends StatelessWidget {
         : LinearGradient(
             colors: [
               GE.red,
-              Color.alphaBlend(Colors.black.withValues(alpha: 0.18), GE.red),
+              Color.alphaBlend(GE.shadow.withValues(alpha: 0.18), GE.red),
             ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
@@ -856,7 +843,7 @@ class GlassButton extends StatelessWidget {
                     end: Alignment.bottomRight,
                     colors: [
                       Color.alphaBlend(
-                        Colors.white.withValues(alpha: 0.10),
+                        GE.text.withValues(alpha: 0.10),
                         surfaceFill,
                       ),
                       surfaceFill,
@@ -872,7 +859,7 @@ class GlassButton extends StatelessWidget {
             ? (isCta ? null : Border.all(color: GE.border, width: 1))
             : (isCta
                   ? Border.all(
-                      color: Colors.white.withValues(alpha: 0.24),
+                      color: GE.text.withValues(alpha: 0.24),
                       width: GE.glassStroke,
                     )
                   : null),
@@ -991,7 +978,7 @@ class GhostIconButton extends StatelessWidget {
           boxShadow: showSurface && traditional
               ? [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.22),
+                    color: GE.shadow.withValues(alpha: 0.22),
                     blurRadius: 8,
                     offset: const Offset(0, 3),
                   ),
@@ -1280,7 +1267,7 @@ Future<T?> showGlassSheet<T>(
     context: context,
     isScrollControlled: isScrollControlled,
     backgroundColor: Colors.transparent,
-    barrierColor: const Color(0xCC020617),
+    barrierColor: GE.bg,
     builder: (ctx) {
       final reducedEffects = PerformanceService.instance.reducedEffects;
       final liquid =
@@ -1304,7 +1291,7 @@ Future<T?> showGlassSheet<T>(
                     : Colors.transparent),
           border: Border(
             top: BorderSide(
-              color: flat ? GE.border : Colors.white.withValues(alpha: 0.22),
+              color: flat ? GE.border : GE.text.withValues(alpha: 0.22),
               width: 1,
             ),
           ),

@@ -426,7 +426,7 @@ class _RoomLinkPreviewScreenState extends State<RoomLinkPreviewScreen> {
                           height: 16,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Colors.white,
+                            color: GE.text,
                           ),
                         )
                       : Icon(

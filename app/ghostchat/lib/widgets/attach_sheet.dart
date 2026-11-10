@@ -172,7 +172,7 @@ class _AttachSheetState extends State<AttachSheet> {
       Navigator.of(context).push(
         PageRouteBuilder<void>(
           opaque: false,
-          barrierColor: Colors.black,
+          barrierColor: GE.shadow,
           pageBuilder: (_, _, _) => GhostVideoViewer(path: file.path),
         ),
       );
@@ -183,11 +183,11 @@ class _AttachSheetState extends State<AttachSheet> {
     Navigator.of(context).push(
       PageRouteBuilder<void>(
         opaque: false,
-        barrierColor: Colors.black,
+        barrierColor: GE.shadow,
         pageBuilder: (ctx, _, _) => GestureDetector(
           onTap: () => Navigator.of(ctx).maybePop(),
           child: Container(
-            color: Colors.black,
+            color: GE.shadow,
             alignment: Alignment.center,
             child: Stack(
               alignment: Alignment.center,
@@ -198,7 +198,7 @@ class _AttachSheetState extends State<AttachSheet> {
                 if (a.type == AssetType.video)
                   const Icon(
                     CupertinoIcons.play_circle_fill,
-                    color: Colors.white70,
+                    color: GE.sub,
                     size: 64,
                   ),
               ],
@@ -320,7 +320,7 @@ class _AttachSheetState extends State<AttachSheet> {
             right: 6,
             child: PopupMenuButton<String>(
               tooltip: 'Другие источники',
-              icon: const Icon(CupertinoIcons.ellipsis, color: Colors.white),
+              icon: const Icon(CupertinoIcons.ellipsis, color: GE.text),
               color: GE.bgDeep,
               onSelected: (value) {
                 Navigator.of(context).maybePop();
@@ -388,7 +388,7 @@ class _AttachSheetState extends State<AttachSheet> {
                       vertical: 3,
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.68),
+                      color: GE.shadow.withValues(alpha: 0.68),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Row(
@@ -396,14 +396,14 @@ class _AttachSheetState extends State<AttachSheet> {
                       children: [
                         const Icon(
                           CupertinoIcons.video_camera_solid,
-                          color: Colors.white,
+                          color: GE.text,
                           size: 11,
                         ),
                         const SizedBox(width: 3),
                         Text(
                           _formatDuration(a.duration),
                           style: const TextStyle(
-                            color: Colors.white,
+                            color: GE.text,
                             fontSize: 10,
                             fontWeight: FontWeight.w700,
                           ),
@@ -428,13 +428,13 @@ class _AttachSheetState extends State<AttachSheet> {
                   height: 22,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: sel ? GE.primary : Colors.black26,
-                    border: Border.all(color: Colors.white, width: 1.5),
+                    color: sel ? GE.primary : GE.scrimFaint,
+                    border: Border.all(color: GE.text, width: 1.5),
                   ),
                   child: sel
                       ? const Icon(
                           CupertinoIcons.checkmark,
-                          color: Colors.white,
+                          color: GE.text,
                           size: 14,
                         )
                       : null,
@@ -493,13 +493,13 @@ class _AttachSheetState extends State<AttachSheet> {
               color: c,
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.3),
+                  color: GE.shadow.withValues(alpha: 0.3),
                   blurRadius: 8,
                   offset: const Offset(0, 3),
                 ),
               ],
             ),
-            child: Icon(ic, color: Colors.white, size: 26),
+            child: Icon(ic, color: GE.text, size: 26),
           ),
           if (badge != null)
             Positioned(
@@ -509,7 +509,7 @@ class _AttachSheetState extends State<AttachSheet> {
                 padding: const EdgeInsets.all(5),
                 decoration: const BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Colors.white,
+                  color: GE.text,
                 ),
                 child: Text(
                   '$badge',
@@ -591,7 +591,7 @@ class _AttachSheetState extends State<AttachSheet> {
                 color: c,
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: Icon(ic, color: Colors.white, size: 26),
+              child: Icon(ic, color: GE.text, size: 26),
             ),
             const SizedBox(height: 5),
             Text(label, style: TextStyle(color: GE.sub, fontSize: 11)),
@@ -715,7 +715,7 @@ class _InlineCameraCellState extends State<_InlineCameraCell> {
                   end: Alignment.bottomCenter,
                   colors: [
                     Colors.transparent,
-                    Colors.black.withValues(alpha: 0.68),
+                    GE.shadow.withValues(alpha: 0.68),
                   ],
                 ),
               ),
@@ -723,7 +723,7 @@ class _InlineCameraCellState extends State<_InlineCameraCell> {
             const Center(
               child: Icon(
                 CupertinoIcons.camera_fill,
-                color: Colors.white,
+                color: GE.text,
                 size: 30,
               ),
             ),
@@ -733,7 +733,7 @@ class _InlineCameraCellState extends State<_InlineCameraCell> {
               child: Text(
                 'Камера',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: GE.text,
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
                 ),

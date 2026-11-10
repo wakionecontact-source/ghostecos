@@ -999,7 +999,7 @@ class _QuickActionButtons extends StatelessWidget {
                     boxShadow: traditional
                         ? [
                             BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.22),
+                              color: GE.shadow.withValues(alpha: 0.22),
                               blurRadius: 8,
                               offset: const Offset(0, 3),
                             ),
@@ -1013,7 +1013,7 @@ class _QuickActionButtons extends StatelessWidget {
                           ],
                   )
                 : null,
-            child: Icon(icon, color: filled ? Colors.white : color, size: 22),
+            child: Icon(icon, color: filled ? GE.text : color, size: 22),
           ),
         );
       },
@@ -1201,8 +1201,8 @@ class _GlassBottomNavState extends State<_GlassBottomNav> {
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
                         shadows: const [
-                          Shadow(color: Colors.black87, blurRadius: 10),
-                          Shadow(color: Colors.black54, blurRadius: 3),
+                          Shadow(color: GE.scrimStrong, blurRadius: 10),
+                          Shadow(color: GE.scrimSoft, blurRadius: 3),
                         ],
                       ),
                     )
@@ -1214,8 +1214,8 @@ class _GlassBottomNavState extends State<_GlassBottomNav> {
                         size: 20,
                         color: GE.sub.withValues(alpha: 0.65),
                         shadows: const [
-                          Shadow(color: Colors.black87, blurRadius: 10),
-                          Shadow(color: Colors.black54, blurRadius: 3),
+                          Shadow(color: GE.scrimStrong, blurRadius: 10),
+                          Shadow(color: GE.scrimSoft, blurRadius: 3),
                         ],
                       ),
                     ),
@@ -1601,14 +1601,14 @@ class _SideRail extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
             child: ShaderMask(
               shaderCallback: (b) => LinearGradient(
-                colors: [Colors.white, GE.primary],
+                colors: [GE.text, GE.primary],
               ).createShader(b),
               child: const Text(
                 'Ghost',
                 style: TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.w800,
-                  color: Colors.white,
+                  color: GE.text,
                   letterSpacing: 0.5,
                 ),
               ),
@@ -1747,12 +1747,12 @@ class _UpdateRailAction extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [Color(0xFF10C947), Color(0xFF00B9B5)],
+                colors: [GE.green, GE.blue],
               ),
               borderRadius: BorderRadius.circular(12),
               boxShadow: [
                 BoxShadow(
-                  color: const Color(0xFF00B9B5).withValues(alpha: 0.18),
+                  color: GE.blue.withValues(alpha: 0.18),
                   blurRadius: 12,
                   offset: const Offset(0, 4),
                 ),
@@ -1768,7 +1768,7 @@ class _UpdateRailAction extends StatelessWidget {
                       state.isBusy
                           ? CupertinoIcons.arrow_down_circle_fill
                           : CupertinoIcons.arrow_down_circle,
-                      color: Colors.white,
+                      color: GE.text,
                       size: 19,
                     ),
                     const SizedBox(width: 8),
@@ -1778,7 +1778,7 @@ class _UpdateRailAction extends StatelessWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          color: Colors.white,
+                          color: GE.text,
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
                         ),
@@ -1787,7 +1787,7 @@ class _UpdateRailAction extends StatelessWidget {
                     if (!state.isBusy)
                       const Icon(
                         CupertinoIcons.chevron_right,
-                        color: Colors.white70,
+                        color: GE.sub,
                         size: 15,
                       ),
                   ],
@@ -1799,8 +1799,8 @@ class _UpdateRailAction extends StatelessWidget {
                     child: LinearProgressIndicator(
                       value: state.progress,
                       minHeight: 4,
-                      color: Colors.white,
-                      backgroundColor: Colors.white.withValues(alpha: 0.28),
+                      color: GE.text,
+                      backgroundColor: GE.text.withValues(alpha: 0.28),
                     ),
                   ),
                 ],
@@ -1812,7 +1812,7 @@ class _UpdateRailAction extends StatelessWidget {
                     state.message!,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white, fontSize: 10),
+                    style: const TextStyle(color: GE.text, fontSize: 10),
                   ),
                 ],
               ],
@@ -1904,7 +1904,7 @@ class _GuestPane extends StatelessWidget {
                     alignment: Alignment.center,
                     child: Icon(
                       CupertinoIcons.person,
-                      color: Colors.white,
+                      color: GE.text,
                       size: 26,
                     ),
                   ),

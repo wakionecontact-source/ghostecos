@@ -122,7 +122,7 @@ class _AppErrorPanelState extends State<AppErrorPanel> {
               constraints: const BoxConstraints(maxHeight: 150),
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.16),
+                color: GE.shadow.withValues(alpha: 0.16),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: SingleChildScrollView(

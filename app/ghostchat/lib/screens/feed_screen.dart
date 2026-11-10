@@ -459,7 +459,7 @@ class _FeedScreenState extends State<FeedScreen> {
                                   child: Container(
                                     width: 80,
                                     height: 80,
-                                    color: Colors.black26,
+                                    color: GE.scrimFaint,
                                     child: m.type == 'image'
                                         ? Image.network(
                                             _absUrl(m.url),
@@ -472,7 +472,7 @@ class _FeedScreenState extends State<FeedScreen> {
                                         : Center(
                                             child: Icon(
                                               CupertinoIcons.play_circle_fill,
-                                              color: Colors.white70,
+                                              color: GE.sub,
                                               size: 32,
                                             ),
                                           ),
@@ -486,12 +486,12 @@ class _FeedScreenState extends State<FeedScreen> {
                                         setSheet(() => attachments.removeAt(i)),
                                     child: Container(
                                       decoration: const BoxDecoration(
-                                        color: Colors.black54,
+                                        color: GE.scrimSoft,
                                         shape: BoxShape.circle,
                                       ),
                                       child: const Icon(
                                         CupertinoIcons.xmark,
-                                        color: Colors.white,
+                                        color: GE.text,
                                         size: 16,
                                       ),
                                     ),
@@ -624,12 +624,12 @@ const Map<String, IconData> _reactionIcon = {
   'eyes': CupertinoIcons.eye_fill,
 };
 const Map<String, Color> _reactionColor = {
-  'heart': Color(0xFFef4444),
-  'fire': Color(0xFFf97316),
-  'laugh': Color(0xFFfacc15),
-  'sad': Color(0xFF60a5fa),
-  'clap': Color(0xFFfb923c),
-  'eyes': Color(0xFFa855f7),
+  'heart': GE.reactionHeart,
+  'fire': GE.reactionFire,
+  'laugh': GE.reactionLaugh,
+  'sad': GE.reactionSad,
+  'clap': GE.reactionClap,
+  'eyes': GE.primary,
 };
 const Map<String, String> _reactionLabel = {
   'heart': 'Сердце',
@@ -649,7 +649,7 @@ Widget reactionDisplay(String key, {double size = 14, Color? overrideColor}) {
     return Icon(
       icon,
       size: size,
-      color: overrideColor ?? _reactionColor[key] ?? const Color(0xFFa855f7),
+      color: overrideColor ?? _reactionColor[key] ?? GE.primary,
     );
   }
   return EmojiText(
@@ -737,7 +737,7 @@ class _PostCardState extends State<_PostCard> {
                           child: BackdropFilter(
                             filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
                             child: Container(
-                              color: Colors.black.withValues(alpha: 0.35),
+                              color: GE.shadow.withValues(alpha: 0.35),
                             ),
                           ),
                         ),
@@ -859,7 +859,7 @@ class _PostCardState extends State<_PostCard> {
                 ? p.authorDisplayName[0].toUpperCase()
                 : '?',
             style: const TextStyle(
-              color: Colors.white,
+              color: GE.text,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -984,7 +984,7 @@ class _PostCardState extends State<_PostCard> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.6),
+        color: GE.shadow.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: GE.red.withValues(alpha: 0.7), width: 1),
       ),
@@ -996,7 +996,7 @@ class _PostCardState extends State<_PostCard> {
           Text(
             byAdmin ? 'Помечено модерацией' : 'Контент 18+',
             style: TextStyle(
-              color: Colors.white,
+              color: GE.text,
               fontWeight: FontWeight.w700,
               fontSize: 13,
             ),
@@ -1004,7 +1004,7 @@ class _PostCardState extends State<_PostCard> {
           const SizedBox(height: 2),
           Text(
             byAdmin ? 'Автор не указал NSFW' : 'Автор пометил как взрослый',
-            style: TextStyle(color: Colors.white70, fontSize: 11),
+            style: TextStyle(color: GE.sub, fontSize: 11),
           ),
           const SizedBox(height: 8),
           Container(
@@ -1807,12 +1807,12 @@ class _MediaGrid extends StatelessWidget {
                       _cell(context, visible[3]),
                       if (extra > 0)
                         Container(
-                          color: Colors.black54,
+                          color: GE.scrimSoft,
                           alignment: Alignment.center,
                           child: Text(
                             '+$extra',
                             style: const TextStyle(
-                              color: Colors.white,
+                              color: GE.text,
                               fontSize: 20,
                               fontWeight: FontWeight.w800,
                             ),
@@ -1837,7 +1837,7 @@ class _MediaGrid extends StatelessWidget {
         onTap: () => _openViewer(context, m.url, isVideo),
         child: Container(
           height: height,
-          color: Colors.black26,
+          color: GE.scrimFaint,
           child: Stack(
             fit: StackFit.expand,
             children: [
@@ -1872,11 +1872,11 @@ class _MediaGrid extends StatelessWidget {
                     height: 50,
                     decoration: const BoxDecoration(
                       shape: BoxShape.circle,
-                      color: Colors.black54,
+                      color: GE.scrimSoft,
                     ),
                     child: const Icon(
                       CupertinoIcons.play_fill,
-                      color: Colors.white,
+                      color: GE.text,
                       size: 30,
                     ),
                   ),
@@ -1895,7 +1895,7 @@ class _MediaGrid extends StatelessWidget {
     }
     showDialog<void>(
       context: context,
-      barrierColor: Colors.black87,
+      barrierColor: GE.scrimStrong,
       builder: (_) => Dialog(
         backgroundColor: Colors.transparent,
         insetPadding: const EdgeInsets.all(8),
@@ -1910,7 +1910,7 @@ class _MediaGrid extends StatelessWidget {
               child: IconButton(
                 icon: const Icon(
                   CupertinoIcons.xmark,
-                  color: Colors.white,
+                  color: GE.text,
                   size: 28,
                 ),
                 onPressed: () => Navigator.pop(context),
@@ -1933,7 +1933,7 @@ class _AudioTile extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: Colors.black26,
+          color: GE.scrimFaint,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: GE.glassBorder),
         ),

@@ -11,6 +11,7 @@ import '../../shared/utils/validators.dart';
 import '../home/home_shell.dart';
 import 'login_screen.dart';
 
+import 'package:ghost/theme.dart';
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
 
@@ -173,7 +174,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           height: 22,
                           child: CircularProgressIndicator(
                             strokeWidth: 2.4,
-                            color: Colors.white,
+                            color: GE.text,
                           ),
                         )
                       : const Text('Создать аккаунт'),

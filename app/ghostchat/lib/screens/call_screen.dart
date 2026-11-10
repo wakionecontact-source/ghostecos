@@ -313,8 +313,8 @@ class _CallScreenState extends State<CallScreen> {
               borderRadius: BorderRadius.circular(16),
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: .55),
-                  border: Border.all(color: Colors.white24),
+                  color: GE.shadow.withValues(alpha: .55),
+                  border: Border.all(color: GE.overlayWeak),
                 ),
                 child: RTCVideoView(
                   previewRenderer,
@@ -366,7 +366,7 @@ class _CallScreenState extends State<CallScreen> {
       child: Row(
         children: [
           IconButton(
-            icon: const Icon(CupertinoIcons.chevron_down, color: Colors.white),
+            icon: const Icon(CupertinoIcons.chevron_down, color: GE.text),
             tooltip: 'Свернуть звонок',
             onPressed: _minimizeCall,
           ),
@@ -379,7 +379,7 @@ class _CallScreenState extends State<CallScreen> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    color: Colors.white,
+                    color: GE.text,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -387,7 +387,7 @@ class _CallScreenState extends State<CallScreen> {
                   '${snapshot.video ? 'Видеозвонок' : 'Аудиозвонок'} · ${_status(snapshot)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: Colors.white.withValues(alpha: .7)),
+                  style: TextStyle(color: GE.text.withValues(alpha: .7)),
                 ),
               ],
             ),
@@ -403,7 +403,7 @@ class _CallScreenState extends State<CallScreen> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: .55),
+                      color: GE.text.withValues(alpha: .55),
                       fontSize: 11,
                     ),
                   ),
@@ -414,7 +414,7 @@ class _CallScreenState extends State<CallScreen> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: .55),
+                      color: GE.text.withValues(alpha: .55),
                       fontSize: 11,
                     ),
                   ),
@@ -424,7 +424,7 @@ class _CallScreenState extends State<CallScreen> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: .55),
+                      color: GE.text.withValues(alpha: .55),
                       fontSize: 10,
                     ),
                   ),

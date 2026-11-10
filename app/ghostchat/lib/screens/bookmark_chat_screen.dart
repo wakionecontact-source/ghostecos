@@ -859,7 +859,7 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
                               backgroundColor: GE.primary2,
                               child: const Icon(
                                 CupertinoIcons.person,
-                                color: Colors.white,
+                                color: GE.text,
                                 size: 18,
                               ),
                             ),
@@ -989,13 +989,13 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
                     children: [
                       Icon(
                         CupertinoIcons.pin_fill,
-                        color: Colors.white70,
+                        color: GE.sub,
                         size: 11,
                       ),
                       const SizedBox(width: 4),
                       const Text(
                         'Закреплено',
-                        style: TextStyle(color: Colors.white70, fontSize: 10),
+                        style: TextStyle(color: GE.sub, fontSize: 10),
                       ),
                     ],
                   ),
@@ -1009,17 +1009,17 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.14),
+                    color: GE.text.withValues(alpha: 0.14),
                     borderRadius: BorderRadius.circular(7),
                     border: Border(
-                      left: BorderSide(color: Colors.white70, width: 2),
+                      left: BorderSide(color: GE.sub, width: 2),
                     ),
                   ),
                   child: Text(
                     m.replyPreview!,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white70, fontSize: 11),
+                    style: const TextStyle(color: GE.sub, fontSize: 11),
                   ),
                 ),
               ],
@@ -1031,7 +1031,7 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
                     children: [
                       const Icon(
                         CupertinoIcons.doc,
-                        color: Colors.white,
+                        color: GE.text,
                         size: 18,
                       ),
                       const SizedBox(width: 6),
@@ -1039,7 +1039,7 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
                         child: Text(
                           m.fileName!,
                           style: const TextStyle(
-                            color: Colors.white,
+                            color: GE.text,
                             fontSize: 13,
                             decoration: TextDecoration.underline,
                           ),
@@ -1052,7 +1052,7 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
                 if (m.hasFile) const SizedBox(height: 4),
                 EmojiText(
                   m.text,
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                  style: const TextStyle(color: GE.text, fontSize: 14),
                 ),
               ],
               if (m.reaction != null) ...[
@@ -1063,7 +1063,7 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
                     vertical: 2,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.18),
+                    color: GE.text.withValues(alpha: 0.18),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: EmojiText(
@@ -1075,7 +1075,7 @@ class _BookmarkChatScreenState extends State<BookmarkChatScreen> {
               const SizedBox(height: 2),
               Text(
                 '${m.editedAt == null ? '' : 'изменено · '}$hh:$mm',
-                style: const TextStyle(color: Colors.white70, fontSize: 10),
+                style: const TextStyle(color: GE.sub, fontSize: 10),
               ),
             ],
           ),

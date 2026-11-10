@@ -132,7 +132,7 @@ class _GateOverlayState extends State<_GateOverlay> {
     return BackdropFilter(
       filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
       child: Container(
-        color: Colors.black.withValues(alpha: 0.55),
+        color: GE.shadow.withValues(alpha: 0.55),
         // KeyGate висит поверх приложения ВНЕ Scaffold/MaterialApp-поддерева
         // MainShell — TextField внутри GlassInput требует Material-предка,
         // без него краш "No Material widget found".

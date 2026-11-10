@@ -912,13 +912,13 @@ class _PrimaryBtn extends StatelessWidget {
                   width: 18,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: Colors.white,
+                    color: GE.text,
                   ),
                 )
               : Text(
                   label,
                   style: const TextStyle(
-                    color: Colors.white,
+                    color: GE.text,
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
                   ),

@@ -38,7 +38,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "online.ghost_chat.chat"
+        applicationId = "online.ghost_chat.chat.test"
         minSdk = flutter.minSdkVersion                        // Android 6.0+ — для записи аудио и secure_storage
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

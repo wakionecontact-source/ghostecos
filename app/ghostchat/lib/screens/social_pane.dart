@@ -191,12 +191,12 @@ class _SocialPaneState extends State<SocialPane> {
                                       setSheet(() => attachments.removeAt(i)),
                                   child: Container(
                                     decoration: const BoxDecoration(
-                                      color: Colors.black54,
+                                      color: GE.scrimSoft,
                                       shape: BoxShape.circle,
                                     ),
                                     child: const Icon(
                                       CupertinoIcons.xmark,
-                                      color: Colors.white,
+                                      color: GE.text,
                                       size: 16,
                                     ),
                                   ),
@@ -372,7 +372,7 @@ class _SocialPaneState extends State<SocialPane> {
                         end: Alignment.bottomRight,
                         colors: [
                           Color.alphaBlend(
-                            Colors.white.withValues(alpha: 0.08),
+                            GE.text.withValues(alpha: 0.08),
                             GE.glassFill,
                           ),
                           GE.glassFill,
@@ -399,7 +399,7 @@ class _SocialPaneState extends State<SocialPane> {
                                 offset: const Offset(0, 4),
                               )
                             : BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.20),
+                                color: GE.shadow.withValues(alpha: 0.20),
                                 blurRadius: 8,
                                 offset: const Offset(0, 3),
                               ),
@@ -411,13 +411,13 @@ class _SocialPaneState extends State<SocialPane> {
                   Icon(
                     active ? iconFill : iconOut,
                     size: 14,
-                    color: active ? Colors.white : GE.sub,
+                    color: active ? GE.text : GE.sub,
                   ),
                   const SizedBox(width: 4),
                   Text(
                     label,
                     style: TextStyle(
-                      color: active ? Colors.white : GE.sub,
+                      color: active ? GE.text : GE.sub,
                       fontSize: 12,
                       fontWeight: active ? FontWeight.w700 : FontWeight.w500,
                     ),
@@ -450,7 +450,7 @@ class _SocialPaneState extends State<SocialPane> {
                         child: Text(
                           count > 99 ? '99+' : '$count',
                           style: const TextStyle(
-                            color: Colors.white,
+                            color: GE.text,
                             fontSize: 9,
                             fontWeight: FontWeight.w800,
                           ),
@@ -548,7 +548,7 @@ class _MiniskaTabState extends State<_MiniskaTab> {
           bottom: 16,
           child: FloatingActionButton.extended(
             backgroundColor: GE.primary,
-            foregroundColor: Colors.white,
+            foregroundColor: GE.text,
             icon: const Icon(CupertinoIcons.videocam, size: 18),
             label: const Text('Новая'),
             onPressed: _openCreate,
@@ -636,7 +636,7 @@ class _MiniPostCard extends StatelessWidget {
                         ? p.authorDisplayName[0].toUpperCase()
                         : '?',
                     style: const TextStyle(
-                      color: Colors.white,
+                      color: GE.text,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -659,7 +659,7 @@ class _MiniPostCard extends StatelessWidget {
             Container(
               height: 200,
               decoration: BoxDecoration(
-                color: Colors.black54,
+                color: GE.scrimSoft,
                 borderRadius: BorderRadius.circular(10),
               ),
               alignment: Alignment.center,
@@ -668,7 +668,7 @@ class _MiniPostCard extends StatelessWidget {
                 children: [
                   Icon(
                     CupertinoIcons.play_circle,
-                    color: Colors.white70,
+                    color: GE.sub,
                     size: 48,
                   ),
                   const SizedBox(height: 6),
@@ -819,7 +819,7 @@ class _SearchTabState extends State<_SearchTab> {
                     child: Text(
                       display.isNotEmpty ? display[0].toUpperCase() : '?',
                       style: const TextStyle(
-                        color: Colors.white,
+                        color: GE.text,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -889,7 +889,7 @@ class _SearchTabState extends State<_SearchTab> {
                     alignment: Alignment.center,
                     child: Text(
                       display.isNotEmpty ? display[0].toUpperCase() : '?',
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                      style: const TextStyle(color: GE.text, fontSize: 12),
                     ),
                   ),
                   const SizedBox(width: 8),

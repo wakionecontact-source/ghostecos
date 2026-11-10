@@ -42,7 +42,7 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
 
     <application
-        android:label="GhostChat"
+        android:label="GhostChat Test"
         android:usesCleartextTraffic="false"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
@@ -110,7 +110,7 @@
             android:enabled="true"
             android:exported="true"
             android:icon="@drawable/app_avatar_01"
-            android:label="GhostChat"
+            android:label="GhostChat Test"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>

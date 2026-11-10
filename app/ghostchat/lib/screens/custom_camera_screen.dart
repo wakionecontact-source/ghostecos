@@ -86,7 +86,7 @@ class _GhostCameraScreenState extends State<GhostCameraScreen> {
   Widget build(BuildContext context) {
     final controller = _controller;
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: GE.shadow,
       body: SafeArea(
         child: Stack(
           fit: StackFit.expand,
@@ -96,13 +96,13 @@ class _GhostCameraScreenState extends State<GhostCameraScreen> {
             else
               Center(
                 child: _error == null
-                    ? const CircularProgressIndicator(color: Colors.white)
+                    ? const CircularProgressIndicator(color: GE.text)
                     : Padding(
                         padding: const EdgeInsets.all(24),
                         child: Text(
                           _error!,
                           textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.white),
+                          style: const TextStyle(color: GE.text),
                         ),
                       ),
               ),
@@ -139,11 +139,11 @@ class _GhostCameraScreenState extends State<GhostCameraScreen> {
                     padding: const EdgeInsets.all(6),
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 3),
+                      border: Border.all(color: GE.text, width: 3),
                     ),
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        color: _busy ? GE.sub : Colors.white,
+                        color: _busy ? GE.sub : GE.text,
                         shape: BoxShape.circle,
                       ),
                     ),
@@ -160,12 +160,12 @@ class _GhostCameraScreenState extends State<GhostCameraScreen> {
   Widget _controlButton(IconData icon, VoidCallback onTap) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.45),
+        color: GE.shadow.withValues(alpha: 0.45),
         shape: BoxShape.circle,
       ),
       child: IconButton(
         onPressed: onTap,
-        icon: Icon(icon, color: Colors.white),
+        icon: Icon(icon, color: GE.text),
       ),
     );
   }

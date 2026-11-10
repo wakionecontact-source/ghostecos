@@ -283,7 +283,7 @@ class _GhostAvatarState extends State<GhostAvatar> {
           child: widget.fallbackIcon != null
               ? Icon(
                   widget.fallbackIcon,
-                  color: Colors.white,
+                  color: GE.text,
                   size: widget.size * 0.42,
                 )
               : Text(
@@ -291,7 +291,7 @@ class _GhostAvatarState extends State<GhostAvatar> {
                       ? widget.fallbackText[0].toUpperCase()
                       : '?',
                   style: TextStyle(
-                    color: Colors.white,
+                    color: GE.text,
                     fontWeight: FontWeight.w800,
                     fontSize: widget.size * 0.4,
                   ),

@@ -1408,7 +1408,7 @@ class _ChatScreenState extends State<ChatScreen>
                   gradient: LinearGradient(
                     colors: [
                       Color.alphaBlend(
-                        Colors.white.withValues(alpha: 0.12),
+                        GE.text.withValues(alpha: 0.12),
                         color,
                       ),
                       color,
@@ -1424,7 +1424,7 @@ class _ChatScreenState extends State<ChatScreen>
                     ),
                   ],
                 ),
-                child: Icon(icon, color: Colors.white, size: 26),
+                child: Icon(icon, color: GE.text, size: 26),
               ),
               const SizedBox(height: 7),
               Text(label, style: TextStyle(color: GE.text, fontSize: 12)),
@@ -1586,7 +1586,7 @@ class _ChatScreenState extends State<ChatScreen>
     // Надёжное меню У ПАЛЬЦА: showDialog + Positioned (showMenu давал зависание).
     final res = await _showAnimatedMenuDialog<String>(
       context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.2),
+      barrierColor: GE.shadow.withValues(alpha: 0.2),
       builder: (dctx) {
         final size = MediaQuery.of(dctx).size;
         const menuW = 236.0;
@@ -1720,7 +1720,7 @@ class _ChatScreenState extends State<ChatScreen>
     ];
     final result = await _showAnimatedMenuDialog<String>(
       context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.2),
+      barrierColor: GE.shadow.withValues(alpha: 0.2),
       builder: (dialogContext) {
         final size = MediaQuery.of(dialogContext).size;
         const menuW = 248.0;
@@ -1915,7 +1915,7 @@ class _ChatScreenState extends State<ChatScreen>
                             backgroundColor: GE.primary2,
                             child: const Icon(
                               CupertinoIcons.person,
-                              color: Colors.white,
+                              color: GE.text,
                               size: 16,
                             ),
                           ),
@@ -2582,7 +2582,7 @@ class _ChatScreenState extends State<ChatScreen>
               child: Icon(
                 _scrollLock ? CupertinoIcons.lock : CupertinoIcons.lock_open,
                 size: 14,
-                color: _scrollLock ? Colors.white : GE.sub,
+                color: _scrollLock ? GE.text : GE.sub,
               ),
             ),
           ),
@@ -2607,7 +2607,7 @@ class _ChatScreenState extends State<ChatScreen>
                     border: Border.all(color: GE.glassBorder),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.30),
+                        color: GE.shadow.withValues(alpha: 0.30),
                         blurRadius: 10,
                         offset: const Offset(0, 3),
                       ),
@@ -2639,7 +2639,7 @@ class _ChatScreenState extends State<ChatScreen>
                       _unreadInChat > 99 ? '99+' : '$_unreadInChat',
                       textAlign: TextAlign.center,
                       style: const TextStyle(
-                        color: Colors.white,
+                        color: GE.text,
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
                         height: 1.2,
@@ -2664,7 +2664,7 @@ class _ChatScreenState extends State<ChatScreen>
   // сборке гасит сам блюр, стекло пропадало).
   Widget _topBlurFade() {
     final tint = Color.alphaBlend(
-      Colors.white.withValues(alpha: 0.10),
+      GE.text.withValues(alpha: 0.10),
       GE.bgDeep,
     );
     return Positioned(
@@ -3047,12 +3047,12 @@ class _ChatScreenState extends State<ChatScreen>
                                       height: 16,
                                       child: CircularProgressIndicator(
                                         strokeWidth: 2,
-                                        color: Colors.white,
+                                        color: GE.text,
                                       ),
                                     )
                                   : const Icon(
                                       CupertinoIcons.paperplane_fill,
-                                      color: Colors.white,
+                                      color: GE.text,
                                       size: 18,
                                     ),
                             ),
@@ -3063,7 +3063,7 @@ class _ChatScreenState extends State<ChatScreen>
                             child: _circleBtn(
                               const Icon(
                                 CupertinoIcons.paperplane_fill,
-                                color: Colors.white,
+                                color: GE.text,
                                 size: 18,
                               ),
                             ),
@@ -3084,7 +3084,7 @@ class _ChatScreenState extends State<ChatScreen>
                             child: _circleBtn(
                               const Icon(
                                 CupertinoIcons.mic,
-                                color: Colors.white,
+                                color: GE.text,
                                 size: 20,
                               ),
                             ),
@@ -3228,7 +3228,7 @@ class _ChatScreenState extends State<ChatScreen>
       ),
       alignment: Alignment.center,
       child: IconTheme(
-        data: const IconThemeData(color: Colors.white),
+        data: const IconThemeData(color: GE.text),
         child: child,
       ),
     );
@@ -3412,7 +3412,7 @@ class _Bubble extends StatelessWidget {
           )
         : null;
     final bgColor = mine ? null : GE.surface;
-    final textColor = mine ? Colors.white : GE.text;
+    final textColor = mine ? GE.text : GE.text;
     final isImg = _isImage(m);
     final inlineTextMeta = _canInlineTextMeta(context, textColor);
     // Подряд идущие сообщения одного автора — теснее (верх 1), их размытие
@@ -3456,12 +3456,12 @@ class _Bubble extends StatelessWidget {
               bottomRight: Radius.circular(mine ? 6 : 16),
             ),
             border: Border.all(
-              color: Colors.white.withValues(alpha: mine ? 0.16 : 0.07),
+              color: GE.text.withValues(alpha: mine ? 0.16 : 0.07),
               width: 0.7,
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.22),
+                color: GE.shadow.withValues(alpha: 0.22),
                 blurRadius: 8,
                 offset: const Offset(0, 2),
               ),
@@ -3508,7 +3508,7 @@ class _Bubble extends StatelessWidget {
                       border: Border(
                         left: BorderSide(
                           color: mine
-                              ? Colors.white.withValues(alpha: 0.65)
+                              ? GE.text.withValues(alpha: 0.65)
                               : GE.primary,
                           width: 3,
                         ),
@@ -3733,21 +3733,21 @@ class _Bubble extends StatelessWidget {
 
   Widget _ticks(StoredMessage m, Color textColor) {
     if (m.pending) {
-      return const Icon(CupertinoIcons.clock, size: 11, color: Colors.white70);
+      return const Icon(CupertinoIcons.clock, size: 11, color: GE.sub);
     }
     if (m.read) {
       return Icon(
         Icons.done_all,
         size: 15,
         color: textColor.withValues(alpha: 0.96),
-        shadows: const [Shadow(color: Colors.black54, blurRadius: 2)],
+        shadows: const [Shadow(color: GE.scrimSoft, blurRadius: 2)],
       ); // 2 — прочитано; контрастно на тусклой теме
     }
     if (m.delivered) {
       return const Icon(
         CupertinoIcons.checkmark,
         size: 13,
-        color: Colors.white70,
+        color: GE.sub,
       ); // 1 — доставлено
     }
     // На сервере, но получатель ещё не подтвердил доставку — дискета
@@ -3755,7 +3755,7 @@ class _Bubble extends StatelessWidget {
     return const Icon(
       CupertinoIcons.floppy_disk,
       size: 12,
-      color: Colors.white54,
+      color: GE.muted,
     );
   }
 
@@ -4023,11 +4023,11 @@ class _MediaPartState extends State<_MediaPart> {
                   fit: BoxFit.cover,
                   gaplessPlayback: true,
                   errorBuilder: (_, __, ___) =>
-                      const ColoredBox(color: Colors.black26),
+                      const ColoredBox(color: GE.scrimFaint),
                 )
               else
-                const ColoredBox(color: Colors.black26),
-              const ColoredBox(color: Color(0x55000000)),
+                const ColoredBox(color: GE.scrimFaint),
+              const ColoredBox(color: GE.scrimDim),
               Center(child: _uploadProgressIndicator()),
             ],
           ),
@@ -4075,7 +4075,7 @@ class _MediaPartState extends State<_MediaPart> {
         width: 240,
         height: 180,
         decoration: BoxDecoration(
-          color: Colors.black26,
+          color: GE.scrimFaint,
           borderRadius: BorderRadius.circular(12),
         ),
         alignment: Alignment.center,
@@ -4088,7 +4088,7 @@ class _MediaPartState extends State<_MediaPart> {
         height: 80,
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
-          color: Colors.black26,
+          color: GE.scrimFaint,
           borderRadius: BorderRadius.circular(12),
         ),
         alignment: Alignment.center,
@@ -4101,7 +4101,7 @@ class _MediaPartState extends State<_MediaPart> {
         onTap: () => Navigator.of(context).push(
           PageRouteBuilder<void>(
             opaque: false,
-            barrierColor: Colors.black,
+            barrierColor: GE.shadow,
             pageBuilder: (_, _, _) => _PhotoViewer(bytes: _bytes!),
           ),
         ),
@@ -4141,7 +4141,7 @@ class _MediaPartState extends State<_MediaPart> {
     await Navigator.of(context).push(
       PageRouteBuilder<void>(
         opaque: false,
-        barrierColor: Colors.black,
+        barrierColor: GE.shadow,
         pageBuilder: (_, _, _) => _PhotoViewer(bytes: bytes),
       ),
     );
@@ -4152,7 +4152,7 @@ class _MediaPartState extends State<_MediaPart> {
     await Navigator.of(context).push(
       PageRouteBuilder<void>(
         opaque: false,
-        barrierColor: Colors.black,
+        barrierColor: GE.shadow,
         pageBuilder: (_, _, _) => _PhotoViewer(file: File(path)),
       ),
     );
@@ -4262,13 +4262,13 @@ class _MediaPartState extends State<_MediaPart> {
                     value: done ? null : (p > 0 ? p : null),
                     strokeWidth: 3,
                     color: GE.primary,
-                    backgroundColor: Colors.white24,
+                    backgroundColor: GE.overlayWeak,
                   ),
                   if (!done)
                     Text(
                       '$pct',
                       style: const TextStyle(
-                        color: Colors.white,
+                        color: GE.text,
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
                       ),
@@ -4306,11 +4306,11 @@ class _MediaPartState extends State<_MediaPart> {
                 gaplessPlayback: true,
                 filterQuality: FilterQuality.low,
                 errorBuilder: (_, __, ___) =>
-                    const ColoredBox(color: Colors.black54),
+                    const ColoredBox(color: GE.scrimSoft),
               )
             else
-              const ColoredBox(color: Colors.black54),
-            const ColoredBox(color: Color(0x55000000)),
+              const ColoredBox(color: GE.scrimSoft),
+            const ColoredBox(color: GE.scrimDim),
             Positioned.fill(child: overlay),
           ],
         ),
@@ -4341,11 +4341,11 @@ class _MediaPartState extends State<_MediaPart> {
                 height: 52,
                 decoration: const BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Colors.white24,
+                  color: GE.overlayWeak,
                 ),
                 child: const Icon(
                   CupertinoIcons.play_fill,
-                  color: Colors.white,
+                  color: GE.text,
                   size: 30,
                 ),
               ),
@@ -4355,7 +4355,7 @@ class _MediaPartState extends State<_MediaPart> {
               bottom: 8,
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.62),
+                  color: GE.shadow.withValues(alpha: 0.62),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Padding(
@@ -4366,7 +4366,7 @@ class _MediaPartState extends State<_MediaPart> {
                   child: Text(
                     durationLabel,
                     style: const TextStyle(
-                      color: Colors.white,
+                      color: GE.text,
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
                     ),
@@ -4456,7 +4456,7 @@ class _MediaPartState extends State<_MediaPart> {
       Navigator.of(context).push(
         PageRouteBuilder<void>(
           opaque: false,
-          barrierColor: Colors.black,
+          barrierColor: GE.shadow,
           pageBuilder: (_, _, _) => GhostVideoViewer(
             path: path!,
             fallbackPath: widget.m.pending ? null : _localPath,
@@ -4685,7 +4685,7 @@ class _PhotoViewerState extends State<_PhotoViewer> {
   Widget build(BuildContext context) {
     final op = (1 - (_dragY.abs() / 400)).clamp(0.0, 1.0);
     return Scaffold(
-      backgroundColor: Colors.black.withValues(alpha: op),
+      backgroundColor: GE.shadow.withValues(alpha: op),
       body: Stack(
         children: [
           GestureDetector(
@@ -4725,7 +4725,7 @@ class _PhotoViewerState extends State<_PhotoViewer> {
               child: IconButton(
                 icon: const Icon(
                   CupertinoIcons.xmark,
-                  color: Colors.white,
+                  color: GE.text,
                   size: 28,
                 ),
                 onPressed: () => Navigator.of(context).pop(),
@@ -5016,7 +5016,7 @@ class _VoiceTileState extends State<_VoiceTile> {
                 color: widget.textColor.withValues(alpha: 0.96),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.20),
+                    color: GE.shadow.withValues(alpha: 0.20),
                     blurRadius: 7,
                     offset: const Offset(0, 2),
                   ),
@@ -5047,7 +5047,7 @@ class _VoiceTileState extends State<_VoiceTile> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
               decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.16),
+                color: GE.shadow.withValues(alpha: 0.16),
                 borderRadius: BorderRadius.circular(13),
               ),
               child: Column(
@@ -5397,7 +5397,7 @@ class _ChatHeader extends StatelessWidget {
                                     fontWeight: FontWeight.w700,
                                     shadows: const [
                                       Shadow(
-                                        color: Color(0xCC000000),
+                                        color: GE.scrimHeavy,
                                         blurRadius: 5,
                                       ),
                                     ],
@@ -5518,7 +5518,7 @@ class _ChatHeader extends StatelessWidget {
                                         fontWeight: FontWeight.w600,
                                         shadows: const [
                                           Shadow(
-                                            color: Color(0xCC000000),
+                                            color: GE.scrimHeavy,
                                             blurRadius: 5,
                                           ),
                                         ],
@@ -5598,7 +5598,7 @@ class _ChatMenuCard extends StatelessWidget {
           border: Border.all(color: GE.glassBorder),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.3),
+              color: GE.shadow.withValues(alpha: 0.3),
               blurRadius: 24,
               offset: const Offset(0, 8),
             ),

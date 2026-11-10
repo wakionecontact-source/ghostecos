@@ -159,12 +159,12 @@ class ChatComposer extends StatelessWidget {
                               height: 16,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: Colors.white,
+                                color: GE.text,
                               ),
                             )
                           : const Icon(
                               CupertinoIcons.paperplane_fill,
-                              color: Colors.white,
+                              color: GE.text,
                               size: 18,
                             ),
                     ),
@@ -202,7 +202,7 @@ class ChatComposer extends StatelessWidget {
       ),
       alignment: Alignment.center,
       child: IconTheme(
-        data: const IconThemeData(color: Colors.white),
+        data: const IconThemeData(color: GE.text),
         child: child,
       ),
     );

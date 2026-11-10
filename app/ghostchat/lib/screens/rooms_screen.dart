@@ -1889,7 +1889,7 @@ class _RoomChatHeader extends StatelessWidget {
                               fontSize: 15,
                               fontWeight: FontWeight.w700,
                               shadows: const [
-                                Shadow(color: Color(0xCC000000), blurRadius: 5),
+                                Shadow(color: GE.scrimHeavy, blurRadius: 5),
                               ],
                             ),
                           ),
@@ -1899,7 +1899,7 @@ class _RoomChatHeader extends StatelessWidget {
                               color: GE.sub,
                               fontSize: 11,
                               shadows: const [
-                                Shadow(color: Color(0xCC000000), blurRadius: 5),
+                                Shadow(color: GE.scrimHeavy, blurRadius: 5),
                               ],
                             ),
                           ),
@@ -1952,7 +1952,7 @@ class _RoomMessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mine = message.senderUsername == myUsername;
-    final textColor = mine ? Colors.white : GE.text;
+    final textColor = mine ? GE.text : GE.text;
     final avatarLabel = message.senderDisplayName.isNotEmpty
         ? message.senderDisplayName
         : message.senderUsername;
@@ -1964,7 +1964,7 @@ class _RoomMessageBubble extends StatelessWidget {
           Text(
             '@${message.senderUsername}',
             style: TextStyle(
-              color: mine ? Colors.white : GE.primary,
+              color: mine ? GE.text : GE.primary,
               fontSize: 11,
               fontWeight: FontWeight.w700,
             ),
@@ -2089,12 +2089,12 @@ class _RoomMessageBubble extends StatelessWidget {
                     bottomRight: Radius.circular(mine ? 6 : 16),
                   ),
                   border: Border.all(
-                    color: Colors.white.withValues(alpha: mine ? 0.16 : 0.07),
+                    color: GE.text.withValues(alpha: mine ? 0.16 : 0.07),
                     width: 0.7,
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.22),
+                      color: GE.shadow.withValues(alpha: 0.22),
                       blurRadius: 8,
                       offset: const Offset(0, 2),
                     ),
@@ -2208,9 +2208,9 @@ class _RoomAttachmentTileState extends State<_RoomAttachmentTile> {
         margin: const EdgeInsets.only(bottom: 5),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.12),
+          color: GE.shadow.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+          border: Border.all(color: GE.text.withValues(alpha: 0.12)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,

@@ -5,6 +5,7 @@ import '../../shared/theme/app_theme.dart';
 import '../home/home_shell.dart';
 import 'welcome_screen.dart';
 
+import 'package:ghost/theme.dart';
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -52,7 +53,7 @@ class _SplashScreenState extends State<SplashScreen> {
                   ),
                 ],
               ),
-              child: const Icon(Icons.shield_moon, size: 44, color: Colors.white),
+              child: const Icon(Icons.shield_moon, size: 44, color: GE.text),
             ),
             const SizedBox(height: 20),
             const Text(

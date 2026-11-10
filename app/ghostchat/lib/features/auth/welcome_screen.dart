@@ -4,6 +4,7 @@ import '../../shared/theme/app_theme.dart';
 import 'login_screen.dart';
 import 'register_screen.dart';
 
+import 'package:ghost/theme.dart';
 /// Стартовый экран: войти / создать аккаунт.
 class WelcomeScreen extends StatelessWidget {
   const WelcomeScreen({super.key});
@@ -30,7 +31,7 @@ class WelcomeScreen extends StatelessWidget {
                   gradient: AppColors.primaryGradient,
                   borderRadius: BorderRadius.circular(28),
                 ),
-                child: const Icon(Icons.shield_moon, size: 48, color: Colors.white),
+                child: const Icon(Icons.shield_moon, size: 48, color: GE.text),
               ),
               const SizedBox(height: 24),
               const Text(

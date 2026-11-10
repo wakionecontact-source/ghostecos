@@ -1346,7 +1346,7 @@ class _ChatListScreenState extends State<ChatListScreen>
                 avatar: Icon(item.icon, size: 15),
                 label: Text(item.label),
                 labelStyle: TextStyle(
-                  color: selected ? Colors.white : GE.text,
+                  color: selected ? GE.text : GE.text,
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                 ),
@@ -2172,7 +2172,7 @@ class _ChatFolderTile extends StatelessWidget {
                   unread > 99 ? '99+' : '$unread',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
-                    color: Colors.white,
+                    color: GE.text,
                     fontSize: 11,
                     fontWeight: FontWeight.w800,
                   ),
@@ -2449,7 +2449,7 @@ class _DialogTile extends StatelessWidget {
             const TextSpan(
               text: 'Черновик: ',
               style: TextStyle(
-                color: Colors.red,
+                color: GE.red,
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
               ),
@@ -2862,7 +2862,7 @@ class _DialogTile extends StatelessWidget {
                                 child: Text(
                                   '${d.unread > 99 ? "99+" : d.unread}',
                                   style: const TextStyle(
-                                    color: Colors.white,
+                                    color: GE.text,
                                     fontSize: 11,
                                     fontWeight: FontWeight.w700,
                                   ),
@@ -3141,7 +3141,7 @@ class _LanDialogTile extends StatelessWidget {
                               child: Text(
                                 '${d.unread > 99 ? "99+" : d.unread}',
                                 style: const TextStyle(
-                                  color: Colors.white,
+                                  color: GE.text,
                                   fontSize: 11,
                                   fontWeight: FontWeight.w700,
                                 ),
@@ -3308,7 +3308,7 @@ class _BookmarkDialogTile extends StatelessWidget {
                               child: Text(
                                 '${d.unread > 99 ? "99+" : d.unread}',
                                 style: const TextStyle(
-                                  color: Colors.white,
+                                  color: GE.text,
                                   fontSize: 11,
                                   fontWeight: FontWeight.w700,
                                 ),
@@ -3549,11 +3549,11 @@ class _Avatar extends StatelessWidget {
       ),
       alignment: Alignment.center,
       child: icon != null
-          ? Icon(icon, color: Colors.white, size: size * 0.46)
+          ? Icon(icon, color: GE.text, size: size * 0.46)
           : Text(
               name.isNotEmpty ? name[0].toUpperCase() : '?',
               style: TextStyle(
-                color: Colors.white,
+                color: GE.text,
                 fontWeight: FontWeight.w800,
                 fontSize: size * 0.4,
               ),

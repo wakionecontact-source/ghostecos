@@ -15,6 +15,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../design/app_palette.dart';
 import '../theme.dart';
 
 /// Стиль отрисовки — ось, независимая от выбора палитры (см. meshNotifier
@@ -391,6 +392,10 @@ class ThemeService {
   ThemeService._();
   static final ThemeService instance = ThemeService._();
 
+  /// Редизайн: пока одна фиксированная палитра. Пресеты и кастомные темы
+  /// остаются в UI с пометкой «временно недоступно», но не применяются.
+  static const bool themesEnabled = false;
+
   /// Короткий доступ для мест вне glass.dart, где нужно спрятать
   /// контуры/свечение в минимализме ИЛИ монотоне (радар, чипы, вкладки и
   /// т.п.) — оба этих стиля плоские, отличаются только палитрой цветов.
@@ -525,16 +530,23 @@ class ThemeService {
     // Стиль считаем ДО выбора дефолтной темы: на свежей установке (нет ни
     // _key, ни _styleKey) дефолт должен быть парой "traditional + тема этого
     // же стиля", а не traditional-флаг при активной vivid-палитре.
-    final style = _styleFromStr(prefs.getString(_styleKey));
+    final style = themesEnabled
+        ? _styleFromStr(prefs.getString(_styleKey))
+        : ThemeStyle.minimal;
     styleNotifier.value = style;
-    final id = prefs.getString(_key);
-    final found =
-        (id != null ? findAnyPreset(id) : null) ??
-        _presets.firstWhere(
-          (p) => p.style == style,
-          orElse: () => _presets.first,
-        );
-    _apply(found);
+    if (themesEnabled) {
+      final id = prefs.getString(_key);
+      final found =
+          (id != null ? findAnyPreset(id) : null) ??
+          _presets.firstWhere(
+            (p) => p.style == style,
+            orElse: () => _presets.first,
+          );
+      _apply(found);
+    } else {
+      // Единая палитра: сохранённые темы не применяем.
+      _applyFixed();
+    }
     final corner = prefs.getDouble(_cornerKey);
     if (corner != null) {
       GE.cornerFactor = corner.clamp(0.0, 1.0);
@@ -542,7 +554,12 @@ class ThemeService {
     }
     avatarBannerBufferNotifier.value =
         (prefs.getDouble(_avatarBannerBufferKey) ?? 20.0).clamp(0.0, 40.0);
-    meshNotifier.value = prefs.getBool(_meshKey) ?? true;
+    // Редизайн: фон плоский (mesh выключен), стекло — только точечно и
+    // вручную, а не глобальными тумблерами. Поэтому при выключенных темах
+    // принудительно держим flat-режим.
+    meshNotifier.value = themesEnabled
+        ? (prefs.getBool(_meshKey) ?? true)
+        : false;
     meshSpeedNotifier.value = (prefs.getDouble(_meshSpeedKey) ?? 1.0).clamp(
       0.25,
       2.0,
@@ -551,13 +568,22 @@ class ThemeService {
         prefs.getBool(_meshTouchReactionKey) ?? true;
     preciseMessageTimeNotifier.value =
         prefs.getBool(_preciseMessageTimeKey) ?? false;
-    liquidGlassNotifier.value = prefs.getBool(_liquidGlassKey) ?? true;
-    glassTintNotifier.value = prefs.getBool(_glassTintKey) ?? false;
-    matteGlassNotifier.value = prefs.getBool(_matteGlassKey) ?? false;
-    // В предыдущем варианте оба слоя по умолчанию были выключены, из-за чего
-    // после обновления пропадали фон карточек и нижний бар. Один раз возвращаем
-    // их в рабочее состояние; последующий выбор пользователя сохраняем.
-    if (!(prefs.getBool(_surfacesMigrationKey) ?? false)) {
+    liquidGlassNotifier.value = themesEnabled
+        ? (prefs.getBool(_liquidGlassKey) ?? true)
+        : false;
+    glassTintNotifier.value = themesEnabled
+        ? (prefs.getBool(_glassTintKey) ?? false)
+        : false;
+    matteGlassNotifier.value = themesEnabled
+        ? (prefs.getBool(_matteGlassKey) ?? false)
+        : false;
+    if (!themesEnabled) {
+      listPlatesNotifier.value = true;
+      navBarPlateNotifier.value = true;
+    } else if (!(prefs.getBool(_surfacesMigrationKey) ?? false)) {
+      // В предыдущем варианте оба слоя по умолчанию были выключены, из-за чего
+      // после обновления пропадали фон карточек и нижний бар. Один раз возвращаем
+      // их в рабочее состояние; последующий выбор пользователя сохраняем.
       listPlatesNotifier.value = true;
       navBarPlateNotifier.value = true;
       await prefs.setBool(_listPlatesKey, listPlatesNotifier.value);
@@ -567,8 +593,9 @@ class ThemeService {
       listPlatesNotifier.value = prefs.getBool(_listPlatesKey) ?? true;
       navBarPlateNotifier.value = prefs.getBool(_navBarPlateKey) ?? true;
     }
-    detailedDescriptionsNotifier.value =
-        prefs.getBool(_detailedDescriptionsKey) ?? false;
+    detailedDescriptionsNotifier.value = themesEnabled
+        ? (prefs.getBool(_detailedDescriptionsKey) ?? false)
+        : false;
   }
 
   Future<void> _loadCustomPresets(SharedPreferences prefs) async {
@@ -600,12 +627,14 @@ class ThemeService {
   }
 
   Future<void> setMeshEnabled(bool enabled) async {
+    if (!themesEnabled) return;
     meshNotifier.value = enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_meshKey, enabled);
   }
 
   Future<void> setMeshSpeed(double speed) async {
+    if (!themesEnabled) return;
     final value = speed.clamp(0.25, 2.0).toDouble();
     meshSpeedNotifier.value = value;
     final prefs = await SharedPreferences.getInstance();
@@ -613,6 +642,7 @@ class ThemeService {
   }
 
   Future<void> setMeshTouchReaction(bool enabled) async {
+    if (!themesEnabled) return;
     meshTouchReactionNotifier.value = enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_meshTouchReactionKey, enabled);
@@ -625,36 +655,42 @@ class ThemeService {
   }
 
   Future<void> setLiquidGlassEnabled(bool enabled) async {
+    if (!themesEnabled) return;
     liquidGlassNotifier.value = enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_liquidGlassKey, enabled);
   }
 
   Future<void> setGlassTintEnabled(bool enabled) async {
+    if (!themesEnabled) return;
     glassTintNotifier.value = enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_glassTintKey, enabled);
   }
 
   Future<void> setMatteGlassEnabled(bool enabled) async {
+    if (!themesEnabled) return;
     matteGlassNotifier.value = enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_matteGlassKey, enabled);
   }
 
   Future<void> setListPlatesEnabled(bool enabled) async {
+    if (!themesEnabled) return;
     listPlatesNotifier.value = enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_listPlatesKey, enabled);
   }
 
   Future<void> setNavBarPlateEnabled(bool enabled) async {
+    if (!themesEnabled) return;
     navBarPlateNotifier.value = enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_navBarPlateKey, enabled);
   }
 
   Future<void> setDetailedDescriptions(bool enabled) async {
+    if (!themesEnabled) return;
     detailedDescriptionsNotifier.value = enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_detailedDescriptionsKey, enabled);
@@ -668,6 +704,7 @@ class ThemeService {
   /// скругление (45°) — фирменный вид монотона; при выходе из любого из
   /// них ничего не трогаем обратно (не навязываем).
   Future<void> setStyle(ThemeStyle style) async {
+    if (!themesEnabled) return;
     if (style == styleNotifier.value) return;
     styleNotifier.value = style;
     final prefs = await SharedPreferences.getInstance();
@@ -701,6 +738,7 @@ class ThemeService {
   }
 
   Future<void> setPreset(String id) async {
+    if (!themesEnabled) return;
     final p = findAnyPreset(id) ?? _presets.first;
     _apply(p);
     final prefs = await SharedPreferences.getInstance();
@@ -984,27 +1022,42 @@ class ThemeService {
   }
 
   void _apply(Palette p) {
-    GE.bg = p.bg;
-    GE.bgDeep = p.bgDeep;
-    GE.surface = p.surface;
-    GE.border = p.border;
-    GE.borderStrong = p.borderStrong;
-    GE.primary = p.primary;
-    GE.primary2 = p.primary2;
-    GE.text = p.text;
-    GE.sub = p.sub;
-    GE.muted = p.muted;
-    GE.green = p.green;
-    GE.yellow = p.yellow;
-    GE.red = p.red;
-    GE.blue = p.blue;
-    GE.glassFill = p.glassFill;
-    GE.glassBorder = p.glassBorder;
-    GE.glowFill = p.glowFill;
-    GE.currentBrightness = p.brightness;
-    notifier.value = p;
+    // Темы выключены: палитра в GE — константы, менять её нельзя.
+    // Уведомляем UI фиксированной палитрой, чтобы старые экраны не падали.
+    notifier.value = _fixedGhostPalette;
+  }
+
+  /// Единая палитра редизайна. Темы выключены — значит, всегда она.
+  void _applyFixed() {
+    notifier.value = _fixedGhostPalette;
   }
 }
+
+/// Фиксированная палитра редизайна (используется, пока темы выключены).
+final Palette _fixedGhostPalette = Palette(
+  id: 'ghost',
+  name: 'Ghost',
+  subtitle: 'Единая палитра',
+  brightness: Brightness.dark,
+  style: ThemeStyle.minimal,
+  bg: AppPalette.bg,
+  bgDeep: AppPalette.bgDeep,
+  surface: AppPalette.surface,
+  border: AppPalette.border,
+  borderStrong: AppPalette.borderStrong,
+  primary: AppPalette.accent,
+  primary2: AppPalette.accentDeep,
+  text: AppPalette.text,
+  sub: AppPalette.textSecondary,
+  muted: AppPalette.textMuted,
+  green: AppPalette.success,
+  yellow: AppPalette.warning,
+  red: AppPalette.danger,
+  blue: AppPalette.info,
+  glassFill: AppPalette.glassFill,
+  glassBorder: AppPalette.glassBorder,
+  glowFill: AppPalette.glow,
+);
 
 // ─── Пресеты ────────────────────────────────────────────────────────────
 final List<Palette> _presets = [

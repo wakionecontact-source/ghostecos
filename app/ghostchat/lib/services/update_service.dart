@@ -1039,7 +1039,7 @@ class _UpdateScreenState extends State<UpdateScreen> {
       canPop: false,
       child: Scaffold(
         backgroundColor: Color.alphaBlend(
-          Colors.black.withValues(alpha: 0.64),
+          GE.shadow.withValues(alpha: 0.64),
           GE.bgDeep,
         ),
         body: SafeArea(

@@ -134,7 +134,7 @@ class _SecurityGateState extends State<SecurityGate>
   Widget build(BuildContext context) {
     if (!_ready) {
       return ColoredBox(
-        color: Colors.black,
+        color: GE.shadow,
         child: Center(child: CircularProgressIndicator(color: GE.primary)),
       );
     }
@@ -256,7 +256,7 @@ class _SecurityLockOverlayState extends State<_SecurityLockOverlay> {
     return BackdropFilter(
       filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
       child: Material(
-        color: Colors.black.withValues(alpha: .68),
+        color: GE.shadow.withValues(alpha: .68),
         child: Center(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),

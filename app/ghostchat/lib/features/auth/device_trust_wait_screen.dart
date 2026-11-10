@@ -9,6 +9,7 @@ import '../../core/storage/secure_store.dart';
 import '../../shared/theme/app_theme.dart';
 import '../home/home_shell.dart';
 
+import 'package:ghost/theme.dart';
 /// Экран входа с нового устройства (device-trust).
 ///
 /// Флоу (безопасный, код генерит/сверяет СЕРВЕР):
@@ -250,7 +251,7 @@ class _DeviceTrustWaitScreenState extends State<DeviceTrustWaitScreen> {
                   height: 22,
                   child: CircularProgressIndicator(
                     strokeWidth: 2.4,
-                    color: Colors.white,
+                    color: GE.text,
                   ),
                 )
               : const Text('Подтвердить'),
