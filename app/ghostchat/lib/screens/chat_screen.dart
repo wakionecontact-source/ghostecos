@@ -6,7 +6,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
@@ -514,23 +513,16 @@ class _ChatScreenState extends State<ChatScreen>
     if (mounted) setState(() {});
   }
 
-  /// BackdropFilter is one of the most expensive operations on a throttled
-  /// phone. At critical battery/thermal level keep the same surface geometry,
-  /// but paint it directly without creating a saveLayer.
+  /// Редизайн: шапка и композер — плоские поверхности без BackdropFilter.
+  /// Исторический хелпер сохранён, чтобы не трогать вызовы по всему экрану.
   Widget _maybeBlurred({
     required Widget child,
     required double sigma,
     BorderRadius? borderRadius,
   }) {
-    final content = PerformanceService.instance.reducedEffects
-        ? child
-        : BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
-            child: child,
-          );
     return borderRadius == null
-        ? ClipRect(child: content)
-        : ClipRRect(borderRadius: borderRadius, child: content);
+        ? ClipRect(child: child)
+        : ClipRRect(borderRadius: borderRadius, child: child);
   }
 
   void _onInputChanged() {
@@ -2027,32 +2019,11 @@ class _ChatScreenState extends State<ChatScreen>
               preferredSize: Size.fromHeight(
                 MediaQuery.of(context).padding.top + headerHeight,
               ),
-              // Прозрачная фрост-шапка: глубокий тинт, тает книзу + акцентный
-              // разделитель снизу. GE.bgDeep/GE.primary (не хардкод-хексы) —
-              // иначе шапка оставалась одной и той же на всех 12 темах.
-              child: _maybeBlurred(
-                sigma: 9,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    border: Border(
-                      bottom: BorderSide(
-                        color: GE.primary.withValues(alpha: 0.17),
-                        width: 0.7,
-                      ),
-                    ),
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        GE.bgDeep.withValues(alpha: 0.70),
-                        GE.bgDeep.withValues(alpha: 0.40),
-                        GE.bgDeep.withValues(alpha: 0.0),
-                      ],
-                      stops: const [0.0, 0.6, 1.0],
-                    ),
-                  ),
-                  child: _selectionMode
-                      ? _SelectionHeader(
+              // Редизайн: плоская непрозрачная шапка без blur и без разделителя.
+              child: DecoratedBox(
+                decoration: const BoxDecoration(color: GE.bg),
+                child: _selectionMode
+                    ? _SelectionHeader(
                           count: _selSids.length,
                           canCopy: _selectedMsgs.any((m) => m.text.isNotEmpty),
                           onClose: _clearSel,
@@ -2072,7 +2043,6 @@ class _ChatScreenState extends State<ChatScreen>
                           },
                           onMenu: () => _openChatMenu(context),
                         ),
-                ),
               ),
             ),
             body: Stack(
@@ -2431,26 +2401,6 @@ class _ChatScreenState extends State<ChatScreen>
                                               // → нейтральный серый. Раз линия рисуется
                                               // только при смене автора, цвет естественно
                                               // чередуется моё-собеседника-моё...
-                                              if (newSender && !newDay)
-                                                Center(
-                                                  child: Container(
-                                                    width: 44,
-                                                    height: 3,
-                                                    margin:
-                                                        const EdgeInsets.symmetric(
-                                                          vertical: 7,
-                                                        ),
-                                                    decoration: BoxDecoration(
-                                                      color: prev.fromMe
-                                                          ? GE.primary
-                                                          : GE.sub,
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                            2,
-                                                          ),
-                                                    ),
-                                                  ),
-                                                ),
                                               bubble,
                                             ],
                                           );
@@ -2576,7 +2526,7 @@ class _ChatScreenState extends State<ChatScreen>
                 shape: BoxShape.circle,
                 color: _scrollLock
                     ? GE.primary.withValues(alpha: 0.85)
-                    : GE.bgDeep.withValues(alpha: 0.55),
+                    : GE.surfaceElevated,
                 border: Border.all(color: GE.glassBorder),
               ),
               child: Icon(
@@ -2603,7 +2553,7 @@ class _ChatScreenState extends State<ChatScreen>
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: GE.bgDeep.withValues(alpha: 0.6),
+                    color: GE.surfaceElevated,
                     border: Border.all(color: GE.glassBorder),
                     boxShadow: [
                       BoxShadow(
@@ -2651,47 +2601,6 @@ class _ChatScreenState extends State<ChatScreen>
           ),
         ),
       ],
-    );
-  }
-
-  // «Мыло» под шапкой: BackdropFilter размывает сообщения, уезжающие вверх под
-  // шапку, + градиент-тинт для мягкого края (не резкая прямая линия). Раньше
-  // дико лагало НЕ из-за этого блюра (он мелкий), а из-за расшифровки фото на
-  // главном потоке — её вынесли в изолят, так что блюр теперь по карману.
-  // Стекло-фон ПОД шапкой. ВИДИМЫЙ слой: светлый тинт (тёмное-на-тёмном не
-  // читается, фон чата тёмный) + BackdropFilter для frost. Низ ПЛАВНО
-  // растворяется 4-ступенчатым градиентом альфы (без ShaderMask — он на этой
-  // сборке гасит сам блюр, стекло пропадало).
-  Widget _topBlurFade() {
-    final tint = Color.alphaBlend(
-      GE.text.withValues(alpha: 0.10),
-      GE.bgDeep,
-    );
-    return Positioned(
-      top: 0,
-      left: 0,
-      right: 0,
-      height: 58,
-      child: IgnorePointer(
-        child: _maybeBlurred(
-          sigma: 20,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  tint.withValues(alpha: 0.95),
-                  tint.withValues(alpha: 0.62),
-                  tint.withValues(alpha: 0.26),
-                  tint.withValues(alpha: 0.0),
-                ],
-                stops: const [0.0, 0.4, 0.72, 1.0],
-              ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 

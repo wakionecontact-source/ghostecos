@@ -6,11 +6,9 @@
 // Fly-анимацию отправки (flySendAnimation) дёргает САМ экран в своём onSend —
 // так же, как chat_screen: [sendKey] вешается на кнопку, экран берёт из неё
 // точку вылета баблы.
-import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import '../theme.dart';
-import '../services/performance_service.dart';
 import '../services/theme_service.dart';
 import '../core/models/message_button.dart';
 
@@ -176,14 +174,8 @@ class ChatComposer extends StatelessWidget {
         ],
       ),
     );
-    return ClipRect(
-      child: PerformanceService.instance.reducedEffects
-          ? surface
-          : BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-              child: surface,
-            ),
-    );
+    // Редизайн: композер — плоская поверхность без blur.
+    return ClipRect(child: surface);
   }
 
   // 1:1 с chat_screen._circleBtn — круглая кнопка с фиолетовым градиентом.

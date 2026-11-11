@@ -312,7 +312,6 @@ class _RoomsScreenState extends State<RoomsScreen> {
                     ],
                     TextField(
                       controller: title,
-                      autofocus: true,
                       decoration: const InputDecoration(labelText: 'Название'),
                     ),
                     TextField(
@@ -375,26 +374,35 @@ class _RoomsScreenState extends State<RoomsScreen> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
+                  onPressed: () {
+                    // Гасим фокус ДО pop: иначе FocusScope диалога
+                    // деактивируется с ещё живыми dependents (красный экран
+                    // "_dependents.isEmpty").
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    Navigator.pop(dialogContext);
+                  },
                   child: const Text('Отмена'),
                 ),
                 FilledButton(
                   onPressed: atLimit()
                       ? null
-                      : () => Navigator.pop(
-                          dialogContext,
-                          _RoomDraft(
-                            type: type,
-                            username: username.text.trim().replaceFirst(
-                              '@',
-                              '',
+                      : () {
+                          FocusManager.instance.primaryFocus?.unfocus();
+                          Navigator.pop(
+                            dialogContext,
+                            _RoomDraft(
+                              type: type,
+                              username: username.text.trim().replaceFirst(
+                                '@',
+                                '',
+                              ),
+                              title: title.text.trim(),
+                              about: about.text.trim(),
+                              visibility: visibility,
+                              historyMode: historyMode,
                             ),
-                            title: title.text.trim(),
-                            about: about.text.trim(),
-                            visibility: visibility,
-                            historyMode: historyMode,
-                          ),
-                        ),
+                          );
+                        },
                   child: const Text('Создать'),
                 ),
               ],
@@ -403,9 +411,13 @@ class _RoomsScreenState extends State<RoomsScreen> {
         },
       );
     } finally {
-      username.dispose();
-      title.dispose();
-      about.dispose();
+      // Диалог доигрывает reverse-анимацию, и TextField продолжает
+      // перестраиваться; освобождаем контроллеры только после этого.
+      Future<void>.delayed(const Duration(milliseconds: 600), () {
+        username.dispose();
+        title.dispose();
+        about.dispose();
+      });
     }
   }
 
@@ -435,7 +447,6 @@ class _RoomsScreenState extends State<RoomsScreen> {
                   ),
                   TextField(
                     controller: value,
-                    autofocus: true,
                     decoration: InputDecoration(
                       labelText: type == 'channel'
                           ? 'Username канала'
@@ -447,17 +458,23 @@ class _RoomsScreenState extends State<RoomsScreen> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
+                  onPressed: () {
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    Navigator.pop(dialogContext);
+                  },
                   child: const Text('Отмена'),
                 ),
                 FilledButton(
-                  onPressed: () => Navigator.pop(
-                    dialogContext,
-                    _JoinDraft(
-                      type: type,
-                      value: value.text.trim().replaceFirst('@', ''),
-                    ),
-                  ),
+                  onPressed: () {
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    Navigator.pop(
+                      dialogContext,
+                      _JoinDraft(
+                        type: type,
+                        value: value.text.trim().replaceFirst('@', ''),
+                      ),
+                    );
+                  },
                   child: const Text('Вступить'),
                 ),
               ],
@@ -466,7 +483,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
         },
       );
     } finally {
-      value.dispose();
+      Future<void>.delayed(const Duration(milliseconds: 600), value.dispose);
     }
   }
 

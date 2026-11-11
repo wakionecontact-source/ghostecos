@@ -794,7 +794,7 @@ class GlassButton extends StatelessWidget {
         ? Colors.transparent
         : (tint || liquid
               ? GE.glassFill.withValues(alpha: tint ? 0.45 : 0.32)
-              : GE.surface.withValues(alpha: _traditional ? 0.92 : 0.58));
+              : GE.surface);
     final gradient = (flat || !primary || hiddenSurface)
         ? null
         : LinearGradient(
@@ -814,10 +814,13 @@ class GlassButton extends StatelessWidget {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           );
-    // Минимализм: сплошной цвет вместо градиента, без blur/glow-тени.
+    // Редизайн: фиолетовый — акцент, не заливка. Основная кнопка получает
+    // приглушённую фиолетовую подложку, остальные — обычную поверхность.
     final flatColor = !flat
         ? null
-        : (primary ? GE.primary : (danger ? GE.red : surfaceFill));
+        : (primary
+              ? GE.accentSoft
+              : (danger ? GE.red : surfaceFill));
     // GE.text вслепую годился, пока CTA-заливка (primary/red) была
     // насыщенным акцентом на тёмном/светлом фоне — так совпадало почти
     // всегда. В монотоне primary/red/text — один и тот же "чернильный"
@@ -1195,9 +1198,11 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
         ThemeService.instance.matteGlassNotifier.value && !reducedEffects;
     final tint = ThemeService.instance.glassTintNotifier.value;
     Widget bar = AppBar(
-      backgroundColor: tint || liquid
-          ? GE.glassFill.withValues(alpha: tint ? 0.45 : 0.32)
-          : Colors.transparent,
+      backgroundColor: _flat
+          ? GE.bg
+          : (tint || liquid
+                ? GE.glassFill.withValues(alpha: tint ? 0.45 : 0.32)
+                : Colors.transparent),
       surfaceTintColor: Colors.transparent,
       shape: Border(
         bottom: BorderSide(

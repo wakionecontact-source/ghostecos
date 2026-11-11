@@ -148,6 +148,8 @@ class GE {
       backgroundColor: bg,
       contentTextStyle: TextStyle(color: text),
     ),
+    // Редизайн: разделительных линий нет нигде.
+    dividerTheme: const DividerThemeData(color: Colors.transparent),
   );
 }
 

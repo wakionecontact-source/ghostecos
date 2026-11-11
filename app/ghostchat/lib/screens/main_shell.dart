@@ -7,7 +7,6 @@
 
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
@@ -1351,25 +1350,13 @@ class _GlassBottomNavState extends State<_GlassBottomNav> {
                         child: row,
                       );
                       if (!showBg || reducedEffects) return content;
-                      return ClipRRect(
-                        borderRadius: radius,
-                        child: BackdropFilter(
-                          filter: ImageFilter.blur(
-                            sigmaX: GE.glassBlur,
-                            sigmaY: GE.glassBlur,
-                          ),
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: Color.alphaBlend(
-                                GE.surface.withValues(alpha: 0.75),
-                                GE.bg,
-                              ),
-                              borderRadius: radius,
-                              border: Border.all(color: GE.border, width: 0.6),
-                            ),
-                            child: content,
-                          ),
+                      // Редизайн: без blur — плоская таблетка без рамки.
+                      return DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: GE.surface,
+                          borderRadius: radius,
                         ),
+                        child: content,
                       );
                     },
                   ),
@@ -1590,10 +1577,7 @@ class _SideRail extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: 220,
-      decoration: BoxDecoration(
-        color: GE.glassFill,
-        border: Border(right: BorderSide(color: GE.glassBorder, width: 1)),
-      ),
+      decoration: const BoxDecoration(color: GE.surface),
       child: Column(
         children: [
           // Brand-header
@@ -1746,17 +1730,8 @@ class _UpdateRailAction extends StatelessWidget {
             duration: const Duration(milliseconds: 180),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [GE.green, GE.blue],
-              ),
+              color: GE.surfaceElevated,
               borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: GE.blue.withValues(alpha: 0.18),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1768,7 +1743,7 @@ class _UpdateRailAction extends StatelessWidget {
                       state.isBusy
                           ? CupertinoIcons.arrow_down_circle_fill
                           : CupertinoIcons.arrow_down_circle,
-                      color: GE.text,
+                      color: GE.primary,
                       size: 19,
                     ),
                     const SizedBox(width: 8),

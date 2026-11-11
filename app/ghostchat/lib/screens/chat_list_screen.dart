@@ -2693,15 +2693,9 @@ class _DialogTile extends StatelessWidget {
               color: selected
                   ? GE.primary.withValues(alpha: 0.14)
                   : hasUnread
-                  ? GE.primary.withValues(alpha: 0.055)
+                  ? GE.primary.withValues(alpha: 0.07)
                   : Colors.transparent,
               borderRadius: BorderRadius.circular(14),
-              border: Border(
-                left: BorderSide(
-                  color: hasUnread ? GE.primary : Colors.transparent,
-                  width: 2,
-                ),
-              ),
             ),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(4, 3, 4, 3),
