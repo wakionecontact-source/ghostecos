@@ -138,6 +138,7 @@ flutter:
     - assets/bip39_en.txt
     - assets/sounds/
     - assets/twemoji/
+    - assets/ui/
 
 # MSIX (Windows installer)
 msix_config:

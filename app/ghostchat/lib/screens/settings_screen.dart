@@ -14,6 +14,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme.dart';
+import '../ui/ui_runtime.dart';
 import '../services/public_page_link.dart';
 import '../mesh_background.dart';
 import '../services/chat_repo.dart';
@@ -2582,6 +2583,63 @@ Widget _tile(
 }
 
 // ─── Раздел: Внешний вид ──────────────────────────────────────────────────────
+class _UiConfigPicker extends StatefulWidget {
+  const _UiConfigPicker();
+
+  @override
+  State<_UiConfigPicker> createState() => _UiConfigPickerState();
+}
+
+class _UiConfigPickerState extends State<_UiConfigPicker> {
+  bool _busy = false;
+
+  Future<void> _select(String id) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    await UiRuntime.instance.setExtension(id);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    final errors = UiRuntime.instance.lastErrors.value;
+    toast.show(
+      errors.isEmpty
+          ? 'UI-конфиг: ${UiRuntime.instance.currentExtension.name}'
+          : 'UI-конфиг не загружен: ${errors.first}',
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<String>(
+      valueListenable: UiRuntime.instance.currentId,
+      builder: (context, current, _) => Column(
+        children: [
+          for (final extension in UiRuntime.extensions)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: Text(
+                extension.name,
+                style: TextStyle(color: GE.text, fontSize: 14),
+              ),
+              subtitle: Text(
+                extension.id,
+                style: TextStyle(color: GE.sub, fontSize: 11),
+              ),
+              trailing: Icon(
+                current == extension.id
+                    ? CupertinoIcons.checkmark_circle_fill
+                    : CupertinoIcons.circle,
+                color: current == extension.id ? GE.primary : GE.muted,
+                size: 20,
+              ),
+              onTap: _busy ? null : () => _select(extension.id),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _AppearanceScreen extends StatefulWidget {
   final String? initialPanel;
 
@@ -2747,6 +2805,9 @@ class _AppearanceScreenState extends State<_AppearanceScreen> {
   List<Widget> _appearancePanel(String panel) => [
     if (panel == 'style') ...[
       if (!ThemeService.themesEnabled) _unavailableNotice(),
+      _sectionTitle('GhostUI · конфиг'),
+      const _UiConfigPicker(),
+      const SizedBox(height: 20),
       _sectionTitle('Стиль'),
       _StyleSwitcher(),
       const SizedBox(height: 20),

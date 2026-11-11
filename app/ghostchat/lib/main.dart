@@ -50,6 +50,8 @@ import 'widgets/key_gate.dart';
 import 'widgets/liquid_glass.dart';
 import 'widgets/call_widget.dart';
 import 'core/local/app_logger.dart';
+import 'ui/ui_runtime.dart';
+import 'ui/ui_theme.dart';
 
 // Desktop-only imports — на мобиле не подключатся (Platform-guard).
 import 'package:window_manager/window_manager.dart';
@@ -102,6 +104,14 @@ Future<void> _bootstrapAfterFirstFrame() async {
   // leave the first Flutter screen looking frozen. The player still gets its
   // system controls, but only after the UI has painted and accepted input.
   await WidgetsBinding.instance.endOfFrame;
+
+  // GhostUI: конфиг оформления грузим после первого кадра. Ошибка конфига не
+  // должна мешать запуску — рантайм сам откатится на дефолт.
+  try {
+    await UiRuntime.instance.load();
+  } catch (e) {
+    appLog.warn('ui', 'UI config load skipped: $e');
+  }
 
   try {
     // Restore the previously verified asset overlay before preloading sounds.
@@ -244,10 +254,13 @@ class GhostApp extends StatelessWidget {
       listenable: Listenable.merge([
         ThemeService.instance.notifier,
         ThemeService.instance.cornerNotifier,
+        UiRuntime.instance.revision,
       ]),
       builder: (_, _) {
         _applySystemBarStyle();
-        return MaterialApp(
+        return UiScope(
+          config: UiRuntime.instance.config,
+          child: MaterialApp(
           title: GE.appName,
           debugShowCheckedModeBanner: false,
           navigatorKey: NotificationService.navigatorKey,
@@ -307,6 +320,7 @@ class GhostApp extends StatelessWidget {
           // НЕ const — иначе при смене темы home-поддерево не перерисовывается
           // и тема меняется только внутри настроек, а не во всём приложении.
           home: _Root(),
+          ),
         );
       },
     );

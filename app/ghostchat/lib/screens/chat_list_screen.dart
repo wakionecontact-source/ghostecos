@@ -10,6 +10,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme.dart';
+import '../ui/ui_theme.dart';
 import '../services/api_client.dart';
 import '../services/chat_repo.dart';
 import '../services/db_service.dart';
@@ -2659,6 +2660,11 @@ class _DialogTile extends StatelessWidget {
     final pinned = _isPinned;
     final muted = _isMuted;
     final statusEmoji = _dailyStatusEmoji;
+    final rowStyle = UiScope.styleOf(context, 'chat.list.row');
+    final avatarSize = rowStyle.number(
+      'avatarSize',
+      fallback: compact ? 44 : 52,
+    );
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 6, vertical: compact ? 3 : 5),
       child: GlassCard(
@@ -2691,11 +2697,20 @@ class _DialogTile extends StatelessWidget {
           child: DecoratedBox(
             decoration: BoxDecoration(
               color: selected
-                  ? GE.primary.withValues(alpha: 0.14)
+                  ? rowStyle.color(
+                      'selectedBackground',
+                      fallback: GE.primary.withValues(alpha: 0.14),
+                    )
                   : hasUnread
-                  ? GE.primary.withValues(alpha: 0.07)
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(14),
+                  ? rowStyle.color(
+                      'unreadBackground',
+                      fallback: GE.primary.withValues(alpha: 0.07),
+                    )
+                  : rowStyle.color(
+                      'background',
+                      fallback: Colors.transparent,
+                    ),
+              borderRadius: BorderRadius.circular(rowStyle.radius()),
             ),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(4, 3, 4, 3),
@@ -2711,12 +2726,12 @@ class _DialogTile extends StatelessWidget {
                             ),
                           ),
                     child: d.username.startsWith('g:')
-                        ? _Avatar(_displayName, size: compact ? 44 : 52)
+                        ? _Avatar(_displayName, size: avatarSize)
                         : Stack(
                             children: [
                               _Avatar(
                                 _displayName,
-                                size: compact ? 44 : 52,
+                                size: avatarSize,
                                 avatarUrl:
                                     _avatarUrl ??
                                     ChatRepo.instance.getPeerAvatarCached(
@@ -2799,7 +2814,10 @@ class _DialogTile extends StatelessWidget {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                  color: GE.text,
+                                  color: rowStyle.color(
+                                    'title',
+                                    fallback: GE.text,
+                                  ),
                                   fontSize: 15,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -2848,15 +2866,21 @@ class _DialogTile extends StatelessWidget {
                                   horizontal: 8,
                                 ),
                                 decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [GE.primary2, GE.primary],
+                                  color: rowStyle.color(
+                                    'badgeBackground',
+                                    fallback: GE.primary,
                                   ),
-                                  borderRadius: BorderRadius.circular(10),
+                                  borderRadius: BorderRadius.circular(
+                                    rowStyle.tokens.radiusStep('s'),
+                                  ),
                                 ),
                                 child: Text(
                                   '${d.unread > 99 ? "99+" : d.unread}',
-                                  style: const TextStyle(
-                                    color: GE.text,
+                                  style: TextStyle(
+                                    color: rowStyle.color(
+                                      'badgeText',
+                                      fallback: GE.onAccent,
+                                    ),
                                     fontSize: 11,
                                     fontWeight: FontWeight.w700,
                                   ),
@@ -2883,7 +2907,10 @@ class _DialogTile extends StatelessWidget {
                     children: [
                       Text(
                         _formatDialogTime(d.lastAt),
-                        style: TextStyle(color: GE.sub, fontSize: 11),
+                        style: TextStyle(
+                          color: rowStyle.color('time', fallback: GE.sub),
+                          fontSize: 11,
+                        ),
                       ),
                       if (d.lastFromMe) ...[
                         const SizedBox(height: 2),

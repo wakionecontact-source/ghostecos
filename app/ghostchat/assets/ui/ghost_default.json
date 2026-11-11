@@ -1,0 +1,108 @@
+{
+  "id": "ghost_default",
+  "name": "Ghost Default",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "tokens": {
+    "radius": 14,
+    "colors": {
+      "bg": "#020617",
+      "bgDeep": "#060A1A",
+      "surface": "#0F172A",
+      "surfaceElevated": "#1E293B",
+      "surfacePressed": "#273449",
+      "text": "#F1F5F9",
+      "textSecondary": "#94A3B8",
+      "textMuted": "#64748B",
+      "accent": "#A855F7",
+      "accentDeep": "#7C3AED",
+      "accentSoft": "#2A163D",
+      "onAccent": "#FFFFFF",
+      "success": "#4ADE80",
+      "warning": "#FBBF24",
+      "danger": "#F87171",
+      "info": "#60A5FA",
+      "transparent": "#00000000"
+    },
+    "spacing": {
+      "xs": 4,
+      "s": 8,
+      "m": 12,
+      "l": 16,
+      "xl": 24,
+      "xxl": 32
+    }
+  },
+  "elements": {
+    "nav.bar": {
+      "background": "token:surface",
+      "selectedBackground": "#24A855F7",
+      "icon": "token:textSecondary",
+      "label": "token:textSecondary",
+      "height": 64,
+      "radius": "l",
+      "labels": true,
+      "position": "bottom"
+    },
+    "chat.list.row": {
+      "background": "transparent",
+      "selectedBackground": "#24A855F7",
+      "unreadBackground": "#12A855F7",
+      "radius": "m",
+      "height": 68,
+      "paddingH": 10,
+      "paddingV": 6,
+      "avatarSize": 46,
+      "title": "token:text",
+      "subtitle": "token:textSecondary",
+      "time": "token:textMuted",
+      "badgeBackground": "token:accent",
+      "badgeText": "token:onAccent",
+      "avatarSide": "left"
+    },
+    "chat.bubble.self": {
+      "background": "token:accentDeep",
+      "backgroundTo": "token:accent",
+      "text": "token:text",
+      "time": "#B3FFFFFF",
+      "radius": "m",
+      "maxWidth": 600,
+      "paddingH": 12,
+      "paddingV": 8
+    },
+    "chat.bubble.peer": {
+      "background": "token:surface",
+      "text": "token:text",
+      "time": "token:textSecondary",
+      "radius": "m",
+      "maxWidth": 600,
+      "paddingH": 12,
+      "paddingV": 8
+    },
+    "chat.composer": {
+      "background": "token:surface",
+      "hint": "token:textSecondary",
+      "sendBackground": "token:accent",
+      "sendIcon": "token:onAccent",
+      "radius": "xl",
+      "height": 52
+    },
+    "settings.row": {
+      "background": "transparent",
+      "title": "token:text",
+      "subtitle": "token:textSecondary",
+      "icon": "token:textSecondary",
+      "chevron": "token:textMuted",
+      "radius": "m",
+      "height": 58,
+      "paddingH": 14
+    },
+    "app.bar": {
+      "background": "token:bg",
+      "title": "token:text",
+      "icon": "token:text",
+      "height": 56,
+      "radius": "xs"
+    }
+  }
+}

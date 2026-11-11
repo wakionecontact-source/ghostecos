@@ -21,6 +21,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:image/image.dart' as img;
 import 'package:video_compress/video_compress.dart';
 import '../theme.dart';
+import '../ui/ui_theme.dart';
 import '../widgets/emoji_picker.dart';
 import '../widgets/emoji_text.dart';
 import '../widgets/command_highlight.dart';
@@ -3313,16 +3314,35 @@ class _Bubble extends StatelessWidget {
     // плоская GE.surface (на вебе тоже flat, без градиента). Раньше цвета были
     // захардкожены — в других палитрах (Лес/Аврора/Слоновая кость) выглядело
     // чужеродно, в светлой теме — нечитаемо.
-    final bgGradient = mine
+    final bubbleStyle = UiScope.styleOf(
+      context,
+      mine ? 'chat.bubble.self' : 'chat.bubble.peer',
+    );
+    final bubbleBackground = bubbleStyle.color(
+      'background',
+      fallback: mine ? GE.primary2 : GE.surface,
+    );
+    final hasGradient = bubbleStyle.values.containsKey('backgroundTo');
+    final bgGradient = hasGradient
         ? LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [GE.primary2, GE.primary],
+            colors: [
+              bubbleBackground,
+              bubbleStyle.color('backgroundTo', fallback: bubbleBackground),
+            ],
           )
         : null;
-    final bgColor = mine ? null : GE.surface;
-    final textColor = mine ? GE.text : GE.text;
+    final bgColor = hasGradient ? null : bubbleBackground;
+    final textColor = bubbleStyle.color('text', fallback: GE.text);
     final isImg = _isImage(m);
+    final bubblePadding = m.filePayload != null && isImg
+        ? const EdgeInsets.all(4)
+        : EdgeInsets.symmetric(
+            horizontal: bubbleStyle.number('paddingH', fallback: 12),
+            vertical: bubbleStyle.number('paddingV', fallback: 8),
+          );
+    final bubbleRadius = bubbleStyle.radius();
     final inlineTextMeta = _canInlineTextMeta(context, textColor);
     // Подряд идущие сообщения одного автора — теснее (верх 1), их размытие
     // соединяется; на смене автора — отступ больше (верх 5).
@@ -3344,29 +3364,30 @@ class _Bubble extends StatelessWidget {
       padding: highlighted ? const EdgeInsets.all(4) : EdgeInsets.zero,
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: (MediaQuery.sizeOf(context).width - 24)
-              .clamp(220.0, 600.0)
-              .toDouble(),
+          maxWidth:
+              (MediaQuery.sizeOf(context).width - 24)
+                  .clamp(
+                    220.0,
+                    bubbleStyle.number('maxWidth', fallback: 600),
+                  )
+                  .toDouble(),
         ),
         child: Container(
           margin: vPad,
-          padding: m.filePayload != null && isImg
-              ? const EdgeInsets.all(4)
-              : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: bubblePadding,
           decoration: BoxDecoration(
-            // Свои — фиолет-градиент (bgGradient); чужие — плоская GE.surface
-            // (bgColor), плюс тонкая inset-кромка и мягкая тень для объёма.
+            // Свои — градиент из конфига; чужие — плоская поверхность.
             gradient: bgGradient,
             color: bgColor,
             borderRadius: BorderRadius.only(
-              topLeft: const Radius.circular(16),
-              topRight: const Radius.circular(16),
-              bottomLeft: Radius.circular(mine ? 16 : 6),
-              bottomRight: Radius.circular(mine ? 6 : 16),
-            ),
-            border: Border.all(
-              color: GE.text.withValues(alpha: mine ? 0.16 : 0.07),
-              width: 0.7,
+              topLeft: Radius.circular(bubbleRadius),
+              topRight: Radius.circular(bubbleRadius),
+              bottomLeft: Radius.circular(
+                mine ? bubbleRadius : bubbleRadius * 0.375,
+              ),
+              bottomRight: Radius.circular(
+                mine ? bubbleRadius * 0.375 : bubbleRadius,
+              ),
             ),
             boxShadow: [
               BoxShadow(

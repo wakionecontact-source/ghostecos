@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 import '../theme.dart';
+import '../ui/ui_theme.dart';
 import '../services/theme_service.dart';
 import '../services/performance_service.dart';
 import '../services/privacy_settings.dart';
@@ -1246,12 +1247,13 @@ class _GlassBottomNavState extends State<_GlassBottomNav> {
                       NavBarSettings.instance.selectedFlyoutNotifier,
                     ]),
                     builder: (_, _) {
+                      final navStyle = UiScope.styleOf(context, 'nav.bar');
                       final showBg =
                           NavBarSettings.instance.backgroundNotifier.value;
                       final reducedEffects =
                           PerformanceService.instance.reducedEffects;
                       final radius = BorderRadius.circular(
-                        GE.radiusLg.clamp(0, 32),
+                        navStyle.radius('radius').clamp(0, 32),
                       );
                       final row = ValueListenableBuilder<List<Section>>(
                         valueListenable: NavBarSettings.instance.orderNotifier,
@@ -1353,7 +1355,10 @@ class _GlassBottomNavState extends State<_GlassBottomNav> {
                       // Редизайн: без blur — плоская таблетка без рамки.
                       return DecoratedBox(
                         decoration: BoxDecoration(
-                          color: GE.surface,
+                          color: navStyle.color(
+                            'background',
+                            fallback: GE.surface,
+                          ),
                           borderRadius: radius,
                         ),
                         child: content,
@@ -1420,6 +1425,7 @@ class _GlassBottomNavState extends State<_GlassBottomNav> {
     // при выключенных постоянных подписях под иконками.
     final flyoutEnabled = settings.selectedFlyoutNotifier.value;
     final flyout = active && flyoutEnabled;
+    final navStyle = UiScope.styleOf(context, 'nav.bar');
     return AnimatedContainer(
       width: width,
       duration: PerformanceService.instance.animationDuration(
@@ -1438,15 +1444,14 @@ class _GlassBottomNavState extends State<_GlassBottomNav> {
             child: DecoratedBox(
               decoration: BoxDecoration(
                 color: active && settings.selectedBackgroundNotifier.value
-                    ? GE.primary.withValues(alpha: 0.12)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(GE.radiusSm),
-                border: active && settings.selectedBackgroundNotifier.value
-                    ? Border.all(
-                        color: GE.primary.withValues(alpha: 0.28),
-                        width: 0.6,
+                    ? navStyle.color(
+                        'selectedBackground',
+                        fallback: GE.primary.withValues(alpha: 0.12),
                       )
-                    : null,
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(
+                  navStyle.tokens.radiusStep('s'),
+                ),
               ),
               child: SizedBox(
                 width: double.infinity,
@@ -1479,7 +1484,10 @@ class _GlassBottomNavState extends State<_GlassBottomNav> {
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                           style: TextStyle(
-                                            color: GE.primary,
+                                            color: navStyle.token(
+                                              'accent',
+                                              fallback: GE.primary,
+                                            ),
                                             fontSize: 11,
                                             fontWeight: FontWeight.w700,
                                           ),
@@ -1508,7 +1516,15 @@ class _GlassBottomNavState extends State<_GlassBottomNav> {
                                   softWrap: false,
                                   textAlign: TextAlign.center,
                                   style: TextStyle(
-                                    color: active ? GE.primary : GE.sub,
+                                    color: active
+                                        ? navStyle.token(
+                                            'accent',
+                                            fallback: GE.primary,
+                                          )
+                                        : navStyle.color(
+                                            'label',
+                                            fallback: GE.sub,
+                                          ),
                                     fontSize: 10.5,
                                     fontWeight: active
                                         ? FontWeight.w700
