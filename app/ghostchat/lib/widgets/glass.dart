@@ -19,6 +19,8 @@ import '../services/performance_service.dart';
 import '../services/ghost_sound_effects.dart';
 import '../services/theme_service.dart';
 import '../theme.dart';
+import '../ui/ui_runtime.dart';
+import '../ui/ui_theme.dart';
 import 'liquid_glass.dart';
 
 /// Редизайн: глобальное «жидкое/матовое стекло» выключено — оно лагало и
@@ -1176,7 +1178,13 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
   });
 
   @override
-  Size get preferredSize => const Size.fromHeight(56);
+  Size get preferredSize {
+    // Высота шапки — из GhostUI-конфига. Глобальный рантайм доступен и без
+    // InheritedWidget, поэтому getter не требует context.
+    final raw = UiRuntime.instance.config.valuesOf('app.bar')['height'];
+    final height = raw is num ? raw.toDouble() : 56.0;
+    return Size.fromHeight(height.clamp(48.0, 80.0));
+  }
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -1186,6 +1194,7 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
       ThemeService.instance.matteGlassNotifier,
       LiquidGlassEngine.shaderReadyNotifier,
       PerformanceService.instance.reducedEffectsNotifier,
+      UiRuntime.instance.revision,
     ]),
     builder: (context, _) => _buildBar(context),
   );
@@ -1197,12 +1206,27 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
     final matte =
         ThemeService.instance.matteGlassNotifier.value && !reducedEffects;
     final tint = ThemeService.instance.glassTintNotifier.value;
-    Widget bar = AppBar(
-      backgroundColor: _flat
+    final barStyle = UiScope.styleOf(context, 'app.bar');
+    final background = barStyle.color(
+      'background',
+      fallback: _flat
           ? GE.bg
           : (tint || liquid
                 ? GE.glassFill.withValues(alpha: tint ? 0.45 : 0.32)
                 : Colors.transparent),
+    );
+    final iconColor = barStyle.color('icon', fallback: GE.text);
+    Widget bar = AppBar(
+      toolbarHeight: barStyle.number('height', fallback: 56),
+      backgroundColor: background,
+      foregroundColor: iconColor,
+      titleTextStyle: TextStyle(
+        color: barStyle.color('title', fallback: GE.text),
+        fontSize: 17,
+        fontWeight: FontWeight.w700,
+      ),
+      elevation: 0,
+      centerTitle: true,
       surfaceTintColor: Colors.transparent,
       shape: Border(
         bottom: BorderSide(
@@ -1211,7 +1235,7 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
         ),
       ),
       title: title ?? (titleText != null ? Text(titleText!) : null),
-      leading: leading ?? (showBack ? BackButton(color: GE.text) : null),
+      leading: leading ?? (showBack ? BackButton(color: iconColor) : null),
       actions: actions,
     );
     if (_flat && !liquid && !matte) return bar;

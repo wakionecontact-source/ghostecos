@@ -1,7 +1,7 @@
 name: ghost
 description: Ghost — приватный мессенджер с экосистемой (чат, лента, банк) на Mesh + жидкое стекло.
 publish_to: 'none'
-version: 1.2.2+4120
+version: 1.2.2+4121
 
 environment:
   sdk: ^3.12.0

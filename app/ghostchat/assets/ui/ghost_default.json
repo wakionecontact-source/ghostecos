@@ -52,7 +52,7 @@
       "height": 68,
       "paddingH": 10,
       "paddingV": 6,
-      "avatarSize": 46,
+      "avatarSize": 52,
       "title": "token:text",
       "subtitle": "token:textSecondary",
       "time": "token:textMuted",

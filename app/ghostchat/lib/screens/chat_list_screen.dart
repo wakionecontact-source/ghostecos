@@ -2661,10 +2661,9 @@ class _DialogTile extends StatelessWidget {
     final muted = _isMuted;
     final statusEmoji = _dailyStatusEmoji;
     final rowStyle = UiScope.styleOf(context, 'chat.list.row');
-    final avatarSize = rowStyle.number(
-      'avatarSize',
-      fallback: compact ? 44 : 52,
-    );
+    final avatarSize = compact
+        ? 44.0
+        : rowStyle.number('avatarSize', fallback: 52);
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 6, vertical: compact ? 3 : 5),
       child: GlassCard(

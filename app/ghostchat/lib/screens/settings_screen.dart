@@ -38,6 +38,7 @@ import 'logs_screen.dart';
 import 'lan_settings_screen.dart';
 import 'storage_screen.dart';
 import 'custom_theme_screen.dart';
+import 'ghost_gallery_screen.dart';
 import 'network_screen.dart';
 import '../services/settings_order.dart';
 import '../services/remote_settings_service.dart';
@@ -704,18 +705,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
         GlassCard(
           isListSection: true,
           padding: const EdgeInsets.symmetric(vertical: 4),
-          child: _row(
-            Icons.palette_outlined,
-            'Внешний вид',
-            'Тема оформления',
-            () => _open(
-              _AppearanceScreen(
-                initialPanel: _appearancePanelForQuery(_settingsFilter),
+          child: Column(
+            children: [
+              _row(
+                Icons.palette_outlined,
+                'Внешний вид',
+                'Тема оформления',
+                () => _open(
+                  _AppearanceScreen(
+                    initialPanel: _appearancePanelForQuery(_settingsFilter),
+                  ),
+                ),
+                searchTerms:
+                    'цвет фон стекло liquid glass матовый эффект анимация плеер интерфейс профиль баннер аватар музыка нижний бар навигация подписи текст под иконками выбранная категория выделение увеличить вылетает влево другое заголовок чаты имя юзернейм ghostchat',
               ),
-            ),
-            searchTerms:
-                'цвет фон стекло liquid glass матовый эффект анимация плеер интерфейс профиль баннер аватар музыка нижний бар навигация подписи текст под иконками выбранная категория выделение увеличить вылетает влево другое заголовок чаты имя юзернейм ghostchat',
-            last: true,
+              _row(
+                CupertinoIcons.square_grid_2x2,
+                'GhostGallery',
+                'Каталог конфигов и расширений GhostUI',
+                () => _open(const GhostGalleryScreen()),
+                searchTerms:
+                    'ghostgallery ghost gallery конфиг расширение ui оформление дизайн тема',
+                last: true,
+              ),
+            ],
           ),
         ),
         const RemoteSettingsPanel(category: 'appearance'),
@@ -2694,6 +2707,15 @@ class _AppearanceScreenState extends State<_AppearanceScreen> {
   List<Widget> _appearanceMenu() => [
     _sectionTitle('Разделы'),
     _appearanceRow(
+      CupertinoIcons.square_grid_2x2,
+      'GhostGallery',
+      'Каталог конфигов и расширений GhostUI',
+      'gallery',
+      onOpen: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const GhostGalleryScreen()),
+      ),
+    ),
+    _appearanceRow(
       CupertinoIcons.paintbrush,
       'Тема и стиль',
       'Основная тема, стиль поверхностей и скругление',
@@ -2772,6 +2794,7 @@ class _AppearanceScreenState extends State<_AppearanceScreen> {
     String description,
     String panel, {
     bool disabled = false,
+    VoidCallback? onOpen,
   }) => GlassCard(
     isListSection: true,
     padding: EdgeInsets.zero,
@@ -2798,7 +2821,7 @@ class _AppearanceScreenState extends State<_AppearanceScreen> {
       ),
       onTap: disabled
           ? () => toast.show('Временно недоступно')
-          : () => setState(() => _panel = panel),
+          : onOpen ?? () => setState(() => _panel = panel),
     ),
   );
 

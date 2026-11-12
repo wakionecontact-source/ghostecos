@@ -12,11 +12,21 @@ class UiExtensionInfo {
     required this.id,
     required this.name,
     required this.asset,
+    this.version = '1.0.0',
+    this.description = '',
+    this.author = 'GhostChat',
+    this.tag,
   });
 
   final String id;
   final String name;
   final String asset;
+  final String version;
+  final String description;
+  final String author;
+
+  /// Короткая метка в каталоге: TEST, BETA и т.п. null — без метки.
+  final String? tag;
 }
 
 class UiRuntime {
@@ -27,17 +37,27 @@ class UiRuntime {
   static const String prefsKey = 'ui.extension.id';
   static const String defaultId = 'ghost_default';
 
-  /// MVP-каталог: встроенные конфиги. Позже сюда приедет GhostGallery.
+  /// MVP-каталог: встроенные конфиги. GhostGallery показывает их и позже
+  /// примет сторонние расширения.
   static const List<UiExtensionInfo> extensions = <UiExtensionInfo>[
     UiExtensionInfo(
       id: defaultId,
       name: 'Ghost Default',
       asset: 'assets/ui/ghost_default.json',
+      version: '1.0.0',
+      description:
+          'Текущий дизайн GhostChat: тёмная палитра, фиолетовый акцент, '
+          'нейтральные поверхности.',
     ),
     UiExtensionInfo(
       id: 'ghost_aurora_test',
       name: 'Aurora (test)',
       asset: 'assets/ui/ghost_aurora_test.json',
+      version: '0.1.0',
+      description:
+          'Тестовое расширение: циановая палитра, увеличенный радиус '
+          'и аватары справа.',
+      tag: 'TEST',
     ),
   ];
 
