@@ -1421,6 +1421,59 @@ function resizeSim() { if (!simCanvas) return; const dpr = window.devicePixelRat
 function roadLen(r) { let d = 0; for (let i = 1; i < r.length; i++) d += distMeters(r[i - 1][0], r[i - 1][1], r[i][0], r[i][1]); return d; }
 function driveWidth(line) { return lineWidthM(line); }
 function laneOffset(line) { return Math.max(.75, Math.min(1.7, driveWidth(line) * .25)); }
+// Замкнутая линия: конец совпадает с началом (кольцо). Машина должна ехать
+// по кругу дальше, а не умирать на «шве» из-за запрета разворота.
+function lineIsClosed(line) {
+  if (!line || line.length < 4) return false;
+  const a = line[0], b = line[line.length - 1];
+  return distMeters(a[0], a[1], b[0], b[1]) <= Math.max(3, laneOffset(line) * 2);
+}
+// Примыкания к кольцу: другие дороги упираются в него где угодно — в том числе
+// в середину сегмента. Кэш на массив линии, сбрасывается при перестройке сети.
+const _ringExitCache = new WeakMap();
+function ringExitAnchors(line) {
+  if (_ringExitCache.has(line)) return _ringExitCache.get(line);
+  const out = [], tol = Math.max(6, LINE_M.road * .9), cum = roadCum(line), L = cum[cum.length - 1] || 1;
+  for (const other of sim.driveLines) {
+    if (other === line || other.length < 2) continue;
+    for (const end of [other[0], other[other.length - 1]]) {
+      let best = null;
+      for (let i = 1; i < line.length; i++) {
+        const hit = projOnSegLL(end, line[i - 1], line[i]);
+        const d = distMeters(end[0], end[1], hit[0], hit[1]);
+        if (!best || d < best.d) best = { d, i, hit };
+      }
+      if (!best || best.d > tol) continue;
+      out.push({ line: other, point: best.hit, progress: cum[best.i - 1] + distMeters(line[best.i - 1][0], line[best.i - 1][1], best.hit[0], best.hit[1]) });
+    }
+  }
+  out.sort((a, b) => a.progress - b.progress);
+  const data = { anchors: out, length: L };
+  _ringExitCache.set(line, data);
+  return data;
+}
+// Машина на кольце решает, съезжать ли на ближайшее примыкание.
+function ringExitTurn(c) {
+  const line = c.line, data = ringExitAnchors(line);
+  if (!data.anchors.length) return null;
+  const p = lineProgress(line, c.seg, c.t, true), lead = turnLead(c);
+  if (c._ringExitAt != null && (p - c._ringExitAt + data.length) % data.length > 30) c._ringExitAt = null;   // примыкание осталось позади
+  let next = null, bestD = Infinity;
+  for (const a of data.anchors) {
+    const d = (a.progress - p + data.length) % data.length;
+    if (d > .2 && d < lead + 3 && d < bestD) { bestD = d; next = a; }
+  }
+  if (!next || c._ringExitAt === next.progress) return null;
+  c._ringExitAt = next.progress;
+  if (Math.random() > .6) return null;
+  const options = (junctionOptions(c, next.point, true) || []).filter(o => o.line === next.line);
+  const pick = options.length ? randomRouteOption(c, options, line) : null;
+  if (!pick) return null;
+  const reach = lineDistanceToEnd(pick.line, pick.seg, pick.t, pick.fwd), exitLead = Math.min(turnLead(c), Math.max(1.2, reach * .42));
+  const turn = buildVehicleTurn(c, pick, next.point, lineStateAfter(pick.line, pick.seg, pick.t, pick.fwd, exitLead), exitLead, true);
+  if (!turn || vehicleTurnBlocked(c, turn)) return null;
+  return turn;
+}
 function trafficLaneKey(line, fwd, lane) { return lineMeta(line).oneWay ? `${fwd ? 'true' : 'false'}:${lane === 1 ? 1 : 0}` : (fwd ? 'true' : 'false'); }
 function segmentVector(line, seg, fwd) {
   const a = line[seg], b = line[seg + 1];
@@ -1963,6 +2016,8 @@ function buildTrafficIndex() {
   for (const c of sim.cars) {
     c._trafficLeader = null;
     if (!c.line || c.line.length < 2) continue;
+    const pose = smoothCarPose(c);
+    c._pos = pose ? pose.pos : null; c._ang = pose ? pose.angle : 0;
     c._tr = lineProgress(c.line, c.seg, c.t, c.fwd);
     lineCounts.set(c.line, (lineCounts.get(c.line) || 0) + 1);
     if (!lanes.has(c.line)) lanes.set(c.line, {});
@@ -2033,6 +2088,28 @@ function junctionWinnersNear(winners, turn) {
   return out;
 }
 function trafficLineLoad(line) { return sim._trafficLineCounts?.get(line) || 0; }
+// Машина впереди по ходу (в т.ч. во время поворота, когда полосной лидер не
+// работает). Даёт зазор до чужого кузова в коридоре шириной с мою машину.
+function aheadObstacle(c) {
+  if (!c._pos) return null;
+  const fx = Math.cos(c._ang || 0), fy = Math.sin(c._ang || 0), myLen = vehicleLength(c), myW = vehicleWidth(c);
+  let best = null;
+  for (const o of sim.cars) {
+    if (o === c || o.dead || !o._pos) continue;
+    const dE = (o._pos[1] - c._pos[1]) * mPerDegLng(c._pos[0]), dN = (o._pos[0] - c._pos[0]) * MPD_LAT;
+    if (dE > 22 || dE < -22 || dN > 22 || dN < -22) continue;
+    const along = dE * fx + dN * fy;
+    if (along <= 0) continue;
+    const lateral = Math.abs(-dE * fy + dN * fx);
+    if (lateral > (vehicleWidth(o) + myW) / 2 + .35) continue;
+    // Поперечный поток — не мой лидер: иначе кольцо встаёт перед машиной,
+    // ждущей въезда, и оба ждут друг друга.
+    if (Math.abs(angleDelta(o._ang || 0, c._ang || 0)) > Math.PI / 3) continue;
+    const gap = along - (myLen + vehicleLength(o)) / 2 - .35;
+    if (!best || gap < best.gap) best = { gap, speed: o.v || 0, other: o };
+  }
+  return best;
+}
 function chooseTrafficOption(options) {
   if (!options.length) return null;
   let minLoad = Infinity;
@@ -2161,7 +2238,14 @@ function vehicleTurnBlocked(c, turn) {
 function junctionOptions(c, endpoint, returnAll = false) {
   const options = [], r = c.line, incoming = segmentVector(r, c.seg, c.fwd), incomingAngle = Math.atan2(incoming.n, incoming.e), tol = Math.max(4.5, LINE_M.road * .9);
   for (const line of sim.driveLines) {
-    if (line === r || line.length < 2) continue;
+    if (line === r) {
+      if (!lineIsClosed(line)) continue;
+      // шов кольца: продолжение движения по той же линии с её начала
+      const raw = segmentVector(line, 0, true), loopBend = Math.abs(angleDelta(Math.atan2(raw.n, raw.e), incomingAngle));
+      options.push({ line, seg: 0, t: 0, fwd: true, point: [line[0][0], line[0][1]], bend: loopBend, distance: 0, loop: true });
+      continue;
+    }
+    if (line.length < 2) continue;
     for (let i = 1; i < line.length; i++) {
       const hit = projOnSegLL(endpoint, line[i - 1], line[i]), distance = distMeters(endpoint[0], endpoint[1], hit[0], hit[1]);
       if (distance > tol) continue;
@@ -2275,7 +2359,7 @@ function buildNextVehicleTurn(c) {
   else if (!c.fwd && c.seg > 0) { endpoint = r[c.seg]; next = { line: r, seg: c.seg - 1, t: 1, fwd: false, point: endpoint }; }
   else {
     endpoint = c.fwd ? r[r.length - 1] : r[0];
-    if (lineEndpointExit(r, c.fwd, 'road')) return null;
+    if (!lineIsClosed(r) && lineEndpointExit(r, c.fwd, 'road')) return null;
     const picked = chooseCarRouteOption(c, endpoint);
     if (picked) {
       const reach = lineDistanceToEnd(picked.line, picked.seg, picked.t, picked.fwd), lead = Math.min(turnLead(c), Math.max(1.2, reach * .42));
@@ -2319,6 +2403,16 @@ function stepCar(c, dt) {
     }
     const line = c.line, raw = segmentVector(line, c.seg, true), available = c.fwd ? (1 - c.t) * raw.len : c.t * raw.len;
     const lead = turnLead(c);
+    // Кольцо: съезд на примыкание, которое упирается в середину сегмента.
+    if (!c.turn && (c.v || 0) >= .05 && lineIsClosed(line)) {
+      const exitTurn = ringExitTurn(c);
+      if (exitTurn) {
+        c.nextTurn = null; c._junctionWaiting = false; c.route = [];
+        c.turn = exitTurn; addJunctionCar(c, c.turn);
+        c.v = Math.min(c.v, c.turn.limit || c.v);
+        break;
+      }
+    }
     if (available > lead + 1e-4) {
       const moved = Math.min(left, available - lead); c.t += (c.fwd ? 1 : -1) * moved / raw.len; left -= moved;
       if (left <= 1e-5) break;
@@ -2361,6 +2455,16 @@ function computeCarSpeeds(dt) {
       const safeGap = Math.max(0, gap - .25), safeSpeed = Math.sqrt(Math.max(0, 2 * brake * safeGap));
       target = Math.min(target, Math.max(0, Math.min(c.spd, followTarget, safeSpeed)));
       if (gap < .05) target = 0;
+    }
+    // Тормозим перед любым кузовом впереди — и на повороте тоже, где
+    // полосного лидера нет.
+    const ahead = aheadObstacle(c);
+    if (ahead) {
+      const gap = Math.max(0, ahead.gap);
+      // Уже наложились — медленно протискиваемся, иначе пара машин
+      // замирает навсегда и собирает пробку за собой.
+      if (gap < .15) target = Math.min(target, Math.max(.9, ahead.speed));
+      else target = Math.min(target, Math.max(ahead.speed * .85, Math.sqrt(2 * brake * (gap - .2))));
     }
     const conflict = trafficConflict(c);
     if (conflict && conflict.yielding) {

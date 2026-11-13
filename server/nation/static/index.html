@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-  <title>GhostNation — основай своё государство</title>
+  <title>GhostNation вЂ” РѕСЃРЅРѕРІР°Р№ СЃРІРѕС‘ РіРѕСЃСѓРґР°СЂСЃС‚РІРѕ</title>
 
   <!-- Leaflet 1.9.4, self-hosted -->
   <link rel="stylesheet" href="/nation/vendor/leaflet-1.9.4/dist/leaflet.css"
@@ -19,182 +19,182 @@
   <div id="map"></div>
   <canvas id="sim"></canvas>
 
-  <!-- ── STATE BANNER (top-left) ── -->
+  <!-- в”Ђв”Ђ STATE BANNER (top-left) в”Ђв”Ђ -->
   <header id="banner" class="panel">
-    <button id="flag" class="flag-chip" title="Цвет флага"></button>
+    <button id="flag" class="flag-chip" title="Р¦РІРµС‚ С„Р»Р°РіР°"></button>
     <div class="banner-text">
-      <input id="state-name" maxlength="28" placeholder="Безымянная земля" spellcheck="false"/>
+      <input id="state-name" maxlength="28" placeholder="Р‘РµР·С‹РјСЏРЅРЅР°СЏ Р·РµРјР»СЏ" spellcheck="false"/>
       <div class="stats">
-        <span id="stat-area">0 км²</span>
-        <span class="dot">·</span>
-        <span id="stat-builds">0 построек</span>
+        <span id="stat-area">0 РєРјВІ</span>
+        <span class="dot">В·</span>
+        <span id="stat-builds">0 РїРѕСЃС‚СЂРѕРµРє</span>
       </div>
     </div>
   </header>
 
-  <!-- ── MODE TOGGLE + MULTIPLAYER BAR (top-right) ── -->
+  <!-- в”Ђв”Ђ MODE TOGGLE + MULTIPLAYER BAR (top-right) в”Ђв”Ђ -->
   <div id="mode-toggle" class="panel">
-    <button id="mode-local" class="mode-btn active">Локально</button>
-    <button id="mode-mp" class="mode-btn">Мир</button>
+    <button id="mode-local" class="mode-btn active">Р›РѕРєР°Р»СЊРЅРѕ</button>
+    <button id="mode-mp" class="mode-btn">РњРёСЂ</button>
   </div>
   <div id="mp-bar" class="panel hidden">
     <b id="mp-balance">0 gost</b>
-    <span id="mp-pop">0 чел</span>
-    <button id="mp-logout" class="mini ghost hidden">Выйти</button>
+    <span id="mp-pop">0 С‡РµР»</span>
+    <button id="mp-logout" class="mini ghost hidden">Р’С‹Р№С‚Рё</button>
   </div>
 
-  <!-- ── MP LOGIN OVERLAY ── -->
+  <!-- в”Ђв”Ђ MP LOGIN OVERLAY в”Ђв”Ђ -->
   <div id="mp-login" class="hidden">
     <div class="mp-login-box panel">
-      <div class="mp-login-title">Вход в общий мир</div>
-      <div class="mp-login-sub">Аккаунт GhostEcos — тот же, что в GhostChat, GhostSocial и на сайте</div>
-      <input id="mp-user" placeholder="Логин (или оставь пустым → откроется GS)" spellcheck="false" autocomplete="username"/>
-      <input id="mp-pass" type="password" placeholder="Пароль" autocomplete="current-password"/>
+      <div class="mp-login-title">Р’С…РѕРґ РІ РѕР±С‰РёР№ РјРёСЂ</div>
+      <div class="mp-login-sub">РђРєРєР°СѓРЅС‚ GhostEcos вЂ” С‚РѕС‚ Р¶Рµ, С‡С‚Рѕ РІ GhostChat, GhostSocial Рё РЅР° СЃР°Р№С‚Рµ</div>
+      <input id="mp-user" placeholder="Р›РѕРіРёРЅ (РёР»Рё РѕСЃС‚Р°РІСЊ РїСѓСЃС‚С‹Рј в†’ РѕС‚РєСЂРѕРµС‚СЃСЏ GS)" spellcheck="false" autocomplete="username"/>
+      <input id="mp-pass" type="password" placeholder="РџР°СЂРѕР»СЊ" autocomplete="current-password"/>
       <div class="mp-login-actions">
-        <button id="mp-login-cancel" class="mini ghost">Отмена</button>
-        <button id="mp-login-go" class="mini primary">Войти</button>
+        <button id="mp-login-cancel" class="mini ghost">РћС‚РјРµРЅР°</button>
+        <button id="mp-login-go" class="mini primary">Р’РѕР№С‚Рё</button>
       </div>
       <div style="margin-top:10px;display:flex;gap:6px;justify-content:center;">
-        <button id="mp-login-register" class="mini ghost" style="flex:1;">Регистрация в GhostEcos</button>
+        <button id="mp-login-register" class="mini ghost" style="flex:1;">Р РµРіРёСЃС‚СЂР°С†РёСЏ РІ GhostEcos</button>
       </div>
     </div>
   </div>
 
-  <!-- ── TOOLBAR (left) ── -->
+  <!-- в”Ђв”Ђ TOOLBAR (left) в”Ђв”Ђ -->
   <nav id="toolbar" class="panel">
-    <button id="tb-collapse" class="tb-collapse" title="Свернуть / развернуть панель">
+    <button id="tb-collapse" class="tb-collapse" title="РЎРІРµСЂРЅСѓС‚СЊ / СЂР°Р·РІРµСЂРЅСѓС‚СЊ РїР°РЅРµР»СЊ">
       <svg viewBox="0 0 24 24" fill="none"><path d="M15 6 L9 12 L15 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
-    <div id="territory-tools-label" class="tool-section-label">ТЕРРИТОРИИ</div>
-    <button class="tool" data-tool="borders"  title="Провозгласить границы"></button>
-    <button class="tool" data-tool="district" data-label="Район" title="Район · сначала граница, затем 3+ точек внутри неё"></button>
-    <button class="tool" data-tool="house"    title="Жилой дом · зелёная крыша"></button>
-    <button class="tool" data-tool="shop"     title="Магазин · синяя крыша"></button>
-    <div class="tool-section-label">ДОРОГИ И СЕТЬ</div>
-    <button class="tool" data-tool="road"     title="Дорога"></button>
-    <button class="tool" data-tool="road-oneway" title="Односторонняя дорога"></button>
-    <button class="tool" data-tool="dirt"     title="Грунтовая дорога"></button>
-    <button class="tool" data-tool="dirt-oneway" title="Односторонняя грунтовка"></button>
-    <button class="tool" data-tool="alley"    title="Переулок · узкая дорога без разметки"></button>
-    <button class="tool" data-tool="alley-oneway" title="Односторонний проезд / переулок"></button>
-    <button class="tool" data-tool="rail"     title="Железная дорога"></button>
-    <button class="tool" data-tool="station"  title="Железнодорожная станция · пеший вход соединяется с ближайшей сетью"></button>
-    <button class="tool" data-tool="path"     title="Пешая тропинка (1 м)"></button>
-    <button class="tool" data-tool="parking" title="Парковка у дороги · машины используют её в симуляции"></button>
-    <button class="tool" data-tool="exit"    title="Въезд / выход транспорта"></button>
-    <button class="tool" data-tool="tree"     title="Дерево"></button>
-    <button class="tool" data-tool="light"    title="Светофор · ставится на перекрёстке"></button>
-    <button class="tool" data-tool="crosswalk" title="Пешеходный переход · только на дороге"></button>
+    <div id="territory-tools-label" class="tool-section-label">РўР•Р Р РРўРћР РР</div>
+    <button class="tool" data-tool="borders"  title="РџСЂРѕРІРѕР·РіР»Р°СЃРёС‚СЊ РіСЂР°РЅРёС†С‹"></button>
+    <button class="tool" data-tool="district" data-label="Р Р°Р№РѕРЅ" title="Р Р°Р№РѕРЅ В· СЃРЅР°С‡Р°Р»Р° РіСЂР°РЅРёС†Р°, Р·Р°С‚РµРј 3+ С‚РѕС‡РµРє РІРЅСѓС‚СЂРё РЅРµС‘"></button>
+    <button class="tool" data-tool="house"    title="Р–РёР»РѕР№ РґРѕРј В· Р·РµР»С‘РЅР°СЏ РєСЂС‹С€Р°"></button>
+    <button class="tool" data-tool="shop"     title="РњР°РіР°Р·РёРЅ В· СЃРёРЅСЏСЏ РєСЂС‹С€Р°"></button>
+    <div class="tool-section-label">Р”РћР РћР“Р Р РЎР•РўР¬</div>
+    <button class="tool" data-tool="road"     title="Р”РѕСЂРѕРіР°"></button>
+    <button class="tool" data-tool="road-oneway" title="РћРґРЅРѕСЃС‚РѕСЂРѕРЅРЅСЏСЏ РґРѕСЂРѕРіР°"></button>
+    <button class="tool" data-tool="dirt"     title="Р“СЂСѓРЅС‚РѕРІР°СЏ РґРѕСЂРѕРіР°"></button>
+    <button class="tool" data-tool="dirt-oneway" title="РћРґРЅРѕСЃС‚РѕСЂРѕРЅРЅСЏСЏ РіСЂСѓРЅС‚РѕРІРєР°"></button>
+    <button class="tool" data-tool="alley"    title="РџРµСЂРµСѓР»РѕРє В· СѓР·РєР°СЏ РґРѕСЂРѕРіР° Р±РµР· СЂР°Р·РјРµС‚РєРё"></button>
+    <button class="tool" data-tool="alley-oneway" title="РћРґРЅРѕСЃС‚РѕСЂРѕРЅРЅРёР№ РїСЂРѕРµР·Рґ / РїРµСЂРµСѓР»РѕРє"></button>
+    <button class="tool" data-tool="rail"     title="Р–РµР»РµР·РЅР°СЏ РґРѕСЂРѕРіР°"></button>
+    <button class="tool" data-tool="station"  title="Р–РµР»РµР·РЅРѕРґРѕСЂРѕР¶РЅР°СЏ СЃС‚Р°РЅС†РёСЏ В· РїРµС€РёР№ РІС…РѕРґ СЃРѕРµРґРёРЅСЏРµС‚СЃСЏ СЃ Р±Р»РёР¶Р°Р№С€РµР№ СЃРµС‚СЊСЋ"></button>
+    <button class="tool" data-tool="path"     title="РџРµС€Р°СЏ С‚СЂРѕРїРёРЅРєР° (1 Рј)"></button>
+    <button class="tool" data-tool="parking" title="РџР°СЂРєРѕРІРєР° Сѓ РґРѕСЂРѕРіРё В· РјР°С€РёРЅС‹ РёСЃРїРѕР»СЊР·СѓСЋС‚ РµС‘ РІ СЃРёРјСѓР»СЏС†РёРё"></button>
+    <button class="tool" data-tool="exit"    title="Р’СЉРµР·Рґ / РІС‹С…РѕРґ С‚СЂР°РЅСЃРїРѕСЂС‚Р°"></button>
+    <button class="tool" data-tool="tree"     title="Р”РµСЂРµРІРѕ"></button>
+    <button class="tool" data-tool="light"    title="РЎРІРµС‚РѕС„РѕСЂ В· СЃС‚Р°РІРёС‚СЃСЏ РЅР° РїРµСЂРµРєСЂС‘СЃС‚РєРµ"></button>
+    <button class="tool" data-tool="crosswalk" title="РџРµС€РµС…РѕРґРЅС‹Р№ РїРµСЂРµС…РѕРґ В· С‚РѕР»СЊРєРѕ РЅР° РґРѕСЂРѕРіРµ"></button>
     <div class="tool-sep"></div>
-    <div class="tool-section-label">РЕДАКТИРОВАНИЕ</div>
-    <button class="tool" data-tool="select"  title="Изменить · выбрать постройку"></button>
-    <button class="tool" data-tool="split"   title="Добавить точку и разделить дорогу"></button>
-    <button class="tool" data-tool="erase"   title="Снести · клик по объекту"></button>
+    <div class="tool-section-label">Р Р•Р”РђРљРўРР РћР’РђРќРР•</div>
+    <button class="tool" data-tool="select"  title="РР·РјРµРЅРёС‚СЊ В· РІС‹Р±СЂР°С‚СЊ РїРѕСЃС‚СЂРѕР№РєСѓ"></button>
+    <button class="tool" data-tool="split"   title="Р”РѕР±Р°РІРёС‚СЊ С‚РѕС‡РєСѓ Рё СЂР°Р·РґРµР»РёС‚СЊ РґРѕСЂРѕРіСѓ"></button>
+    <button class="tool" data-tool="erase"   title="РЎРЅРµСЃС‚Рё В· РєР»РёРє РїРѕ РѕР±СЉРµРєС‚Сѓ"></button>
     <div class="tool-sep"></div>
-    <button class="tool" data-action="undo"  title="Отменить (Ctrl+Z)"></button>
-    <button class="tool" data-action="save"  title="Сохранить в файл"></button>
-    <button class="tool" data-action="load"  title="Загрузить из файла"></button>
-    <button class="tool" data-action="sim"   title="Движение · машины и люди"></button>
-    <button id="sim-config" class="sim-config" title="Настройки транспорта">Настройки движения</button>
-    <button id="locate" class="tool" title="К своей стране"></button>
+    <button class="tool" data-action="undo"  title="РћС‚РјРµРЅРёС‚СЊ (Ctrl+Z)"></button>
+    <button class="tool" data-action="save"  title="РЎРѕС…СЂР°РЅРёС‚СЊ РІ С„Р°Р№Р»"></button>
+    <button class="tool" data-action="load"  title="Р—Р°РіСЂСѓР·РёС‚СЊ РёР· С„Р°Р№Р»Р°"></button>
+    <button class="tool" data-action="sim"   title="Р”РІРёР¶РµРЅРёРµ В· РјР°С€РёРЅС‹ Рё Р»СЋРґРё"></button>
+    <button id="sim-config" class="sim-config" title="РќР°СЃС‚СЂРѕР№РєРё С‚СЂР°РЅСЃРїРѕСЂС‚Р°">РќР°СЃС‚СЂРѕР№РєРё РґРІРёР¶РµРЅРёСЏ</button>
+    <button id="locate" class="tool" title="Рљ СЃРІРѕРµР№ СЃС‚СЂР°РЅРµ"></button>
   </nav>
   <div id="tool-tooltip" role="tooltip" aria-hidden="true"></div>
   <input type="file" id="import-file" accept="application/json,.json" hidden/>
 
-  <!-- ── DRAW CONTROLS (appear while drawing) ── -->
+  <!-- в”Ђв”Ђ DRAW CONTROLS (appear while drawing) в”Ђв”Ђ -->
   <div id="draw-bar" class="panel hidden">
-    <span id="draw-hint">Кликай по карте, чтобы ставить точки</span>
-    <button id="draw-undo" class="mini">Назад</button>
-    <button id="draw-plan" class="mini plan hidden">Пунктир-план</button>
-    <button id="draw-done" class="mini primary">Готово</button>
-    <button id="draw-cancel" class="mini ghost">Отмена</button>
+    <span id="draw-hint">РљР»РёРєР°Р№ РїРѕ РєР°СЂС‚Рµ, С‡С‚РѕР±С‹ СЃС‚Р°РІРёС‚СЊ С‚РѕС‡РєРё</span>
+    <button id="draw-undo" class="mini">РќР°Р·Р°Рґ</button>
+    <button id="draw-plan" class="mini plan hidden">РџСѓРЅРєС‚РёСЂ-РїР»Р°РЅ</button>
+    <button id="draw-done" class="mini primary">Р“РѕС‚РѕРІРѕ</button>
+    <button id="draw-cancel" class="mini ghost">РћС‚РјРµРЅР°</button>
   </div>
 
-  <!-- ── EDIT PANEL (selected building) ── -->
+  <!-- в”Ђв”Ђ EDIT PANEL (selected building) в”Ђв”Ђ -->
   <div id="edit" class="panel hidden">
     <div class="edit-head">
-      <span id="edit-title">Постройка</span>
-      <span id="edit-meta">—</span>
-      <button id="edit-collapse" class="edit-collapse" title="Свернуть / развернуть">
+      <span id="edit-title">РџРѕСЃС‚СЂРѕР№РєР°</span>
+      <span id="edit-meta">вЂ”</span>
+      <button id="edit-collapse" class="edit-collapse" title="РЎРІРµСЂРЅСѓС‚СЊ / СЂР°Р·РІРµСЂРЅСѓС‚СЊ">
         <svg viewBox="0 0 24 24" fill="none"><path d="M6 9 L12 15 L18 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
     </div>
-    <div class="edit-hint">Тяни ручки на карте: <b>центр</b> — двигать, <b>зелёная</b> — крутить, <b>оранжевая</b> — размер</div>
+    <div class="edit-hint">РўСЏРЅРё СЂСѓС‡РєРё РЅР° РєР°СЂС‚Рµ: <b>С†РµРЅС‚СЂ</b> вЂ” РґРІРёРіР°С‚СЊ, <b>Р·РµР»С‘РЅР°СЏ</b> вЂ” РєСЂСѓС‚РёС‚СЊ, <b>РѕСЂР°РЅР¶РµРІР°СЏ</b> вЂ” СЂР°Р·РјРµСЂ</div>
     <div class="edit-actions">
-      <button id="edit-del" class="mini danger">Удалить</button>
-      <button id="edit-done" class="mini ghost">Готово</button>
+      <button id="edit-del" class="mini danger">РЈРґР°Р»РёС‚СЊ</button>
+      <button id="edit-done" class="mini ghost">Р“РѕС‚РѕРІРѕ</button>
     </div>
   </div>
 
-  <!-- ── ROAD CONTEXT MENU ── -->
+  <!-- в”Ђв”Ђ ROAD CONTEXT MENU в”Ђв”Ђ -->
   <div id="ctx-menu" class="panel hidden"></div>
 
-  <!-- ── CITIZEN INFO (selected during sim) ── -->
+  <!-- в”Ђв”Ђ CITIZEN INFO (selected during sim) в”Ђв”Ђ -->
   <div id="citizen" class="panel hidden">
     <div class="cz-head">
-      <span id="cz-name">Житель</span>
-      <button id="cz-close" class="cz-close" title="Закрыть">
+      <span id="cz-name">Р–РёС‚РµР»СЊ</span>
+      <button id="cz-close" class="cz-close" title="Р—Р°РєСЂС‹С‚СЊ">
         <svg viewBox="0 0 24 24" fill="none"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
     </div>
     <div id="cz-body"></div>
-    <div class="cz-foot">Камера следует за жителем · клик по пустому месту — снять выбор</div>
+    <div class="cz-foot">РљР°РјРµСЂР° СЃР»РµРґСѓРµС‚ Р·Р° Р¶РёС‚РµР»РµРј В· РєР»РёРє РїРѕ РїСѓСЃС‚РѕРјСѓ РјРµСЃС‚Сѓ вЂ” СЃРЅСЏС‚СЊ РІС‹Р±РѕСЂ</div>
   </div>
 
-  <!-- ── SIMULATION SETTINGS ── -->
+  <!-- в”Ђв”Ђ SIMULATION SETTINGS в”Ђв”Ђ -->
   <div id="sim-panel" class="panel hidden">
-    <div class="sim-panel-head"><b>Настройки движения</b><button id="sim-panel-close" class="cz-close" title="Закрыть">×</button></div>
-    <label class="sim-control"><span>Машины</span><select id="sim-car-mode"><option value="auto">Автоматически по длине дорог</option><option value="fixed">Фиксированное количество</option></select></label>
-    <label class="sim-control"><span id="sim-car-label">Плотность</span><input id="sim-car-count" type="range" min="0" max="800" step="1" value="0"/><output id="sim-car-value">Авто</output></label>
-    <label class="sim-control"><span>Поезда</span><select id="sim-train-mode"><option value="auto">Автоматически по ЖД</option><option value="fixed">Фиксированное количество</option></select></label>
-    <label class="sim-control"><span id="sim-train-label">Плотность</span><input id="sim-train-count" type="range" min="0" max="80" step="1" value="0"/><output id="sim-train-value">Авто</output></label>
-    <div id="sim-panel-hint" class="sim-panel-hint">Авто-режим распределяет транспорт по длине всех дорог и путей.</div>
-    <button id="sim-panel-apply" class="mini primary">Применить</button>
+    <div class="sim-panel-head"><b>РќР°СЃС‚СЂРѕР№РєРё РґРІРёР¶РµРЅРёСЏ</b><button id="sim-panel-close" class="cz-close" title="Р—Р°РєСЂС‹С‚СЊ">Г—</button></div>
+    <label class="sim-control"><span>РњР°С€РёРЅС‹</span><select id="sim-car-mode"><option value="auto">РђРІС‚РѕРјР°С‚РёС‡РµСЃРєРё РїРѕ РґР»РёРЅРµ РґРѕСЂРѕРі</option><option value="fixed">Р¤РёРєСЃРёСЂРѕРІР°РЅРЅРѕРµ РєРѕР»РёС‡РµСЃС‚РІРѕ</option></select></label>
+    <label class="sim-control"><span id="sim-car-label">РџР»РѕС‚РЅРѕСЃС‚СЊ</span><input id="sim-car-count" type="range" min="0" max="800" step="1" value="0"/><output id="sim-car-value">РђРІС‚Рѕ</output></label>
+    <label class="sim-control"><span>РџРѕРµР·РґР°</span><select id="sim-train-mode"><option value="auto">РђРІС‚РѕРјР°С‚РёС‡РµСЃРєРё РїРѕ Р–Р”</option><option value="fixed">Р¤РёРєСЃРёСЂРѕРІР°РЅРЅРѕРµ РєРѕР»РёС‡РµСЃС‚РІРѕ</option></select></label>
+    <label class="sim-control"><span id="sim-train-label">РџР»РѕС‚РЅРѕСЃС‚СЊ</span><input id="sim-train-count" type="range" min="0" max="80" step="1" value="0"/><output id="sim-train-value">РђРІС‚Рѕ</output></label>
+    <div id="sim-panel-hint" class="sim-panel-hint">РђРІС‚Рѕ-СЂРµР¶РёРј СЂР°СЃРїСЂРµРґРµР»СЏРµС‚ С‚СЂР°РЅСЃРїРѕСЂС‚ РїРѕ РґР»РёРЅРµ РІСЃРµС… РґРѕСЂРѕРі Рё РїСѓС‚РµР№.</div>
+    <button id="sim-panel-apply" class="mini primary">РџСЂРёРјРµРЅРёС‚СЊ</button>
   </div>
 
-  <!-- ── AUTO-BUILD SEGMENT SELECTION BAR ── -->
+  <!-- в”Ђв”Ђ AUTO-BUILD SEGMENT SELECTION BAR в”Ђв”Ђ -->
   <div id="gen-bar" class="panel hidden">
-    <span id="gen-hint">Кликай по улицам, что застроить:</span>
-    <button id="gen-side" class="zone">Сторона: обе</button>
+    <span id="gen-hint">РљР»РёРєР°Р№ РїРѕ СѓР»РёС†Р°Рј, С‡С‚Рѕ Р·Р°СЃС‚СЂРѕРёС‚СЊ:</span>
+    <button id="gen-side" class="zone">РЎС‚РѕСЂРѕРЅР°: РѕР±Рµ</button>
     <div id="gen-zones">
-      <button class="zone active" data-zone="res">Жилая</button>
-      <button class="zone" data-zone="pureRes">Без магазинов</button>
-      <button class="zone" data-zone="commercial">Торговая</button>
+      <button class="zone active" data-zone="res">Р–РёР»Р°СЏ</button>
+      <button class="zone" data-zone="pureRes">Р‘РµР· РјР°РіР°Р·РёРЅРѕРІ</button>
+      <button class="zone" data-zone="commercial">РўРѕСЂРіРѕРІР°СЏ</button>
     </div>
-    <button id="gen-ok" class="mini primary">ОК</button>
-    <button id="gen-cancel" class="mini ghost">Отмена</button>
+    <button id="gen-ok" class="mini primary">РћРљ</button>
+    <button id="gen-cancel" class="mini ghost">РћС‚РјРµРЅР°</button>
   </div>
 
-  <!-- ── SIDEWALK SIDE BAR (after drawing a road) ── -->
+  <!-- в”Ђв”Ђ SIDEWALK SIDE BAR (after drawing a road) в”Ђв”Ђ -->
   <div id="walk-bar" class="panel hidden">
-    <span>Тротуар:</span>
+    <span>РўСЂРѕС‚СѓР°СЂ:</span>
     <div id="walk-opts">
-      <button class="zone active" data-walk="none">Нет</button>
-      <button class="zone" data-walk="left">Слева</button>
-      <button class="zone" data-walk="right">Справа</button>
-      <button class="zone" data-walk="both">С обеих</button>
+      <button class="zone active" data-walk="none">РќРµС‚</button>
+      <button class="zone" data-walk="left">РЎР»РµРІР°</button>
+      <button class="zone" data-walk="right">РЎРїСЂР°РІР°</button>
+      <button class="zone" data-walk="both">РЎ РѕР±РµРёС…</button>
     </div>
   </div>
 
-  <!-- ── BORDER EDIT BAR ── -->
+  <!-- в”Ђв”Ђ BORDER EDIT BAR в”Ђв”Ђ -->
   <div id="border-bar" class="panel hidden">
-    <span>Граница: тяни точки · средние — добавить · ПКМ — удалить</span>
-    <button id="border-redraw" class="mini ghost">Заново</button>
-    <button id="border-done" class="mini primary">Готово</button>
+    <span>Р“СЂР°РЅРёС†Р°: С‚СЏРЅРё С‚РѕС‡РєРё В· СЃСЂРµРґРЅРёРµ вЂ” РґРѕР±Р°РІРёС‚СЊ В· РџРљРњ вЂ” СѓРґР°Р»РёС‚СЊ</span>
+    <button id="border-redraw" class="mini ghost">Р—Р°РЅРѕРІРѕ</button>
+    <button id="border-done" class="mini primary">Р“РѕС‚РѕРІРѕ</button>
   </div>
 
-  <!-- ── TOAST (transient feedback) ── -->
+  <!-- в”Ђв”Ђ TOAST (transient feedback) в”Ђв”Ђ -->
   <div id="toast" class="panel hidden"></div>
 
-  <!-- ── LAYER SWITCH (bottom-right) ── -->
+  <!-- в”Ђв”Ђ LAYER SWITCH (bottom-right) в”Ђв”Ђ -->
   <div id="layers" class="panel">
     <button class="layer active" data-layer="esri">Esri</button>
     <button class="layer" data-layer="google">Google</button>
   </div>
 
-  <!-- ── FLAG COLOR PICKER ── -->
+  <!-- в”Ђв”Ђ FLAG COLOR PICKER в”Ђв”Ђ -->
   <div id="palette" class="panel hidden"></div>
 
-  <script defer src="app.js?v=29"></script>
+  <script defer src="app.js?v=30"></script>
 </body>
 </html>
