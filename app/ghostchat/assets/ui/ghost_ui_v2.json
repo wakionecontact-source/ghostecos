@@ -1,0 +1,100 @@
+{
+  "id": "ghost_ui_v2",
+  "name": "GhostChat V2",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "tokens": {
+    "radius": 24,
+    "colors": {
+      "bg": "#020A14",
+      "bgDeep": "#04111F",
+      "surface": "#0B1220",
+      "surfaceElevated": "#12203A",
+      "surfacePressed": "#182A47",
+      "text": "#ECFEFF",
+      "textSecondary": "#A5F3FC",
+      "textMuted": "#67E8F9",
+      "accent": "#22D3EE",
+      "accentDeep": "#0891B2",
+      "accentSoft": "#0E3A4A",
+      "onAccent": "#031018",
+      "success": "#4ADE80",
+      "warning": "#FBBF24",
+      "danger": "#F87171",
+      "info": "#38BDF8",
+      "transparent": "#00000000"
+    }
+  },
+  "elements": {
+    "nav.bar": {
+      "background": "#0B1220",
+      "selectedBackground": "#3322D3EE",
+      "icon": "#A5F3FC",
+      "label": "#67E8F9",
+      "height": 72,
+      "radius": "xl",
+      "labels": true,
+      "position": "bottom"
+    },
+    "chat.list.row": {
+      "background": "#050D18",
+      "selectedBackground": "#3322D3EE",
+      "unreadBackground": "#1A22D3EE",
+      "radius": "xl",
+      "height": 78,
+      "paddingH": 16,
+      "paddingV": 8,
+      "avatarSize": 52,
+      "title": "#ECFEFF",
+      "subtitle": "#A5F3FC",
+      "time": "#67E8F9",
+      "badgeBackground": "#22D3EE",
+      "badgeText": "#031018",
+      "avatarSide": "right"
+    },
+    "chat.bubble.self": {
+      "background": "#0891B2",
+      "backgroundTo": "#22D3EE",
+      "text": "#031018",
+      "time": "#B3031018",
+      "radius": "l",
+      "maxWidth": 560,
+      "paddingH": 16,
+      "paddingV": 10
+    },
+    "chat.bubble.peer": {
+      "background": "#12203A",
+      "text": "#ECFEFF",
+      "time": "#A5F3FC",
+      "radius": "l",
+      "maxWidth": 620,
+      "paddingH": 14,
+      "paddingV": 9
+    },
+    "chat.composer": {
+      "background": "#0B1220",
+      "hint": "#67E8F9",
+      "sendBackground": "#22D3EE",
+      "sendIcon": "#031018",
+      "radius": "l",
+      "height": 58
+    },
+    "settings.row": {
+      "background": "#050D18",
+      "title": "#ECFEFF",
+      "subtitle": "#A5F3FC",
+      "icon": "#22D3EE",
+      "chevron": "#67E8F9",
+      "radius": "l",
+      "height": 64,
+      "paddingH": 18
+    },
+    "app.bar": {
+      "background": "#020A14",
+      "title": "#ECFEFF",
+      "icon": "#A5F3FC",
+      "height": 60,
+      "radius": "s"
+    }
+  }
+}

@@ -9,9 +9,11 @@
 //   final me = await api.socPost('/login', {...});
 //   final dialogs = await api.chatGet('/contacts');
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import '../core/app_version.dart';
+import '../models/gallery_extension.dart';
 import '../theme.dart';
 import 'auth_service.dart';
 import 'bot_check_service.dart';
@@ -568,6 +570,74 @@ class ApiClient {
       ),
     );
     return r.data;
+  }
+
+  // ─── GhostGallery ───────────────────────────────────────────────────────
+  Future<List<GalleryExtension>> galleryExtensions() async {
+    final response = await _ghosou.get<dynamic>('/api/gallery/v1/extensions');
+    _ensureGalleryOk(response);
+    final data = response.data;
+    final rawItems = data is Map ? data['items'] : null;
+    if (rawItems is! List) {
+      throw ApiException(502, 'GhostGallery вернул некорректный список');
+    }
+    return rawItems
+        .whereType<Map>()
+        .map(
+          (item) => GalleryExtension.fromJson(
+            Map<String, dynamic>.from(item),
+          ),
+        )
+        .where((extension) => extension.id.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Future<GalleryExtension> galleryExtension(String id) async {
+    final response = await _ghosou.get<dynamic>(
+      '/api/gallery/v1/extensions/${Uri.encodeComponent(id)}',
+    );
+    _ensureGalleryOk(response);
+    final data = response.data;
+    if (data is! Map) {
+      throw ApiException(502, 'GhostGallery вернул некорректную карточку');
+    }
+    return GalleryExtension.fromJson(Map<String, dynamic>.from(data));
+  }
+
+  Future<Uint8List> galleryDownload(
+    String id, {
+    void Function(int received, int total)? onProgress,
+  }) async {
+    final response = await _ghosou.get<List<int>>(
+      '/api/gallery/v1/extensions/${Uri.encodeComponent(id)}/download',
+      options: Options(responseType: ResponseType.bytes),
+      onReceiveProgress: onProgress,
+    );
+    _ensureGalleryOk(response);
+    final data = response.data;
+    if (data == null || data.isEmpty) {
+      throw ApiException(502, 'GhostGallery вернул пустой файл');
+    }
+    return data is Uint8List ? data : Uint8List.fromList(data);
+  }
+
+  void _ensureGalleryOk(Response response) {
+    final code = response.statusCode ?? 0;
+    if (code >= 200 && code < 300) return;
+    var message = 'Ошибка GhostGallery ($code)';
+    if (code == 401) {
+      message = 'Для скачивания нужен вход в GhostEcos';
+    }
+    final data = response.data;
+    if (data is Map && data['detail'] is String) {
+      message = data['detail'] as String;
+    }
+    throw ApiException(
+      code,
+      message,
+      authFailure:
+          code == 401 ? ApiAuthFailure.invalidToken : ApiAuthFailure.none,
+    );
   }
 
   Future<dynamic> socPost(String path, [dynamic body]) async {
