@@ -423,7 +423,66 @@ class DbService {
             // таблица ниже хранит только путь и метаданные.
             if (legacyTable.isNotEmpty) {
               await db.execute('DROP TABLE plaincache_v2');
-            }
+  // ─── Extensions (GhostGallery) ───────────────────────────────────────
+  Future<void> upsertExtension({
+    required String id,
+    required String name,
+    String description = '',
+    String? avatarUrl,
+    String version = '1.0.0',
+    String author = 'GhostEcos',
+    bool installed = false,
+    bool applied = false,
+  }) async {
+    await _safeDb.insert('extensions', {
+      'id': id,
+      'name': name,
+      'description': description,
+      'avatar_url': avatarUrl,
+      'version': version,
+      'author': author,
+      'installed': installed ? 1 : 0,
+      'applied': applied ? 1 : 0,
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<Map<String, Object?>>> getExtensions() async {
+    return _safeDb.query('extensions', orderBy: 'created_at DESC');
+  }
+
+  Future<Map<String, Object?>?> getExtension(String id) async {
+    final rows = await _safeDb.query(
+      'extensions',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  Future<void> setExtensionInstalled(String id, bool installed) async {
+    await _safeDb.update(
+      'extensions',
+      {'installed': installed ? 1 : 0},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> setExtensionApplied(String id, bool applied) async {
+    await _safeDb.update(
+      'extensions',
+      {'applied': applied ? 1 : 0},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> deleteExtension(String id) async {
+    await _safeDb.delete('extensions', where: 'id = ?', whereArgs: [id]);
+  }
+}
             await db.execute('ALTER TABLE plaincache RENAME TO plaincache_v2');
             await db.execute('''
               CREATE TABLE plaincache (
@@ -566,8 +625,26 @@ class DbService {
             );
           }
         }
+        if (oldVersion < 15) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS extensions (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL DEFAULT '',
+              description TEXT NOT NULL DEFAULT '',
+              avatar_url TEXT,
+              version TEXT NOT NULL DEFAULT '1.0.0',
+              author TEXT NOT NULL DEFAULT 'GhostEcos',
+              installed INTEGER NOT NULL DEFAULT 0,
+              applied INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL
+            )
+          ''');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_extensions_installed ON extensions (installed, applied)',
+          );
+        }
       },
-      version: 14,
+      version: 15,
     );
   }
 
