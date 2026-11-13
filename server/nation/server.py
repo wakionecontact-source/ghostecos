@@ -13,15 +13,20 @@ GhostNation — бэкенд общего мира (мультиплеер).
 Запуск:  uvicorn server:app --host 127.0.0.1 --port 8010
 Деплой:  systemd + nginx location /api/nation/ → 127.0.0.1:8010 (как /api/soc → 8005).
 """
-import os, json, math, time, sqlite3
+import os, json, math, time, sqlite3, hmac, ipaddress
+from collections import defaultdict, deque
 from typing import Optional
-from fastapi import FastAPI, Header, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 import jwt
 
 JWT_SECRET = os.getenv("GC_JWT_SECRET", "")
 JWT_ALG = "HS256"
 DB_PATH = os.getenv("NATION_DB", os.path.join(os.path.dirname(os.path.abspath(__file__)), "nation.db"))
+
+if len(JWT_SECRET) < 32:
+    raise RuntimeError("GC_JWT_SECRET must be configured with at least 32 random characters")
 
 # ── Экономика (gost) — решено: налоги с населения + старт-бонус, всё стоит gost ──
 START_BONUS         = 1500      # gost при создании страны
@@ -32,7 +37,71 @@ RESIDENTS_PER_HOUSE = 4         # население = дома × это (ог�
 JOBS_PER_SHOP       = 12
 TAX_PER_CITIZEN_HR  = 2.0       # gost в час с жителя
 
+MAX_BORDER_POINTS = 512
+MAX_BUILDINGS = 5000
+MAX_ROADS = 2000
+MAX_ROAD_POINTS = 512
+MAX_TOTAL_ROAD_POINTS = 50000
+
 app = FastAPI(title="GhostNation API", docs_url=None, redoc_url=None, openapi_url=None)
+_MAX_JSON_BODY = 12 * 1024 * 1024
+_MAX_STATE_BYTES = 8 * 1024 * 1024
+_MAX_WORLD_COUNTRIES = 5000
+_RL_LIMIT = 240
+_RL_WINDOW = 60
+_RL_BUCKETS: dict[str, deque] = defaultdict(deque)
+
+
+@app.middleware("http")
+async def request_size_guard(request: Request, call_next):
+    raw_length = request.headers.get("content-length")
+    if raw_length:
+        try:
+            length = int(raw_length)
+        except ValueError:
+            return JSONResponse({"detail": "Invalid Content-Length"}, status_code=400)
+        if length < 0 or length > _MAX_JSON_BODY:
+            return JSONResponse({"detail": "Request body too large"}, status_code=413)
+    return await call_next(request)
+
+
+def _client_ip(request: Request) -> str:
+    """Trust the proxy-provided address only from the local reverse proxy."""
+    peer = request.client.host if request.client else "unknown"
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+    except ValueError:
+        peer_ip = None
+    forwarded = (request.headers.get("x-real-ip") or "").strip()
+    try:
+        forwarded_ip = ipaddress.ip_address(forwarded) if forwarded else None
+    except ValueError:
+        forwarded_ip = None
+    if forwarded_ip and peer_ip and (peer_ip.is_loopback or forwarded_ip == peer_ip):
+        return str(forwarded_ip)
+    return str(peer_ip) if peer_ip else "unknown"
+
+
+@app.middleware("http")
+async def rate_limit(request: Request, call_next):
+    key = _client_ip(request)
+    now = time.monotonic()
+    bucket = _RL_BUCKETS[key]
+    while bucket and now - bucket[0] > _RL_WINDOW:
+        bucket.popleft()
+    if len(bucket) >= _RL_LIMIT:
+        return JSONResponse(
+            {"detail": "Too many requests"},
+            status_code=429,
+            headers={"Retry-After": str(_RL_WINDOW)},
+        )
+    bucket.append(now)
+    if len(_RL_BUCKETS) > 10_000:
+        stale_before = now - (_RL_WINDOW * 2)
+        for stale_key, stale_bucket in list(_RL_BUCKETS.items())[:2_000]:
+            if not stale_bucket or stale_bucket[-1] < stale_before:
+                _RL_BUCKETS.pop(stale_key, None)
+    return await call_next(request)
 
 
 def _db():
@@ -55,12 +124,20 @@ def _db():
 def _user(authorization: Optional[str]) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Authorization required")
+    token = authorization[7:]
+    if not token or len(token) > 4096:
+        raise HTTPException(401, "Invalid token")
     try:
-        payload = jwt.decode(authorization[7:], JWT_SECRET, algorithms=[JWT_ALG])
+        payload = jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=[JWT_ALG],
+            options={"require": ["sub", "iat", "exp"]},
+        )
     except Exception:
         raise HTTPException(401, "Invalid token")
     sub = payload.get("sub")
-    if not sub:
+    if not isinstance(sub, str) or not (1 <= len(sub) <= 64):
         raise HTTPException(401, "Invalid token")
     return sub
 
@@ -69,6 +146,57 @@ def _user(authorization: Optional[str]) -> str:
 def _bbox(b):
     la = [p[0] for p in b]; ln = [p[1] for p in b]
     return min(la), min(ln), max(la), max(ln)
+
+
+def _validate_point(point, label: str) -> None:
+    if not isinstance(point, (list, tuple)) or len(point) != 2:
+        raise HTTPException(400, f"{label}: point must be [lat, lng]")
+    lat, lng = point
+    if (isinstance(lat, bool) or isinstance(lng, bool) or
+            not isinstance(lat, (int, float)) or not isinstance(lng, (int, float))):
+        raise HTTPException(400, f"{label}: coordinates must be numbers")
+    try:
+        lat_f, lng_f = float(lat), float(lng)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"{label}: coordinates must be numbers")
+    if not math.isfinite(lat_f) or not math.isfinite(lng_f):
+        raise HTTPException(400, f"{label}: coordinates must be finite")
+    if not -90 <= lat_f <= 90 or not -180 <= lng_f <= 180:
+        raise HTTPException(400, f"{label}: coordinates out of range")
+
+
+def _validate_border(border) -> None:
+    if not isinstance(border, list) or len(border) < 3:
+        raise HTTPException(400, "Border needs >=3 points")
+    if len(border) > MAX_BORDER_POINTS:
+        raise HTTPException(413, f"Border has too many points (max {MAX_BORDER_POINTS})")
+    for i, point in enumerate(border):
+        _validate_point(point, f"border[{i}]")
+
+
+def _validate_state(state: dict) -> None:
+    if not isinstance(state, dict):
+        raise HTTPException(400, "state must be an object")
+    buildings = state.get("buildings", [])
+    if not isinstance(buildings, list) or len(buildings) > MAX_BUILDINGS:
+        raise HTTPException(413, f"Too many buildings (max {MAX_BUILDINGS})")
+    for i, building in enumerate(buildings):
+        if not isinstance(building, dict):
+            raise HTTPException(400, f"buildings[{i}] must be an object")
+        if building.get("lat") is not None or building.get("lng") is not None:
+            _validate_point([building.get("lat"), building.get("lng")], f"buildings[{i}]")
+    for key in ("roads", "alleys"):
+        lines = state.get(key, [])
+        if not isinstance(lines, list) or len(lines) > MAX_ROADS:
+            raise HTTPException(413, f"Too many {key} (max {MAX_ROADS})")
+        for i, line in enumerate(lines):
+            if not isinstance(line, list) or len(line) < 2 or len(line) > MAX_ROAD_POINTS:
+                raise HTTPException(400, f"{key}[{i}] has an invalid number of points")
+            for j, point in enumerate(line):
+                _validate_point(point, f"{key}[{i}][{j}]")
+    total_points = sum(len(line) for key in ("roads", "alleys") for line in state.get(key, []))
+    if total_points > MAX_TOTAL_ROAD_POINTS:
+        raise HTTPException(413, f"Too many road points (max {MAX_TOTAL_ROAD_POINTS})")
 
 
 def _centroid(b):
@@ -133,8 +261,8 @@ def _state_value(state):
 
 
 class ClaimReq(BaseModel):
-    name: str = ""
-    color: str = "#D97757"
+    name: str = Field("", max_length=80)
+    color: str = Field("#D97757", max_length=32)
     border: list
 
 
@@ -145,11 +273,17 @@ class SaveReq(BaseModel):
 @app.get("/api/nation/world")
 def world(minlat: float = Query(...), minlng: float = Query(...),
           maxlat: float = Query(...), maxlng: float = Query(...)):
+    bbox = (minlat, minlng, maxlat, maxlng)
+    if any(not math.isfinite(v) for v in bbox):
+        raise HTTPException(400, "Bounding box must be finite")
+    if not (-90 <= minlat <= maxlat <= 90 and -180 <= minlng <= maxlng <= 180):
+        raise HTTPException(400, "Bounding box is out of range")
     con = _db()
     rows = con.execute(
         "SELECT owner,name,color,border,cx,cy FROM country "
-        "WHERE NOT (maxlat<? OR minlat>? OR maxlng<? OR minlng>?)",
-        (minlat, maxlat, minlng, maxlng)).fetchall()
+        "WHERE NOT (maxlat<? OR minlat>? OR maxlng<? OR minlng>?) "
+        "ORDER BY updated DESC LIMIT ?",
+        (minlat, maxlat, minlng, maxlng, _MAX_WORLD_COUNTRIES)).fetchall()
     con.close()
     return {"countries": [
         {"owner": r["owner"], "name": r["name"], "color": r["color"],
@@ -181,14 +315,17 @@ def get_mine(authorization: Optional[str] = Header(None)):
 @app.post("/api/nation/claim")
 def claim(req: ClaimReq, authorization: Optional[str] = Header(None)):
     user = _user(authorization)
-    if len(req.border) < 3:
-        raise HTTPException(400, "Border needs >=3 points")
+    _validate_border(req.border)
     area = _area_km2(req.border)
     cost = area * CLAIM_COST_PER_KM2
     con = _db()
+    # Serialize overlap check and country creation/update. Otherwise two
+    # simultaneous claims could validate against the same stale map.
+    con.execute("BEGIN IMMEDIATE")
     for o in con.execute("SELECT owner,border FROM country WHERE owner!=?", (user,)).fetchall():
         if _overlap(req.border, json.loads(o["border"])):
-            con.close(); raise HTTPException(409, f"Граница пересекает территорию игрока {o['owner']}")
+            con.rollback(); con.close()
+            raise HTTPException(409, f"Граница пересекает территорию игрока {o['owner']}")
     now = int(time.time())
     bb = _bbox(req.border); cx, cy = _centroid(req.border)
     ex = con.execute("SELECT balance FROM country WHERE owner=?", (user,)).fetchone()
@@ -220,6 +357,23 @@ def save_mine(req: SaveReq, authorization: Optional[str] = Header(None)):
         con.close(); raise HTTPException(404, "Сначала застолби территорию (claim)")
     border = json.loads(r["border"])
     st = req.state or {}
+    encoded_state = json.dumps(st, ensure_ascii=False, separators=(",", ":"))
+    if len(encoded_state.encode("utf-8")) > _MAX_STATE_BYTES:
+        con.close()
+        raise HTTPException(413, "Состояние слишком большое")
+    try:
+        _validate_state(st)
+    except HTTPException:
+        con.close()
+        raise
+    # Re-read under the write lock after all CPU-heavy validation.
+    con.execute("BEGIN IMMEDIATE")
+    r = con.execute("SELECT border,state,balance,built_value FROM country WHERE owner=?", (user,)).fetchone()
+    if not r:
+        con.rollback()
+        con.close()
+        raise HTTPException(404, "Сначала застолби территорию (claim)")
+    border = json.loads(r["border"])
     # объекты только ВНУТРИ границы (анти-вылезание)
     st["buildings"] = [b for b in st.get("buildings", [])
                        if b.get("lat") is not None and _in_poly([b["lat"], b["lng"]], border)]
@@ -227,10 +381,20 @@ def save_mine(req: SaveReq, authorization: Optional[str] = Header(None)):
     val = _state_value(st)
     spend = max(0.0, val - (r["built_value"] or 0))
     if spend > r["balance"]:
-        con.close(); raise HTTPException(402, f"Недостаточно gost (нужно {round(spend)})")
+        con.rollback()
+        con.close()
+        raise HTTPException(402, f"Недостаточно gost (нужно {round(spend)})")
     now = int(time.time())
-    con.execute("UPDATE country SET state=?,balance=balance-?,built_value=?,updated=? WHERE owner=?",
-                (json.dumps(st), spend, max(r["built_value"] or 0, val), now, user))
+    changed = con.execute(
+        "UPDATE country SET state=?,balance=balance-?,built_value=?,updated=? "
+        "WHERE owner=? AND balance>=?",
+        (json.dumps(st, ensure_ascii=False, separators=(",", ":")), spend,
+         max(r["built_value"] or 0, val), now, user, spend),
+    ).rowcount
+    if changed != 1:
+        con.rollback()
+        con.close()
+        raise HTTPException(402, f"Недостаточно gost (нужно {round(spend)})")
     con.commit()
     bal = con.execute("SELECT balance FROM country WHERE owner=?", (user,)).fetchone()["balance"]
     con.close()
@@ -251,7 +415,7 @@ def cleanup_archived(days: int = Query(180), x_internal_token: Optional[str] = H
     """Удаляет архивированные страны старше N дней (по умолчанию 180).
     Защищён внутренним токеном. Можно дергать из cron.
     """
-    if not _NATION_INTERNAL_TOKEN or x_internal_token != _NATION_INTERNAL_TOKEN:
+    if not _NATION_INTERNAL_TOKEN or not x_internal_token or not hmac.compare_digest(x_internal_token, _NATION_INTERNAL_TOKEN):
         raise HTTPException(403, "Forbidden")
     if days < 1 or days > 3650:
         raise HTTPException(400, "days must be 1..3650")
@@ -275,10 +439,10 @@ def archive_country(username: str, x_internal_token: Optional[str] = Header(None
     """Архивирует страну юзера (постройки остаются на карте, но без владельца).
     Защищено внутренним токеном — вызывается из social_router при DELETE /me/account.
     """
-    if not _NATION_INTERNAL_TOKEN or x_internal_token != _NATION_INTERNAL_TOKEN:
+    if not _NATION_INTERNAL_TOKEN or not x_internal_token or not hmac.compare_digest(x_internal_token, _NATION_INTERNAL_TOKEN):
         raise HTTPException(403, "Forbidden")
     uname = username.strip().lower()
-    if not uname:
+    if not uname or len(uname) > 64:
         raise HTTPException(400, "Empty username")
     con = _db()
     r = con.execute("SELECT owner FROM country WHERE owner=?", (uname,)).fetchone()
