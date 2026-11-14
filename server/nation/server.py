@@ -328,13 +328,20 @@ def claim(req: ClaimReq, authorization: Optional[str] = Header(None)):
             raise HTTPException(409, f"Граница пересекает территорию игрока {o['owner']}")
     now = int(time.time())
     bb = _bbox(req.border); cx, cy = _centroid(req.border)
-    ex = con.execute("SELECT balance FROM country WHERE owner=?", (user,)).fetchone()
+    ex = con.execute("SELECT balance,border FROM country WHERE owner=?", (user,)).fetchone()
     if ex:
-        cost = 0   # перерисовка границы существующей страной — БЕСПЛАТНО (gost берётся только за первичный claim)
+        # Расширение стоит gost по приросту площади; сжатие и перерисовка в
+        # прежних границах — бесплатно.
+        try: old_area = _area_km2(json.loads(ex["border"]))
+        except Exception: old_area = 0.0
+        cost = max(0.0, area - old_area) * CLAIM_COST_PER_KM2
+        if cost > (ex["balance"] or 0):
+            con.rollback(); con.close()
+            raise HTTPException(402, f"Недостаточно gost для расширения (нужно {round(cost)} gost)")
         con.execute("UPDATE country SET name=?,color=?,border=?,cx=?,cy=?,"
-                    "minlat=?,minlng=?,maxlat=?,maxlng=?,updated=? WHERE owner=?",
+                    "minlat=?,minlng=?,maxlat=?,maxlng=?,updated=?,balance=balance-? WHERE owner=?",
                     (req.name, req.color, json.dumps(req.border), cx, cy,
-                     bb[0], bb[1], bb[2], bb[3], now, user))
+                     bb[0], bb[1], bb[2], bb[3], now, cost, user))
     else:
         cost = min(cost, START_BONUS)  # новичку хватает на стартовый участок
         con.execute("INSERT INTO country(owner,name,color,border,state,balance,built_value,"
