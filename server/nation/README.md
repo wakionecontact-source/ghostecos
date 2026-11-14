@@ -53,7 +53,7 @@ python -m http.server 5500
 - Код фронта: `/var/www/nation/` (`app.js`, `index.html`, `style.css`, `icons/`, `vendor/`) — раздаётся nginx по `/nation/`.
 - Бэкенд: `/opt/ghostnation/server.py`, systemd-юнит `ghostnation.service` (uvicorn, `127.0.0.1:8010`).
 - БД: `/opt/ghostnation/nation.db` → симлинк на `/var/lib/ghostnation-app/nation.db`.
-- nginx: `location /api/nation/` → Core `127.0.0.1:8002`, Core проксирует в `:8010`.
+- nginx: `location /api/nation/` → `127.0.0.1:8010` (REST и WS в одном процессе), плюс `location = /api/nation/ws` с заголовками `Upgrade`/`Connection` и `proxy_read_timeout 3600s`.
 - Ноутбучный трим памяти: `gs-mem-nation.service` (ночной рестарт).
 
 Правки в `server/nation/` → выгрузка в `/var/www/nation/` и `/opt/ghostnation/`
@@ -65,6 +65,7 @@ python -m http.server 5500
 | Метод | Путь | Назначение |
 |-------|------|-----------|
 | GET  | `/api/nation/world?minlat&minlng&maxlat&maxlng` | публично: страны в bbox |
+| WS   | `/api/nation/ws?token=<JWT>` | мир в реальном времени: `sub` → `snapshot`, затем push `country` / `remove` |
 | GET  | `/api/nation/mine` | (auth) моя страна + начисленные налоги |
 | POST | `/api/nation/claim` | (auth) застолбить/перечертить границу |
 | PUT  | `/api/nation/mine` | (auth) сохранить состояние страны |
@@ -78,6 +79,15 @@ python -m http.server 5500
 claim оплачивается целиком, последующая **перерисовка — по приросту площади**
 (300 gost/км²), сжатие и правка в прежних пределах бесплатны. Лимиты валидации:
 512 точек границы, 5000 построек, 2000 линий дорог. Rate limit 240 запросов/мин.
+
+### Мир в реальном времени
+
+Клиент в режиме мультиплеера держит WS-подписку на видимый bbox: при движении
+карты переподписывается, при обрыве переподключается с backoff. В снимке и в
+push приходят **границы и постройки** чужих стран (до 1500 построек на страну,
+фильтр по bbox), поэтому город соседа видно без перезагрузки страницы.
+REST `/world` остаётся фолбэком на случай недоступности WS — в нём только
+границы, без построек.
 
 ## Управление
 
