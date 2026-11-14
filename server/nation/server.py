@@ -39,8 +39,8 @@ COST_LIGHT          = 30
 COST_CROSSWALK      = 10
 RESIDENTS_PER_HOUSE = 4         # население = дома × это
 JOBS_PER_SHOP       = 12
-TAX_EMPLOYED_HR     = 2.0       # gost в час с занятого жителя
-TAX_UNEMPLOYED_HR   = 0.5       # безработный платит меньше
+TAX_EMPLOYED_HR     = 10.0      # gost в час с занятого жителя
+TAX_UNEMPLOYED_HR   = 2.5       # безработный платит меньше
 UPKEEP_ROAD_KM_HR   = 1.0       # содержание дорог/жд/тропинок за км в час
 UPKEEP_STATION_HR   = 3.0
 UPKEEP_PARKING_HR   = 1.0

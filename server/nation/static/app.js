@@ -1432,7 +1432,7 @@ const PED_COLORS = ['#ffd24a', '#5ad06a', '#ff8a5c', '#5cc8ff', '#e8e8e8', '#d98
 const sim = { on: false, cars: [], parkedCars: [], parkingLots: [], peds: [], trains: [], driveLines: [], railLines: [], pedLines: [], raf: 0, last: 0, t: 0, selected: null, follow: false, _panelT: 0, _trafficT: 0, _trafficLanes: null, _junctionTraffic: null, _junctionRequests: null, workload: new Map() };
 // Экономика: те же правила, что на сервере (server.py), для локальной оценки
 const RESIDENTS_PER_HOUSE = 4, JOBS_PER_SHOP = 12;
-const TAX_EMPLOYED_HR = 2.0, TAX_UNEMPLOYED_HR = 0.5;
+const TAX_EMPLOYED_HR = 10.0, TAX_UNEMPLOYED_HR = 2.5;
 const UPKEEP_ROAD_KM_HR = 1.0, UPKEEP_STATION_HR = 3.0, UPKEEP_PARKING_HR = 1.0, UPKEEP_LIGHT_HR = 0.3, UPKEEP_CROSSWALK_HR = 0.1;
 let simCanvas = null, simCtx = null;
 let _vehicleId = 0;
@@ -2867,7 +2867,7 @@ function wire() {
 /* ════════════════ BOOT ════════════════ */
 /* ════════════════ МУЛЬТИПЛЕЕР (общий мир, аккаунты GhostEcos) ════════════════ */
 const MP_API = '/api/nation', MP_STORE = 'ghostnation:mp';
-const mp = { mode: localStorage.getItem('ghostnation:mode') === 'mp' ? 'mp' : 'local', country: null, balance: 0, pop: 0, econ: null, worldLayer: null, saveTimer: null, world: new Map(), layers: new Map(), ws: null, wsReady: false, wsRetry: 0, wsTimer: 0, wsSubTimer: 0, confirmed: null };
+const mp = { mode: localStorage.getItem('ghostnation:mode') === 'mp' ? 'mp' : 'local', country: null, balance: 0, pop: 0, econ: null, worldLayer: null, saveTimer: null, incomeTimer: null, world: new Map(), layers: new Map(), ws: null, wsReady: false, wsRetry: 0, wsTimer: 0, wsSubTimer: 0, confirmed: null };
 let mpWorldLoadTimer = 0, mpWorldLoadInFlight = false, mpWorldLoadAgain = false;
 function isMP() { return mp.mode === 'mp'; }
 
@@ -2933,6 +2933,7 @@ function mpInit() {
   if (regBtn) regBtn.onclick = mpGoRegister;
   document.getElementById('mp-logout').onclick = mpLogout;
   updateModeUI();
+  startMpIncomeRefresh();
   if (isMP()) enterMP();
 }
 function setMode(m) {
@@ -2968,6 +2969,23 @@ function enterMP() {
   mpWsConnect(); mpLoadWorld();          // мир грузим всегда: и без входа, и при мёртвом JWT
   if (!ssoToken()) return;               // аноним смотрит мир сразу, вход — по кнопке «Войти»
   mpLoadMine();
+}
+// Доход капает на сервере: пока страна открыта, подтягиваем баланс раз в минуту
+function startMpIncomeRefresh() {
+  if (mp.incomeTimer) return;
+  mp.incomeTimer = setInterval(async () => {
+    if (!isMP() || !ssoToken() || document.visibilityState !== 'visible') return;
+    try {
+      const r = await mpApi('/mine');
+      if (!r.ok) return;
+      const d = await r.json();
+      if (!d.country) return;
+      mp.balance = d.country.balance;
+      mp.pop = d.country.population != null ? d.country.population : mp.pop;
+      mp.econ = d.country.economy || mp.econ;
+      updateBalanceUI();
+    } catch (e) {}
+  }, 60000);
 }
 async function mpLoadMine() {
   try {
