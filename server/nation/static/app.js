@@ -77,14 +77,31 @@ function migrate(s) {
 }
 let state = load();
 function load() { try { const r = localStorage.getItem(STORE_KEY); if (r) return migrate(Object.assign(freshState(), JSON.parse(r))); } catch (e) { console.warn(e); } return freshState(); }
-function save() { try { syncLineMetadata(); localStorage.setItem(isMP() ? MP_STORE : STORE_KEY, JSON.stringify(state)); } catch (e) { console.warn(e); } if (isMP()) mpSyncSave(); }
+let storageWarned = false;
+function save() {
+  try { syncLineMetadata(); localStorage.setItem(isMP() ? MP_STORE : STORE_KEY, JSON.stringify(state)); }
+  catch (e) {
+    console.warn(e);
+    if (!storageWarned) { storageWarned = true; try { flash('Не удалось сохранить в браузере — экспортируйте страну в файл', true); } catch (_) {} }
+  }
+  if (isMP()) mpSyncSave();
+}
 
 /* ════════════════ UNDO ════════════════ */
-let undoStack = [];
-function pushUndo() { undoStack.push(JSON.stringify(state)); if (undoStack.length > 60) undoStack.shift(); updateUndoBtn(); }
+let undoStack = [], undoBytes = 0;
+const UNDO_MAX_STEPS = 60, UNDO_MAX_BYTES = 24 * 1024 * 1024;
+function pushUndo() {
+  const snap = JSON.stringify(state);
+  undoStack.push(snap); undoBytes += snap.length;
+  while (undoStack.length > UNDO_MAX_STEPS || (undoBytes > UNDO_MAX_BYTES && undoStack.length > 1)) {
+    const old = undoStack.shift(); undoBytes -= old.length;
+  }
+  updateUndoBtn();
+}
 function undo() {
   if (!undoStack.length) return;
-  state = Object.assign(freshState(), JSON.parse(undoStack.pop()));
+  const prev = undoStack.pop(); undoBytes = Math.max(0, undoBytes - prev.length);
+  state = Object.assign(freshState(), JSON.parse(prev));
   save(); deselect(); clearHover();
   document.getElementById('state-name').value = state.name; buildPalette(); renderAll();
   if (borderEdit.active) { if (state.border && state.border.length >= 3) bBuildHandles(); else exitBorderEdit(); }   // правка границы: ручки на новый массив (иначе orphaned)
@@ -2838,7 +2855,7 @@ async function mpToken() {
 async function mpApi(path, opts) {
   opts = opts || {};
   const h = { 'Content-Type': 'application/json' };
-  const t = await mpToken();
+  const t = ssoToken() ? await mpToken() : null;   // без входа не дёргаем SSO
   if (t) h['Authorization'] = 'Bearer ' + t;
   return fetch(MP_API + path, Object.assign({}, opts, { headers: Object.assign(h, opts.headers || {}) }));
 }
@@ -2851,6 +2868,8 @@ function mpInit() {
   document.getElementById('mp-login-cancel').onclick = () => hideMpLogin();
   const loginOpen = document.getElementById('mp-login-open');
   if (loginOpen) loginOpen.onclick = showMpLogin;
+  const cClose = document.getElementById('mpc-close');
+  if (cClose) cClose.onclick = mpHideCountryCard;
   const regBtn = document.getElementById('mp-login-register');
   if (regBtn) regBtn.onclick = mpGoRegister;
   document.getElementById('mp-logout').onclick = mpLogout;
@@ -2871,10 +2890,15 @@ function updateModeUI() {
   if (isMP()) updateBalanceUI();
 }
 function updateBalanceUI() {
-  const b = document.getElementById('mp-balance'); if (b) b.textContent = Math.round(mp.balance) + ' gost';
-  const p = document.getElementById('mp-pop'); if (p) p.textContent = mp.pop + ' чел';
-  const lo = document.getElementById('mp-logout'); if (lo) lo.classList.toggle('hidden', !ssoToken());
-  const li = document.getElementById('mp-login-open'); if (li) li.classList.toggle('hidden', !!ssoToken());
+  const logged = !!ssoToken();
+  const b = document.getElementById('mp-balance');
+  if (b) b.textContent = logged ? Math.round(mp.balance) + ' gost' : 'Режим просмотра';
+  const p = document.getElementById('mp-pop');
+  if (p) { p.textContent = logged ? mp.pop + ' чел' : ''; p.classList.toggle('hidden', !logged); }
+  const inc = document.getElementById('mp-income');
+  if (inc) { inc.textContent = logged ? '≈' + Math.round(mp.pop * 2) + ' gost/ч' : ''; inc.classList.toggle('hidden', !logged); }
+  const lo = document.getElementById('mp-logout'); if (lo) lo.classList.toggle('hidden', !logged);
+  const li = document.getElementById('mp-login-open'); if (li) li.classList.toggle('hidden', logged);
 }
 function enterMP() {
   mpWsConnect(); mpLoadWorld();          // мир грузим всегда: и без входа, и при мёртвом JWT
@@ -2897,20 +2921,60 @@ async function mpLoadMine() {
     if (d.country) {
       const c = d.country; mp.country = c; mp.balance = c.balance || 0; mp.pop = c.population || 0;
       state = migrate(Object.assign(freshState(), c.state || {})); state.name = c.name || ''; state.color = c.color || state.color; state.border = c.border || null;
+      mpResetSent();
       document.getElementById('state-name').value = state.name; renderAll(); updateBalanceUI();
       if (state.border && state.border.length) try { map.fitBounds(L.latLngBounds(state.border).pad(0.25)); } catch (e) {}
       flash('Загружена твоя страна');
-    } else { mp.country = null; mp.balance = 1500; mp.pop = 0; state = freshState(); renderAll(); updateBalanceUI(); flash('Нарисуй границу — застолби свою территорию', true); }
+    } else { mp.country = null; mp.balance = 1500; mp.pop = 0; state = freshState(); mpResetSent(); renderAll(); updateBalanceUI(); flash('Нарисуй границу — застолби свою территорию', true); }
   } catch (e) { flash('Сервер недоступен', true); }
+}
+// Частичное сохранение: на сервер уходят только изменившиеся коллекции состояния
+const MP_STATE_KEYS = ['buildings', 'roads', 'alleys', 'rails', 'paths', 'plannedLines', 'districts',
+  'lights', 'roadWalk', 'lineMeta', 'noZebra', 'crosswalks', 'stations', 'exits', 'parking', 'simulation'];
+function mpResetSent() { mp.sent = null; }
+function mpStatePatch() {
+  const cur = {}, keys = [];
+  for (const k of MP_STATE_KEYS) cur[k] = JSON.stringify(state[k] === undefined ? null : state[k]);
+  if (!mp.sent) { mp.sent = cur; return { state, keys: null }; }   // первый раз — целиком
+  for (const k of MP_STATE_KEYS) if (cur[k] !== mp.sent[k]) keys.push(k);
+  if (!keys.length) return null;
+  const patch = {};
+  for (const k of keys) patch[k] = state[k];
+  mp.sent = cur;
+  return { state: patch, keys };
+}
+function mpSetSaveState(text, ok) {
+  const el = document.getElementById('mp-saved');
+  if (el) { el.textContent = text; el.title = text; el.dataset.state = ok ? 'ok' : 'err'; }
 }
 function mpSyncSave() {
   if (!isMP() || !ssoToken() || !mp.country) return;
   clearTimeout(mp.saveTimer);
   mp.saveTimer = setTimeout(async () => {
-    try { const r = await mpApi('/mine', { method: 'PUT', body: JSON.stringify({ state }) });
-      if (r.ok) { const d = await r.json(); mp.balance = d.balance; mp.pop = d.population != null ? d.population : mp.pop; updateBalanceUI(); }
-      else if (r.status === 402) { const d = await r.json().catch(() => ({})); flash(d.detail || 'Не хватает gost', true); }
-    } catch (e) {}
+    const patch = mpStatePatch();
+    if (!patch) return;
+    try {
+      mpSetSaveState('Сохраняю…', true);
+      const body = patch.keys ? { state: patch.state, keys: patch.keys } : { state: patch.state };
+      const r = await mpApi('/mine', { method: 'PUT', body: JSON.stringify(body) });
+      if (r.ok) {
+        const d = await r.json();
+        mp.balance = d.balance; mp.pop = d.population != null ? d.population : mp.pop; updateBalanceUI();
+        mpSetSaveState('Сохранено', true);
+      } else if (r.status === 402) {
+        const d = await r.json().catch(() => ({}));
+        mpResetSent();                                  // следующий раз отправим целиком
+        mpSetSaveState('Не хватает gost', false);
+        flash(d.detail || 'Не хватает gost', true);
+      } else {
+        mpResetSent();
+        mpSetSaveState('Не сохранено', false);
+        flash('Сервер не принял изменения (' + r.status + ')', true);
+      }
+    } catch (e) {
+      mpResetSent();
+      mpSetSaveState('Нет связи', false);
+    }
   }, 900);
 }
 async function mpClaim() {
@@ -2960,7 +3024,7 @@ function mpWsRetry() {
 }
 async function mpWsConnect() {
   if (!isMP() || !mp.worldLayer || mp.ws) return;
-  const t = await mpToken();                  // может быть null: мир смотрим и без входа
+  const t = ssoToken() ? await mpToken() : null;   // может быть null: мир смотрим и без входа
   const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
   const url = scheme + location.host + '/api/nation/ws' + (t ? '?token=' + encodeURIComponent(t) : '');
   let ws;
@@ -3024,10 +3088,38 @@ function mpDrawForeignLines(g, c) {
     L.polyline(line, { pane: 'pane-lines', color: '#d0d0d0', weight: Math.max(1, w * .35), dashArray: `${Math.max(3, w)} ${Math.max(4, w * 1.2)}`, interactive: false }).addTo(g);
   }
 }
+// Карточка чужой страны — только просмотр
+function mpForeignStats(c) {
+  const list = Array.isArray(c.buildings) ? c.buildings : [];
+  const houses = list.filter(b => b && b.type === 'house').length;
+  const shops = list.filter(b => b && b.type === 'shop').length;
+  const trees = list.filter(b => b && b.type === 'tree').length;
+  const pop = Math.min(houses * 4, shops * 12 + houses);
+  let area = 0;
+  try { if (Array.isArray(c.border) && c.border.length >= 3) area = geodesicArea(c.border); } catch (e) {}
+  return { houses, shops, trees, pop, area };
+}
+function mpShowCountryCard(c) {
+  const panel = document.getElementById('mp-country');
+  if (!panel || !c) return;
+  const s = mpForeignStats(c);
+  document.getElementById('mpc-name').textContent = c.name || c.owner;
+  document.getElementById('mpc-body').innerHTML =
+    `<div class="mpc-row"><span>Владелец</span><b>${escLabel(c.owner || '—')}</b></div>` +
+    `<div class="mpc-row"><span>Площадь</span><b>${s.area ? s.area.toFixed(2) + ' км²' : '—'}</b></div>` +
+    `<div class="mpc-row"><span>Домов / магазинов</span><b>${s.houses} / ${s.shops}</b></div>` +
+    `<div class="mpc-row"><span>Деревьев</span><b>${s.trees}</b></div>` +
+    `<div class="mpc-row"><span>Жителей (оценка)</span><b>≈${s.pop}</b></div>` +
+    `<div class="mpc-hint">Данные по видимой части страны, без построек за пределами экрана.</div>`;
+  panel.classList.remove('hidden');
+}
+function mpHideCountryCard() { const p = document.getElementById('mp-country'); if (p) p.classList.add('hidden'); }
 // Чужая страна: контур, подпись, дороги и её постройки — только просмотр
 function mpCountryLayer(c) {
   const g = L.layerGroup();
-  L.polygon(c.border, { pane: 'pane-territory', color: c.color || '#888', weight: 2, opacity: .6, fillColor: c.color || '#888', fillOpacity: .07, interactive: false, dashArray: '5 4' }).addTo(g);
+  const border = L.polygon(c.border, { pane: 'pane-territory', color: c.color || '#888', weight: 2, opacity: .6, fillColor: c.color || '#888', fillOpacity: .07, interactive: true, dashArray: '5 4' });
+  border.on('click', e => { L.DomEvent.stop(e); mpShowCountryCard(c); });
+  border.addTo(g);
   if (map.getZoom() <= LABEL_MAX_ZOOM) L.marker(borderCentroid(c.border), { pane: 'markerPane', interactive: false, icon: L.divIcon({ className: 'country-label-wrap', html: `<div class="country-label" style="--c:${c.color || '#888'}">${escLabel(c.name || c.owner)}</div>`, iconSize: [0, 0], iconAnchor: [0, 0] }) }).addTo(g);
   mpDrawForeignLines(g, c);
   for (const b of (Array.isArray(c.buildings) ? c.buildings : [])) {

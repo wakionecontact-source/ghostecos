@@ -11,7 +11,7 @@
   <script defer src="/nation/vendor/leaflet-1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
-  <link rel="stylesheet" href="style.css?v=29"/>
+  <link rel="stylesheet" href="style.css?v=30"/>
   <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 </head>
@@ -40,8 +40,21 @@
   <div id="mp-bar" class="panel hidden">
     <b id="mp-balance">0 gost</b>
     <span id="mp-pop">0 чел</span>
+    <span id="mp-income">0 gost/ч</span>
+    <span id="mp-saved" data-state="ok">—</span>
     <button id="mp-login-open" class="mini primary">Войти</button>
     <button id="mp-logout" class="mini ghost hidden">Выйти</button>
+  </div>
+
+  <!-- ── FOREIGN COUNTRY CARD ── -->
+  <div id="mp-country" class="panel hidden">
+    <div class="cz-head">
+      <span id="mpc-name">Страна</span>
+      <button id="mpc-close" class="cz-close" title="Закрыть">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div id="mpc-body"></div>
   </div>
 
   <!-- ── MP LOGIN OVERLAY ── -->
@@ -69,23 +82,23 @@
     <div id="territory-tools-label" class="tool-section-label">ТЕРРИТОРИИ</div>
     <button class="tool" data-tool="borders"  title="Провозгласить границы"></button>
     <button class="tool" data-tool="district" data-label="Район" title="Район · сначала граница, затем 3+ точек внутри неё"></button>
-    <button class="tool" data-tool="house"    title="Жилой дом · зелёная крыша"></button>
-    <button class="tool" data-tool="shop"     title="Магазин · синяя крыша"></button>
+    <button class="tool" data-tool="house"    title="Жилой дом · зелёная крыша · 40 gost"></button>
+    <button class="tool" data-tool="shop"     title="Магазин · синяя крыша · 70 gost"></button>
     <div class="tool-section-label">ДОРОГИ И СЕТЬ</div>
-    <button class="tool" data-tool="road"     title="Дорога"></button>
-    <button class="tool" data-tool="road-oneway" title="Односторонняя дорога"></button>
-    <button class="tool" data-tool="dirt"     title="Грунтовая дорога"></button>
-    <button class="tool" data-tool="dirt-oneway" title="Односторонняя грунтовка"></button>
-    <button class="tool" data-tool="alley"    title="Переулок · узкая дорога без разметки"></button>
-    <button class="tool" data-tool="alley-oneway" title="Односторонний проезд / переулок"></button>
-    <button class="tool" data-tool="rail"     title="Железная дорога"></button>
-    <button class="tool" data-tool="station"  title="Железнодорожная станция · пеший вход соединяется с ближайшей сетью"></button>
-    <button class="tool" data-tool="path"     title="Пешая тропинка (1 м)"></button>
-    <button class="tool" data-tool="parking" title="Парковка у дороги · машины используют её в симуляции"></button>
+    <button class="tool" data-tool="road"     title="Дорога · 0.6 gost/м"></button>
+    <button class="tool" data-tool="road-oneway" title="Односторонняя дорога · 0.6 gost/м"></button>
+    <button class="tool" data-tool="dirt"     title="Грунтовая дорога · 0.6 gost/м"></button>
+    <button class="tool" data-tool="dirt-oneway" title="Односторонняя грунтовка · 0.6 gost/м"></button>
+    <button class="tool" data-tool="alley"    title="Переулок · узкая дорога без разметки · 0.6 gost/м"></button>
+    <button class="tool" data-tool="alley-oneway" title="Односторонний проезд / переулок · 0.6 gost/м"></button>
+    <button class="tool" data-tool="rail"     title="Железная дорога · 0.6 gost/м"></button>
+    <button class="tool" data-tool="station"  title="Железнодорожная станция · 250 gost"></button>
+    <button class="tool" data-tool="path"     title="Пешая тропинка (1 м) · 0.6 gost/м"></button>
+    <button class="tool" data-tool="parking" title="Парковка у дороги · 120 gost"></button>
     <button class="tool" data-tool="exit"    title="Въезд / выход транспорта"></button>
-    <button class="tool" data-tool="tree"     title="Дерево"></button>
-    <button class="tool" data-tool="light"    title="Светофор · ставится на перекрёстке"></button>
-    <button class="tool" data-tool="crosswalk" title="Пешеходный переход · только на дороге"></button>
+    <button class="tool" data-tool="tree"     title="Дерево · 4 gost"></button>
+    <button class="tool" data-tool="light"    title="Светофор · ставится на перекрёстке · 30 gost"></button>
+    <button class="tool" data-tool="crosswalk" title="Пешеходный переход · только на дороге · 10 gost"></button>
     <div class="tool-sep"></div>
     <div class="tool-section-label">РЕДАКТИРОВАНИЕ</div>
     <button class="tool" data-tool="select"  title="Изменить · выбрать постройку"></button>
@@ -196,6 +209,6 @@
   <!-- ── FLAG COLOR PICKER ── -->
   <div id="palette" class="panel hidden"></div>
 
-  <script defer src="app.js?v=34"></script>
+  <script defer src="app.js?v=36"></script>
 </body>
 </html>

@@ -32,7 +32,11 @@ if len(JWT_SECRET) < 32:
 START_BONUS         = 1500      # gost при создании страны
 CLAIM_COST_PER_KM2  = 300       # gost за км² застолблённой территории
 COST_BUILD          = {"house": 40, "shop": 70, "tree": 4}
-COST_ROAD_PER_M     = 0.6       # дорога/переулок/жд
+COST_ROAD_PER_M     = 0.6       # дорога/переулок/жд/тропинка
+COST_STATION        = 250
+COST_PARKING        = 120
+COST_LIGHT          = 30
+COST_CROSSWALK      = 10
 RESIDENTS_PER_HOUSE = 4         # население = дома × это (ограничено рабочими местами)
 JOBS_PER_SHOP       = 12
 TAX_PER_CITIZEN_HR  = 2.0       # gost в час с жителя
@@ -82,6 +86,26 @@ def _client_ip(request: Request) -> str:
     return str(peer_ip) if peer_ip else "unknown"
 
 
+def _ws_ip(ws: WebSocket) -> str:
+    """IP клиента WS: заголовкам прокси доверяем только при локальном peer."""
+    peer = ws.client.host if ws.client else "unknown"
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+    except ValueError:
+        peer_ip = None
+    if peer_ip and peer_ip.is_loopback:
+        for name in ("x-real-ip", "x-forwarded-for"):
+            raw = (ws.headers.get(name) or "").split(",")[0].strip()
+            if not raw:
+                continue
+            try:
+                forwarded = ipaddress.ip_address(raw)
+            except ValueError:
+                continue
+            return str(forwarded)
+    return str(peer_ip) if peer_ip else "unknown"
+
+
 @app.middleware("http")
 async def rate_limit(request: Request, call_next):
     key = _client_ip(request)
@@ -104,9 +128,13 @@ async def rate_limit(request: Request, call_next):
     return await call_next(request)
 
 
+SCHEMA_VERSION = 2
+
+
 def _db():
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
+    con.execute("CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL)")
     con.execute("""CREATE TABLE IF NOT EXISTS country(
         owner TEXT PRIMARY KEY, name TEXT, color TEXT,
         border TEXT, state TEXT, balance REAL DEFAULT 0, built_value REAL DEFAULT 0,
@@ -118,6 +146,10 @@ def _db():
                      ("prev_owner", "TEXT")):
         try: con.execute(f"ALTER TABLE country ADD COLUMN {col} {ddl}")
         except Exception: pass
+    row = con.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+    if row is None:
+        con.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))
+        con.commit()
     return con
 
 
@@ -148,7 +180,15 @@ _WS_MAX_LINES = 400           # линий каждого типа на стра
 _WS_MAX_POINTS = 20000        # точек во всех линиях страны
 _WS_LINE_KEYS = ("roads", "alleys", "paths", "rails")
 _WS_ANON_PER_IP = 8           # анонимных соединений с одного IP
+_WS_PER_USER = 4              # соединений на одного авторизованного игрока
+_WS_MAX_CLIENTS = 2000        # всего подписок на процесс
+_WS_SEND_TIMEOUT = 5.0        # секунд на отправку одному клиенту
 _WS_MAX_MSG = 8192            # байт в одном клиентском сообщении
+_MAX_OFFLINE_HOURS = 72.0     # сколько часов офлайна начисляем (анти-накопление)
+# коллекции состояния, которые клиент может присылать частично
+_STATE_KEYS = {"buildings", "roads", "alleys", "rails", "paths", "plannedLines", "districts",
+               "lights", "roadWalk", "lineMeta", "noZebra", "crosswalks", "stations", "exits",
+               "parking", "simulation"}
 
 
 def _lines_payload(state, bbox=None):
@@ -179,41 +219,53 @@ class WorldHub:
         self.clients: dict[WebSocket, tuple[float, float, float, float]] = {}
         self.info: dict[WebSocket, dict] = {}
         self.anon_ips: defaultdict[str, int] = defaultdict(int)
+        self.user_ws: defaultdict[str, int] = defaultdict(int)
 
     def add(self, ws: WebSocket, bbox: tuple[float, float, float, float],
-            ip: str = "", anon: bool = False) -> None:
+            ip: str = "", anon: bool = False, user: Optional[str] = None) -> None:
         prev = self.info.get(ws)
         self.clients[ws] = bbox
-        self.info[ws] = {"ip": ip, "anon": anon}
+        self.info[ws] = {"ip": ip, "anon": anon, "user": user}
         # переподписка того же соединения не должна накручивать лимит на IP
         if anon and not (prev and prev.get("anon") and prev.get("ip") == ip):
             self.anon_ips[ip] += 1
+        if user and not (prev and prev.get("user") == user):
+            self.user_ws[user] += 1
 
     def drop(self, ws: WebSocket) -> None:
         info = self.info.pop(ws, None)
-        if info and info.get("anon"):
+        if info:
             ip = info.get("ip") or ""
-            self.anon_ips[ip] = max(0, self.anon_ips[ip] - 1)
-            if not self.anon_ips[ip]:
-                self.anon_ips.pop(ip, None)
+            if info.get("anon"):
+                self.anon_ips[ip] = max(0, self.anon_ips[ip] - 1)
+                if not self.anon_ips[ip]:
+                    self.anon_ips.pop(ip, None)
+            user = info.get("user")
+            if user:
+                self.user_ws[user] = max(0, self.user_ws[user] - 1)
+                if not self.user_ws[user]:
+                    self.user_ws.pop(user, None)
         self.clients.pop(ws, None)
 
     def anon_count(self, ip: str) -> int:
         return self.anon_ips.get(ip, 0)
 
+    def user_count(self, user: str) -> int:
+        return self.user_ws.get(user, 0)
+
     async def push(self, ws: WebSocket, payload: dict) -> None:
         try:
-            await ws.send_json(payload)
+            await asyncio.wait_for(ws.send_json(payload), _WS_SEND_TIMEOUT)
         except Exception:
             self.drop(ws)
 
     async def broadcast(self, area, payload: dict) -> int:
-        sent = 0
-        for ws, bbox in list(self.clients.items()):
-            if _bbox_hits(bbox, area):
-                await self.push(ws, payload)
-                sent += 1
-        return sent
+        targets = [ws for ws, bbox in list(self.clients.items()) if _bbox_hits(bbox, area)]
+        if not targets:
+            return 0
+        # один медленный клиент не должен задерживать рассылку остальным
+        results = await asyncio.gather(*(self.push(ws, payload) for ws in targets), return_exceptions=True)
+        return sum(1 for r in results if not isinstance(r, Exception))
 
 
 _hub = WorldHub()
@@ -324,7 +376,7 @@ def _validate_state(state: dict) -> None:
             raise HTTPException(400, f"buildings[{i}] must be an object")
         if building.get("lat") is not None or building.get("lng") is not None:
             _validate_point([building.get("lat"), building.get("lng")], f"buildings[{i}]")
-    for key in ("roads", "alleys"):
+    for key in ("roads", "alleys", "rails", "paths"):
         lines = state.get(key, [])
         if not isinstance(lines, list) or len(lines) > MAX_ROADS:
             raise HTTPException(413, f"Too many {key} (max {MAX_ROADS})")
@@ -333,9 +385,13 @@ def _validate_state(state: dict) -> None:
                 raise HTTPException(400, f"{key}[{i}] has an invalid number of points")
             for j, point in enumerate(line):
                 _validate_point(point, f"{key}[{i}][{j}]")
-    total_points = sum(len(line) for key in ("roads", "alleys") for line in state.get(key, []))
+    total_points = sum(len(line) for key in ("roads", "alleys", "rails", "paths") for line in state.get(key, []))
     if total_points > MAX_TOTAL_ROAD_POINTS:
         raise HTTPException(413, f"Too many road points (max {MAX_TOTAL_ROAD_POINTS})")
+    for key in ("lineMeta", "roadWalk"):
+        meta = state.get(key, {})
+        if not isinstance(meta, dict) or len(meta) > 8192:
+            raise HTTPException(413, f"{key} is too large")
 
 
 def _centroid(b):
@@ -394,8 +450,12 @@ def _state_value(state):
     v = 0.0
     for b in state.get("buildings", []):
         v += COST_BUILD.get(b.get("type"), 0)
-    v += _road_len_m(state.get("roads", [])) * COST_ROAD_PER_M
-    v += _road_len_m(state.get("alleys", [])) * COST_ROAD_PER_M
+    for key in ("roads", "alleys", "rails", "paths"):
+        v += _road_len_m(state.get(key, [])) * COST_ROAD_PER_M
+    v += len(state.get("stations") or []) * COST_STATION
+    v += len(state.get("parking") or []) * COST_PARKING
+    v += len(state.get("lights") or []) * COST_LIGHT
+    v += len(state.get("crosswalks") or []) * COST_CROSSWALK
     return v
 
 
@@ -407,6 +467,8 @@ class ClaimReq(BaseModel):
 
 class SaveReq(BaseModel):
     state: dict
+    # необязательный список коллекций: клиент присылает только изменённое
+    keys: Optional[list] = None
 
 
 @app.get("/api/nation/world")
@@ -420,7 +482,7 @@ def world(minlat: float = Query(...), minlng: float = Query(...),
     con = _db()
     rows = con.execute(
         "SELECT owner,name,color,border,cx,cy FROM country "
-        "WHERE NOT (maxlat<? OR minlat>? OR maxlng<? OR minlng>?) "
+        "WHERE archived=0 AND NOT (maxlat<? OR minlat>? OR maxlng<? OR minlng>?) "
         "ORDER BY updated DESC LIMIT ?",
         (minlat, maxlat, minlng, maxlng, _MAX_WORLD_COUNTRIES)).fetchall()
     con.close()
@@ -444,9 +506,15 @@ async def world_ws(ws: WebSocket, token: str = Query("")):
             user = _user("Bearer " + token)
         except HTTPException:
             user = None
-    ip = ws.client.host if ws.client else "unknown"
+    ip = _ws_ip(ws)
     anon = user is None
+    if len(_hub.clients) >= _WS_MAX_CLIENTS:
+        await ws.close(code=4429)
+        return
     if anon and _hub.anon_count(ip) >= _WS_ANON_PER_IP:
+        await ws.close(code=4429)
+        return
+    if user and _hub.user_count(user) >= _WS_PER_USER:
         await ws.close(code=4429)
         return
     await ws.accept()
@@ -471,7 +539,7 @@ async def world_ws(ws: WebSocket, token: str = Query("")):
             bbox = _norm_bbox(msg)
             if not bbox:
                 continue
-            _hub.add(ws, bbox, ip, anon)
+            _hub.add(ws, bbox, ip, anon, user)
             con = _db()
             rows = con.execute(
                 "SELECT * FROM country WHERE archived=0 "
@@ -499,7 +567,7 @@ def get_mine(authorization: Optional[str] = Header(None)):
     state = json.loads(r["state"] or "{}")
     pop = _population(state)
     now = int(time.time())
-    hrs = max(0.0, (now - (r["last_income"] or now)) / 3600.0)
+    hrs = min(_MAX_OFFLINE_HOURS, max(0.0, (now - (r["last_income"] or now)) / 3600.0))
     bal = r["balance"] + pop * TAX_PER_CITIZEN_HR * hrs
     con.execute("UPDATE country SET balance=?, last_income=? WHERE owner=?", (bal, now, user))
     con.commit()
@@ -520,12 +588,18 @@ async def claim(req: ClaimReq, authorization: Optional[str] = Header(None)):
     # Serialize overlap check and country creation/update. Otherwise two
     # simultaneous claims could validate against the same stale map.
     con.execute("BEGIN IMMEDIATE")
-    for o in con.execute("SELECT owner,border FROM country WHERE owner!=?", (user,)).fetchall():
+    bb = _bbox(req.border)
+    # только неархивные соседи, чей bbox задевает новый контур (без полного скана)
+    for o in con.execute(
+        "SELECT owner,border FROM country WHERE owner!=? AND archived=0 "
+        "AND NOT (maxlat<? OR minlat>? OR maxlng<? OR minlng>?)",
+        (user, bb[0], bb[2], bb[1], bb[3]),
+    ).fetchall():
         if _overlap(req.border, json.loads(o["border"])):
             con.rollback(); con.close()
             raise HTTPException(409, f"Граница пересекает территорию игрока {o['owner']}")
     now = int(time.time())
-    bb = _bbox(req.border); cx, cy = _centroid(req.border)
+    cx, cy = _centroid(req.border)
     ex = con.execute("SELECT balance,border FROM country WHERE owner=?", (user,)).fetchone()
     if ex:
         # Расширение стоит gost по приросту площади; сжатие и перерисовка в
@@ -557,32 +631,42 @@ async def claim(req: ClaimReq, authorization: Optional[str] = Header(None)):
 @app.put("/api/nation/mine")
 async def save_mine(req: SaveReq, authorization: Optional[str] = Header(None)):
     user = _user(authorization)
+    keys = req.keys
+    if keys is not None:
+        if (not isinstance(keys, list) or len(keys) > 64
+                or any(k not in _STATE_KEYS for k in keys)
+                or any(k not in (req.state or {}) for k in keys)):
+            raise HTTPException(400, "keys: invalid partial state")
     con = _db()
     r = con.execute("SELECT border,state,balance,built_value FROM country WHERE owner=?", (user,)).fetchone()
     if not r:
         con.close(); raise HTTPException(404, "Сначала застолби территорию (claim)")
-    border = json.loads(r["border"])
-    st = req.state or {}
-    encoded_state = json.dumps(st, ensure_ascii=False, separators=(",", ":"))
-    if len(encoded_state.encode("utf-8")) > _MAX_STATE_BYTES:
-        con.close()
-        raise HTTPException(413, "Состояние слишком большое")
-    try:
-        _validate_state(st)
-    except HTTPException:
-        con.close()
-        raise
-    # Re-read under the write lock after all CPU-heavy validation.
+    # Re-read under the write lock: partial state merges with the stored one.
     con.execute("BEGIN IMMEDIATE")
     r = con.execute("SELECT border,state,balance,built_value FROM country WHERE owner=?", (user,)).fetchone()
     if not r:
         con.rollback()
         con.close()
         raise HTTPException(404, "Сначала застолби территорию (claim)")
+    st = json.loads(r["state"] or "{}") if keys is not None else (req.state or {})
+    if keys is not None:
+        for k in keys:
+            st[k] = req.state.get(k)
     border = json.loads(r["border"])
     # объекты только ВНУТРИ границы (анти-вылезание)
     st["buildings"] = [b for b in st.get("buildings", [])
                        if b.get("lat") is not None and _in_poly([b["lat"], b["lng"]], border)]
+    encoded_state = json.dumps(st, ensure_ascii=False, separators=(",", ":"))
+    if len(encoded_state.encode("utf-8")) > _MAX_STATE_BYTES:
+        con.rollback()
+        con.close()
+        raise HTTPException(413, "Состояние слишком большое")
+    try:
+        _validate_state(st)
+    except HTTPException:
+        con.rollback()
+        con.close()
+        raise
     # стоимость = прирост «стоимости застройки» над ранее оплаченным пиком (built_value ратчетится)
     val = _state_value(st)
     spend = max(0.0, val - (r["built_value"] or 0))

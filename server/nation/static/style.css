@@ -386,3 +386,13 @@ button { cursor: pointer; background: none; border: none; color: inherit; font-f
 .mp-login-box input { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 9px; padding: 10px 12px; color: var(--text); font-size: 14px; outline: none; }
 .mp-login-box input:focus { border-color: var(--accent); }
 .mp-login-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+
+/* ── Мир: состояние сохранения и карточка чужой страны ── */
+#mp-bar #mp-income { color: var(--text-dim); }
+#mp-saved { font-size: 11px; color: var(--text-dim); opacity: .8; }
+#mp-saved[data-state="err"] { color: #ff8a80; opacity: 1; }
+#mp-country { top: 108px; left: 50%; transform: translateX(-50%); width: 270px; max-width: 92vw; padding: 12px 14px; z-index: 600; }
+#mp-country .cz-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 700; margin-bottom: 8px; }
+.mpc-row { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; padding: 3px 0; color: var(--text-dim); }
+.mpc-row b { color: var(--text); font-weight: 600; }
+.mpc-hint { margin-top: 8px; font-size: 11px; color: var(--text-dim); opacity: .75; line-height: 1.4; }
