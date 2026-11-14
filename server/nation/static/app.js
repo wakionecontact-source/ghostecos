@@ -739,27 +739,27 @@ function roofFacets(b) {                 // hip roof: 2 slopes + 2 hip ends + ri
   else { const e = Math.max(0, h / 2 - w / 2); R1 = [0, -e]; R2 = [0, e]; s1 = [c0, c3, R2, R1]; s2 = [c1, c2, R2, R1]; t1 = [c0, R1, c1]; t2 = [c3, R2, c2]; }
   return { slope1: s1.map(p => P(...p)), slope2: s2.map(p => P(...p)), hip1: t1.map(p => P(...p)), hip2: t2.map(p => P(...p)), ridge: [P(...R1), P(...R2)] };
 }
-function drawHouse(b) {
-  const corners = rectCorners(b), out = [];
+function drawHouse(b, layer = buildLayer) {
+  const corners = rectCorners(b), out = [], own = layer === buildLayer;
   if (b.type === 'shop') {
-    out.push(L.polygon(corners, { pane: 'pane-builds', color: '#ffffff', weight: 4, fillColor: ROOF.shop.fill, fillOpacity: .95 }).addTo(buildLayer));   // parapet
-    out.push(L.polygon(insetRect(b, 0.66), { pane: 'pane-builds', color: '#173b6b', weight: 1, fillColor: '#2f6fc4', fillOpacity: .97 }).addTo(buildLayer)); // roof field
-    out.push(L.polygon(insetRect(b, 0.30), { pane: 'pane-builds', color: '#0e294e', weight: 1, fillColor: '#1d4f93', fillOpacity: .97 }).addTo(buildLayer)); // rooftop unit
+    out.push(L.polygon(corners, { pane: 'pane-builds', color: '#ffffff', weight: 4, fillColor: ROOF.shop.fill, fillOpacity: .95 }).addTo(layer));   // parapet
+    out.push(L.polygon(insetRect(b, 0.66), { pane: 'pane-builds', color: '#173b6b', weight: 1, fillColor: '#2f6fc4', fillOpacity: .97 }).addTo(layer)); // roof field
+    out.push(L.polygon(insetRect(b, 0.30), { pane: 'pane-builds', color: '#0e294e', weight: 1, fillColor: '#1d4f93', fillOpacity: .97 }).addTo(layer)); // rooftop unit
   } else {
     const f = roofFacets(b);
-    out.push(L.polygon(f.slope1, { pane: 'pane-builds', color: ROOF.house.edge, weight: 1, fillColor: '#44c65a', fillOpacity: .97 }).addTo(buildLayer));
-    out.push(L.polygon(f.slope2, { pane: 'pane-builds', color: ROOF.house.edge, weight: 1, fillColor: '#2f9d43', fillOpacity: .97 }).addTo(buildLayer));
-    out.push(L.polygon(f.hip1, { pane: 'pane-builds', color: ROOF.house.edge, weight: 1, fillColor: '#23823a', fillOpacity: .97 }).addTo(buildLayer));
-    out.push(L.polygon(f.hip2, { pane: 'pane-builds', color: ROOF.house.edge, weight: 1, fillColor: '#23823a', fillOpacity: .97 }).addTo(buildLayer));
-    out.push(L.polyline(f.ridge, { pane: 'pane-builds', color: '#eafff0', weight: 1.8, opacity: .95 }).addTo(buildLayer));
+    out.push(L.polygon(f.slope1, { pane: 'pane-builds', color: ROOF.house.edge, weight: 1, fillColor: '#44c65a', fillOpacity: .97 }).addTo(layer));
+    out.push(L.polygon(f.slope2, { pane: 'pane-builds', color: ROOF.house.edge, weight: 1, fillColor: '#2f9d43', fillOpacity: .97 }).addTo(layer));
+    out.push(L.polygon(f.hip1, { pane: 'pane-builds', color: ROOF.house.edge, weight: 1, fillColor: '#23823a', fillOpacity: .97 }).addTo(layer));
+    out.push(L.polygon(f.hip2, { pane: 'pane-builds', color: ROOF.house.edge, weight: 1, fillColor: '#23823a', fillOpacity: .97 }).addTo(layer));
+    out.push(L.polyline(f.ridge, { pane: 'pane-builds', color: '#eafff0', weight: 1.8, opacity: .95 }).addTo(layer));
   }
-  out.push(L.polygon(doorRect(b), { pane: 'pane-builds', color: '#7a4a12', weight: 1, fillColor: PORCH, fillOpacity: .95 }).addTo(buildLayer));
-  out.forEach(l => { l.on('click', e => onBuildClick(b, e)); l.on('mouseover', () => hoverBuilding(b)); l.on('mouseout', clearHover); });
+  out.push(L.polygon(doorRect(b), { pane: 'pane-builds', color: '#7a4a12', weight: 1, fillColor: PORCH, fillOpacity: .95 }).addTo(layer));
+  if (own) out.forEach(l => { l.on('click', e => onBuildClick(b, e)); l.on('mouseover', () => hoverBuilding(b)); l.on('mouseout', clearHover); });
   return out;
 }
-function drawTree(b) {
-  const c = L.circle([b.lat, b.lng], { pane: 'pane-builds', radius: clampR(b.r ?? DEF.tree.r), color: '#16551f', weight: 1, fillColor: '#2f9a44', fillOpacity: .9 }).addTo(buildLayer);
-  c.on('click', e => onBuildClick(b, e)); c.on('mouseover', () => hoverBuilding(b)); c.on('mouseout', clearHover);
+function drawTree(b, layer = buildLayer) {
+  const c = L.circle([b.lat, b.lng], { pane: 'pane-builds', radius: clampR(b.r ?? DEF.tree.r), color: '#16551f', weight: 1, fillColor: '#2f9a44', fillOpacity: .9 }).addTo(layer);
+  if (layer === buildLayer) { c.on('click', e => onBuildClick(b, e)); c.on('mouseover', () => hoverBuilding(b)); c.on('mouseout', clearHover); }
   return [c];
 }
 function renderBuildings() { buildLayer.clearLayers(); blMap.clear(); state.buildings.forEach(b => blMap.set(b, b.type === 'tree' ? drawTree(b) : drawHouse(b))); }
@@ -2791,7 +2791,7 @@ function wire() {
 /* ════════════════ BOOT ════════════════ */
 /* ════════════════ МУЛЬТИПЛЕЕР (общий мир, аккаунты GhostEcos) ════════════════ */
 const MP_API = '/api/nation', MP_STORE = 'ghostnation:mp';
-const mp = { mode: localStorage.getItem('ghostnation:mode') === 'mp' ? 'mp' : 'local', country: null, balance: 0, pop: 0, worldLayer: null, saveTimer: null };
+const mp = { mode: localStorage.getItem('ghostnation:mode') === 'mp' ? 'mp' : 'local', country: null, balance: 0, pop: 0, worldLayer: null, saveTimer: null, world: new Map(), layers: new Map(), ws: null, wsReady: false, wsRetry: 0, wsTimer: 0, wsSubTimer: 0 };
 let mpWorldLoadTimer = 0, mpWorldLoadInFlight = false, mpWorldLoadAgain = false;
 function isMP() { return mp.mode === 'mp'; }
 
@@ -2859,7 +2859,7 @@ function setMode(m) {
   if (m === mp.mode) return;
   if (mp.mode === 'local') localStorage.setItem(STORE_KEY, JSON.stringify(state));
   mp.mode = m; localStorage.setItem('ghostnation:mode', m); updateModeUI();
-  if (m === 'local') { mp.worldLayer.clearLayers(); mp.country = null; state = load(); document.getElementById('state-name').value = state.name; renderAll(); flash('Локальный режим'); }
+  if (m === 'local') { mpWsClose(); mp.world.clear(); mp.layers.clear(); mp.worldLayer.clearLayers(); mp.country = null; state = load(); document.getElementById('state-name').value = state.name; renderAll(); flash('Локальный режим'); }
   else enterMP();
 }
 function updateModeUI() {
@@ -2873,7 +2873,7 @@ function updateBalanceUI() {
   const p = document.getElementById('mp-pop'); if (p) p.textContent = mp.pop + ' чел';
   const lo = document.getElementById('mp-logout'); if (lo) lo.classList.toggle('hidden', !ssoToken());
 }
-function enterMP() { if (!ssoToken()) { showMpLogin(); return; } mpLoadMine().then(mpLoadWorld); }
+function enterMP() { if (!ssoToken()) { showMpLogin(); return; } mpLoadMine().then(() => { mpWsConnect(); mpLoadWorld(); }); }
 async function mpLoadMine() {
   try {
     const r = await mpApi('/mine');
@@ -2921,6 +2921,11 @@ async function mpClaim() {
 }
 function scheduleMpWorldLoad(delay = 120) {
   if (!isMP() || !map || !mp.worldLayer) return;
+  if (mp.wsReady) {                          // WS жив: только переподписка на новый bbox
+    if (mp.wsSubTimer) { if (delay > 0) return; clearTimeout(mp.wsSubTimer); mp.wsSubTimer = 0; }
+    mp.wsSubTimer = setTimeout(() => { mp.wsSubTimer = 0; mpWsSubscribe(); }, Math.max(0, delay));
+    return;
+  }
   if (mpWorldLoadInFlight) { mpWorldLoadAgain = true; return; }
   if (mpWorldLoadTimer) {
     if (delay > 0) return;
@@ -2929,8 +2934,87 @@ function scheduleMpWorldLoad(delay = 120) {
   if (delay <= 0) { mpLoadWorld(); return; }
   mpWorldLoadTimer = setTimeout(() => { mpWorldLoadTimer = 0; mpLoadWorld(); }, delay);
 }
+
+/* ── Мир в реальном времени: снимок bbox по WS + push изменений ── */
+function mpBoundsMsg() {
+  const b = map.getBounds();
+  return { type: 'sub', minlat: b.getSouth(), minlng: b.getWest(), maxlat: b.getNorth(), maxlng: b.getEast() };
+}
+function mpWsClose() {
+  if (mp.wsSubTimer) { clearTimeout(mp.wsSubTimer); mp.wsSubTimer = 0; }
+  if (mp.wsTimer) { clearTimeout(mp.wsTimer); mp.wsTimer = 0; }
+  if (mp.ws) { try { mp.ws.onclose = null; mp.ws.close(); } catch (e) {} }
+  mp.ws = null; mp.wsReady = false;
+}
+function mpWsRetry() {
+  if (!isMP() || mp.wsTimer) return;
+  mp.wsRetry = Math.min((mp.wsRetry || 0) + 1, 6);
+  mp.wsTimer = setTimeout(() => { mp.wsTimer = 0; mpWsConnect(); }, Math.min(15000, 700 * Math.pow(2, mp.wsRetry - 1)));
+}
+async function mpWsConnect() {
+  if (!isMP() || !mp.worldLayer || mp.ws) return;
+  const t = await mpToken();
+  if (!t) return;
+  const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  let ws;
+  try { ws = new WebSocket(scheme + location.host + '/api/nation/ws?token=' + encodeURIComponent(t)); }
+  catch (e) { mpWsRetry(); return; }
+  mp.ws = ws;
+  ws.onopen = () => { mp.wsReady = true; mp.wsRetry = 0; mpWsSubscribe(); };
+  ws.onmessage = ev => { let msg; try { msg = JSON.parse(ev.data); } catch (e) { return; } mpWsHandle(msg); };
+  ws.onclose = () => { mp.ws = null; mp.wsReady = false; mpWsRetry(); };
+  ws.onerror = () => {};
+}
+function mpWsSubscribe() {
+  if (mp.ws && mp.ws.readyState === 1 && map) mp.ws.send(JSON.stringify(mpBoundsMsg()));
+}
+function mpWsHandle(msg) {
+  if (!msg || typeof msg !== 'object') return;
+  if (msg.type === 'snapshot') {
+    mp.world.clear();
+    for (const c of msg.countries || []) if (c && c.owner) mp.world.set(c.owner, c);
+    mpWorldRedraw();
+  } else if (msg.type === 'country' && msg.country && msg.country.owner) {
+    mp.world.set(msg.country.owner, msg.country);
+    mpWorldUpsert(msg.country);
+  } else if (msg.type === 'remove' && msg.owner) {
+    mpWorldRemove(msg.owner);
+  }
+}
+// Чужая страна: контур, подпись и её постройки — только просмотр
+function mpCountryLayer(c) {
+  const g = L.layerGroup();
+  L.polygon(c.border, { pane: 'pane-territory', color: c.color || '#888', weight: 2, opacity: .6, fillColor: c.color || '#888', fillOpacity: .07, interactive: false, dashArray: '5 4' }).addTo(g);
+  if (map.getZoom() <= LABEL_MAX_ZOOM) L.marker(borderCentroid(c.border), { pane: 'markerPane', interactive: false, icon: L.divIcon({ className: 'country-label-wrap', html: `<div class="country-label" style="--c:${c.color || '#888'}">${escLabel(c.name || c.owner)}</div>`, iconSize: [0, 0], iconAnchor: [0, 0] }) }).addTo(g);
+  for (const b of (Array.isArray(c.buildings) ? c.buildings : [])) {
+    if (!isFinite(b.lat) || !isFinite(b.lng)) continue;
+    if (b.type === 'tree') drawTree(b, g); else drawHouse(b, g);
+  }
+  return g;
+}
+function mpWorldUpsert(c) {
+  if (!mp.worldLayer || !c || !c.owner) return;
+  if (mp.country && c.owner === mp.country.owner) return;
+  if (!Array.isArray(c.border) || c.border.length < 3) return;
+  const old = mp.layers.get(c.owner);
+  if (old) mp.worldLayer.removeLayer(old);
+  mp.layers.set(c.owner, mpCountryLayer(c).addTo(mp.worldLayer));
+}
+function mpWorldRemove(owner) {
+  const g = mp.layers.get(owner);
+  if (g && mp.worldLayer) mp.worldLayer.removeLayer(g);
+  mp.layers.delete(owner);
+  mp.world.delete(owner);
+}
+function mpWorldRedraw() {
+  if (!mp.worldLayer) return;
+  mp.worldLayer.clearLayers();
+  mp.layers.clear();
+  for (const c of mp.world.values()) mpWorldUpsert(c);
+}
 async function mpLoadWorld() {
   if (!isMP() || !map || !mp.worldLayer) return;
+  if (mp.wsReady) { mpWsSubscribe(); return; }
   if (mpWorldLoadInFlight) { mpWorldLoadAgain = true; return; }
   mpWorldLoadInFlight = true;
   const b = map.getBounds();
@@ -2943,14 +3027,11 @@ async function mpLoadWorld() {
     if (mpWorldLoadAgain) { mpWorldLoadAgain = false; scheduleMpWorldLoad(80); }
   }
 }
+// REST-фолбэк: только границы без построек (полный набор даёт снимок по WS)
 function mpRenderWorld(countries) {
-  mp.worldLayer.clearLayers();
-  const mine = mp.country && mp.country.owner;
-  for (const c of countries) {
-    if (c.owner === mine || !c.border || c.border.length < 3) continue;
-    L.polygon(c.border, { pane: 'pane-territory', color: c.color || '#888', weight: 2, opacity: .6, fillColor: c.color || '#888', fillOpacity: .07, interactive: false, dashArray: '5 4' }).addTo(mp.worldLayer);
-    if (map.getZoom() <= LABEL_MAX_ZOOM) L.marker(borderCentroid(c.border), { pane: 'markerPane', interactive: false, icon: L.divIcon({ className: 'country-label-wrap', html: `<div class="country-label" style="--c:${c.color || '#888'}">${escLabel(c.name || c.owner)}</div>`, iconSize: [0, 0], iconAnchor: [0, 0] }) }).addTo(mp.worldLayer);
-  }
+  mp.world.clear();
+  for (const c of countries) if (c && c.owner) mp.world.set(c.owner, c);
+  mpWorldRedraw();
 }
 function showMpLogin() { if (ssoToken()) return; document.getElementById('mp-login').classList.remove('hidden'); }
 function hideMpLogin() { document.getElementById('mp-login').classList.add('hidden'); }

@@ -13,10 +13,10 @@ GhostNation — бэкенд общего мира (мультиплеер).
 Запуск:  uvicorn server:app --host 127.0.0.1 --port 8010
 Деплой:  systemd + nginx location /api/nation/ → 127.0.0.1:8010 (как /api/soc → 8005).
 """
-import os, json, math, time, sqlite3, hmac, ipaddress
+import os, json, math, time, sqlite3, hmac, ipaddress, asyncio
 from collections import defaultdict, deque
 from typing import Optional
-from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 import jwt
@@ -140,6 +140,99 @@ def _user(authorization: Optional[str]) -> str:
     if not isinstance(sub, str) or not (1 <= len(sub) <= 64):
         raise HTTPException(401, "Invalid token")
     return sub
+
+
+# ── Общий мир в реальном времени (WS) ──
+_WS_MAX_BUILDINGS = 1500      # потолок построек на страну в одном сообщении
+
+
+class WorldHub:
+    """Подписки на bbox: кто что видит, тому и push."""
+
+    def __init__(self):
+        self.clients: dict[WebSocket, tuple[float, float, float, float]] = {}
+
+    def add(self, ws: WebSocket, bbox: tuple[float, float, float, float]) -> None:
+        self.clients[ws] = bbox
+
+    def drop(self, ws: WebSocket) -> None:
+        self.clients.pop(ws, None)
+
+    async def push(self, ws: WebSocket, payload: dict) -> None:
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            self.drop(ws)
+
+    async def broadcast(self, area, payload: dict) -> int:
+        sent = 0
+        for ws, bbox in list(self.clients.items()):
+            if _bbox_hits(bbox, area):
+                await self.push(ws, payload)
+                sent += 1
+        return sent
+
+
+_hub = WorldHub()
+
+
+def _bbox_hits(a, b) -> bool:
+    return not (a[2] < b[0] or a[0] > b[2] or a[3] < b[1] or a[1] > b[3])
+
+
+def _norm_bbox(msg: dict):
+    try:
+        box = tuple(float(msg[k]) for k in ("minlat", "minlng", "maxlat", "maxlng"))
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in box):
+        return None
+    if not (-90 <= box[0] <= box[2] <= 90 and -180 <= box[1] <= box[3] <= 180):
+        return None
+    return box
+
+
+def _country_payload(row, bbox=None) -> dict:
+    """Страна для мира: границы + постройки (обрезанные по bbox)."""
+    state = json.loads(row["state"] or "{}")
+    buildings = []
+    for b in state.get("buildings", [])[:MAX_BUILDINGS]:
+        if not isinstance(b, dict):
+            continue
+        try:
+            lat, lng = float(b.get("lat")), float(b.get("lng"))
+        except (TypeError, ValueError):
+            continue
+        if bbox and not (bbox[0] <= lat <= bbox[2] and bbox[1] <= lng <= bbox[3]):
+            continue
+        item = {"type": b.get("type") or "house", "lat": round(lat, 6), "lng": round(lng, 6)}
+        if b.get("type") == "tree":
+            item["r"] = round(float(b.get("r") or 3.5), 2)
+        else:
+            item["w"] = round(float(b.get("w") or 13), 1)
+            item["h"] = round(float(b.get("h") or 10), 1)
+            item["rot"] = round(float(b.get("rot") or 0), 1)
+        buildings.append(item)
+        if len(buildings) >= _WS_MAX_BUILDINGS:
+            break
+    return {"owner": row["owner"], "name": row["name"], "color": row["color"],
+            "border": json.loads(row["border"]), "cx": row["cx"], "cy": row["cy"],
+            "buildings": buildings, "updated": row["updated"]}
+
+
+def _country_row(owner: str):
+    con = _db()
+    r = con.execute("SELECT * FROM country WHERE owner=? AND archived=0", (owner,)).fetchone()
+    con.close()
+    return r
+
+
+async def _broadcast_country(owner: str) -> None:
+    r = _country_row(owner)
+    if not r:
+        return
+    await _hub.broadcast((r["minlat"], r["minlng"], r["maxlat"], r["maxlng"]),
+                         {"type": "country", "country": _country_payload(r)})
 
 
 # ── Геометрия ──
@@ -291,6 +384,48 @@ def world(minlat: float = Query(...), minlng: float = Query(...),
         for r in rows]}
 
 
+@app.websocket("/api/nation/ws")
+async def world_ws(ws: WebSocket, token: str = Query("")):
+    """Общий мир в реальном времени: клиент подписывается на bbox и получает
+    снимок, дальше — push при claim/save любой страны в этом bbox."""
+    try:
+        _user("Bearer " + token)
+    except HTTPException:
+        await ws.close(code=4401)
+        return
+    await ws.accept()
+    try:
+        while True:
+            msg = await ws.receive_json()
+            if not isinstance(msg, dict):
+                continue
+            kind = msg.get("type")
+            if kind == "ping":
+                await ws.send_json({"type": "pong"})
+                continue
+            if kind != "sub":
+                continue
+            bbox = _norm_bbox(msg)
+            if not bbox:
+                continue
+            _hub.add(ws, bbox)
+            con = _db()
+            rows = con.execute(
+                "SELECT * FROM country WHERE archived=0 "
+                "AND NOT (maxlat<? OR minlat>? OR maxlng<? OR minlng>?) "
+                "ORDER BY updated DESC LIMIT ?",
+                (bbox[0], bbox[2], bbox[1], bbox[3], _MAX_WORLD_COUNTRIES)).fetchall()
+            con.close()
+            await ws.send_json({"type": "snapshot",
+                                "countries": [_country_payload(r, bbox) for r in rows]})
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        _hub.drop(ws)
+
+
 @app.get("/api/nation/mine")
 def get_mine(authorization: Optional[str] = Header(None)):
     user = _user(authorization)
@@ -313,7 +448,7 @@ def get_mine(authorization: Optional[str] = Header(None)):
 
 
 @app.post("/api/nation/claim")
-def claim(req: ClaimReq, authorization: Optional[str] = Header(None)):
+async def claim(req: ClaimReq, authorization: Optional[str] = Header(None)):
     user = _user(authorization)
     _validate_border(req.border)
     area = _area_km2(req.border)
@@ -352,11 +487,12 @@ def claim(req: ClaimReq, authorization: Optional[str] = Header(None)):
     con.commit()
     bal = con.execute("SELECT balance FROM country WHERE owner=?", (user,)).fetchone()["balance"]
     con.close()
+    await _broadcast_country(user)          # мир видит новую границу сразу
     return {"ok": True, "balance": round(bal, 1), "area_km2": round(area, 4), "cost": round(cost, 1)}
 
 
 @app.put("/api/nation/mine")
-def save_mine(req: SaveReq, authorization: Optional[str] = Header(None)):
+async def save_mine(req: SaveReq, authorization: Optional[str] = Header(None)):
     user = _user(authorization)
     con = _db()
     r = con.execute("SELECT border,state,balance,built_value FROM country WHERE owner=?", (user,)).fetchone()
@@ -405,6 +541,7 @@ def save_mine(req: SaveReq, authorization: Optional[str] = Header(None)):
     con.commit()
     bal = con.execute("SELECT balance FROM country WHERE owner=?", (user,)).fetchone()["balance"]
     con.close()
+    await _broadcast_country(user)          # соседи видят новые постройки без перезагрузки
     return {"ok": True, "balance": round(bal, 1), "spent": round(spend, 1),
             "population": _population(st)}
 
@@ -442,7 +579,7 @@ def cleanup_archived(days: int = Query(180), x_internal_token: Optional[str] = H
 
 
 @app.post("/api/nation/archive/{username}")
-def archive_country(username: str, x_internal_token: Optional[str] = Header(None)):
+async def archive_country(username: str, x_internal_token: Optional[str] = Header(None)):
     """Архивирует страну юзера (постройки остаются на карте, но без владельца).
     Защищено внутренним токеном — вызывается из social_router при DELETE /me/account.
     """
@@ -452,7 +589,7 @@ def archive_country(username: str, x_internal_token: Optional[str] = Header(None
     if not uname or len(uname) > 64:
         raise HTTPException(400, "Empty username")
     con = _db()
-    r = con.execute("SELECT owner FROM country WHERE owner=?", (uname,)).fetchone()
+    r = con.execute("SELECT owner,minlat,minlng,maxlat,maxlng FROM country WHERE owner=?", (uname,)).fetchone()
     if not r:
         con.close()
         return {"ok": True, "archived": False, "reason": "no country"}
@@ -466,4 +603,6 @@ def archive_country(username: str, x_internal_token: Optional[str] = Header(None
         (new_owner, now, uname, uname),
     )
     con.commit(); con.close()
+    await _hub.broadcast((r["minlat"], r["minlng"], r["maxlat"], r["maxlng"]),
+                         {"type": "remove", "owner": uname})
     return {"ok": True, "archived": True, "username": uname}
