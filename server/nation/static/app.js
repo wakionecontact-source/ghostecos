@@ -480,10 +480,37 @@ function onMapClick(e) {
 }
 function bRadius(b) { return b.type === 'tree' ? clampR(b.r ?? DEF.tree.r) : Math.hypot(clampWH(b.w ?? DEF[b.type].w) / 2, clampWH(b.h ?? DEF[b.type].h) / 2); }
 function distMeters(la1, ln1, la2, ln2) { const E = (ln2 - ln1) * mPerDegLng(la1), N = (la2 - la1) * MPD_LAT; return Math.hypot(E, N); }
-function overlapsAt(lat, lng, radius, exclude) { for (const o of state.buildings) { if (o === exclude) continue; if (distMeters(lat, lng, o.lat, o.lng) < radius + bRadius(o)) return true; } for (const s of state.stations || []) if (distMeters(lat, lng, s.lat, s.lng) < radius + 9) return true; return false; }
-function insideBuilding(lat, lng) { for (const o of state.buildings) if (distMeters(lat, lng, o.lat, o.lng) < bRadius(o) + 1) return true; for (const s of state.stations || []) if (distMeters(lat, lng, s.lat, s.lng) < 9) return true; return false; }
+const LINE_KINDS = ['roads', 'alleys', 'paths', 'rails'];
+function lineHalfWidth(kind) { return ((kind === 'rails' ? LINE_M.rail : kind === 'paths' ? LINE_M.path : kind === 'alleys' ? LINE_M.alley : LINE_M.road) / 2) + 0.3; }
+function lineSegDistMin(lat, lng, line) {
+  let best = Infinity;
+  for (let i = 1; i < line.length; i++) best = Math.min(best, pointSegDistM(lat, lng, line[i - 1], line[i]));
+  return best;
+}
+function nearestAnyLineDist(lat, lng) {
+  let best = Infinity;
+  for (const kind of LINE_KINDS) for (const line of state[kind] || []) best = Math.min(best, lineSegDistMin(lat, lng, line));
+  return best;
+}
+// занятость места ЛЮБЫМ объектом: постройки, станции, парковки, съезды, светофоры, переходы
+function overlapsAt(lat, lng, radius, exclude) {
+  for (const o of state.buildings) { if (o === exclude) continue; if (distMeters(lat, lng, o.lat, o.lng) < radius + bRadius(o)) return true; }
+  for (const s of state.stations || []) if (distMeters(lat, lng, s.lat, s.lng) < radius + 9) return true;
+  for (const p of state.parking || []) if (distMeters(lat, lng, p.lat, p.lng) < radius + Math.max(p.w || 22, p.h || 9) / 2) return true;
+  for (const x of state.exits || []) if (distMeters(lat, lng, x.lat, x.lng) < radius + 6) return true;
+  for (const l of state.lights || []) if (distMeters(lat, lng, l.lat, l.lng) < radius + 2.5) return true;
+  for (const c of state.crosswalks || []) if (distMeters(lat, lng, c.lat, c.lng) < radius + 4) return true;
+  return false;
+}
+function insideBuilding(lat, lng) {
+  for (const o of state.buildings) if (distMeters(lat, lng, o.lat, o.lng) < bRadius(o) + 1) return true;
+  for (const s of state.stations || []) if (distMeters(lat, lng, s.lat, s.lng) < 9) return true;
+  for (const p of state.parking || []) if (distMeters(lat, lng, p.lat, p.lng) < Math.max(p.w || 22, p.h || 9) / 2) return true;
+  for (const x of state.exits || []) if (distMeters(lat, lng, x.lat, x.lng) < 6) return true;
+  return false;
+}
 function freeSpot(lat, lng, radius) {
-  for (let ring = 1; ring <= 9; ring++) { const dist = ring * (radius * 2 + 3); for (let k = 0; k < 8; k++) { const ang = k / 8 * 2 * Math.PI, ll = offset(lat, lng, Math.cos(ang) * dist, Math.sin(ang) * dist); if (!overlapsAt(ll[0], ll[1], radius) && nearestRoadDist(ll[0], ll[1]) >= LINE_M.road / 2 + radius * 0.7) return { lat: ll[0], lng: ll[1] }; } }
+  for (let ring = 1; ring <= 9; ring++) { const dist = ring * (radius * 2 + 3); for (let k = 0; k < 8; k++) { const ang = k / 8 * 2 * Math.PI, ll = offset(lat, lng, Math.cos(ang) * dist, Math.sin(ang) * dist); if (!overlapsAt(ll[0], ll[1], radius) && nearestAnyLineDist(ll[0], ll[1]) >= LINE_M.road / 2 + radius * 0.7) return { lat: ll[0], lng: ll[1] }; } }
   return { lat, lng };
 }
 function pointSegDistM(plat, plng, a, b) {     // metres from point to road segment
@@ -492,11 +519,15 @@ function pointSegDistM(plat, plng, a, b) {     // metres from point to road segm
   let t = l2 ? (px * bx + py * by) / l2 : 0; t = Math.max(0, Math.min(1, t));
   return Math.hypot(px - t * bx, py - t * by);
 }
-function buildingHitsRoad(b) {                  // any corner / porch within road half-width of any road
-  if (b.type === 'tree') return nearestRoadDist(b.lat, b.lng) < LINE_M.road / 2 + clampR(b.r ?? DEF.tree.r) * 0.6;   // у дерева нет w/h — проверяем кругом (иначе rectCorners=NaN и дерево лезло на дорогу)
+function buildingHitsRoad(b) {                  // касание ЛЮБОЙ линии: дороги, переулки, тропинки, жд
+  if (b.type === 'tree') {
+    const r = clampR(b.r ?? DEF.tree.r);
+    return LINE_KINDS.some(kind => (state[kind] || []).some(line => lineSegDistMin(b.lat, b.lng, line) < lineHalfWidth(kind) + r * 0.6));
+  }
   const pts = [[b.lat, b.lng], ...rectCorners(b)]; const dr = doorRect(b); pts.push(dr[2], dr[3]);
-  for (const road of state.roads) for (let i = 1; i < road.length; i++)
-    for (const p of pts) if (pointSegDistM(p[0], p[1], road[i - 1], road[i]) < LINE_M.road / 2 + 0.3) return true;
+  for (const kind of LINE_KINDS) for (const line of state[kind] || [])
+    for (let i = 1; i < line.length; i++)
+      for (const p of pts) if (pointSegDistM(p[0], p[1], line[i - 1], line[i]) < lineHalfWidth(kind)) return true;
   return false;
 }
 function nearestRoadDist(lat, lng) { let best = Infinity; for (const road of state.roads) for (let i = 1; i < road.length; i++) best = Math.min(best, pointSegDistM(lat, lng, road[i - 1], road[i])); return best; }
