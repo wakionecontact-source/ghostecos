@@ -2808,7 +2808,7 @@ function wire() {
 /* ════════════════ BOOT ════════════════ */
 /* ════════════════ МУЛЬТИПЛЕЕР (общий мир, аккаунты GhostEcos) ════════════════ */
 const MP_API = '/api/nation', MP_STORE = 'ghostnation:mp';
-const mp = { mode: localStorage.getItem('ghostnation:mode') === 'mp' ? 'mp' : 'local', country: null, balance: 0, pop: 0, worldLayer: null, saveTimer: null, world: new Map(), layers: new Map(), ws: null, wsReady: false, wsRetry: 0, wsTimer: 0, wsSubTimer: 0 };
+const mp = { mode: localStorage.getItem('ghostnation:mode') === 'mp' ? 'mp' : 'local', country: null, balance: 0, pop: 0, worldLayer: null, saveTimer: null, world: new Map(), layers: new Map(), ws: null, wsReady: false, wsRetry: 0, wsTimer: 0, wsSubTimer: 0, confirmed: null };
 let mpWorldLoadTimer = 0, mpWorldLoadInFlight = false, mpWorldLoadAgain = false;
 function isMP() { return mp.mode === 'mp'; }
 
@@ -2921,11 +2921,11 @@ async function mpLoadMine() {
     if (d.country) {
       const c = d.country; mp.country = c; mp.balance = c.balance || 0; mp.pop = c.population || 0;
       state = migrate(Object.assign(freshState(), c.state || {})); state.name = c.name || ''; state.color = c.color || state.color; state.border = c.border || null;
-      mpResetSent();
+      mpResetSent(); mp.confirmed = JSON.stringify(state);
       document.getElementById('state-name').value = state.name; renderAll(); updateBalanceUI();
       if (state.border && state.border.length) try { map.fitBounds(L.latLngBounds(state.border).pad(0.25)); } catch (e) {}
       flash('Загружена твоя страна');
-    } else { mp.country = null; mp.balance = 1500; mp.pop = 0; state = freshState(); mpResetSent(); renderAll(); updateBalanceUI(); flash('Нарисуй границу — застолби свою территорию', true); }
+    } else { mp.country = null; mp.balance = 1500; mp.pop = 0; state = freshState(); mpResetSent(); mp.confirmed = JSON.stringify(state); renderAll(); updateBalanceUI(); flash('Нарисуй границу — застолби свою территорию', true); }
   } catch (e) { flash('Сервер недоступен', true); }
 }
 // Частичное сохранение: на сервер уходят только изменившиеся коллекции состояния
@@ -2947,6 +2947,17 @@ function mpSetSaveState(text, ok) {
   const el = document.getElementById('mp-saved');
   if (el) { el.textContent = text; el.title = text; el.dataset.state = ok ? 'ok' : 'err'; }
 }
+// Откат к последнему состоянию, принятому сервером: неоплаченный объект исчезает локально
+function mpRollbackLocal() {
+  if (!mp.confirmed) return false;
+  try { state = migrate(Object.assign(freshState(), JSON.parse(mp.confirmed))); } catch (e) { return false; }
+  mpResetSent();
+  try { deselect(); clearHover(); } catch (e) {}
+  const nameEl = document.getElementById('state-name');
+  if (nameEl) nameEl.value = state.name || '';
+  try { buildPalette(); renderAll(); updateStats(); } catch (e) {}
+  return true;
+}
 function mpSyncSave() {
   if (!isMP() || !ssoToken() || !mp.country) return;
   clearTimeout(mp.saveTimer);
@@ -2959,13 +2970,18 @@ function mpSyncSave() {
       const r = await mpApi('/mine', { method: 'PUT', body: JSON.stringify(body) });
       if (r.ok) {
         const d = await r.json();
+        mp.confirmed = JSON.stringify(state);          // что сервер уже принял
         mp.balance = d.balance; mp.pop = d.population != null ? d.population : mp.pop; updateBalanceUI();
         mpSetSaveState('Сохранено', true);
       } else if (r.status === 402) {
         const d = await r.json().catch(() => ({}));
-        mpResetSent();                                  // следующий раз отправим целиком
+        mpRollbackLocal();
         mpSetSaveState('Не хватает gost', false);
-        flash(d.detail || 'Не хватает gost', true);
+        flash((d.detail || 'Не хватает gost') + ' — изменение отменено', true);
+      } else if (r.status === 400 || r.status === 409 || r.status === 413) {
+        mpRollbackLocal();
+        mpSetSaveState('Изменение отменено', false);
+        flash('Сервер отклонил изменения (' + r.status + ') — откатил локально', true);
       } else {
         mpResetSent();
         mpSetSaveState('Не сохранено', false);
