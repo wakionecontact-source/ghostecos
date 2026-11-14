@@ -65,7 +65,8 @@ function migrate(s) {
   s.simulation = normalizeSimulation(s.simulation);
   const okPt = p => Array.isArray(p) && isFinite(p[0]) && isFinite(p[1]);
   const cleanLn = l => (Array.isArray(l) ? l.filter(okPt) : []);
-  ['roads', 'rails', 'paths', 'alleys'].forEach(k => { s[k] = (s[k] || []).map(cleanLn).filter(l => l.length >= 2); });   // выкинуть битые точки/вырожденные линии
+  const dropZero = l => l.length < 2 || (l.length === 2 && distMeters(l[0][0], l[0][1], l[1][0], l[1][1]) < 0.5);   // линия из двух одинаковых точек — мусор
+  ['roads', 'rails', 'paths', 'alleys'].forEach(k => { s[k] = (s[k] || []).map(cleanLn).filter(dropZero); });   // выкинуть битые точки/вырожденные линии
   s.plannedLines = (s.plannedLines || []).map(p => {
     const raw = Array.isArray(p) ? { pts: p } : (p || {}), mode = ['road', 'alley', 'path'].includes(raw.mode) ? raw.mode : 'road';
     return { mode, pts: cleanLn(raw.pts || raw.points) };
@@ -460,7 +461,19 @@ function onMapClick(e) {
     if (sim.selected) { deselectCitizen(); return; }
   }
   if (genSel.active) return;
-  if (draw.active) { addVertex(e.latlng, e.originalEvent); return; }
+  if (draw.active) {
+    if (draw.mode === 'path') {                        // клик по дому в режиме тропинки — проложить ко входу
+      const hit = buildingAtPoint(e.latlng, 2);
+      if (hit) {
+        pushUndo();
+        const line = addWalkway(hit, true);
+        if (line) { renderPaths(); save(); flash('Тропинка от входа проложена к сети'); }
+        else flash('Не нашёл, куда вести тропинку', true);
+        return;
+      }
+    }
+    addVertex(e.latlng, e.originalEvent); return;
+  }
   if (activeTool === 'split') { splitRoadAt(e.latlng); return; }
   if (activeTool === 'select') { deselect(); return; }
   if (activeTool === 'station') { placeStation(e.latlng); return; }
@@ -479,6 +492,15 @@ function onMapClick(e) {
   if (['house', 'shop', 'tree'].includes(activeTool)) placeBuilding(activeTool, e.latlng);
 }
 function bRadius(b) { return b.type === 'tree' ? clampR(b.r ?? DEF.tree.r) : Math.hypot(clampWH(b.w ?? DEF[b.type].w) / 2, clampWH(b.h ?? DEF[b.type].h) / 2); }
+function buildingAtPoint(latlng, pad = 1) {        // постройка под кликом (без деревьев)
+  let best = null, bd = Infinity;
+  for (const b of state.buildings) {
+    if (b.type === 'tree' || !isFinite(b.lat) || !isFinite(b.lng)) continue;
+    const d = distMeters(latlng.lat, latlng.lng, b.lat, b.lng);
+    if (d < bRadius(b) + pad && d < bd) { bd = d; best = b; }
+  }
+  return best;
+}
 function distMeters(la1, ln1, la2, ln2) { const E = (ln2 - ln1) * mPerDegLng(la1), N = (la2 - la1) * MPD_LAT; return Math.hypot(E, N); }
 const LINE_KINDS = ['roads', 'alleys', 'paths', 'rails'];
 function lineHalfWidth(kind) { return ((kind === 'rails' ? LINE_M.rail : kind === 'paths' ? LINE_M.path : kind === 'alleys' ? LINE_M.alley : LINE_M.road) / 2) + 0.3; }
@@ -572,17 +594,39 @@ function settleToRoad(b) {
   b.lat = nlat; b.lng = nlng; alignToRoad(b); return true;
 }
 function settlePass(times) { let moved = true, it = 0; while (moved && it++ < (times || 20)) { moved = false; for (const b of state.buildings) if (settleToRoad(b)) moved = true; } }
-function settleAll() { pushUndo(); settlePass(25); save(); renderBuildings(); renderPaths(); updateStats(); flash('Здания подтянуты к дороге'); }
+function settleAll() { pushUndo(); settlePass(25); ensureWalkways(false); save(); renderBuildings(); renderPaths(); updateStats(); flash('Здания подтянуты к дороге'); }
 
 /* ════════════════ AUTO-GENERATION ALONG A ROAD ════════════════ */
-function addWalkway(b) {                 // дорожка от крыльца к тротуару ближайшей дороги
-  const info = nearestRoad(b.lat, b.lng); if (!info) return;
-  if (distMeters(b.lat, b.lng, info.lat, info.lng) > 80) return;   // далеко от дороги — без дорожки
-  const dr = doorRect(b), ent = [(dr[2][0] + dr[3][0]) / 2, (dr[2][1] + dr[3][1]) / 2];
-  const a = info.bearing * Math.PI / 180; let pE = -Math.sin(a), pN = Math.cos(a);
-  const tE = (b.lng - info.lng) * mPerDegLng(b.lat), tN = (b.lat - info.lat) * MPD_LAT;
-  if (pE * tE + pN * tN < 0) { pE = -pE; pN = -pN; }
-  state.paths.push([ent, offset(info.lat, info.lng, pE * SIDEWALK_OFF, pN * SIDEWALK_OFF)]);
+function walkwayNearEntry(ent) {         // уже есть тропинка от этого входа?
+  return state.paths.find(p => (distMeters(p[0][0], p[0][1], ent[0], ent[1]) < 1.5 || distMeters(p[p.length - 1][0], p[p.length - 1][1], ent[0], ent[1]) < 1.5)) || null;
+}
+function pedestrianLineAt(point, exclude) {   // ближайшая линия пешеходной сети к точке
+  let best = null, bd = Infinity;
+  for (const line of pedestrianBaseLines()) {
+    if (line === exclude) continue;
+    for (let i = 1; i < line.length; i++) {
+      const pr = projOnSegLL(point, line[i - 1], line[i]), d = distMeters(point[0], point[1], pr[0], pr[1]);
+      if (d < bd) { bd = d; best = { point: pr, dist: d }; }
+    }
+  }
+  return best;
+}
+function addWalkway(b, force = false) {  // тропинка от входа дома до ближайшей пешеходной линии
+  if (!b || b.type === 'tree') return null;
+  const ent = doorEntry(b);
+  if (!force && walkwayNearEntry(ent)) return null;
+  const target = pedestrianLineAt(ent);
+  if (!target || target.dist > 90 || target.dist < 0.6) return null;
+  if (!isFinite(ent[0]) || !isFinite(ent[1]) || !isFinite(target.point[0]) || !isFinite(target.point[1])) return null;
+  const line = [ent, target.point];
+  state.paths.push(line);
+  return line;
+}
+function ensureWalkways(saveAfter = true) {   // достроить недостающие тропинки от входов к сети
+  let added = 0;
+  for (const b of state.buildings) if (addWalkway(b)) added++;
+  if (added) { renderPaths(); if (saveAfter) save(); }
+  return added;
 }
 function runGeneration(pairs, zone) {
   pushUndo();
@@ -670,6 +714,10 @@ function rectCorners(b) {
 function ridgeEnds(b) {
   const w = clampWH(b.w ?? DEF[b.type].w), a = (b.rot || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
   return [offset(b.lat, b.lng, -w / 2 * ca, -w / 2 * sa), offset(b.lat, b.lng, w / 2 * ca, w / 2 * sa)];
+}
+function doorEntry(b) {                 // точка входа: середина внешнего края крыльца
+  const dr = doorRect(b);
+  return [(dr[2][0] + dr[3][0]) / 2, (dr[2][1] + dr[3][1]) / 2];
 }
 function doorRect(b) {                  // крыльцо на стороне входа
   const w = clampWH(b.w ?? DEF[b.type].w), h = clampWH(b.h ?? DEF[b.type].h), a = (b.rot || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
@@ -1226,12 +1274,16 @@ function stationSnapLines() { return (state.stations || []).map(station => [stat
 function stationAtEntry(point, tolerance = .75) { return (state.stations || []).find(station => { const entry = stationEntryPoint(station); return distMeters(point.lat, point.lng, entry[0], entry[1]) <= tolerance; }) || null; }
 function pedestrianBaseLines() {
   const lines = [];
-  state.paths.forEach(line => { if (line.length >= 2 && roadLen(line) > 4) lines.push(line); });
-  state.alleys.forEach(line => { if (line.length >= 2 && roadLen(line) > 4) lines.push(line); });
+  state.paths.forEach(line => { if (line.length >= 2 && roadLen(line) > 1.2) lines.push(line); });   // тропинки короткие, но нужные
+  state.alleys.forEach(line => {                                    // проезд: идём по краям, а не по центру
+    const walk = state.roadWalk[roadKey(line)] || 'both', offsetM = LINE_M.alley / 2 + 0.5;
+    const sides = walk === 'left' ? [offsetM] : walk === 'right' ? [-offsetM] : [offsetM, -offsetM];
+    sides.forEach(side => { const edge = offsetLine(line, side); if (edge.length >= 2 && roadLen(edge) > 1.2) lines.push(edge); });
+  });
   state.roads.forEach(line => {
     const walk = state.roadWalk[roadKey(line)] || 'both', offsetM = lineWidthM(line) / 2 + 1;
     const sides = walk === 'both' ? [offsetM, -offsetM] : walk === 'left' ? [offsetM] : walk === 'right' ? [-offsetM] : [];
-    sides.forEach(side => { const sidewalk = offsetLine(line, side); if (sidewalk.length >= 2 && roadLen(sidewalk) > 4) lines.push(sidewalk); });
+    sides.forEach(side => { const sidewalk = offsetLine(line, side); if (sidewalk.length >= 2 && roadLen(sidewalk) > 1.2) lines.push(sidewalk); });
   });
   return lines;
 }
@@ -1449,7 +1501,7 @@ function exportFile() {
   a.href = URL.createObjectURL(blob); a.download = ((state.name || 'ghostnation').replace(/[^\wа-яё \-]/gi, '').trim() || 'ghostnation') + '.json';
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); flash('Сохранено в файл');
 }
-function importFile(file) { const r = new FileReader(); r.onload = () => { try { state = migrate(Object.assign(freshState(), JSON.parse(r.result))); undoStack = []; save(); deselect(); document.getElementById('state-name').value = state.name; buildPalette(); renderAll(); locate(); flash('Государство загружено'); } catch (e) { flash('Не удалось прочитать файл', true); } }; r.readAsText(file); }
+function importFile(file) { const r = new FileReader(); r.onload = () => { try { state = migrate(Object.assign(freshState(), JSON.parse(r.result))); undoStack = []; ensureWalkways(false); save(); deselect(); document.getElementById('state-name').value = state.name; buildPalette(); renderAll(); locate(); flash('Государство загружено'); } catch (e) { flash('Не удалось прочитать файл', true); } }; r.readAsText(file); }
 let flashTimer = null;
 function flash(msg, bad) { const t = document.getElementById('toast'); t.textContent = msg; t.style.color = bad ? '#E0245E' : ''; t.classList.remove('hidden'); clearTimeout(flashTimer); flashTimer = setTimeout(() => t.classList.add('hidden'), 1800); }
 
@@ -2198,12 +2250,12 @@ function assignDest(cit, options = {}) {                        // выбрат�
     b = builds[randInt(builds.length)];
     kind = b === cit.home ? 'home' : '';
   }
-  let np = pedNearestPoint([b.lat, b.lng]);
+  let np = pedNearestPoint(doorEntry(b));          // идём ко входу дома, а не к его центру
   if (np && distMeters(b.lat, b.lng, np.pos[0], np.pos[1]) > 80) np = null;   // здание далеко от сети — не годится в цель
   if (!kind && !np) {                             // случайная цель вне сети — ищем достижимую
     for (let k = 0; k < 5 && !np; k++) {
       b = builds[randInt(builds.length)];
-      np = pedNearestPoint([b.lat, b.lng]);
+      np = pedNearestPoint(doorEntry(b));
       if (np && distMeters(b.lat, b.lng, np.pos[0], np.pos[1]) > 80) np = null;
     }
   }
@@ -3231,6 +3283,7 @@ async function mpLoadMine() {
       const c = d.country; mp.country = c; mp.balance = c.balance || 0; mp.pop = c.population || 0;
       mp.econ = c.economy || null;
       state = migrate(Object.assign(freshState(), c.state || {})); state.name = c.name || ''; state.color = c.color || state.color; state.border = c.border || null;
+      ensureWalkways(false);                                     // восстановить тропинки от входов, если их нет
       mpResetSent(); mp.confirmed = JSON.stringify(state);
       document.getElementById('state-name').value = state.name; renderAll(); updateBalanceUI();
       if (state.border && state.border.length) try { map.fitBounds(L.latLngBounds(state.border).pad(0.25)); } catch (e) {}
