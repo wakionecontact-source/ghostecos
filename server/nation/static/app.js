@@ -68,8 +68,8 @@ function migrate(s) {
   s.simulation = normalizeSimulation(s.simulation);
   const okPt = p => Array.isArray(p) && isFinite(p[0]) && isFinite(p[1]);
   const cleanLn = l => (Array.isArray(l) ? l.filter(okPt) : []);
-  const dropZero = l => l.length < 2 || (l.length === 2 && distMeters(l[0][0], l[0][1], l[1][0], l[1][1]) < 0.5);   // линия из двух одинаковых точек — мусор
-  ['roads', 'rails', 'paths', 'alleys'].forEach(k => { s[k] = (s[k] || []).map(cleanLn).filter(dropZero); });   // выкинуть битые точки/вырожденные линии
+  const validLine = l => l.length >= 2 && !(l.length === 2 && distMeters(l[0][0], l[0][1], l[1][0], l[1][1]) < 0.5);   // валидная линия: >=2 точек и не «дважды одна точка»
+  ['roads', 'rails', 'paths', 'alleys'].forEach(k => { s[k] = (s[k] || []).map(cleanLn).filter(validLine); });   // выкинуть битые точки/вырожденные линии
   s.plannedLines = (s.plannedLines || []).map(p => {
     const raw = Array.isArray(p) ? { pts: p } : (p || {}), mode = ['road', 'alley', 'path'].includes(raw.mode) ? raw.mode : 'road';
     return { mode, pts: cleanLn(raw.pts || raw.points) };
