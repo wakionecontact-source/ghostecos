@@ -65,7 +65,7 @@ python -m http.server 5500
 | Метод | Путь | Назначение |
 |-------|------|-----------|
 | GET  | `/api/nation/world?minlat&minlng&maxlat&maxlng` | публично: страны в bbox |
-| WS   | `/api/nation/ws?token=<JWT>` | мир в реальном времени: `sub` → `snapshot`, затем push `country` / `remove` |
+| WS   | `/api/nation/ws?token=<JWT>` | мир в реальном времени: `sub` → `snapshot`, затем push `country` / `remove`. Токен не обязателен: без него просмотр разрешён, лимит 8 соединений на IP |
 | GET  | `/api/nation/mine` | (auth) моя страна + начисленные налоги |
 | POST | `/api/nation/claim` | (auth) застолбить/перечертить границу |
 | PUT  | `/api/nation/mine` | (auth) сохранить состояние страны |

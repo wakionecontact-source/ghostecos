@@ -2873,7 +2873,15 @@ function updateBalanceUI() {
   const p = document.getElementById('mp-pop'); if (p) p.textContent = mp.pop + ' чел';
   const lo = document.getElementById('mp-logout'); if (lo) lo.classList.toggle('hidden', !ssoToken());
 }
-function enterMP() { if (!ssoToken()) { showMpLogin(); return; } mpLoadMine().then(() => { mpWsConnect(); mpLoadWorld(); }); }
+function enterMP() {
+  if (!ssoToken()) {                     // без входа мир доступен на просмотр
+    showMpLogin();
+    mpWsConnect();
+    mpLoadWorld();
+    return;
+  }
+  mpLoadMine().then(() => { mpWsConnect(); mpLoadWorld(); });
+}
 async function mpLoadMine() {
   try {
     const r = await mpApi('/mine');
@@ -2953,11 +2961,11 @@ function mpWsRetry() {
 }
 async function mpWsConnect() {
   if (!isMP() || !mp.worldLayer || mp.ws) return;
-  const t = await mpToken();
-  if (!t) return;
+  const t = await mpToken();                  // может быть null: мир смотрим и без входа
   const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  const url = scheme + location.host + '/api/nation/ws' + (t ? '?token=' + encodeURIComponent(t) : '');
   let ws;
-  try { ws = new WebSocket(scheme + location.host + '/api/nation/ws?token=' + encodeURIComponent(t)); }
+  try { ws = new WebSocket(url); }
   catch (e) { mpWsRetry(); return; }
   mp.ws = ws;
   ws.onopen = () => { mp.wsReady = true; mp.wsRetry = 0; mpWsSubscribe(); };

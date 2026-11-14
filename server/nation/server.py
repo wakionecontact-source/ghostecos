@@ -144,6 +144,8 @@ def _user(authorization: Optional[str]) -> str:
 
 # ── Общий мир в реальном времени (WS) ──
 _WS_MAX_BUILDINGS = 1500      # потолок построек на страну в одном сообщении
+_WS_ANON_PER_IP = 8           # анонимных соединений с одного IP
+_WS_MAX_MSG = 8192            # байт в одном клиентском сообщении
 
 
 class WorldHub:
@@ -151,12 +153,27 @@ class WorldHub:
 
     def __init__(self):
         self.clients: dict[WebSocket, tuple[float, float, float, float]] = {}
+        self.info: dict[WebSocket, dict] = {}
+        self.anon_ips: defaultdict[str, int] = defaultdict(int)
 
-    def add(self, ws: WebSocket, bbox: tuple[float, float, float, float]) -> None:
+    def add(self, ws: WebSocket, bbox: tuple[float, float, float, float],
+            ip: str = "", anon: bool = False) -> None:
         self.clients[ws] = bbox
+        self.info[ws] = {"ip": ip, "anon": anon}
+        if anon:
+            self.anon_ips[ip] += 1
 
     def drop(self, ws: WebSocket) -> None:
+        info = self.info.pop(ws, None)
+        if info and info.get("anon"):
+            ip = info.get("ip") or ""
+            self.anon_ips[ip] = max(0, self.anon_ips[ip] - 1)
+            if not self.anon_ips[ip]:
+                self.anon_ips.pop(ip, None)
         self.clients.pop(ws, None)
+
+    def anon_count(self, ip: str) -> int:
+        return self.anon_ips.get(ip, 0)
 
     async def push(self, ws: WebSocket, payload: dict) -> None:
         try:
@@ -387,16 +404,33 @@ def world(minlat: float = Query(...), minlng: float = Query(...),
 @app.websocket("/api/nation/ws")
 async def world_ws(ws: WebSocket, token: str = Query("")):
     """Общий мир в реальном времени: клиент подписывается на bbox и получает
-    снимок, дальше — push при claim/save любой страны в этом bbox."""
-    try:
-        _user("Bearer " + token)
-    except HTTPException:
-        await ws.close(code=4401)
+    снимок, дальше — push при claim/save любой страны в этом bbox.
+
+    Данные мира публичные (как и REST /world), поэтому токен не обязателен:
+    без него соединение работает в режиме просмотра, с лимитом на IP.
+    """
+    user = None
+    if token:
+        try:
+            user = _user("Bearer " + token)
+        except HTTPException:
+            user = None
+    ip = ws.client.host if ws.client else "unknown"
+    anon = user is None
+    if anon and _hub.anon_count(ip) >= _WS_ANON_PER_IP:
+        await ws.close(code=4429)
         return
     await ws.accept()
     try:
         while True:
-            msg = await ws.receive_json()
+            raw = await ws.receive_text()
+            if len(raw) > _WS_MAX_MSG:
+                await ws.close(code=4400)
+                break
+            try:
+                msg = json.loads(raw)
+            except Exception:
+                continue
             if not isinstance(msg, dict):
                 continue
             kind = msg.get("type")
@@ -408,7 +442,7 @@ async def world_ws(ws: WebSocket, token: str = Query("")):
             bbox = _norm_bbox(msg)
             if not bbox:
                 continue
-            _hub.add(ws, bbox)
+            _hub.add(ws, bbox, ip, anon)
             con = _db()
             rows = con.execute(
                 "SELECT * FROM country WHERE archived=0 "
