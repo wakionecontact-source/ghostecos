@@ -1,9 +1,12 @@
-/* ════════════════════════════════════════════════════════════
+﻿/* ════════════════════════════════════════════════════════════
    GhostNation — основай своё государство на спутниковой карте
    Личная песочница. Автосейв localStorage + экспорт/импорт файла.
    ════════════════════════════════════════════════════════════ */
 
 const STORE_KEY = 'ghostnation:v1';
+const MP_STORE = 'ghostnation:mp';
+const MPD_LAT = 111320;                                   // метров в градусе широты
+const mPerDegLng = lat => 111320 * Math.cos(lat * Math.PI / 180);   // метров в градусе долготы
 const FLAG_COLORS = ['#D97757', '#E0245E', '#F5A623', '#F8E71C', '#7ED321', '#50E3C2', '#4A90E2', '#9013FE', '#FFFFFF', '#15C26B'];
 const DEF = { house: { w: 13, h: 10 }, shop: { w: 13, h: 10 }, tree: { r: 3.5 } };
 const ROOF = { house: { fill: '#36b24a', edge: '#0b2c16' }, shop: { fill: '#2E7FE0' } };
@@ -77,7 +80,17 @@ function migrate(s) {
   return s;
 }
 let state = load();
-function load() { try { const r = localStorage.getItem(STORE_KEY); if (r) return migrate(Object.assign(freshState(), JSON.parse(r))); } catch (e) { console.warn(e); } return freshState(); }
+function load() {
+  const mode = localStorage.getItem('ghostnation:mode');                // локальный мир хранится в своём ключе в зависимости от режима
+  const keys = mode === 'mp' ? [MP_STORE, STORE_KEY] : [STORE_KEY, MP_STORE];
+  for (const key of keys) {
+    try {
+      const r = localStorage.getItem(key);
+      if (r) return migrate(Object.assign(freshState(), JSON.parse(r)));
+    } catch (e) { console.warn(e); }
+  }
+  return freshState();
+}
 let storageWarned = false;
 function save() {
   try { syncLineMetadata(); localStorage.setItem(isMP() ? MP_STORE : STORE_KEY, JSON.stringify(state)); }
@@ -116,8 +129,6 @@ const ICONS = {};
 async function loadIcons() { await Promise.all(ICON_NAMES.map(async n => { try { ICONS[n] = await (await fetch(`icons/${n}.svg`)).text(); } catch (e) { ICONS[n] = ''; } })); }
 
 /* ════════════════ GEO HELPERS ════════════════ */
-const MPD_LAT = 111320;
-const mPerDegLng = lat => 111320 * Math.cos(lat * Math.PI / 180);
 const offset = (lat, lng, eM, nM) => [lat + nM / MPD_LAT, lng + eM / mPerDegLng(lat)];
 const mpp = () => 40075016.686 * Math.cos(map.getCenter().lat * Math.PI / 180) / Math.pow(2, map.getZoom() + 8);
 const mToPx = m => m / mpp();
@@ -3221,7 +3232,7 @@ function wire() {
 
 /* ════════════════ BOOT ════════════════ */
 /* ════════════════ МУЛЬТИПЛЕЕР (общий мир, аккаунты GhostEcos) ════════════════ */
-const MP_API = '/api/nation', MP_STORE = 'ghostnation:mp';
+const MP_API = '/api/nation';
 const mp = { mode: localStorage.getItem('ghostnation:mode') === 'mp' ? 'mp' : 'local', country: null, balance: 0, pop: 0, econ: null, worldLayer: null, saveTimer: null, incomeTimer: null, world: new Map(), layers: new Map(), ws: null, wsReady: false, wsRetry: 0, wsTimer: 0, wsSubTimer: 0, confirmed: null };
 let mpWorldLoadTimer = 0, mpWorldLoadInFlight = false, mpWorldLoadAgain = false;
 function isMP() { return mp.mode === 'mp'; }
@@ -3364,7 +3375,7 @@ async function mpLoadMine() {
       document.getElementById('state-name').value = state.name; renderAll(); updateBalanceUI();
       if (state.border && state.border.length) try { map.fitBounds(L.latLngBounds(state.border).pad(0.25)); } catch (e) {}
       flash('Загружена твоя страна');
-    } else { mp.country = null; mp.balance = 1500; mp.pop = 0; state = freshState(); mpResetSent(); mp.confirmed = JSON.stringify(state); renderAll(); updateBalanceUI(); flash('Нарисуй границу — застолби свою территорию', true); }
+    } else { mp.country = null; mp.balance = 1500; mp.pop = 0; state = freshState(); const cached = load(); if (cached && cached.buildings?.length) { state = cached; flash('Страна не найдена — показан последний местный мир'); } else { mpResetSent(); mp.confirmed = JSON.stringify(state); renderAll(); updateBalanceUI(); flash('Нарисуй границу — застолби свою территорию', true); } }
   } catch (e) { flash('Сервер недоступен', true); }
 }
 // Частичное сохранение: на сервер уходят только изменившиеся коллекции состояния
