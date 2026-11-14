@@ -1280,6 +1280,7 @@ function refreshStationAccessInRunningSim(addedLine, drawMode) {
   const known = new Set(sim.pedLines.map(signature));
   const newLines = additions.filter(line => line && line.length >= 2 && roadLen(line) > 4 && !known.has(signature(line)));
   newLines.forEach(line => sim.pedLines.push(line));
+  sim.pedNet = pedNetBuild(sim.pedLines);                      // новый участок — пересобрать граф маршрутов
   sim.stationAccess = new Map(); sim.transitStations = [];
   for (const station of state.stations) {
     const access = stationAccessInfo(station, sim.pedLines);
@@ -1655,6 +1656,7 @@ function makeCitizen(line) {
     line, seg: randInt(Math.max(1, line.length - 1)), t: Math.random(), fwd: Math.random() < .5,
     spd: 1.0 + Math.random() * 0.7, color: PED_COLORS[randInt(PED_COLORS.length)],
     dest: null, goal: null, status: 'идёт', idle: 0, transit: null, waitingAtStation: null, waitSlot: null,
+    route: null, routeIdx: 0, stepEnd: null,
     home: null, work: null, employed: false, atWork: false
   };
   assignCitizenJob(cit);
@@ -1960,6 +1962,7 @@ function buildSim() {
   addTrafficFair(trafficLinePlans());
   const basePedLines = pedestrianBaseLines();
   sim.pedLines = basePedLines.slice();
+  sim.pedNet = pedNetBuild(sim.pedLines);                      // граф сети для маршрутов жителей
   sim.stationAccess = new Map(); sim.transitStations = [];
   for (const station of state.stations) {
     const access = stationAccessInfo(station, basePedLines);
@@ -1993,12 +1996,181 @@ function pedNearestPoint(ll) {                                 // ближайш
   let best = null, bd = Infinity;
   for (const line of sim.pedLines) for (let i = 1; i < line.length; i++) {
     const pr = projOnSegLL([ll[0], ll[1]], line[i - 1], line[i]), d = distMeters(ll[0], ll[1], pr[0], pr[1]);
-    if (d < bd) { bd = d; best = { line, seg: i - 1, pos: pr }; }
+    if (d < bd) {
+      const len = distMeters(line[i - 1][0], line[i - 1][1], line[i][0], line[i][1]) || 1;
+      bd = d; best = { line, seg: i - 1, pos: pr, t: Math.max(0, Math.min(1, distMeters(line[i - 1][0], line[i - 1][1], pr[0], pr[1]) / len)) };
+    }
   }
   return best;
 }
+
+/* ════════════ ПЕШЕХОДНАЯ СЕТЬ: ГРАФ И МАРШРУТЫ ════════════ */
+const PED_SNAP_M = 1.5;                                     // узел считается лежащим на линии
+function linePosOf(line, seg, t) {                          // (seg,t) → метры от начала линии
+  let acc = 0;
+  for (let s = 0; s < seg && s < line.length - 1; s++) acc += distMeters(line[s][0], line[s][1], line[s + 1][0], line[s + 1][1]);
+  const len = distMeters(line[seg][0], line[seg][1], line[seg + 1][0], line[seg + 1][1]) || 1;
+  return acc + Math.max(0, Math.min(1, t)) * len;
+}
+function lineSteps(line, posA, posB) {                      // участки одной линии от posA к posB
+  const total = roadLen(line), a = Math.max(0, Math.min(total, posA)), b = Math.max(0, Math.min(total, posB));
+  const lo = Math.min(a, b), hi = Math.max(a, b), out = [];
+  if (hi - lo < 0.15) return out;
+  let acc = 0;
+  for (let s = 0; s < line.length - 1; s++) {
+    const len = distMeters(line[s][0], line[s][1], line[s + 1][0], line[s + 1][1]) || 1, from = acc, to = acc + len; acc = to;
+    const s0 = Math.max(from, lo), s1 = Math.min(to, hi);
+    if (s1 - s0 < 0.15) continue;
+    out.push({ line, seg: s, t0: (s0 - from) / len, t1: (s1 - from) / len });
+  }
+  if (a > b) out.reverse().forEach(st => { const tmp = st.t0; st.t0 = st.t1; st.t1 = tmp; });
+  return out;
+}
+function segCrossPoint(a, b, c, d) {                        // пересечение двух отрезков (latlng)
+  const m = mPerDegLng((a[0] + c[0]) / 2);
+  const x1 = a[1] * m, y1 = a[0] * MPD_LAT, x2 = b[1] * m, y2 = b[0] * MPD_LAT;
+  const x3 = c[1] * m, y3 = c[0] * MPD_LAT, x4 = d[1] * m, y4 = d[0] * MPD_LAT;
+  const den = (x2 - x1) * (y4 - y3) - (y2 - y1) * (x4 - x3);
+  if (Math.abs(den) < 1e-9) return null;
+  const t = ((x3 - x1) * (y4 - y3) - (y3 - y1) * (x4 - x3)) / den;
+  const u = ((x3 - x1) * (y2 - y1) - (y3 - y1) * (x2 - x1)) / den;
+  if (t < -0.001 || t > 1.001 || u < -0.001 || u > 1.001) return null;
+  return [(y1 + t * (y2 - y1)) / MPD_LAT, (x1 + t * (x2 - x1)) / m];
+}
+function pedNetBuild(lines) {                               // узлы-стыки + рёбра участками линий
+  const nodes = [], grid = new Map(), edges = [];
+  const nodeAt = (lat, lng) => {
+    const gy = Math.round(lat * MPD_LAT / 2), gx = Math.round(lng * mPerDegLng(lat) / 2);
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const list = grid.get((gy + dy) + ':' + (gx + dx)); if (!list) continue;
+      for (const idx of list) { const n = nodes[idx]; if (distMeters(lat, lng, n.lat, n.lng) <= 2) return idx; }
+    }
+    const idx = nodes.length, key = gy + ':' + gx;
+    nodes.push({ lat, lng, edges: [] });
+    if (!grid.has(key)) grid.set(key, []);
+    grid.get(key).push(idx);
+    return idx;
+  };
+  const link = (na, nb, line, seg, t0, t1) => {
+    if (na === nb) return;
+    const len = Math.abs(t1 - t0) * distMeters(line[seg][0], line[seg][1], line[seg + 1][0], line[seg + 1][1]);
+    if (!(len > 0.15)) return;
+    const idx = edges.push({ a: na, b: nb, line, seg, t0, t1, len }) - 1;
+    nodes[na].edges.push(idx); nodes[nb].edges.push(idx);
+  };
+  lines.forEach(line => { for (const p of line) nodeAt(p[0], p[1]); });
+  for (let i = 0; i < lines.length; i++) for (let j = i + 1; j < lines.length; j++) {
+    const A = lines[i], B = lines[j];
+    for (let p = 1; p < A.length; p++) for (let q = 1; q < B.length; q++) {
+      const hit = segCrossPoint(A[p - 1], A[p], B[q - 1], B[q]);
+      if (hit) nodeAt(hit[0], hit[1]);
+    }
+  }
+  const cutsByLine = new Map();
+  for (const line of lines) {
+    const cuts = [], snapshot = nodes.slice();
+    let acc = 0;
+    for (let s = 0; s < line.length - 1; s++) {
+      const a = line[s], b = line[s + 1], len = distMeters(a[0], a[1], b[0], b[1]) || 1;
+      cuts.push({ seg: s, t: 0, node: nodeAt(a[0], a[1]), pos: acc });
+      for (const n of snapshot) {
+        if (distMeters(n.lat, n.lng, a[0], a[1]) > len + PED_SNAP_M) continue;
+        const pr = projOnSegLL([n.lat, n.lng], a, b);
+        if (distMeters(n.lat, n.lng, pr[0], pr[1]) > PED_SNAP_M) continue;
+        const t = distMeters(a[0], a[1], pr[0], pr[1]) / len;
+        if (t < 1e-3 || t > 1 - 1e-3) continue;
+        cuts.push({ seg: s, t, node: nodeAt(pr[0], pr[1]), pos: acc + t * len });
+      }
+      acc += len;
+      if (s === line.length - 2) cuts.push({ seg: s, t: 1, node: nodeAt(b[0], b[1]), pos: acc });
+    }
+    cuts.sort((p, q) => p.pos - q.pos);
+    const uniq = [];
+    for (const c of cuts) if (!uniq.length || c.pos - uniq[uniq.length - 1].pos > 0.2) uniq.push(c);
+    for (let k = 1; k < uniq.length; k++) { const p = uniq[k - 1], q = uniq[k]; if (p.seg === q.seg) link(p.node, q.node, line, p.seg, p.t, q.t); }
+    cutsByLine.set(line, uniq);
+  }
+  return { nodes, edges, cutsByLine };
+}
+function pedRouteFromTo(from, to) {                          // маршрут по сети: from/to = {line, seg, t}
+  if (!from || !to || !from.line || !to.line) return null;
+  if (from.line === to.line) return lineSteps(from.line, linePosOf(from.line, from.seg, from.t), linePosOf(to.line, to.seg, to.t));
+  const net = sim.pedNet; if (!net) return null;
+  const cutsA = net.cutsByLine.get(from.line), cutsB = net.cutsByLine.get(to.line);
+  if (!cutsA || !cutsB || !cutsA.length || !cutsB.length) return null;
+  const posA = linePosOf(from.line, from.seg, from.t), posB = linePosOf(to.line, to.seg, to.t);
+  const targets = new Map();
+  for (const c of cutsB) { const d = Math.abs(c.pos - posB); if (!targets.has(c.node) || targets.get(c.node) > d) targets.set(c.node, d); }
+  const best = new Map(), prev = new Map(), heap = [];
+  const pushH = (d, node) => {
+    heap.push([d, node]);
+    let i = heap.length - 1;
+    while (i > 0) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; const tmp = heap[p]; heap[p] = heap[i]; heap[i] = tmp; i = p; }
+  };
+  const popH = () => {
+    const top = heap[0], last = heap.pop();
+    if (heap.length) {
+      heap[0] = last;
+      let i = 0;
+      for (;;) {
+        const l = i * 2 + 1, r = l + 1; let m = i;
+        if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+        if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+        if (m === i) break;
+        const tmp = heap[m]; heap[m] = heap[i]; heap[i] = tmp; i = m;
+      }
+    }
+    return top;
+  };
+  for (const c of cutsA) { const d = Math.abs(c.pos - posA); if (d < (best.get(c.node) ?? Infinity)) { best.set(c.node, d); prev.set(c.node, null); pushH(d, c.node); } }
+  let reached = -1;
+  while (heap.length) {
+    const [d, node] = popH();
+    if (d > (best.get(node) ?? Infinity) + 1e-6) continue;
+    if (targets.has(node)) { reached = node; break; }
+    for (const ei of net.nodes[node].edges) {
+      const e = net.edges[ei], other = e.a === node ? e.b : e.a, nd = d + e.len;
+      if (nd < (best.get(other) ?? Infinity)) { best.set(other, nd); prev.set(other, { from: node, edge: ei }); pushH(nd, other); }
+    }
+  }
+  if (reached < 0) return null;
+  const chain = []; let cur = reached;
+  while (prev.get(cur)) { chain.push({ edge: prev.get(cur).edge, from: prev.get(cur).from, to: cur }); cur = prev.get(cur).from; }
+  chain.reverse();
+  const steps = [];
+  const cutA = cutsA.find(c => c.node === cur);
+  const startPos = cutA ? cutA.pos : posA;
+  steps.push(...lineSteps(from.line, posA, startPos));
+  for (const item of chain) {
+    const e = net.edges[item.edge];
+    steps.push(e.a === item.from ? { line: e.line, seg: e.seg, t0: e.t0, t1: e.t1 } : { line: e.line, seg: e.seg, t0: e.t1, t1: e.t0 });
+  }
+  const cutB = cutsB.find(c => c.node === reached);
+  const endPos = cutB ? cutB.pos : posB;
+  steps.push(...lineSteps(to.line, endPos, posB));
+  return steps;
+}
+function routeStepBegin(p) {                                // встать на текущий шаг маршрута
+  const st = p.route && p.route[p.routeIdx];
+  if (!st) return false;
+  p.line = st.line; p.seg = st.seg; p.t = st.t0; p.fwd = st.t1 > st.t0; p.stepEnd = st.t1;
+  return true;
+}
+function pedHere(cit) {                                     // текущая позиция жителя как точка сети
+  if (!cit.line || cit.line.length < 2 || !cit.line[cit.seg + 1]) return null;
+  return { line: cit.line, seg: cit.seg, t: Math.max(0, Math.min(1, cit.t)) };
+}
+function citRouteTo(cit, target) {                          // маршрут по сети до точки target
+  const here = pedHere(cit);
+  if (!here || !target || !target.line) return false;
+  const steps = pedRouteFromTo(here, target);
+  if (!steps || !steps.length) { cit.route = null; cit.routeIdx = 0; return false; }
+  cit.route = steps; cit.routeIdx = 0;
+  return routeStepBegin(cit);
+}
 function assignDest(cit, options = {}) {                        // выбрать здание или станцию-цель на пешеходной сети
   cit.transit = null; cit.waitingAtStation = null; cit.waitSlot = null; cit.dest = null; cit.goal = null;
+  cit.route = null; cit.routeIdx = 0;
   if (!sim.pedLines.length) { cit.status = 'гуляет'; return; }
   if (!options.avoidTransit && sim.transitStations?.length && Math.random() < .18) {
     const current = cit.line && cit.line[cit.seg + 1] ? lerpPos(cit.line, cit.seg, cit.t) : null;
@@ -2006,10 +2178,13 @@ function assignDest(cit, options = {}) {                        // выбрат�
       .filter(item => item.access && (!current || distMeters(current[0], current[1], item.access.stationPoint[0], item.access.stationPoint[1]) > 20))
       .sort((a, b) => current ? distMeters(current[0], current[1], a.access.stationPoint[0], a.access.stationPoint[1]) - distMeters(current[0], current[1], b.access.stationPoint[0], b.access.stationPoint[1]) : 0)
       .slice(0, 4);
-    if (candidates.length) {
-      const { station, access } = candidates[randInt(candidates.length)];
-      cit.dest = { type: 'station', name: station.name || 'станция' }; cit.goal = access.stationPoint;
-      cit.transit = { state: 'toStation', stationKey: stationSimKey(station) }; cit.status = `идёт на станцию ${station.name || ''}`.trim(); orientToGoal(cit); return;
+    for (let i = candidates.length - 1; i > 0; i--) { const k = randInt(i + 1); const tmp = candidates[i]; candidates[i] = candidates[k]; candidates[k] = tmp; }   // случайный порядок — идём к разным станциям
+    for (const { station, access } of candidates) {
+      if (!citRouteTo(cit, { line: access.networkLine, seg: access.segment, t: access.t })) continue;
+      cit.dest = { type: 'station', name: station.name || 'станция' }; cit.goal = access.networkPoint;
+      cit.transit = { state: 'toStation', stationKey: stationSimKey(station) };
+      cit.status = `идёт на станцию ${station.name || ''}`.trim();
+      return;
     }
   }
   const builds = state.buildings.filter(b => b.type !== 'tree' && isFinite(b.lat) && isFinite(b.lng));
@@ -2023,12 +2198,21 @@ function assignDest(cit, options = {}) {                        // выбрат�
     b = builds[randInt(builds.length)];
     kind = b === cit.home ? 'home' : '';
   }
-  const np = pedNearestPoint([b.lat, b.lng]);
+  let np = pedNearestPoint([b.lat, b.lng]);
+  if (np && distMeters(b.lat, b.lng, np.pos[0], np.pos[1]) > 80) np = null;   // здание далеко от сети — не годится в цель
+  if (!kind && !np) {                             // случайная цель вне сети — ищем достижимую
+    for (let k = 0; k < 5 && !np; k++) {
+      b = builds[randInt(builds.length)];
+      np = pedNearestPoint([b.lat, b.lng]);
+      if (np && distMeters(b.lat, b.lng, np.pos[0], np.pos[1]) > 80) np = null;
+    }
+  }
   const g = np ? np.pos : [b.lat, b.lng];
   if (!isFinite(g[0]) || !isFinite(g[1])) { cit.dest = null; cit.goal = null; cit.status = 'гуляет'; return; }   // защита от битых координат
   cit.dest = b; cit.goal = g; cit.destKind = kind;
   cit.status = kind === 'work' ? 'идёт на работу' : kind === 'home' ? 'идёт домой' : 'идёт ' + (b.type === 'shop' ? 'в магазин' : 'к дому');
-  orientToGoal(cit);                                          // сразу повернуть В СТОРОНУ цели (а не куда смотрел)
+  if (np) citRouteTo(cit, { line: np.line, seg: np.seg, t: np.t });   // настоящий маршрут по пешеходной сети
+  else orientToGoal(cit);                                        // цели вне сети — прежняя логика
 }
 function orientToGoal(cit) {                                   // выбрать направление по текущей линии, что ближе к цели
   if (!cit.goal || !cit.line || !cit.line[cit.seg + 1]) return;
@@ -2591,29 +2775,41 @@ function citizenJunction(p, atEnd) {              // на стыке сверн�
   if (!best) { const o = opts[randInt(opts.length)]; best = [o[0], o[1], o[2], Math.random() < 0.5]; p.goal = null; }   // цель недостижима/битая → идём случайно, не падаем
   p.line = best[0]; p.seg = best[1]; p.t = Math.max(0.04, Math.min(0.96, best[2])); p.fwd = best[3];
 }
+function citizenArrive(p) {                                   // дошёл до цели
+  if (p.transit?.state === 'toStation') {
+    const station = stationBySimKey(p.transit.stationKey);
+    if (station && setCitizenAtStation(p, station, false)) return;
+    assignDest(p, { avoidTransit: true }); return;
+  }
+  p.route = null; p.routeIdx = 0;
+  p.idle = 2 + Math.random() * 5;
+  p.atWork = p.destKind === 'work';
+  p.status = p.destKind === 'work' ? 'на работе'
+    : p.destKind === 'home' ? 'дома'
+    : 'на месте: ' + (p.dest && p.dest.type === 'shop' ? 'магазин' : 'дом');
+  p.goal = null;
+}
 function stepPed(p, dt) {
   if (p.transit?.state === 'waiting' || p.transit?.state === 'onTrain') return;
   if (p.idle > 0) { p.idle -= dt; if (p.idle <= 0) assignDest(p); return; }   // стоит у цели, потом новая цель
   const line = p.line; if (!line || line.length < 2 || !line[p.seg] || !line[p.seg + 1]) { p.dead = true; return; }
   const a = line[p.seg], b = line[p.seg + 1], len = distMeters(a[0], a[1], b[0], b[1]) || 1;
   p.t += (p.fwd ? 1 : -1) * p.spd * dt / len;
+  if (p.route && p.route.length) {                              // идём по маршруту по сети
+    const step = p.route[p.routeIdx];
+    if (!step) { citizenArrive(p); return; }
+    const done = p.fwd ? p.t >= step.t1 - 1e-6 : p.t <= step.t1 + 1e-6;
+    if (!done) return;
+    p.t = step.t1; p.routeIdx++;
+    if (p.routeIdx >= p.route.length) { citizenArrive(p); return; }
+    routeStepBegin(p);
+    return;
+  }
   if (p.t > 1) { if (p.seg < line.length - 2) { p.seg++; p.t = 0; } else citizenJunction(p, true); }
   else if (p.t < 0) { if (p.seg > 0) { p.seg--; p.t = 1; } else citizenJunction(p, false); }
   if (p.goal && p.line && p.line[p.seg + 1]) {                  // пришёл к цели?
     const pos = lerpPos(p.line, p.seg, p.t);
-    if (distMeters(pos[0], pos[1], p.goal[0], p.goal[1]) < 7) {
-      if (p.transit?.state === 'toStation') {
-        const station = stationBySimKey(p.transit.stationKey);
-        if (station && setCitizenAtStation(p, station, false)) return;
-        assignDest(p, { avoidTransit: true }); return;
-      }
-      p.idle = 2 + Math.random() * 5;
-      p.atWork = p.destKind === 'work';
-      p.status = p.destKind === 'work' ? 'на работе'
-        : p.destKind === 'home' ? 'дома'
-        : 'на месте: ' + (p.dest && p.dest.type === 'shop' ? 'магазин' : 'дом');
-      p.goal = null;
-    }
+    if (distMeters(pos[0], pos[1], p.goal[0], p.goal[1]) < 7) citizenArrive(p);
   }
 }
 function pickCitizen(cp) {                          // ближайший житель к точке экрана (для клика)
