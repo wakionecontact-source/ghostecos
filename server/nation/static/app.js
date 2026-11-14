@@ -2789,7 +2789,18 @@ function wire() {
     }
     document.querySelectorAll('[data-walk]').forEach(x => x.classList.toggle('active', x === b)); closeWalkBar();
   });
-  const nameEl = document.getElementById('state-name'); nameEl.value = state.name; nameEl.oninput = () => { state.name = nameEl.value.trim(); save(); };
+  const nameEl = document.getElementById('state-name'), nameBtn = document.getElementById('name-apply');
+  const syncNameBtn = () => {
+    if (!nameBtn) return;
+    const committed = nameEl.dataset.committed || '';
+    nameBtn.classList.toggle('hidden', nameEl.value.trim() === committed || !nameEl.value.trim());
+  };
+  nameEl.value = state.name;
+  nameEl.dataset.committed = state.name || '';
+  nameEl.oninput = () => { state.name = nameEl.value.trim(); save(); syncNameBtn(); };
+  nameEl.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); applyCountryName(); } };
+  if (nameBtn) nameBtn.onclick = applyCountryName;
+  syncNameBtn();
   document.getElementById('flag').onclick = () => document.getElementById('palette').classList.toggle('hidden');
   document.querySelectorAll('.layer').forEach(b => { b.onclick = () => { const id = b.dataset.layer; if (id === currentLayer) return; map.removeLayer(layers[currentLayer]); layers[id].addTo(map); currentLayer = id; document.querySelectorAll('.layer').forEach(x => x.classList.toggle('active', x === b)); }; });
   document.addEventListener('keydown', e => {
@@ -2992,6 +3003,27 @@ function mpSyncSave() {
       mpSetSaveState('Нет связи', false);
     }
   }, 900);
+}
+// Переименование страны: локально сразу, в мире — через claim (та же граница, плата 0)
+async function applyCountryName() {
+  const input = document.getElementById('state-name'), btn = document.getElementById('name-apply');
+  const name = ((input ? input.value : state.name) || '').trim().slice(0, 80);
+  if (!name) { flash('Название не может быть пустым', true); if (input) input.focus(); return; }
+  state.name = name;
+  if (input) { input.value = name; input.dataset.committed = name; }
+  if (btn) btn.classList.add('hidden');
+  save(); renderAll();
+  if (!isMP() || !ssoToken() || !state.border || state.border.length < 3) { flash('Название сохранено'); return; }
+  try {
+    const r = await mpApi('/claim', { method: 'POST', body: JSON.stringify({ name, color: state.color, border: state.border }) });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok) {
+      mp.country = Object.assign(mp.country || {}, { name });
+      if (d.balance != null) mp.balance = d.balance;
+      updateBalanceUI(); mpLoadWorld();
+      flash('Название сохранено' + (d.cost ? ' · −' + Math.round(d.cost) + ' gost' : ''));
+    } else flash(d.detail || 'Не удалось сохранить название', true);
+  } catch (e) { flash('Сервер недоступен', true); }
 }
 async function mpClaim() {
   if (!isMP() || !ssoToken() || !state.border || state.border.length < 3) return;

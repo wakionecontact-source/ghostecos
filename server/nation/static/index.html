@@ -23,7 +23,10 @@
   <header id="banner" class="panel">
     <button id="flag" class="flag-chip" title="Цвет флага"></button>
     <div class="banner-text">
-      <input id="state-name" maxlength="28" placeholder="Безымянная земля" spellcheck="false"/>
+      <div class="name-row">
+        <input id="state-name" maxlength="28" placeholder="Безымянная земля" spellcheck="false"/>
+        <button id="name-apply" class="mini primary hidden" title="Применить название">Принять</button>
+      </div>
       <div class="stats">
         <span id="stat-area">0 км²</span>
         <span class="dot">·</span>
@@ -209,6 +212,6 @@
   <!-- ── FLAG COLOR PICKER ── -->
   <div id="palette" class="panel hidden"></div>
 
-  <script defer src="app.js?v=37"></script>
+  <script defer src="app.js?v=38"></script>
 </body>
 </html>

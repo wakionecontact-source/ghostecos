@@ -396,3 +396,8 @@ button { cursor: pointer; background: none; border: none; color: inherit; font-f
 .mpc-row { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; padding: 3px 0; color: var(--text-dim); }
 .mpc-row b { color: var(--text); font-weight: 600; }
 .mpc-hint { margin-top: 8px; font-size: 11px; color: var(--text-dim); opacity: .75; line-height: 1.4; }
+
+/* ── Переименование страны ── */
+.name-row { display: flex; align-items: center; gap: 6px; }
+.name-row #state-name { flex: 1; min-width: 0; }
+#name-apply { flex: 0 0 auto; padding: 4px 10px; font-size: 12px; }
