@@ -2989,11 +2989,37 @@ function mpWsHandle(msg) {
     mpWorldRemove(msg.owner);
   }
 }
-// Чужая страна: контур, подпись и её постройки — только просмотр
+// Линии чужой страны: дороги, переулки, тропинки, жд — в тех же цветах, что и свои
+function mpForeignMeta(c, line) {
+  const map = c.lineMeta || {};
+  return normalizeLineMeta(map[roadKey(line)]);
+}
+function mpDrawForeignLines(g, c) {
+  const lines = c.lines || {}, wpx = m => Math.max(1, mToPx(m));
+  for (const line of lines.roads || []) {
+    const meta = mpForeignMeta(c, line), dirt = meta.surface === 'dirt', w = wpx(dirt ? LINE_M.dirt : LINE_M.road);
+    L.polyline(line, { pane: dirt ? 'pane-dirt' : 'pane-lines', color: dirt ? '#886548' : '#3b3f45', weight: w, opacity: .95, dashArray: dirt ? '10 5' : null, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(g);
+    if (!dirt) L.polyline(line, { pane: 'pane-lines', color: meta.oneWay ? '#e5e7eb' : '#f2c200', weight: Math.max(1, w * .11), opacity: .9, interactive: false }).addTo(g);
+  }
+  for (const line of lines.alleys || []) {
+    const meta = mpForeignMeta(c, line), dirt = meta.surface === 'dirt';
+    L.polyline(line, { pane: 'pane-alley', color: dirt ? '#886548' : '#54585f', weight: wpx(dirt ? LINE_M.dirt : LINE_M.alley), opacity: .95, dashArray: dirt ? '10 5' : null, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(g);
+  }
+  for (const line of lines.paths || []) {
+    L.polyline(line, { pane: 'pane-path', color: '#b7b9bc', weight: wpx(LINE_M.path), opacity: .95, lineCap: 'round', interactive: false }).addTo(g);
+  }
+  for (const line of lines.rails || []) {
+    const w = wpx(LINE_M.rail);
+    L.polyline(line, { pane: 'pane-lines', color: '#6b6f76', weight: w, opacity: .9, interactive: false }).addTo(g);
+    L.polyline(line, { pane: 'pane-lines', color: '#d0d0d0', weight: Math.max(1, w * .35), dashArray: `${Math.max(3, w)} ${Math.max(4, w * 1.2)}`, interactive: false }).addTo(g);
+  }
+}
+// Чужая страна: контур, подпись, дороги и её постройки — только просмотр
 function mpCountryLayer(c) {
   const g = L.layerGroup();
   L.polygon(c.border, { pane: 'pane-territory', color: c.color || '#888', weight: 2, opacity: .6, fillColor: c.color || '#888', fillOpacity: .07, interactive: false, dashArray: '5 4' }).addTo(g);
   if (map.getZoom() <= LABEL_MAX_ZOOM) L.marker(borderCentroid(c.border), { pane: 'markerPane', interactive: false, icon: L.divIcon({ className: 'country-label-wrap', html: `<div class="country-label" style="--c:${c.color || '#888'}">${escLabel(c.name || c.owner)}</div>`, iconSize: [0, 0], iconAnchor: [0, 0] }) }).addTo(g);
+  mpDrawForeignLines(g, c);
   for (const b of (Array.isArray(c.buildings) ? c.buildings : [])) {
     if (!isFinite(b.lat) || !isFinite(b.lng)) continue;
     if (b.type === 'tree') drawTree(b, g); else drawHouse(b, g);

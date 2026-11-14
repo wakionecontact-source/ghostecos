@@ -144,8 +144,32 @@ def _user(authorization: Optional[str]) -> str:
 
 # ── Общий мир в реальном времени (WS) ──
 _WS_MAX_BUILDINGS = 1500      # потолок построек на страну в одном сообщении
+_WS_MAX_LINES = 400           # линий каждого типа на страну
+_WS_MAX_POINTS = 20000        # точек во всех линиях страны
+_WS_LINE_KEYS = ("roads", "alleys", "paths", "rails")
 _WS_ANON_PER_IP = 8           # анонимных соединений с одного IP
 _WS_MAX_MSG = 8192            # байт в одном клиентском сообщении
+
+
+def _lines_payload(state, bbox=None):
+    """Линии страны для мира: дороги, переулки, тропинки, жд."""
+    out, points = {}, 0
+    for key in _WS_LINE_KEYS:
+        keep = []
+        for line in (state.get(key) or [])[:_WS_MAX_LINES]:
+            if not isinstance(line, list) or len(line) < 2:
+                continue
+            if bbox and not any(
+                isinstance(p, list) and len(p) == 2 and bbox[0] <= p[0] <= bbox[2] and bbox[1] <= p[1] <= bbox[3]
+                for p in line
+            ):
+                continue
+            if points + len(line) > _WS_MAX_POINTS:
+                break
+            points += len(line)
+            keep.append(line)
+        out[key] = keep
+    return out
 
 
 class WorldHub:
@@ -234,7 +258,10 @@ def _country_payload(row, bbox=None) -> dict:
             break
     return {"owner": row["owner"], "name": row["name"], "color": row["color"],
             "border": json.loads(row["border"]), "cx": row["cx"], "cy": row["cy"],
-            "buildings": buildings, "updated": row["updated"]}
+            "buildings": buildings, "updated": row["updated"],
+            "lines": _lines_payload(state, bbox),
+            "lineMeta": state.get("lineMeta") or {},
+            "roadWalk": state.get("roadWalk") or {}}
 
 
 def _country_row(owner: str):
