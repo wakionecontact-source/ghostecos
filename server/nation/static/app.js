@@ -2848,7 +2848,9 @@ function mpInit() {
   document.getElementById('mode-local').onclick = () => setMode('local');
   document.getElementById('mode-mp').onclick = () => setMode('mp');
   document.getElementById('mp-login-go').onclick = mpSubmitLogin;
-  document.getElementById('mp-login-cancel').onclick = () => { hideMpLogin(); if (isMP()) setMode('local'); };
+  document.getElementById('mp-login-cancel').onclick = () => hideMpLogin();
+  const loginOpen = document.getElementById('mp-login-open');
+  if (loginOpen) loginOpen.onclick = showMpLogin;
   const regBtn = document.getElementById('mp-login-register');
   if (regBtn) regBtn.onclick = mpGoRegister;
   document.getElementById('mp-logout').onclick = mpLogout;
@@ -2872,15 +2874,12 @@ function updateBalanceUI() {
   const b = document.getElementById('mp-balance'); if (b) b.textContent = Math.round(mp.balance) + ' gost';
   const p = document.getElementById('mp-pop'); if (p) p.textContent = mp.pop + ' чел';
   const lo = document.getElementById('mp-logout'); if (lo) lo.classList.toggle('hidden', !ssoToken());
+  const li = document.getElementById('mp-login-open'); if (li) li.classList.toggle('hidden', !!ssoToken());
 }
 function enterMP() {
-  if (!ssoToken()) {                     // без входа мир доступен на просмотр
-    showMpLogin();
-    mpWsConnect();
-    mpLoadWorld();
-    return;
-  }
-  mpLoadMine().then(() => { mpWsConnect(); mpLoadWorld(); });
+  mpWsConnect(); mpLoadWorld();          // мир грузим всегда: и без входа, и при мёртвом JWT
+  if (!ssoToken()) return;               // аноним смотрит мир сразу, вход — по кнопке «Войти»
+  mpLoadMine();
 }
 async function mpLoadMine() {
   try {
@@ -2994,16 +2993,27 @@ function mpForeignMeta(c, line) {
   const map = c.lineMeta || {};
   return normalizeLineMeta(map[roadKey(line)]);
 }
+function mpForeignWalk(c, line, dflt) {
+  const w = (c.roadWalk || {})[roadKey(line)];
+  return w === 'both' || w === 'left' || w === 'right' || w === 'none' ? w : dflt;
+}
 function mpDrawForeignLines(g, c) {
-  const lines = c.lines || {}, wpx = m => Math.max(1, mToPx(m));
+  const lines = c.lines || {}, wpx = m => Math.max(1, mToPx(m)), sw = Math.max(2, mToPx(LINE_M.path + 0.6));
+  const sidewalks = (line, widthM, walk) => {
+    const off = widthM / 2 + 1;
+    const sides = walk === 'both' ? [off, -off] : walk === 'left' ? [off] : walk === 'right' ? [-off] : [];
+    sides.forEach(o => L.polyline(offsetLine(line, o), { pane: 'pane-path', color: '#b7b9bc', weight: sw, opacity: .92, interactive: false, lineCap: 'round' }).addTo(g));
+  };
   for (const line of lines.roads || []) {
-    const meta = mpForeignMeta(c, line), dirt = meta.surface === 'dirt', w = wpx(dirt ? LINE_M.dirt : LINE_M.road);
+    const meta = mpForeignMeta(c, line), dirt = meta.surface === 'dirt', widthM = dirt ? LINE_M.dirt : LINE_M.road, w = wpx(widthM);
+    sidewalks(line, widthM, mpForeignWalk(c, line, 'both'));
     L.polyline(line, { pane: dirt ? 'pane-dirt' : 'pane-lines', color: dirt ? '#886548' : '#3b3f45', weight: w, opacity: .95, dashArray: dirt ? '10 5' : null, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(g);
     if (!dirt) L.polyline(line, { pane: 'pane-lines', color: meta.oneWay ? '#e5e7eb' : '#f2c200', weight: Math.max(1, w * .11), opacity: .9, interactive: false }).addTo(g);
   }
   for (const line of lines.alleys || []) {
-    const meta = mpForeignMeta(c, line), dirt = meta.surface === 'dirt';
-    L.polyline(line, { pane: 'pane-alley', color: dirt ? '#886548' : '#54585f', weight: wpx(dirt ? LINE_M.dirt : LINE_M.alley), opacity: .95, dashArray: dirt ? '10 5' : null, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(g);
+    const meta = mpForeignMeta(c, line), dirt = meta.surface === 'dirt', widthM = dirt ? LINE_M.dirt : LINE_M.alley;
+    sidewalks(line, widthM, mpForeignWalk(c, line, 'none'));
+    L.polyline(line, { pane: 'pane-alley', color: dirt ? '#886548' : '#54585f', weight: wpx(widthM), opacity: .95, dashArray: dirt ? '10 5' : null, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(g);
   }
   for (const line of lines.paths || []) {
     L.polyline(line, { pane: 'pane-path', color: '#b7b9bc', weight: wpx(LINE_M.path), opacity: .95, lineCap: 'round', interactive: false }).addTo(g);

@@ -182,9 +182,11 @@ class WorldHub:
 
     def add(self, ws: WebSocket, bbox: tuple[float, float, float, float],
             ip: str = "", anon: bool = False) -> None:
+        prev = self.info.get(ws)
         self.clients[ws] = bbox
         self.info[ws] = {"ip": ip, "anon": anon}
-        if anon:
+        # переподписка того же соединения не должна накручивать лимит на IP
+        if anon and not (prev and prev.get("anon") and prev.get("ip") == ip):
             self.anon_ips[ip] += 1
 
     def drop(self, ws: WebSocket) -> None:
