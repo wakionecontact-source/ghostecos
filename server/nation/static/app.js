@@ -1747,22 +1747,51 @@ function stationNearTrain(train, radius = 7) {
   const point = lerpPos(train.line, train.seg, train.t);
   return state.stations.find(x => { const distance = distMeters(x.lat, x.lng, point[0], point[1]); return distance <= radius && (!x.railKey || x.railKey === roadKey(train.line) || distance <= 2.5); }) || null;
 }
-function railJunctionOptions(train, endpoint, returnAll = false) {
+function railBendBetween(line, seg, fwd, otherLine, otherSeg, otherFwd) {   // отклонение курса при переходе (радианы)
+  const a = segmentVector(line, seg, fwd), b = segmentVector(otherLine, otherSeg, otherFwd);
+  return Math.abs(angleDelta(Math.atan2(a.n, a.e), Math.atan2(b.n, b.e)));
+}
+function railJunctionOptions(train, endpoint, returnAll = false) {          // стыки рельсов: только плавные по курсу
   const options = [], current = train.line, tol = Math.max(5, LINE_M.rail * .95);
+  const incomingAngle = Math.atan2(segmentVector(current, train.seg, train.fwd).n, segmentVector(current, train.seg, train.fwd).e);
+  const prev = train.seg > 0 ? segmentVector(current, train.seg - 1, train.fwd) : null;
+  const prevAngle = prev ? Math.atan2(prev.n, prev.e) : incomingAngle;
   for (const line of sim.railLines || []) {
     if (line === current || line.length < 2) continue;
+    if (lineIsClosed(line)) continue;                          // кольцо не стыкуется со случайными линиями в середине
     for (let i = 1; i < line.length; i++) {
       const hit = projOnSegLL(endpoint, line[i - 1], line[i]), distance = distMeters(endpoint[0], endpoint[1], hit[0], hit[1]);
       if (distance > tol) continue;
       const segLen = distMeters(line[i - 1][0], line[i - 1][1], line[i][0], line[i][1]) || 1;
       const t = Math.max(0, Math.min(1, distMeters(line[i - 1][0], line[i - 1][1], hit[0], hit[1]) / segLen));
-      for (const fwd of [true, false]) if ((fwd ? 1 - t : t) * segLen >= .45) options.push({ line, seg: i - 1, t, fwd, point: hit, distance });
+      for (const fwd of [true, false]) {
+        if ((fwd ? 1 - t : t) * segLen < .45) continue;
+        const bend = railBendBetween(current, train.seg, train.fwd, line, i - 1, fwd);
+        // отсекаем резкие повороты: разрешено продолжение почти по курсу или плавный изгиб (<= 70°),
+        // U-разворот на 180° оставляем только как крайний случай (нет других путей)
+        if (bend > Math.PI * .39 && bend < Math.PI * .8) continue;
+        options.push({ line, seg: i - 1, t, fwd, point: hit, distance, bend });
+      }
       break;
     }
   }
   if (!options.length) return null;
+  options.sort((a, b) => (a.bend || 0) - (b.bend || 0));
   if (returnAll) return options;
-  return options[randInt(options.length)];
+  // маршрут до станции: если он есть и совпадает с опцией — почти всегда туда
+  const planned = train.route && train.route[0];
+  if (planned) {
+    const matches = options.filter(o => o.line === planned.line && o.fwd === planned.fwd);
+    if (matches.length) {
+      const picked = matches.sort((a, b) => distMeters(a.point[0], a.point[1], planned.point[0], planned.point[1]) - distMeters(b.point[0], b.point[1], planned.point[0], planned.point[1]))[0];
+      train.route.shift();
+      return picked;
+    }
+    train.route = [];
+  }
+  // прямо по курсу: берём самый плавный изгиб; случайность — только среди почти прямых (±12° от лучшего)
+  const bestBend = options[0].bend || 0, nearStraight = options.filter(o => (o.bend || 0) <= bestBend + Math.PI / 15);
+  return nearStraight[randInt(nearStraight.length)];
 }
 function makeTrain(line, fwd, initialT) {
   const direction = fwd == null ? Math.random() < .5 : fwd;
@@ -1935,6 +1964,31 @@ function replenishTrains() {
   const plans = trainLinePlans(); plans.forEach(plan => { plan.count = counts.get(plan.line) || 0; });
   addTrainsFair(plans);
 }
+function trainTurnPose(train) {                        // позиция поезда на дуге поворота
+  const tr = train.turn; if (!tr || !tr.samples.length) return null;
+  let i = 1; while (i < tr.cum.length - 1 && tr.cum[i] < tr.s) i++;
+  const a = tr.samples[i - 1], b = tr.samples[i], span = tr.cum[i] - tr.cum[i - 1] || 1;
+  const f = Math.max(0, Math.min(1, (tr.s - tr.cum[i - 1]) / span)), pos = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+  const p0 = tr.samples[Math.max(0, i - 2)], p1 = tr.samples[Math.min(tr.samples.length - 1, i + 1)];
+  const e = (p1[1] - p0[1]) * mPerDegLng(pos[0]), n = (p1[0] - p0[0]) * MPD_LAT;
+  return { pos, angle: Math.atan2(n, e) };
+}
+function trainPose(train) {                             // позиция поезда (дуга поворота или сегмент)
+  if (train.turn) { const p = trainTurnPose(train); if (p) return p; }
+  if (!train.line || !train.line[train.seg + 1]) return null;
+  const raw = segmentVector(train.line, train.seg, train.fwd), pos = lerpPos(train.line, train.seg, train.t);
+  return { pos, angle: Math.atan2(raw.n, raw.e) };
+}
+function buildTrainTurn(train, picked, endpoint, bend) {   // дуга поворота между текущим положением и новым путём
+  const from = trainPose(train); if (!from) return null;
+  const to = lineStateAfter(picked.line, picked.seg, picked.t, picked.fwd, 2.2);
+  const toPos = lerpPos(to.line, to.seg, to.t);
+  const center = picked.point ? [(endpoint[0] + picked.point[0]) / 2, (endpoint[1] + picked.point[1]) / 2] : endpoint;
+  const control = offset(center[0], center[1], 0, 0);
+  const curve = turnSamples(from.pos, control, toPos);
+  const outFwd = segmentVector(to.line, to.seg, to.fwd);
+  return { ...curve, s: 0, end: to, angle: Math.atan2(outFwd.n, outFwd.e), bend: bend || 0 };
+}
 function stepTrain(train, dt) {
   if (train.dead || !train.line || train.line.length < 2 || !train.line[train.seg] || !train.line[train.seg + 1]) { train.dead = true; return; }
   const station = stationNearTrain(train, 7);
@@ -1943,7 +1997,18 @@ function stepTrain(train, dt) {
   if (!station) train.stationKey = null;
   train.v = Math.min(train.maxSpd || 15, (train.v || 0) + (train.accel || 2.8) * dt);
   let left = Math.max(0, train.v * dt), guard = 0;
-  while (left > 1e-5 && guard++ < 8) {
+  while (left > 1e-5 && guard++ < 10) {
+    if (train.turn) {                                   // идём по дуге поворота
+      const remain = train.turn.length - train.turn.s, moved = Math.min(left, remain);
+      train.turn.s += moved; left -= moved;
+      const curveLimit = train.turn.limit || train.maxSpd || 15;
+      if (train.v > curveLimit) train.v = Math.max(curveLimit, train.v - (train.brake || 12) * dt);
+      if (train.turn.s >= train.turn.length - 1e-4) {
+        Object.assign(train, train.turn.end); train.turn = null; train.stationKey = null;
+        if (left <= 1e-5) break; continue;
+      }
+      break;
+    }
     const raw = segmentVector(train.line, train.seg, true), available = train.fwd ? (1 - train.t) * raw.len : train.t * raw.len;
     const gap = trainFrontGap(train), allowed = Math.max(0, Math.min(left, available, Number.isFinite(gap) ? gap : left));
     if (allowed <= 1e-5) { train.v = Math.max(0, train.v - (train.brake || 12) * dt); break; }
@@ -1958,7 +2023,17 @@ function stepTrain(train, dt) {
       if (out) handleTrainRailExit(train, out);
       if (train.dead) break;
       const picked = railJunctionOptions(train, endpoint);
-      Object.assign(train, lineStateAfter(picked.line, picked.seg, picked.t, picked.fwd, 2.2)); train.stationKey = null;
+      const merged = Object.assign({}, picked, { line: picked.line });
+      const bend = picked.bend || 0;
+      const turn = buildTrainTurn(train, merged, endpoint, bend);
+      if (turn && turn.length > 0.5) {
+        const speedLimit = bend > 0.9 ? Math.min(train.maxSpd || 15, 6) : bend > 0.5 ? Math.min(train.maxSpd || 15, 9.5) : (train.maxSpd || 15);
+        turn.limit = speedLimit;
+        if (train.v > speedLimit) train.v = speedLimit;
+        train.turn = turn;
+      } else {
+        Object.assign(train, lineStateAfter(picked.line, picked.seg, picked.t, picked.fwd, 2.2)); train.stationKey = null;
+      }
     } else if (out) {
       handleTrainRailExit(train, out);
       if (!train.dead) { train.fwd = !train.fwd; train.t = train.fwd ? .015 : .985; train.stationKey = null; train.dwell = .8; train.v = 0; }
@@ -2930,11 +3005,12 @@ function drawSim() {
   const W = innerWidth, H = innerHeight;
   drawLightSignals(ctx, dpr, W, H);
   for (const train of sim.trains) {
-    if (train.dead || !train.line || !train.line[train.seg + 1]) continue;
-    const pos = lerpPos(train.line, train.seg, train.t), raw = segmentVector(train.line, train.seg, train.fwd), cp = map.latLngToContainerPoint([pos[0], pos[1]]);
+    if (train.dead || !train.line || !train.line[train.seg + 1] && !train.turn) continue;
+    const pose = trainPose(train); if (!pose) continue;
+    const pos = pose.pos, cp = map.latLngToContainerPoint([pos[0], pos[1]]);
     if (cp.x < -40 || cp.y < -40 || cp.x > W + 40 || cp.y > H + 40) continue;
     const length = Math.max(12, mToPx(train.length)), width = Math.max(1.2, mToPx(train.width)), carCount = Math.max(2, train.cars || 3), carLength = length / carCount - Math.max(1, mToPx(.8));
-    ctx.save(); ctx.translate(cp.x * dpr, cp.y * dpr); ctx.rotate(-Math.atan2(raw.n, raw.e));
+    ctx.save(); ctx.translate(cp.x * dpr, cp.y * dpr); ctx.rotate(-pose.angle);
     for (let i = 0; i < carCount; i++) {
       const cx = -length * .5 + (i + .5) * (length / carCount);
       ctx.fillStyle = i === 0 || i === carCount - 1 ? '#efc55b' : '#dba942'; roundRect(ctx, (cx - carLength * .5) * dpr, -width * .5 * dpr, carLength * dpr, width * dpr, Math.min(width * .45, 3) * dpr); ctx.fill();
