@@ -37,9 +37,16 @@ COST_STATION        = 250
 COST_PARKING        = 120
 COST_LIGHT          = 30
 COST_CROSSWALK      = 10
-RESIDENTS_PER_HOUSE = 4         # население = дома × это (ограничено рабочими местами)
+RESIDENTS_PER_HOUSE = 4         # население = дома × это
 JOBS_PER_SHOP       = 12
-TAX_PER_CITIZEN_HR  = 2.0       # gost в час с жителя
+TAX_EMPLOYED_HR     = 2.0       # gost в час с занятого жителя
+TAX_UNEMPLOYED_HR   = 0.5       # безработный платит меньше
+UPKEEP_ROAD_KM_HR   = 1.0       # содержание дорог/жд/тропинок за км в час
+UPKEEP_STATION_HR   = 3.0
+UPKEEP_PARKING_HR   = 1.0
+UPKEEP_LIGHT_HR     = 0.3
+UPKEEP_CROSSWALK_HR = 0.1
+MIN_BALANCE         = -300.0    # глубже минуса не уходим
 
 MAX_BORDER_POINTS = 512
 MAX_BUILDINGS = 5000
@@ -441,9 +448,27 @@ def _overlap(p1, p2):
 
 
 def _population(state):
+    return sum(1 for b in state.get("buildings", []) if b.get("type") == "house") * RESIDENTS_PER_HOUSE
+
+
+def _economy(state):
+    """Доход (налог + торговля) и расходы (содержание) страны — всё в час."""
     houses = sum(1 for b in state.get("buildings", []) if b.get("type") == "house")
     shops = sum(1 for b in state.get("buildings", []) if b.get("type") == "shop")
-    return min(houses * RESIDENTS_PER_HOUSE, shops * JOBS_PER_SHOP + houses)  # ограничено работой
+    residents = houses * RESIDENTS_PER_HOUSE
+    jobs = shops * JOBS_PER_SHOP
+    employed = min(residents, jobs)
+    unemployed = max(0, residents - employed)
+    income = employed * TAX_EMPLOYED_HR + unemployed * TAX_UNEMPLOYED_HR
+    road_km = sum(_road_len_m(state.get(k, [])) for k in ("roads", "alleys", "rails", "paths")) / 1000.0
+    upkeep = (road_km * UPKEEP_ROAD_KM_HR
+              + len(state.get("stations") or []) * UPKEEP_STATION_HR
+              + len(state.get("parking") or []) * UPKEEP_PARKING_HR
+              + len(state.get("lights") or []) * UPKEEP_LIGHT_HR
+              + len(state.get("crosswalks") or []) * UPKEEP_CROSSWALK_HR)
+    return {"residents": residents, "jobs": jobs, "employed": employed,
+            "unemployed": unemployed, "income": round(income, 2),
+            "upkeep": round(upkeep, 2), "net": round(income - upkeep, 2)}
 
 
 def _state_value(state):
@@ -565,15 +590,15 @@ def get_mine(authorization: Optional[str] = Header(None)):
     if not r:
         con.close(); return {"country": None}
     state = json.loads(r["state"] or "{}")
-    pop = _population(state)
+    econ = _economy(state)
     now = int(time.time())
     hrs = min(_MAX_OFFLINE_HOURS, max(0.0, (now - (r["last_income"] or now)) / 3600.0))
-    bal = r["balance"] + pop * TAX_PER_CITIZEN_HR * hrs
+    bal = max(MIN_BALANCE, r["balance"] + econ["net"] * hrs)
     con.execute("UPDATE country SET balance=?, last_income=? WHERE owner=?", (bal, now, user))
     con.commit()
     res = {"owner": r["owner"], "name": r["name"], "color": r["color"],
            "border": json.loads(r["border"]), "state": state,
-           "balance": round(bal, 1), "population": pop}
+           "balance": round(bal, 1), "population": econ["residents"], "economy": econ}
     con.close()
     return {"country": res}
 
@@ -690,7 +715,7 @@ async def save_mine(req: SaveReq, authorization: Optional[str] = Header(None)):
     con.close()
     await _broadcast_country(user)          # соседи видят новые постройки без перезагрузки
     return {"ok": True, "balance": round(bal, 1), "spent": round(spend, 1),
-            "population": _population(st)}
+            "population": _economy(st)["residents"], "economy": _economy(st)}
 
 
 @app.get("/api/nation/health")

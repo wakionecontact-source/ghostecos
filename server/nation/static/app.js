@@ -1429,7 +1429,11 @@ const VEHICLE_TYPES = {
   truck: { length: 8.6, width: 2.45, minSpeed: 5.5, maxSpeed: 11, accel: 5.5, brake: 21, maxLatAccel: 4.2, cabLength: 2.4, trailerLength: 6.2, trailerWheelbase: 5.1 }
 };
 const PED_COLORS = ['#ffd24a', '#5ad06a', '#ff8a5c', '#5cc8ff', '#e8e8e8', '#d98cff'];
-const sim = { on: false, cars: [], parkedCars: [], parkingLots: [], peds: [], trains: [], driveLines: [], railLines: [], pedLines: [], raf: 0, last: 0, t: 0, selected: null, follow: false, _panelT: 0, _trafficT: 0, _trafficLanes: null, _junctionTraffic: null, _junctionRequests: null };
+const sim = { on: false, cars: [], parkedCars: [], parkingLots: [], peds: [], trains: [], driveLines: [], railLines: [], pedLines: [], raf: 0, last: 0, t: 0, selected: null, follow: false, _panelT: 0, _trafficT: 0, _trafficLanes: null, _junctionTraffic: null, _junctionRequests: null, workload: new Map() };
+// Экономика: те же правила, что на сервере (server.py), для локальной оценки
+const RESIDENTS_PER_HOUSE = 4, JOBS_PER_SHOP = 12;
+const TAX_EMPLOYED_HR = 2.0, TAX_UNEMPLOYED_HR = 0.5;
+const UPKEEP_ROAD_KM_HR = 1.0, UPKEEP_STATION_HR = 3.0, UPKEEP_PARKING_HR = 1.0, UPKEEP_LIGHT_HR = 0.3, UPKEEP_CROSSWALK_HR = 0.1;
 let simCanvas = null, simCtx = null;
 let _vehicleId = 0;
 let _trainId = 0;
@@ -1615,13 +1619,34 @@ function makeCitizen(line) {
   const female = Math.random() < 0.5;
   const first = female ? NAME_F[randInt(NAME_F.length)] : NAME_M[randInt(NAME_M.length)];
   const last = SURNAME[randInt(SURNAME.length)] + (female ? 'а' : '');
-  return {
+  const cit = {
     id: ++_cid, name: first + ' ' + last, female, age: 16 + randInt(64), job: JOBS[randInt(JOBS.length)],
     line, seg: randInt(Math.max(1, line.length - 1)), t: Math.random(), fwd: Math.random() < .5,
     spd: 1.0 + Math.random() * 0.7, color: PED_COLORS[randInt(PED_COLORS.length)],
-    dest: null, goal: null, status: 'идёт', idle: 0, transit: null, waitingAtStation: null, waitSlot: null
+    dest: null, goal: null, status: 'идёт', idle: 0, transit: null, waitingAtStation: null, waitSlot: null,
+    home: null, work: null, employed: false, atWork: false
   };
+  assignCitizenJob(cit);
+  return cit;
 }
+// Дом и рабочее место: работа выдаётся по свободным местам магазинов
+function assignCitizenJob(cit) {
+  const houses = state.buildings.filter(b => b.type === 'house' && isFinite(b.lat) && isFinite(b.lng));
+  const shops = state.buildings.filter(b => b.type === 'shop' && isFinite(b.lat) && isFinite(b.lng));
+  if (houses.length) cit.home = houses[cit.id % houses.length];
+  cit.work = null; cit.employed = false;
+  if (!shops.length) return;
+  let best = null, bestLoad = Infinity;
+  for (const s of shops) {
+    const load = sim.workload.get(s) || 0;
+    if (load < bestLoad) { bestLoad = load; best = s; }
+  }
+  if (best && bestLoad < JOBS_PER_SHOP) {
+    cit.work = best; cit.employed = true;
+    sim.workload.set(best, bestLoad + 1);
+  }
+}
+function citizenWorkplace(cit) { return cit && cit.work ? cit.work : null; }
 function exitNearPoint(point, mode, radius = 10) {
   if (!point || !Array.isArray(state.exits)) return null;
   return state.exits.find(x => Array.isArray(x.modes) && x.modes.includes(mode) && distMeters(x.lat, x.lng, point[0], point[1]) <= radius) || null;
@@ -1896,6 +1921,7 @@ function addTrafficFair(plans) {
 }
 function buildSim() {
   sim.cars = []; sim.parkedCars = []; sim.parkingLots = []; sim.peds = []; sim.trains = []; sim._trafficLineCounts = new Map();
+  sim.workload = new Map();
   sim.railLines = state.rails.filter(line => line && line.length >= 2);
   addTrainsFair(trainLinePlans());
   sim.driveLines = state.roads.concat(state.alleys);          // машины ездят по дорогам И переулкам
@@ -1957,11 +1983,20 @@ function assignDest(cit, options = {}) {                        // выбрат�
   }
   const builds = state.buildings.filter(b => b.type !== 'tree' && isFinite(b.lat) && isFinite(b.lng));
   if (!builds.length) { cit.status = 'гуляет'; return; }
-  const b = builds[randInt(builds.length)], np = pedNearestPoint([b.lat, b.lng]);
+  let b = null, kind = '';
+  if (cit.employed && cit.work) {                 // занятой житель ходит по маршруту дом ↔ работа
+    const toWork = !cit.atWork;
+    b = toWork ? cit.work : (cit.home || cit.work);
+    kind = toWork ? 'work' : 'home';
+  } else {
+    b = builds[randInt(builds.length)];
+    kind = b === cit.home ? 'home' : '';
+  }
+  const np = pedNearestPoint([b.lat, b.lng]);
   const g = np ? np.pos : [b.lat, b.lng];
   if (!isFinite(g[0]) || !isFinite(g[1])) { cit.dest = null; cit.goal = null; cit.status = 'гуляет'; return; }   // защита от битых координат
-  cit.dest = b; cit.goal = g;
-  cit.status = 'идёт ' + (b.type === 'shop' ? 'в магазин' : 'к дому');
+  cit.dest = b; cit.goal = g; cit.destKind = kind;
+  cit.status = kind === 'work' ? 'идёт на работу' : kind === 'home' ? 'идёт домой' : 'идёт ' + (b.type === 'shop' ? 'в магазин' : 'к дому');
   orientToGoal(cit);                                          // сразу повернуть В СТОРОНУ цели (а не куда смотрел)
 }
 function orientToGoal(cit) {                                   // выбрать направление по текущей линии, что ближе к цели
@@ -2541,7 +2576,12 @@ function stepPed(p, dt) {
         if (station && setCitizenAtStation(p, station, false)) return;
         assignDest(p, { avoidTransit: true }); return;
       }
-      p.idle = 2 + Math.random() * 5; p.status = 'на месте: ' + (p.dest && p.dest.type === 'shop' ? 'магазин' : 'дом'); p.goal = null;
+      p.idle = 2 + Math.random() * 5;
+      p.atWork = p.destKind === 'work';
+      p.status = p.destKind === 'work' ? 'на работе'
+        : p.destKind === 'home' ? 'дома'
+        : 'на месте: ' + (p.dest && p.dest.type === 'shop' ? 'магазин' : 'дом');
+      p.goal = null;
     }
   }
 }
@@ -2565,7 +2605,10 @@ function updateCitizenPanel() {
   document.getElementById('cz-body').innerHTML =
     `<div class="cz-row"><span>${c.female ? 'Женщина' : 'Мужчина'}, ${c.age}</span><span>${c.job}</span></div>` +
     `<div class="cz-row"><span>Статус</span><b>${c.status || 'идёт'}</b></div>` +
-    `<div class="cz-row"><span>Направляется</span><b>${dest}</b></div>`;
+    `<div class="cz-row"><span>Направляется</span><b>${dest}</b></div>` +
+    `<div class="cz-row"><span>Дом</span><b>${c.home ? 'есть' : 'нет'}</b></div>` +
+    `<div class="cz-row"><span>Работа</span><b>${c.employed ? 'магазин' : 'нет'}</b></div>` +
+    `<div class="cz-row"><span>Занятость</span><b>${c.employed ? 'работает' : 'безработный'}</b></div>`;
 }
 function roundRect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
 function drawVehicleShape(ctx, c, length, width, dpr, vehicleAngle) {
@@ -2671,7 +2714,12 @@ function simLoop(ts) {
     stepParkingCars(dt);
     if (sim.cars.some(c => c.dead)) sim.cars = sim.cars.filter(c => !c.dead);
     if (sim.trains.some(train => train.dead)) sim.trains = sim.trains.filter(train => !train.dead);
-    if (sim.peds.some(p => p.dead)) sim.peds = sim.peds.filter(p => !p.dead);
+    if (sim.peds.some(p => p.dead)) {
+    sim.peds.filter(p => p.dead).forEach(p => {          // освобождаем рабочее место
+      if (p.work) sim.workload.set(p.work, Math.max(0, (sim.workload.get(p.work) || 0) - 1));
+    });
+    sim.peds = sim.peds.filter(p => !p.dead);
+  }
     if (sim.selected) {
       if (sim.selected.dead || !sim.peds.includes(sim.selected)) deselectCitizen();
       else {
@@ -2819,7 +2867,7 @@ function wire() {
 /* ════════════════ BOOT ════════════════ */
 /* ════════════════ МУЛЬТИПЛЕЕР (общий мир, аккаунты GhostEcos) ════════════════ */
 const MP_API = '/api/nation', MP_STORE = 'ghostnation:mp';
-const mp = { mode: localStorage.getItem('ghostnation:mode') === 'mp' ? 'mp' : 'local', country: null, balance: 0, pop: 0, worldLayer: null, saveTimer: null, world: new Map(), layers: new Map(), ws: null, wsReady: false, wsRetry: 0, wsTimer: 0, wsSubTimer: 0, confirmed: null };
+const mp = { mode: localStorage.getItem('ghostnation:mode') === 'mp' ? 'mp' : 'local', country: null, balance: 0, pop: 0, econ: null, worldLayer: null, saveTimer: null, world: new Map(), layers: new Map(), ws: null, wsReady: false, wsRetry: 0, wsTimer: 0, wsSubTimer: 0, confirmed: null };
 let mpWorldLoadTimer = 0, mpWorldLoadInFlight = false, mpWorldLoadAgain = false;
 function isMP() { return mp.mode === 'mp'; }
 
@@ -2907,7 +2955,12 @@ function updateBalanceUI() {
   const p = document.getElementById('mp-pop');
   if (p) { p.textContent = logged ? mp.pop + ' чел' : ''; p.classList.toggle('hidden', !logged); }
   const inc = document.getElementById('mp-income');
-  if (inc) { inc.textContent = logged ? '≈' + Math.round(mp.pop * 2) + ' gost/ч' : ''; inc.classList.toggle('hidden', !logged); }
+  if (inc) {
+    const e = mp.econ;
+    inc.textContent = logged ? (e ? (e.net >= 0 ? '+' : '') + Math.round(e.net) + ' gost/ч' : '≈' + Math.round(mp.pop * 2) + ' gost/ч') : '';
+    if (e) inc.title = `Доход ${Math.round(e.income)} · содержание ${Math.round(e.upkeep)} · жителей ${e.residents} · рабочих мест ${e.jobs} · безработных ${e.unemployed}`;
+    inc.classList.toggle('hidden', !logged);
+  }
   const lo = document.getElementById('mp-logout'); if (lo) lo.classList.toggle('hidden', !logged);
   const li = document.getElementById('mp-login-open'); if (li) li.classList.toggle('hidden', logged);
 }
@@ -2931,6 +2984,7 @@ async function mpLoadMine() {
     const d = await r.json();
     if (d.country) {
       const c = d.country; mp.country = c; mp.balance = c.balance || 0; mp.pop = c.population || 0;
+      mp.econ = c.economy || null;
       state = migrate(Object.assign(freshState(), c.state || {})); state.name = c.name || ''; state.color = c.color || state.color; state.border = c.border || null;
       mpResetSent(); mp.confirmed = JSON.stringify(state);
       document.getElementById('state-name').value = state.name; renderAll(); updateBalanceUI();
@@ -2982,6 +3036,7 @@ function mpSyncSave() {
       if (r.ok) {
         const d = await r.json();
         mp.confirmed = JSON.stringify(state);          // что сервер уже принял
+        mp.econ = d.economy || mp.econ;
         mp.balance = d.balance; mp.pop = d.population != null ? d.population : mp.pop; updateBalanceUI();
         mpSetSaveState('Сохранено', true);
       } else if (r.status === 402) {

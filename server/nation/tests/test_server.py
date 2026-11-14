@@ -67,11 +67,28 @@ class EconomyTests(unittest.TestCase):
         line_m = 0.007 * 111320
         self.assertAlmostEqual(val, 40 + 0.6 * 3 * line_m + 30 + 10 + 120 + 250, places=3)
 
-    def test_population_limited_by_jobs(self):
+    def test_population_is_residents(self):
         houses = [{"type": "house", "lat": 0, "lng": 0}] * 3
-        self.assertEqual(srv._population({"buildings": houses}), 3)
-        st = {"buildings": houses + [{"type": "shop", "lat": 0, "lng": 0}]}
-        self.assertEqual(srv._population(st), 12)
+        self.assertEqual(srv._population({"buildings": houses}), 12)
+
+    def test_economy_employment(self):
+        st = {"buildings": [{"type": "house", "lat": 0, "lng": 0}] * 2
+                           + [{"type": "shop", "lat": 0, "lng": 0}]}
+        e = srv._economy(st)
+        self.assertEqual((e["residents"], e["jobs"], e["employed"], e["unemployed"]), (8, 12, 8, 0))
+        self.assertAlmostEqual(e["income"], 8 * srv.TAX_EMPLOYED_HR, places=3)
+
+    def test_economy_unemployed_paid_less(self):
+        st = {"buildings": [{"type": "house", "lat": 0, "lng": 0}] * 2}
+        e = srv._economy(st)
+        self.assertEqual((e["employed"], e["unemployed"]), (0, 8))
+        self.assertAlmostEqual(e["income"], 8 * srv.TAX_UNEMPLOYED_HR, places=3)
+
+    def test_upkeep_counts_all_lines(self):
+        km = [[0.0, 0.0], [0.008993, 0.0]]
+        e = srv._economy({"roads": [km], "paths": [km], "lights": [{"lat": 0, "lng": 0}]})
+        self.assertAlmostEqual(e["upkeep"], 2 * srv.UPKEEP_ROAD_KM_HR + srv.UPKEEP_LIGHT_HR, delta=0.02)
+        self.assertLess(e["net"], 0)
 
     def test_offline_cap_constant(self):
         self.assertEqual(srv._MAX_OFFLINE_HOURS, 72.0)
