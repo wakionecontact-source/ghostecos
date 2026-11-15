@@ -1821,6 +1821,62 @@ function exitNearPoint(point, mode, radius = 10) {
   if (!point || !Array.isArray(state.exits)) return null;
   return state.exits.find(x => Array.isArray(x.modes) && x.modes.includes(mode) && distMeters(x.lat, x.lng, point[0], point[1]) <= radius) || null;
 }
+function railExitsAll() { return (state.exits || []).filter(x => Array.isArray(x.modes) && x.modes.includes('rail')); }
+function railLinesAtExit(exit) {                          // линии ЖД, концы которых у точки выезда
+  const out = [];
+  for (let i = 0; i < (sim.railLines || []).length; i++) {
+    const L = sim.railLines[i];
+    if (distMeters(exit.lat, exit.lng, L[0][0], L[0][1]) <= 8) out.push({ i, atEnd: false });
+    else if (distMeters(exit.lat, exit.lng, L[L.length - 1][0], L[L.length - 1][1]) <= 8) out.push({ i, atEnd: true });
+  }
+  return out;
+}
+function railExitEndFor(line, nextLine) {                 // к какому концу line ехать, чтобы стыковаться с nextLine
+  const tol = Math.max(5, LINE_M.rail * .95), ends = [{ atEnd: false, p: line[0] }, { atEnd: true, p: line[line.length - 1] }];
+  for (const e of ends) for (let s = 1; s < nextLine.length; s++) {
+    const h = projOnSegLL(e.p, nextLine[s - 1], nextLine[s]);
+    if (distMeters(e.p[0], e.p[1], h[0], h[1]) <= tol) return e.atEnd;
+  }
+  return null;
+}
+function buildTrainRoute(train, targetExit) {             // BFS по сети ЖД от текущей линии до линии у targetExit
+  train._routeGoal = targetExit ? railExitSimKey(targetExit) : null;
+  train.route = [];
+  if (!targetExit || !train.line || !(sim.railLines || []).length) return false;
+  const railLines = sim.railLines, startIdx = railLines.indexOf(train.line), tol = Math.max(5, LINE_M.rail * .95);
+  if (startIdx < 0) return false;
+  const adj = railLines.map(() => []);
+  for (let i = 0; i < railLines.length; i++) for (let j = i + 1; j < railLines.length; j++) {
+    const A = railLines[i], B = railLines[j]; let conn = false;
+    const touches = (p, L) => { for (let s = 1; s < L.length && !conn; s++) { const h = projOnSegLL(p, L[s - 1], L[s]); if (distMeters(p[0], p[1], h[0], h[1]) <= tol) conn = true; } };
+    touches(A[0], B); if (!conn && A.length) touches(A[A.length - 1], B);
+    if (!conn) { touches(B[0], A); if (!conn && B.length) touches(B[B.length - 1], A); }
+    if (conn) { adj[i].push(j); adj[j].push(i); }
+  }
+  const goals = railLinesAtExit(targetExit).map(x => x.i), prev = new Map([[startIdx, -1]]);
+  let queue = [startIdx], found = -1;
+  while (queue.length && found < 0) { const next = []; for (const u of queue) if (goals.includes(u)) { found = u; break; } for (const u of queue) { if (found >= 0) break; for (const v of adj[u]) if (!prev.has(v)) { prev.set(v, u); next.push(v); } } queue = next; }
+  if (found < 0) return false;
+  const path = []; for (let x = found; x >= 0; x = prev.get(x)) path.unshift(x);
+  if (path.length === 1) {                                   // цель на стартовой линии: маршрут возможен, только если поезд уже едет к её концу у выезда
+    const goalAtEnd = railLinesAtExit(targetExit).find(x => x.i === found);
+    if (train.fwd ? !goalAtEnd.atEnd : goalAtEnd.atEnd) return false;
+    train.route = [];
+    return true;
+  }
+  if (path.length > 1) {                                     // первый переход обязан вести к тому концу линии, куда поезд едет
+    const firstHopEnd = railExitEndFor(railLines[path[0]], railLines[path[1]]);
+    if (train.fwd ? !firstHopEnd : !!firstHopEnd) return false;
+  }
+  const goalAtEnd = railLinesAtExit(targetExit).find(x => x.i === found);
+  const route = [];
+  for (let k = 1; k < path.length; k++) {
+    const atEnd = k === path.length - 1 ? (goalAtEnd ? goalAtEnd.atEnd : true) : (railExitEndFor(railLines[path[k]], railLines[path[k + 1]]) || false);
+    route.push({ line: railLines[path[k]], fwd: atEnd, point: null });
+  }
+  if (route.length) train.route = route;
+  return train.route.length > 0;
+}
 function prepareCitizenEntry(cit) {
   if (!cit || !cit.line || cit.line.length < 2) return cit;
   const last = cit.line.length - 2, entries = [{ atEnd: false, fwd: true }, { atEnd: true, fwd: false }].filter(entry => exitNearPoint(entry.atEnd ? cit.line[cit.line.length - 1] : cit.line[0], 'walk', 12));
@@ -1868,7 +1924,7 @@ function railJunctionOptions(train, endpoint, returnAll = false) {          // �
   if (planned) {
     const matches = options.filter(o => o.line === planned.line && o.fwd === planned.fwd);
     if (matches.length) {
-      const picked = matches.sort((a, b) => distMeters(a.point[0], a.point[1], planned.point[0], planned.point[1]) - distMeters(b.point[0], b.point[1], planned.point[0], planned.point[1]))[0];
+      const picked = planned.point ? matches.sort((a, b) => distMeters(a.point[0], a.point[1], planned.point[0], planned.point[1]) - distMeters(b.point[0], b.point[1], planned.point[0], planned.point[1]))[0] : matches[0];
       train.route.shift();
       return picked;
     }
@@ -1889,7 +1945,25 @@ function makeTrain(line, fwd, initialT) {
   // 8 вагонов: локомотив (i=0) — голова, ведёт; прицепные следуют за ним с фикс. сцепкой
   const wagons = [];
   for (let i = 0; i < TRAIN_WAGONS; i++) wagons.push({ i, len: TRAIN_WAGON_LEN, w: TRAIN_WIDTH, pos: null, angle: 0, hitchAngle: 0, couplDist: TRAIN_COUPLING });
-  return { id: ++_trainId, line, seg, t, fwd: enterFwd, v: rand(7, 11), maxSpd: rand(12, 17), accel: 2.8, brake: 12, wagons, length: TRAIN_WAGONS * TRAIN_COUPLING, width: TRAIN_WIDTH, dwell: 0, stationKey: null, passengers: [], inboundPassengers: entryExit ? 4 + randInt(11) : 0, entryExit, dead: false, pos: null, angle: 0 };
+  const train = { id: ++_trainId, line, seg, t, fwd: enterFwd, v: rand(7, 11), maxSpd: rand(12, 17), accel: 2.8, brake: 12, wagons, length: TRAIN_WAGONS * TRAIN_COUPLING, width: TRAIN_WIDTH, dwell: 0, stationKey: null, passengers: [], inboundPassengers: entryExit ? 4 + randInt(11) : 0, entryExit, dead: false, pos: null, angle: 0, route: [] };
+  assignTrainRoute(train);
+  return train;
+}
+function assignTrainRoute(train) {                    // явный маршрут: между точками выезда, или город → ближайшая точка выезда
+  const all = railExitsAll();
+  let goal = null;
+  if (train._routeGoal) {                             // курсирующий (развернулся у выхода): едем к любой другой точке выезда
+    const others = all.filter(x => railExitSimKey(x) !== train._routeGoal);
+    if (others.length) goal = others[randInt(others.length)];
+    train.entryExit = null;
+  } else if (train.entryExit) {                       // спавн из точки выезда: едем к другой точке выезда в мире
+    const others = all.filter(x => x !== train.entryExit);
+    goal = others[randInt(others.length)] || train.entryExit;
+  } else {                                            // городской поезд: к ближайшей точке выезда
+    const pose = trainPose(train);
+    goal = all.sort((a, b) => distMeters(pose.pos[0], pose.pos[1], a.lat, a.lng) - distMeters(pose.pos[0], pose.pos[1], b.lat, b.lng))[0] || null;
+  }
+  buildTrainRoute(train, goal);
 }
 function parkingSlotPosition(lot, slot) {
   const parking = lot.parking, capacity = Math.max(2, Math.min(20, Math.round(Number(parking.capacity) || 6))), angle = (Number(parking.rot) || 0) * Math.PI / 180;
@@ -2032,7 +2106,7 @@ function handleTrainRailExit(train, exit) {
     else remaining.push(passenger);
   }
   train.passengers = remaining; train.inboundPassengers = 0;
-  if (!remaining.length) train.dead = true;
+  if (!remaining.length && !train._routeGoal) train.dead = true;   // поезд без маршрута (случайный) уезжает из мира
 }
 function trainProgress(train) { return lineProgress(train.line, train.seg, train.t, train.fwd); }
 function trainFrontGap(train) {
@@ -2176,6 +2250,13 @@ function stepTrain(train, dt) {
     if (!train.fwd && train.seg > 0) { train.seg--; train.t = 1; continue; }
     const endpoint = train.fwd ? train.line[train.line.length - 1] : train.line[0];
     const out = exitNearPoint(endpoint, 'rail', 10);
+    if (out && train._routeGoal && railExitSimKey(out) === train._routeGoal) {   // маршрутный поезд доехал до ЦЕЛЕВОЙ точки выезда — курсируем к другой
+      handleTrainRailExit(train, out);
+      if (train.dead) break;
+      train.fwd = !train.fwd; train.t = train.fwd ? .015 : .985; train.stationKey = null; train.dwell = .8; train.v = 0;
+      assignTrainRoute(train);
+      break;
+    }
     const options = railJunctionOptions(train, endpoint, true);
     if (options && options.length) {
       if (out) handleTrainRailExit(train, out);
@@ -2194,7 +2275,8 @@ function stepTrain(train, dt) {
       }
     } else if (out) {
       handleTrainRailExit(train, out);
-      if (!train.dead) { train.fwd = !train.fwd; train.t = train.fwd ? .015 : .985; train.stationKey = null; train.dwell = .8; train.v = 0; }
+      if (train.dead) break;
+      train.fwd = !train.fwd; train.t = train.fwd ? .015 : .985; train.stationKey = null; train.dwell = .8; train.v = 0;
       break;
     } else {
       train.fwd = !train.fwd; train.t = train.fwd ? .015 : .985; train.stationKey = null;
