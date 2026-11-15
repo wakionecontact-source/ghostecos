@@ -35,6 +35,100 @@ FILE_TTL_DAYS = 7
 
 router = APIRouter(prefix="/api/chat", tags=["GhostChat"])
 
+# ── Аватарка из чата ──────────────────────────────────────────────
+# Веб-чат ходит своим токеном, а /api/soc/* принимает только соцсетевую сессию.
+AVATAR_DIR = "/opt/ghostchat/media/avatars"
+AVATAR_MAX_BYTES = 5 * 1024 * 1024
+AVATAR_TYPES = {"image/jpeg", "image/png", "image/webp"}
+
+
+def _avatar_make_readable(path: str) -> None:
+    """nginx отдаёт /media/avatars/ от www-data — файл должен быть читаемым."""
+    import os as _os
+    try:
+        _os.chmod(path, 0o644)
+        import grp
+        _os.chown(path, 0, grp.getgrnam("www-data").gr_gid)
+    except Exception:
+        pass
+
+
+def _avatar_crop_square(raw: bytes) -> bytes:
+    """Квадрат 512×512 в JPEG — как в соцсети, чтобы аватарки совпадали."""
+    from PIL import Image
+    import io as _io
+    img = Image.open(_io.BytesIO(raw))
+    img.load()
+    if img.mode == "RGBA":
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        bg.paste(img, mask=img.split()[3])
+        img = bg
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+    w, h = img.size
+    side = min(w, h)
+    img = img.crop(((w - side) // 2, (h - side) // 2, (w - side) // 2 + side, (h - side) // 2 + side))
+    img = img.resize((512, 512), Image.LANCZOS)
+    out = _io.BytesIO()
+    img.save(out, format="JPEG", quality=85, optimize=True)
+    return out.getvalue()
+
+
+@router.post("/me/avatar")
+async def upload_my_avatar(
+    authorization: Optional[str] = Header(None), file: UploadFile = File(...)
+):
+    """Своя аватарка по токену чата: без зависимости от соцсетевой сессии."""
+    user = await run_in_threadpool(auth_member, authorization)
+    _rate_limit(f"avaup:{user['id']}", limit=10, window=3600)
+    if file.content_type not in AVATAR_TYPES:
+        raise HTTPException(400, "Только JPEG / PNG / WebP")
+    raw = await file.read()
+    if len(raw) > AVATAR_MAX_BYTES:
+        raise HTTPException(413, "Файл больше 5 МБ")
+    if len(raw) < 100:
+        raise HTTPException(400, "Файл слишком маленький")
+    try:
+        out_bytes = await run_in_threadpool(_avatar_crop_square, raw)
+    except Exception as exc:
+        raise HTTPException(400, f"Не удалось обработать изображение: {exc}") from None
+    import os as _os
+    await run_in_threadpool(_os.makedirs, AVATAR_DIR, 0o755, True)
+    fname = f"{user['id']}_{int(time.time())}.jpg"
+    fpath = _os.path.join(AVATAR_DIR, fname)
+    with open(fpath, "wb") as fh:
+        fh.write(out_bytes)
+    await run_in_threadpool(_avatar_make_readable, fpath)
+    url = f"/media/avatars/{fname}"
+    c = db()
+    try:
+        old = c.execute("SELECT avatar_url FROM users WHERE id=?", (user["id"],)).fetchone()
+        c.execute("UPDATE users SET avatar_url=? WHERE id=?", (url, user["id"]))
+        c.commit()
+    finally:
+        c.close()
+    if old and old["avatar_url"] and str(old["avatar_url"]).startswith("/media/avatars/"):
+        try:
+            _os.remove(_os.path.join(AVATAR_DIR, str(old["avatar_url"]).rsplit("/", 1)[1]))
+        except Exception:
+            pass
+    return {"avatar_url": url}
+
+
+@router.delete("/me/avatar")
+def delete_my_avatar(authorization: Optional[str] = Header(None)):
+    """Снять свою аватарку."""
+    user = auth_member(authorization)
+    c = db()
+    try:
+        c.execute("UPDATE users SET avatar_url=NULL WHERE id=?", (user["id"],))
+        c.commit()
+    finally:
+        c.close()
+    return {"ok": True, "avatar_url": None}
+
+
+
 class SendBody(BaseModel):
     to_username: str
     ciphertext: Optional[str] = None  # base64; обычный DM уже зашифрован клиентом

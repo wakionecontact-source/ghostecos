@@ -1,6 +1,6 @@
-import { requestJson } from './http';
+﻿import { requestJson } from './http';
 
-/** Публичный профиль текущего пользователя — как в приложении. */
+/** РџСѓР±Р»РёС‡РЅС‹Р№ РїСЂРѕС„РёР»СЊ С‚РµРєСѓС‰РµРіРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ вЂ” РєР°Рє РІ РїСЂРёР»РѕР¶РµРЅРёРё. */
 export interface MeProfile {
   id: number;
   username: string;
@@ -16,7 +16,7 @@ export interface MeProfile {
   likes_given?: number;
 }
 
-/** Результат поиска пользователей для нового чата. */
+/** Р РµР·СѓР»СЊС‚Р°С‚ РїРѕРёСЃРєР° РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№ РґР»СЏ РЅРѕРІРѕРіРѕ С‡Р°С‚Р°. */
 export interface UserHit {
   username: string;
   display_name: string;
@@ -34,7 +34,7 @@ export function searchUsers(token: string, query: string): Promise<{ results: Us
   );
 }
 
-/** Правка публичного профиля — только отображаемые поля, без смены пароля. */
+/** РџСЂР°РІРєР° РїСѓР±Р»РёС‡РЅРѕРіРѕ РїСЂРѕС„РёР»СЏ вЂ” С‚РѕР»СЊРєРѕ РѕС‚РѕР±СЂР°Р¶Р°РµРјС‹Рµ РїРѕР»СЏ, Р±РµР· СЃРјРµРЅС‹ РїР°СЂРѕР»СЏ. */
 export function updateProfile(
   token: string,
   body: { display_name?: string; about?: string },
@@ -49,9 +49,9 @@ export function updateProfile(
 export function uploadAvatar(token: string, file: File): Promise<{ avatar_url: string }> {
   const form = new FormData();
   form.append('file', file, file.name);
-  return requestJson<{ avatar_url: string }>('/api/soc/me/avatar', { token, form });
+  return requestJson<{ avatar_url: string }>('/api/chat/me/avatar', { token, form });
 }
 
 export function deleteAvatar(token: string): Promise<{ ok: boolean }> {
-  return requestJson<{ ok: boolean }>('/api/soc/me/avatar', { token, method: 'DELETE' });
+  return requestJson<{ ok: boolean }>('/api/chat/me/avatar', { token, method: 'DELETE' });
 }

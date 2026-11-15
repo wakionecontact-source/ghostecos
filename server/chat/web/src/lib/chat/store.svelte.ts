@@ -22,7 +22,7 @@ import {
   type ThreadSummary,
 } from './messages';
 
-const REFRESH_INTERVAL = 15_000;
+const REFRESH_INTERVAL = 60_000;
 const HISTORY_INTERVAL = 45_000;
 const PRESENCE_DEBOUNCE = 3_000;
 
@@ -135,7 +135,11 @@ export class ChatStore {
         void setStatuses(ids, status).then(() => this.notify());
         return;
       }
-      if (event.type.startsWith('chat.') || event.type === 'hello') void this.refresh();
+      if (event.type === 'chat.v2.new' || event.type === 'chat.new' || event.type === 'chat.echo' || event.type === 'chat.sealed_new') {
+        void this.syncNew();
+        return;
+      }
+      if (event.type === 'hello') void this.refresh();
     });
     socket.connect();
 
@@ -175,6 +179,28 @@ export class ChatStore {
     if (!force && Date.now() - last < PRESENCE_DEBOUNCE) return;
     this.asked.set(peer, Date.now());
     this.socket?.send('presence.ask', { username: peer });
+  }
+
+  /** Быстрая синхронизация по WS-событию: только новые сообщения и статусы. */
+  private async syncNew(): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      let added = 0;
+      const v2 = await this.ensureV2();
+      if (v2) added += (await receiveV2(this.api, v2)).added;
+      added += (await receivePending(this.api, this.account, this.username)).added;
+      await syncStatuses(this.api);
+      this.threads = await listThreads();
+      if (added > 0) this.notifyIncoming(added);
+      this.error = '';
+    } catch (cause) {
+      this.error = cause instanceof Error ? cause.message : 'Ошибка синхронизации';
+    } finally {
+      this.busy = false;
+      this.ready = true;
+      this.notify();
+    }
   }
 
   async refresh(): Promise<void> {

@@ -1,4 +1,5 @@
-﻿import type { ChatClient, InboxMessage } from '../api/chat';
+﻿import type { ChatClient, InboxMessage, PeerKeys } from '../api/chat';
+import { ApiError } from '../api/http';
 import type { AccountKey } from '../crypto/account-key';
 import { aesGcmDecrypt } from '../crypto/aes';
 import { attachmentBlobBytes, encryptAttachment } from '../crypto/attachment';
@@ -209,30 +210,52 @@ interface Delivered {
 }
 
 /** Собирает конверты по доверенным устройствам пира и отправляет payload. */
+/** Ключи пира меняются редко — держим их в памяти, чтобы не тратить RTT на каждое сообщение. */
+const PEER_KEYS_TTL = 60_000;
+const peerKeysCache = new Map<string, { bundle: PeerKeys; at: number }>();
+
+async function peerBundle(api: ChatClient, username: string, force = false): Promise<PeerKeys> {
+  const key = username.trim().toLowerCase();
+  const hit = peerKeysCache.get(key);
+  if (!force && hit && Date.now() - hit.at < PEER_KEYS_TTL) return hit.bundle;
+  const bundle = await api.peerKeys(username);
+  peerKeysCache.set(key, { bundle, at: Date.now() });
+  return bundle;
+}
+
 async function deliverV2(
   api: ChatClient,
   keys: V2Keys,
   toUsername: string,
   payload: WirePayload,
 ): Promise<Delivered> {
-  const bundle = await api.peerKeys(toUsername);
-  if (!bundle.identity_pub || bundle.devices.length === 0) throw new Error('NO_V2');
-
   const sid = Date.now() * 1000 + Math.floor(Math.random() * 1000);
   const ts = payload.ts ?? Math.floor(Date.now() / 1000);
   const wire: WirePayload = { ...payload, v: 2, from_id: identityPubB64(keys), sid, ts };
   const plain = utf8(JSON.stringify(wire));
 
-  const envelopes: { target_device_id: number; envelope: string }[] = [];
-  for (const device of bundle.devices) {
-    if (!trustedPeerDevice(bundle.identity_pub, device.device_pub, device.signed_prekey_sig)) continue;
-    const envelope = await encryptV2(fromBase64(device.device_pub), plain);
-    envelopes.push({ target_device_id: device.device_id, envelope });
+  let bundle = await peerBundle(api, toUsername);
+  for (let attempt = 0; ; attempt += 1) {
+    if (!bundle.identity_pub || bundle.devices.length === 0) throw new Error('NO_V2');
+    const envelopes: { target_device_id: number; envelope: string }[] = [];
+    for (const device of bundle.devices) {
+      if (!trustedPeerDevice(bundle.identity_pub, device.device_pub, device.signed_prekey_sig)) continue;
+      const envelope = await encryptV2(fromBase64(device.device_pub), plain);
+      envelopes.push({ target_device_id: device.device_id, envelope });
+    }
+    if (envelopes.length === 0) throw new Error('NO_V2');
+    try {
+      const result = await api.sendV2({ to_username: toUsername, envelopes });
+      return { sid, delivered: result.delivered_to_devices, ts };
+    } catch (cause) {
+      // 409 — у пира сменился ключ устройства: перечитываем бандл один раз.
+      if (attempt === 0 && cause instanceof ApiError && cause.status === 409) {
+        bundle = await peerBundle(api, toUsername, true);
+        continue;
+      }
+      throw cause;
+    }
   }
-  if (envelopes.length === 0) throw new Error('NO_V2');
-
-  const result = await api.sendV2({ to_username: toUsername, envelopes });
-  return { sid, delivered: result.delivered_to_devices, ts };
 }
 
 /** Легаси-путь приложения: P-256 ECDH в /api/chat/send, пока у пира нет v2-устройств. */
