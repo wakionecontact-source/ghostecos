@@ -2133,7 +2133,7 @@ function updateTrainChain(train) {
   train.pos = head.pos; train.angle = head.angle;
   for (const w of wagons) {
     const distBack = TRAIN_WAGON_LEN / 2 + w.i * TRAIN_COUPLING;
-    const p = w.i === 0 ? head : (trainPointBehind(train, distBack) || head);
+    const p = trainPointBehind(train, distBack) || head;
     w.pos = p.pos; w.angle = p.angle; w.hitchAngle = p.angle;
   }
 }
@@ -3251,9 +3251,10 @@ function drawSim() {
     for (let i = 0; i < carCount; i++) {
       const w = wagons[i]; if (!w || !w.pos) continue;
       const cp = map.latLngToContainerPoint([w.pos[0], w.pos[1]]);
-      if (cp.x < -60 || cp.y < -60 || cp.x > W + 60 || cp.y > H + 60) { drawCouplingTo(ctx, dpr, wagons[i - 1], w); continue; }
+      if (cp.x < -60 || cp.y < -60 || cp.x > W + 60 || cp.y > H + 60) continue;
+      if (i > 0) drawCouplingTo(ctx, dpr, wagons[i - 1], w);   // сцепка ПОД вагонами (рисуем до вагона)
       ctx.save(); ctx.translate(cp.x * dpr, cp.y * dpr); ctx.rotate(-w.angle);
-      if (i === 0) {                                          // локомотив: нос, капот, окна кабины
+      if (i === 0) {                                          // локомотив: центр в w.pos (8 м позади носа), нос — на +8
         const gl = carLength * .42;
         ctx.fillStyle = TRAIN_LOCO_COLORS[train._locoColor || 0]; roundRect(ctx, -carLength * .5 * dpr, -width / 2 * dpr, carLength * dpr, width * dpr, Math.min(width * .45, 3) * dpr); ctx.fill();
         ctx.fillStyle = 'rgba(20,24,30,.35)'; ctx.fillRect(-carLength * .5 * dpr, -width * .5 * dpr, carLength * .35 * dpr, width * dpr);
