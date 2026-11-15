@@ -5017,7 +5017,8 @@ class _KeysScreen extends StatelessWidget {
     final done = await ChatRepo.instance.publishV2Pair(
       password: pwd ?? '',
       uploadCopy: choice,
-      rotate: !report.ready,
+      // Замена identity нужна только когда на сервере уже чужая пара.
+      rotate: !report.ready && !report.created,
     );
     _toast(done ? 'Ключ v2 отправлен' : 'Не удалось отправить ключ v2');
   }

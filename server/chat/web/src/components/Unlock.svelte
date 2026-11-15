@@ -10,7 +10,7 @@
     type V2Keys,
     type V2PairCheck,
   } from '../lib/chat/keys';
-  import { generateKeys, publishAccountKey } from '../lib/chat/provision';
+  import { generateKeys, publishAccountKey, type KeyStorageMode } from '../lib/chat/provision';
   import type { AccountKey } from '../lib/crypto/account-key';
 
   interface Props {
@@ -81,13 +81,14 @@
     }
   }
 
-  /** Новый аккаунт: ключ v1 в серверную копию, пара v2 — после ответа о копии. */
-  async function create() {
+  /** Новый аккаунт: копия v1 на сервере — по выбору, локальный режим без пароля. */
+  async function create(mode: KeyStorageMode) {
     busy = true;
     error = '';
     try {
       const generated = await generateKeys();
-      await publishAccountKey(api, username, generated.account, 'server', password, askReplace);
+      const secret = mode === 'server' ? password : '';
+      await publishAccountKey(api, username, generated.account, mode, secret, askReplace);
       await saveDeviceVault({
         accountPkcs8: generated.account.pkcs8,
         accountPublic: generated.account.publicKey,
@@ -126,8 +127,8 @@
 
   function submit(event: SubmitEvent) {
     event.preventDefault();
-    if (!password || busy || decision) return;
-    void (canUnlock ? open() : create());
+    if (!password || busy || decision || !canUnlock) return;
+    void open();
   }
 </script>
 
@@ -151,6 +152,9 @@
         Создать новый ключ v2
       </button>
       <p class="muted">Прежние сообщения v2 останутся нечитаемыми.</p>
+      <button class="link" onclick={() => finish(null)} disabled={busy}>
+        Продолжить без ключа v2
+      </button>
     {:else}
       <form onsubmit={submit}>
         <label class="field-label" for="password">Пароль аккаунта</label>
@@ -161,9 +165,23 @@
           bind:value={password}
           autocomplete="current-password"
         />
-        <button class="button primary" type="submit" disabled={busy || !password}>
-          {busy ? 'Открываем…' : needCreate ? 'Создать ключ' : 'Открыть'}
-        </button>
+        {#if needCreate}
+          <button
+            class="button primary"
+            type="button"
+            onclick={() => create('server')}
+            disabled={busy || !password}
+          >
+            Копия на сервере
+          </button>
+          <button class="button" type="button" onclick={() => create('local')} disabled={busy}>
+            Только на устройстве
+          </button>
+        {:else}
+          <button class="button primary" type="submit" disabled={busy || !password}>
+            {busy ? 'Открываем…' : 'Открыть'}
+          </button>
+        {/if}
       </form>
     {/if}
 
@@ -171,8 +189,8 @@
       <p class="error">{error}</p>
     {/if}
 
-    {#if askReplace}
-      <button class="button" onclick={() => (canUnlock ? open() : create())} disabled={busy}>
+    {#if askReplace && canUnlock}
+      <button class="button" onclick={() => open()} disabled={busy}>
         Заменить ключ устройства
       </button>
     {/if}
