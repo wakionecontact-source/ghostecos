@@ -62,7 +62,7 @@ function migrate(s) {
   delete s.railSwitches;
   s.exits = Array.isArray(s.exits) ? s.exits.filter(x => x && isFinite(x.lat) && isFinite(x.lng)) : [];
   s.parking = Array.isArray(s.parking) ? s.parking.filter(x => x && isFinite(x.lat) && isFinite(x.lng)) : [];
-  s.stations = s.stations.map((x, i) => ({ ...x, name: typeof x.name === 'string' && x.name.trim() ? x.name.trim() : `Station ${i + 1}`, railKey: typeof x.railKey === 'string' ? x.railKey : null, railSegment: Number.isInteger(x.railSegment) ? x.railSegment : null, railT: Number.isFinite(Number(x.railT)) ? Math.max(0, Math.min(1, Number(x.railT))) : null, rot: Number.isFinite(Number(x.rot)) ? Number(x.rot) : 0, w: clampWH(Number(x.w) || 13), h: clampWH(Number(x.h) || 8) }));
+  s.stations = s.stations.map((x, i) => ({ ...x, name: typeof x.name === 'string' && x.name.trim() ? x.name.trim() : `Station ${i + 1}`, railKey: typeof x.railKey === 'string' ? x.railKey : null, railSegment: Number.isInteger(x.railSegment) ? x.railSegment : null, railT: Number.isFinite(Number(x.railT)) ? Math.max(0, Math.min(1, Number(x.railT))) : null, rot: Number.isFinite(Number(x.rot)) ? Number(x.rot) : 0, w: clampWH(Number(x.w) || 13), h: clampWH(Number(x.h) || 8), side: x.side === 1 || x.side === -1 ? x.side : 1 }));
   s.exits = s.exits.map((x, i) => ({ ...x, name: typeof x.name === 'string' && x.name.trim() ? x.name.trim() : `Exit ${i + 1}`, modes: [...new Set((Array.isArray(x.modes) ? x.modes : []).filter(mode => ['road', 'walk', 'rail'].includes(mode)))] }));
   s.parking = s.parking.map(x => ({ ...x, w: clampWH(Number(x.w) || 22), h: clampWH(Number(x.h) || 9), rot: Number.isFinite(Number(x.rot)) ? Number(x.rot) : 0, capacity: Math.max(2, Math.min(20, Math.round(Number(x.capacity) || 6))) }));
   s.simulation = normalizeSimulation(s.simulation);
@@ -259,7 +259,7 @@ function addDrawVertex(latlng, snapped = false, station = null) {
   draw.handles.push(L.marker(latlng, { pane: 'markerPane', interactive: false, keyboard: false, icon: L.divIcon({ className: '', html: `<div class="vertex-dot${snapped ? ' snapped' : ''}${station ? ' station-endpoint' : ''}"></div>`, iconSize: [12, 12], iconAnchor: [6, 6] }) }).addTo(map));
   if (station) draw.stationPoints.push({ index, point: [latlng.lat, latlng.lng] });
 }
-function onMapMove(e) { if (draw.active && draw.points.length) draw.rubber.setLatLngs([draw.points[draw.points.length - 1], drawPointAt(e.latlng, e.originalEvent).point]); }
+function onMapMove(e) { if (draw.active && draw.points.length) draw.rubber.setLatLngs([draw.points[draw.points.length - 1], drawPointAt(e.latlng, e.originalEvent).point]); if (activeTool === 'station') stationPreview(e.latlng); }
 function undoVertex() { if (!draw.points.length) return; const index = draw.points.length - 1; draw.points.pop(); draw.stationPoints = draw.stationPoints.filter(x => x.index !== index); const h = draw.handles.pop(); if (h) map.removeLayer(h); draw.preview.setLatLngs(draw.points); if (!draw.points.length) draw.rubber.setLatLngs([]); updateDrawHint(); }
 function finishDraw(fromDoubleClick) {
   if (fromDoubleClick && draw.points.length > 1) {
@@ -875,8 +875,22 @@ function onBuildClick(b, e) { if (activeTool === 'erase') { L.DomEvent.stop(e); 
 function removeBuilding(b) { pushUndo(); if (selected === b) deselect(); clearHover(); state.buildings = state.buildings.filter(x => x !== b); save(); renderBuildings(); updateStats(); }
 
 /* ════════════════ HOVER HIGHLIGHT ════════════════ */
-let hoverHL = null;
-function clearHover() { if (hoverHL) { map.removeLayer(hoverHL); hoverHL = null; } }
+function stationPreview(latlng) {                 // предпросмотр станции при наведении на ЖД (инструмент «станция»)
+  const hit = nearestLinePointForGroups(latlng, ['rails']);
+  if (!hit || hit.distance > Math.max(22, mToPx(LINE_M.rail) * 2.4)) { if (hoverHL) clearHover(); return; }
+  const a = hit.line[hit.segment], b = hit.line[hit.segment + 1], segLen = distMeters(a[0], a[1], b[0], b[1]) || 1;
+  const railT = Math.max(0, Math.min(1, distMeters(a[0], a[1], hit.point.lat, hit.point.lng) / segLen));
+  const ref = { line: hit.line, seg: hit.segment, point: [hit.point.lat, hit.point.lng] }, side = stationSideOfPoint(ref, latlng);
+  const pseudo = { lat: hit.point.lat, lng: hit.point.lng, railKey: roadKey(hit.line), railSegment: hit.segment, railT, rot: 0, side };
+  const g = stationGeometry(pseudo);
+  const access = stationAccessInfo(pseudo);
+  clearHover();
+  hoverPL = L.polygon(g.platformPoly, { pane: 'pane-edit', interactive: false, color: access ? '#42dc83' : '#ffffff', weight: 2, dashArray: '5 4', fillOpacity: .18, fillColor: access ? '#42dc83' : '#ffffff' }).addTo(map);
+  hoverBL = L.polygon(rectCorners(g.building), { pane: 'pane-edit', interactive: false, color: '#ffffff', weight: 2, dashArray: '5 4', fill: false }).addTo(map);
+  hoverHL = hoverPL;
+}
+let hoverHL = null, hoverPL = null, hoverBL = null;
+function clearHover() { if (hoverHL) { map.removeLayer(hoverHL); hoverHL = null; } if (hoverPL) { map.removeLayer(hoverPL); hoverPL = null; } if (hoverBL) { map.removeLayer(hoverBL); hoverBL = null; } }
 function hoverBuilding(b) {
   if (selected === b) return;
   const danger = activeTool === 'erase';
@@ -1273,12 +1287,66 @@ function nearestRailPointForStation(station) {
   }
   return best;
 }
+const STATION_PLATFORM_LEN = 150, STATION_PLATFORM_W = 5.5, STATION_RAIL_GAP = 1.2, STATION_BUILD_HALF = 5;   // станция под 8-9 вагонов
+function stationRailRef(station) {                       // путь станции + позиция (seg,t): ищем по railKey, иначе ближайший рельс
+  const line = station.railKey ? state.rails.find(l => roadKey(l) === station.railKey) : null;
+  if (line && line.length >= 2) {
+    const seg = Math.max(0, Math.min(line.length - 2, Number.isInteger(station.railSegment) ? station.railSegment : 0));
+    const t = Math.max(0, Math.min(1, Number.isFinite(Number(station.railT)) ? Number(station.railT) : 0));
+    return { line, seg, t, point: lerpPos(line, seg, t) };
+  }
+  const hit = nearestRailPointForStation(station);
+  if (!hit || !hit.line || !lineDExists(hit.line)) return null;
+  const len = distMeters(hit.line[hit.segment][0], hit.line[hit.segment][1], hit.line[hit.segment + 1][0], hit.line[hit.segment + 1][1]) || 1;
+  return { line: hit.line, seg: hit.segment, t: Math.max(0, Math.min(1, distMeters(hit.line[hit.segment][0], hit.line[hit.segment][1], hit.point[0], hit.point[1]) / len)), point: hit.point };
+}
+function lineDExists(line) { return line && line.length >= 2 && line[0] && line[1] && line[0][0] != null && line[1][0] != null; }
+function tangentAt(line, i) {                            // единичный касательный вектор (east,north) в сегменте line[i]→line[i+1]
+  const a = line[i], b = line[i + 1], E = (b[1] - a[1]) * mPerDegLng(a[0]), N = (b[0] - a[0]) * MPD_LAT, len = Math.hypot(E, N) || 1;
+  return { e: E / len, n: N / len };
+}
+function stationSideOfPoint(ref, clickLatLng) {         // сторона курсора относительно хода пути: 1 слева, -1 справа
+  const tan = tangentAt(ref.line, ref.seg), p = ref.point;
+  const ce = (clickLatLng.lng - p[1]) * mPerDegLng(p[0]), cn = (clickLatLng.lat - p[0]) * MPD_LAT;
+  const cross = tan.e * cn - tan.n * ce;                 // положительный — левее хода
+  return cross >= 0 ? 1 : -1;
+}
+function stationPlatformShape(ref, side, halfLen = STATION_PLATFORM_LEN / 2, width = STATION_PLATFORM_W) {
+  // лента платформы (полигон), повторяющая изгибы рельса вокруг позиции станции, со смещением на сторону
+  const cum = [0]; for (let i = 1; i < ref.line.length; i++) cum.push(cum[i - 1] + distMeters(ref.line[i - 1][0], ref.line[i - 1][1], ref.line[i][0], ref.line[i][1]));
+  let base = cum[ref.seg] + ref.t * distMeters(ref.line[ref.seg][0], ref.line[ref.seg][1], ref.line[ref.seg + 1][0], ref.line[ref.seg + 1][1]);
+  const total = cum[cum.length - 1] || 1, d0 = Math.max(0, base - halfLen), d1 = Math.min(total, base + halfLen);
+  const inner = [], outer = [], gap = STATION_RAIL_GAP + (side === 1 ? 0 : width), gapFar = gap + width;
+  for (let d = d0; d <= d1 + 1e-6; d += 2.5) {
+    const dd = Math.min(d, d1), at = linePointAtDistance(ref.line, dd);
+    const p = lerpPos(ref.line, at[2], Math.max(0, Math.min(1, (dd - cum[at[2]]) / (distMeters(ref.line[at[2]][0], ref.line[at[2]][1], ref.line[at[2] + 1][0], ref.line[at[2] + 1][1]) || 1))));
+    const tan = tangentAt(ref.line, at[2]);
+    inner.push(offset(p[0], p[1], -tan.n * gap * side, tan.e * gap * side));
+    outer.push(offset(p[0], p[1], -tan.n * gapFar * side, tan.e * gapFar * side));
+  }
+  if (d1 - d0 < 1) { const p = ref.point, tan = tangentAt(ref.line, ref.seg); inner.push(offset(p[0], p[1], -tan.n * gap * side, tan.e * gap * side)); outer.push(offset(p[0], p[1], -tan.n * gapFar * side, tan.e * gapFar * side)); }
+  return inner.concat(outer.slice().reverse());
+}
 function stationGeometry(station) {
-  const hit = nearestRailPointForStation(station), point = hit ? hit.point : [station.lat, station.lng], line = hit && hit.line, a = hit && line[hit.segment], b = hit && line[hit.segment + 1];
-  let angle = Number(station.rot) || 0, e = Math.cos(angle * Math.PI / 180), n = Math.sin(angle * Math.PI / 180);
-  if (a && b) { const E = (b[1] - a[1]) * mPerDegLng(a[0]), N = (b[0] - a[0]) * MPD_LAT, len = Math.hypot(E, N) || 1; e = E / len; n = N / len; angle = Math.atan2(N, E) * 180 / Math.PI; }
-  const platform = { lat: point[0], lng: point[1], w: 30, h: 4.5, rot: angle }, buildingCenter = offset(point[0], point[1], -n * 6.2, e * 6.2), building = { lat: buildingCenter[0], lng: buildingCenter[1], w: 13, h: 8, rot: angle };
-  return { point, platform, building, e, n, angle };
+  const ref = stationRailRef(station);
+  const side = station.side == null ? 1 : station.side;
+  let point, e, n, angle, platformPoly, mid;
+  if (ref) {
+    point = ref.point;
+    const tan = tangentAt(ref.line, ref.seg); e = tan.e; n = tan.n; angle = Math.atan2(n, e) * 180 / Math.PI;
+    platformPoly = stationPlatformShape(ref, side);
+    const idx = Math.floor(platformPoly.length / 2), midp = platformPoly[idx];   // середина дальнего края платформы (side inf)
+    const midNear = platformPoly[idx + 1] || platformPoly[idx], de = (midNear[0] - midp[0]) * MPD_LAT / (distMeters(midp[0], midp[1], midNear[0], midNear[1]) || 1), dn = (midNear[1] - midp[1]) * mPerDegLng(midp[0]) / (distMeters(midp[0], midp[1], midNear[0], midNear[1]) || 1);
+    mid = offset(midp[0], midp[1], dn * (side > 0 ? -1 : 1) * (STATION_BUILD_HALF + 1), -de * (side > 0 ? -1 : 1) * (STATION_BUILD_HALF + 1));
+  } else {
+    point = [station.lat, station.lng]; e = Math.cos((Number(station.rot) || 0) * Math.PI / 180); n = Math.sin((Number(station.rot) || 0) * Math.PI / 180);
+    angle = Number(station.rot) || 0;
+    const half = STATION_PLATFORM_LEN / 2, gap = STATION_RAIL_GAP + STATION_PLATFORM_W;
+    platformPoly = [ [e * half + n * gap, n * half - e * gap], [-e * half + n * gap, n * half - e * gap], [-e * half + n * gap, -n * half - e * gap], [e * half + n * gap, -n * half - e * gap] ].map(d => offset(point[0], point[1], d[0], d[1]));
+    mid = offset(point[0], point[1], n * (STATION_RAIL_GAP + STATION_PLATFORM_W + STATION_BUILD_HALF + 1.5), -e * (STATION_RAIL_GAP + STATION_PLATFORM_W + STATION_BUILD_HALF + 1.5));
+  }
+  const platform = { lat: point[0], lng: point[1], w: STATION_PLATFORM_LEN, h: STATION_PLATFORM_W, rot: angle }, building = { lat: mid[0], lng: mid[1], w: 26, h: STATION_BUILD_HALF * 2, rot: angle };
+  return { point, platform, building, e, n, angle, platformPoly: platformPoly.map(p => [p[0], p[1]]) };
 }
 function stationEntryPoint(station) { const building = stationGeometry(station).building; return [building.lat, building.lng]; }
 function stationSnapLines() { return (state.stations || []).map(station => [stationEntryPoint(station)]); }
@@ -1361,7 +1429,8 @@ function placeStation(latlng) {
   if (!hit || hit.distance > Math.max(22, mToPx(LINE_M.rail) * 2.4)) { flash('Станция ставится на железнодорожный путь', true); return; }
   if (state.stations.some(s => distMeters(s.lat, s.lng, hit.point.lat, hit.point.lng) < 18)) { flash('Здесь уже есть станция', true); return; }
   const a = hit.line[hit.segment], b = hit.line[hit.segment + 1], E = (b[1] - a[1]) * mPerDegLng(a[0]), N = (b[0] - a[0]) * MPD_LAT, segmentLength = Math.hypot(E, N) || 1, railT = Math.max(0, Math.min(1, distMeters(a[0], a[1], hit.point.lat, hit.point.lng) / segmentLength)), angle = Math.atan2(N, E) * 180 / Math.PI;
-  const station = { lat: hit.point.lat, lng: hit.point.lng, name: 'Станция ' + (state.stations.length + 1), railKey: roadKey(hit.line), railSegment: hit.segment, railT, rot: angle, w: 13, h: 8 };
+  const ref = { line: hit.line, seg: hit.segment, point: [hit.point.lat, hit.point.lng] }, side = stationSideOfPoint(ref, latlng);
+  const station = { lat: hit.point.lat, lng: hit.point.lng, name: 'Станция ' + (state.stations.length + 1), railKey: roadKey(hit.line), railSegment: hit.segment, railT, rot: angle, w: 13, h: 8, side };
   pushUndo(); state.stations.push(station); save(); renderTransport(); updateStats();
   flash(stationAccessInfo(station) ? 'Станция подключена к пешеходной сети' : 'Станция построена; подведи к входу дорогу, переулок или тропу');
 }
@@ -1401,9 +1470,9 @@ function renderTransport() {
   state.stations.forEach(s => {
     const g = stationGeometry(s), access = stationAccessInfo(s);
     const connectedClass = access ? ' connected' : '';
-    const platform = L.polygon(rectCorners(g.platform), { pane: 'pane-builds', className: `station-platform${connectedClass}`, color: access ? '#42dc83' : '#e4c875', weight: 1.4, fillColor: access ? '#477758' : '#8d7651', fillOpacity: .84 }).addTo(transportLayer);
+    const platform = L.polygon(g.platformPoly, { pane: 'pane-builds', className: `station-platform${connectedClass}`, color: access ? '#42dc83' : '#e4c875', weight: 1.4, fillColor: access ? '#477758' : '#8d7651', fillOpacity: .84 }).addTo(transportLayer);
     const building = L.polygon(rectCorners(g.building), { pane: 'pane-builds', className: `station-building${connectedClass}`, color: access ? '#42dc83' : '#ffd975', weight: 1.4, fillColor: access ? '#315b48' : '#5a4352', fillOpacity: .96 }).addTo(transportLayer);
-    const railA = offset(g.point[0], g.point[1], -g.e * g.platform.w * .5, -g.n * g.platform.w * .5), railB = offset(g.point[0], g.point[1], g.e * g.platform.w * .5, g.n * g.platform.w * .5);
+    const railA = offset(g.point[0], g.point[1], -g.n * 3, g.e * 3), railB = offset(g.point[0], g.point[1], g.n * 3, -g.e * 3);
     L.polyline([railA, railB], { pane: 'pane-edit', color: '#f7df8c', weight: Math.max(1, railPx() * .38), opacity: .95, interactive: false, lineCap: 'round' }).addTo(transportLayer);
     const m = L.marker([g.building.lat, g.building.lng], { pane: 'markerPane', icon: transportIcon(access ? 'station connected' : 'station', 'ЖД') }).addTo(transportLayer);
     m.bindTooltip((s.name || 'Станция') + (access ? ` · вход подключён · пеший подход ${fmtLen(access.distance)}` : ' · нет пешеходной сети'), { direction: 'top', offset: [0, -8] });
@@ -1523,6 +1592,11 @@ const VEHICLE_TYPES = {
   car: { length: 3.8, width: 1.7, minSpeed: 8, maxSpeed: 16, accel: 9, brake: 28, maxLatAccel: 7.5 },
   truck: { length: 8.6, width: 2.45, minSpeed: 5.5, maxSpeed: 11, accel: 5.5, brake: 21, maxLatAccel: 4.2, cabLength: 2.4, trailerLength: 6.2, trailerWheelbase: 5.1 }
 };
+// Поезд: 8 вагонов, каждый — звено цепи со своей геометрией. Локомотив ведёт (нос едет
+// по ЖД-пути + дуги), прицепные ставятся на фиксированную дистанцию позади по направлению
+// тела предыдущего — сцепки не растягиваются и не налезают, поезд плавно изгибается на поворотах.
+const TRAIN_WAGONS = 8, TRAIN_WAGON_LEN = 16, TRAIN_WAGON_GAP = 0.8, TRAIN_COUPLING = TRAIN_WAGON_LEN + TRAIN_WAGON_GAP, TRAIN_WIDTH = 2.4;
+const TRAIN_LOCO_COLORS = ['#b0242a', '#2c5aa0', '#3a7d44', '#7a3a9e'];
 const PED_COLORS = ['#ffd24a', '#5ad06a', '#ff8a5c', '#5cc8ff', '#e8e8e8', '#d98cff'];
 const sim = { on: false, cars: [], parkedCars: [], parkingLots: [], peds: [], trains: [], driveLines: [], railLines: [], pedLines: [], raf: 0, last: 0, t: 0, selected: null, follow: false, _panelT: 0, _trafficT: 0, _trafficLanes: null, _junctionTraffic: null, _junctionRequests: null, workload: new Map() };
 // Экономика: те же правила, что на сервере (server.py), для локальной оценки
@@ -1812,7 +1886,10 @@ function makeTrain(line, fwd, initialT) {
     const entry = entries[randInt(entries.length)], endpoint = entry.atEnd ? line[line.length - 1] : line[0];
     entryExit = exitNearPoint(endpoint, 'rail', 10); enterFwd = entry.fwd; seg = entry.atEnd ? line.length - 2 : 0; t = entry.atEnd ? .985 : .015;
   }
-  return { id: ++_trainId, line, seg, t, fwd: enterFwd, v: rand(7, 11), maxSpd: rand(12, 17), accel: 2.8, brake: 12, cars: 3, length: 24, width: 2.4, dwell: 0, stationKey: null, passengers: [], inboundPassengers: entryExit ? 4 + randInt(7) : 0, entryExit, dead: false };
+  // 8 вагонов: локомотив (i=0) — голова, ведёт; прицепные следуют за ним с фикс. сцепкой
+  const wagons = [];
+  for (let i = 0; i < TRAIN_WAGONS; i++) wagons.push({ i, len: TRAIN_WAGON_LEN, w: TRAIN_WIDTH, pos: null, angle: 0, hitchAngle: 0, couplDist: TRAIN_COUPLING });
+  return { id: ++_trainId, line, seg, t, fwd: enterFwd, v: rand(7, 11), maxSpd: rand(12, 17), accel: 2.8, brake: 12, wagons, length: TRAIN_WAGONS * TRAIN_COUPLING, width: TRAIN_WIDTH, dwell: 0, stationKey: null, passengers: [], inboundPassengers: entryExit ? 4 + randInt(11) : 0, entryExit, dead: false, pos: null, angle: 0 };
 }
 function parkingSlotPosition(lot, slot) {
   const parking = lot.parking, capacity = Math.max(2, Math.min(20, Math.round(Number(parking.capacity) || 6))), angle = (Number(parking.rot) || 0) * Math.PI / 180;
@@ -1912,24 +1989,39 @@ function spawnInboundPassengers(train, station) {
   }
   train.inboundPassengers = Math.max(0, (train.inboundPassengers || 0) - created);
 }
+function boardingCount(train) { return sim.peds.filter(p => p._board && p._board.train === train).length; }
+function startBoarding(p, train, station, slot, side) {      // ожидающий подходит к двери вагона и садится
+  const door = trainDoorPos(train, slot, side), from = stationQueuePosition(station, p.waitSlot || 0);
+  p._board = { train, station, from, to: door, t: 0, dur: rand(0.9, 1.5), slot, requestedDestination: (p.transit && p.transit.requestedDestination) || null };
+  p.transit = { state: 'boarding', stationKey: stationSimKey(station) };
+  p.waitingAtStation = null; p.waitSlot = null; p.goal = null;
+  p.status = 'садится в поезд';
+}
+function startAlight(p, train, station, slot, side) {         // пассажир выходит из вагона на платформу
+  const door = trainDoorPos(train, slot, side), to = stationQueuePosition(station, sim.peds.filter(o => o !== p && o.waitingAtStation === station).length);
+  p._board = { train, station, from: door, to, t: 0, dur: rand(0.9, 1.5), alight: true };
+  p.transit = { state: 'boarding', stationKey: stationSimKey(station) };
+  p.status = 'выходит из поезда';
+}
 function handleTrainStationStop(train, station) {
   if (!Array.isArray(train.passengers)) train.passengers = [];
-  const key = stationSimKey(station), remaining = [];
-  for (const passenger of train.passengers) {
-    const destination = passenger.transit?.destination;
-    if (destination?.type === 'station' && destination.stationKey === key) setCitizenAtStation(passenger, station, true);
-    else remaining.push(passenger);
+  const key = stationSimKey(station), side = station.side == null ? 1 : station.side, remaining = [];
+  for (let i = 0; i < train.passengers.length; i++) {
+    const passenger = train.passengers[i], destination = passenger.transit?.destination;
+    if (destination?.type === 'station' && destination.stationKey === key) {
+      if (destination.finalGoal) passenger._alightFinal = destination;   // цель после выхода — дойдёт пешком
+      startAlight(passenger, train, station, i, side);
+    } else remaining.push(passenger);
   }
   train.passengers = remaining;
   if (train.inboundPassengers > 0) spawnInboundPassengers(train, station);
-  const capacity = 48;
+  const capacity = 80;
   for (const pedestrian of sim.peds) {
-    if (train.passengers.length >= capacity) break;
+    if (train.passengers.length + boardingCount(train) >= capacity) break;
     if (pedestrian.transit?.state !== 'waiting' || pedestrian.transit.stationKey !== key) continue;
-    const destination = passengerDestinationForTrain(train, station); if (!destination) continue;
-    pedestrian.transit = { state: 'onTrain', originStationKey: key, destination };
-    pedestrian.waitingAtStation = null; pedestrian.waitSlot = null; pedestrian.goal = null;
-    pedestrian.status = `едет поездом · ${destination.name}`; train.passengers.push(pedestrian);
+    const destination = pedestrian.transit.requestedDestination || passengerDestinationForTrain(train, station); if (!destination) continue;
+    const slot = train.passengers.length + boardingCount(train);
+    startBoarding(pedestrian, train, station, slot, side);
   }
 }
 function handleTrainRailExit(train, exit) {
@@ -1984,11 +2076,66 @@ function trainTurnPose(train) {                        // позиция пое�
   const e = (p1[1] - p0[1]) * mPerDegLng(pos[0]), n = (p1[0] - p0[0]) * MPD_LAT;
   return { pos, angle: Math.atan2(n, e) };
 }
-function trainPose(train) {                             // позиция поезда (дуга поворота или сегмент)
+function trainFrontPose(train) {                     // позиция носа (головы состава) — по ЖД пути или дуге поворота
   if (train.turn) { const p = trainTurnPose(train); if (p) return p; }
   if (!train.line || !train.line[train.seg + 1]) return null;
   const raw = segmentVector(train.line, train.seg, train.fwd), pos = lerpPos(train.line, train.seg, train.t);
   return { pos, angle: Math.atan2(raw.n, raw.e) };
+}
+function trainPose(train) { return trainFrontPose(train); }
+// Расстановка вагонов от головы: каждый следующий — на фиксированную дистанцию позади
+// по направлению тела предыдущего (кинематическая цепь). Так промежутки не меняются на
+// поворотах, а состав плавно изгибается (как у грузовика с прицепом).
+// Поза точки на дуге поворота по накопленной дистанции s (обобщение trainTurnPose)
+function curvePoseAt(tr, s) {
+  const c = tr.cum; if (!c || !c.length) return null;
+  if (s <= c[0] + 1e-9) { const p0 = tr.samples[0], p1 = tr.samples[Math.min(tr.samples.length - 1, 1)]; const e = (p1[1] - p0[1]) * mPerDegLng(p0[0]), n = (p1[0] - p0[0]) * MPD_LAT; return { pos: p0, angle: Math.atan2(n, e || 1) }; }
+  let i = 1; while (i < c.length - 1 && c[i] < s) i++;
+  const a = tr.samples[i - 1], b = tr.samples[i], span = c[i] - c[i - 1] || 1;
+  const f = Math.max(0, Math.min(1, (s - c[i - 1]) / span)), pos = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+  const p0 = tr.samples[Math.max(0, i - 2)], p1 = tr.samples[Math.min(tr.samples.length - 1, i + 1)];
+  const e = (p1[1] - p0[1]) * mPerDegLng(pos[0]), n = (p1[0] - p0[0]) * MPD_LAT;
+  return { pos, angle: Math.atan2(n, e) };
+}
+// Поза точки на полилинии на distBack метров к «хвосту» от (seg,t) по направлению движения
+function lineBackwardPose(line, seg, t, fwd, distBack) {
+  let s = Math.max(0, Math.min(line.length - 2, seg)), u = Math.max(0, Math.min(1, t)), left = Math.max(0, distBack), guard = 0;
+  while (left > 1e-6 && guard++ < line.length + 4) {
+    const a = line[s], b = line[s + 1]; if (!a || !b) break;
+    const len = distMeters(a[0], a[1], b[0], b[1]) || 1;
+    const available = fwd ? u * len : (1 - u) * len;
+    if (left <= available + 1e-6) { u -= (fwd ? 1 : -1) * left / len; const p = lerpPos(line, s, u); const tan = tangentAt(line, s); return { pos: p, angle: Math.atan2(tan.n, tan.e) }; }
+    left -= available;
+    if (fwd) { if (s <= 0) break; s--; u = 1; } else { if (s >= line.length - 2) break; s++; u = 0; }
+  }
+  const a = line[Math.max(0, Math.min(line.length - 2, s))], b = line[a === line[line.length - 1] ? line.length - 2 : Math.min(line.length - 1, s + 1)];
+  const tan = a && b ? tangentAt(line, s) : { e: 1, n: 0 };
+  return { pos: [a[0], a[1]], angle: Math.atan2(tan.n, tan.e) };
+}
+// Поза точки на distBack метров к хвосту от носа: сначала дуга поворота (если идём по ней),
+// затем рельс, по которому поезд ехал до поворота. Так прицепные вагоны едут ПО рельсам.
+function trainPointBehind(train, distBack) {
+  if (distBack <= 1e-3) return trainFrontPose(train);
+  let remaining = distBack;
+  if (train.turn) {
+    const tr = train.turn, headS = tr.s;
+    if (remaining <= headS + 1e-6) { const p = curvePoseAt(tr, Math.max(0, headS - remaining)); if (p) return p; }
+    remaining -= headS;
+  }
+  const line = train.line; if (!line || line.length < 2 || !line[train.seg + 1]) return trainFrontPose(train);
+  return lineBackwardPose(line, train.seg, train.t, train.fwd, Math.max(0, remaining));
+}
+// Расстановка 8 вагонов от носа: каждый центр на фиксированной дистанции позже по пути —
+// вагоны стоят на рельсах, промежутки не меняются, состав плавно изгибается на поворотах.
+function updateTrainChain(train) {
+  const head = trainFrontPose(train); if (!head) return;
+  const wagons = train.wagons || []; if (!wagons.length) return;
+  train.pos = head.pos; train.angle = head.angle;
+  for (const w of wagons) {
+    const distBack = TRAIN_WAGON_LEN / 2 + w.i * TRAIN_COUPLING;
+    const p = w.i === 0 ? head : (trainPointBehind(train, distBack) || head);
+    w.pos = p.pos; w.angle = p.angle; w.hitchAngle = p.angle;
+  }
 }
 function buildTrainTurn(train, picked, endpoint, bend) {   // дуга поворота между текущим положением и новым путём
   const from = trainPose(train); if (!from) return null;
@@ -2053,6 +2200,7 @@ function stepTrain(train, dt) {
       train.fwd = !train.fwd; train.t = train.fwd ? .015 : .985; train.stationKey = null;
     }
   }
+  updateTrainChain(train);                              // расставить 8 физических вагонов от головы
 }
 function simulationSettings() { state.simulation = normalizeSimulation(state.simulation); return state.simulation; }
 function allocateTrafficTargets(lines, total) {
@@ -2306,6 +2454,30 @@ function citRouteTo(cit, target) {                          // маршрут п
   cit.route = steps; cit.routeIdx = 0;
   return routeStepBegin(cit);
 }
+function trainRouteFor(cit, targetPoint, goal) {       // маршрут поездом: если цель далеко и станции соединены ЖД
+  if (!sim.transitStations?.length || !sim.railLines?.length) return null;
+  const here = pedHere(cit); if (!here) return null;
+  const start = lerpPos(here.line, here.seg, here.t), goalDist = distMeters(start[0], start[1], goal ? goal[0] : targetPoint[0], goal ? goal[1] : targetPoint[1]);
+  if (goalDist < 350) return null;                     // близко — незачем ехать
+  const stations = sim.transitStations.map(station => ({ station, access: sim.stationAccess.get(station) })).filter(x => x.access);
+  if (stations.length < 2) return null;
+  // компонента ЖД, в которой лежит станция (по её ближайшему рельсу)
+  const componentOf = station => { const np = nearestRailPointForStation(station); if (!np) return null; return railComponentLines(np.line); };
+  const entries = stations.map(({ station, access }) => ({ station, access, comp: componentOf(station) }));
+  // ближайшая станция к жителю и к цели
+  let entryA = null, entryB = null, bestA = Infinity, bestB = Infinity;
+  for (const e of entries) {
+    const dA = distMeters(start[0], start[1], e.access.networkPoint[0], e.access.networkPoint[1]);
+    const dB = distMeters(goal ? goal[0] : targetPoint[0], goal ? goal[1] : targetPoint[1], e.access.networkPoint[0], e.access.networkPoint[1]);
+    if (dA < bestA) { bestA = dA; entryA = e; }
+    if (dB < bestB) { bestB = dB; entryB = e; }
+  }
+  if (!entryA || !entryB || entryA.station === entryB.station) return null;
+  if (!entryA.comp || !entryB.comp || !entryA.comp.has(nearestRailPointForStation(entryB.station)?.line)) return null;   // станции не соединены ЖД
+  const walkToA = bestA, walkFromB = bestB, railDist = roadLen(nearestRailPointForStation(entryA.station).line);
+  if (walkToA + walkFromB + 150 > goalDist) return null;   // поездом не выгоднее
+  return { entryA, entryB };
+}
 function assignDest(cit, options = {}) {                        // выбрать здание или станцию-цель на пешеходной сети
   cit.transit = null; cit.waitingAtStation = null; cit.waitSlot = null; cit.dest = null; cit.goal = null;
   cit.route = null; cit.routeIdx = 0;
@@ -2347,6 +2519,18 @@ function assignDest(cit, options = {}) {                        // выбрат�
   }
   const g = np ? np.pos : [b.lat, b.lng];
   if (!isFinite(g[0]) || !isFinite(g[1])) { cit.dest = null; cit.goal = null; cit.status = 'гуляет'; return; }   // защита от битых координат
+  // поезд в маршруте: цель далеко и достижима ЖД — едем поездом
+  const viaTrain = trainRouteFor(cit, doorEntry(b), g);
+  if (viaTrain && !options.avoidTransit) {
+    const toEntry = viaTrain.entryA.access.networkPoint;
+    if (citRouteTo(cit, { line: viaTrain.entryA.access.networkLine, seg: viaTrain.entryA.access.segment, t: viaTrain.entryA.access.t })) {
+      cit.dest = { type: 'station', name: viaTrain.entryA.station.name || 'станция' };
+      cit.goal = toEntry;
+      cit.transit = { state: 'toStation', stationKey: stationSimKey(viaTrain.entryA.station), requestedDestination: { type: 'station', stationKey: stationSimKey(viaTrain.entryB.station), name: viaTrain.entryB.station.name || 'станция', finalGoal: g, finalBuilding: b, destKind: kind } };
+      cit.status = `едет поездом до станции ${viaTrain.entryB.station.name || ''}`.trim();
+      return;
+    }
+  }
   cit.dest = b; cit.goal = g; cit.destKind = kind;
   cit.status = kind === 'work' ? 'идёт на работу' : kind === 'home' ? 'идёт домой' : 'идёт ' + (b.type === 'shop' ? 'в магазин' : 'к дому');
   if (np) citRouteTo(cit, { line: np.line, seg: np.seg, t: np.t });   // настоящий маршрут по пешеходной сети
@@ -2359,11 +2543,24 @@ function orientToGoal(cit) {                                   // выбрать
 }
 function lerpPos(line, seg, t) { const a = line[seg], b = line[seg + 1]; t = Math.max(0, Math.min(1, t)); return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; }
 function stationQueuePosition(station, slot = 0) {
-  const g = stationGeometry(station), column = slot % 5, row = Math.floor(slot / 5), along = (column - 2) * 1.1, side = g.platform.h / 2 + .8 + row * 1.05;
-  return offset(g.point[0], g.point[1], g.e * along - g.n * side, g.n * along + g.e * side);
+  const g = stationGeometry(station), half = STATION_PLATFORM_LEN / 2 - 3, side = station.side == null ? 1 : station.side;
+  // люди вдоль платформы: колонка (столбец) — вдоль пути, ряд — вглубь платформы от края у путей
+  const columns = 32, column = slot % columns, row = Math.floor(slot / columns);
+  const along = -half + (half * 2) * (column + .5) / columns, inM = STATION_RAIL_GAP + 1 + row * 1.05;
+  return offset(g.point[0], g.point[1], g.e * along - g.n * inM * side, g.n * along + g.e * inM * side);
+}
+function trainAtStation(station) {                 // поезд, который сейчас стоит у станции (dwell)
+  return sim.trains.find(t => !t.dead && t.stationKey === station && t.dwell > 0) || null;
+}
+function trainDoorPos(train, slot, side = 1) {      // позиция у дверей вагона (край платформы у поезда)
+  const wagons = train.wagons || []; if (!wagons.length) return null;
+  const w = wagons[slot % wagons.length]; if (!w || !w.pos) return null;
+  const e = Math.cos(w.angle), n = Math.sin(w.angle), off = STATION_RAIL_GAP + 1.4;
+  return offset(w.pos[0], w.pos[1], -n * off * side, e * off * side);
 }
 function pedestrianPosition(p) {
   if (!p || p.dead || p.transit?.state === 'onTrain') return null;
+  if (p._board) { const f = Math.max(0, Math.min(1, p._board.t || 0)), from = p._board.from, to = p._board.to; if (from && to) return [from[0] + (to[0] - from[0]) * f, from[1] + (to[1] - from[1]) * f]; }
   if (p.waitingAtStation) { const pos = stationQueuePosition(p.waitingAtStation, p.waitSlot || 0); return [pos[0], pos[1]]; }
   if (!p.line || !p.line[p.seg + 1]) return null;
   return smoothLinePoint(p.line, p.seg, p.t) || lerpPos(p.line, p.seg, p.t);
@@ -2928,6 +3125,27 @@ function citizenArrive(p) {                                   // дошёл до
   p.goal = null;
 }
 function stepPed(p, dt) {
+  if (p._board) {                                       // посадка/высадка: идёт к двери или на платформу
+    p._board.t += dt / p._board.dur;
+    if (p._board.t >= 1) {
+      const b = p._board; p._board = null;
+      if (b.alight) {                                   // вышел — продолжить пешком (к цели или случайно)
+        p.transit = null; p.waitingAtStation = null;
+        p.line = b.station ? (sim.stationAccess.get(b.station)?.networkLine || null) : null;
+        if (p.line) { const acc = sim.stationAccess.get(b.station); p.seg = acc.segment; p.t = acc.t; p.fwd = true;
+          if (p._alightFinal?.finalGoal) { p.dest = p._alightFinal.finalBuilding || null; p.goal = p._alightFinal.finalGoal; p.destKind = p._alightFinal.destKind || ''; p.status = 'идёт к цели'; citRouteTo(p, { line: p.line, seg: p.seg, t: p.t }); delete p._alightFinal; }
+          else { p.goal = null; p.status = 'вышел на станции'; assignDest(p, { avoidTransit: true }); }
+        } else { assignDest(p, { avoidTransit: true }); }
+      } else {                                          // сел — теперь пассажир поезда
+        const train = b.train; if (train && !train.dead) {
+          p.transit = { state: 'onTrain', originStationKey: b.station ? stationSimKey(b.station) : null, destination: b.requestedDestination || p.transit?.requestedDestination || passengerDestinationForTrain(train, b.station) || null };
+          p.status = `едет поездом · ${p.transit.destination?.name || 'поезд'}`;
+          train.passengers.push(p);
+        } else { p.dead = true; }
+      }
+    }
+    return;
+  }
   if (p.transit?.state === 'waiting' || p.transit?.state === 'onTrain') return;
   if (p.idle > 0) { p.idle -= dt; if (p.idle <= 0) assignDest(p); return; }   // стоит у цели, потом новая цель
   const line = p.line; if (!line || line.length < 2 || !line[p.seg] || !line[p.seg + 1]) { p.dead = true; return; }
@@ -2976,6 +3194,12 @@ function updateCitizenPanel() {
     `<div class="cz-row"><span>Занятость</span><b>${c.employed ? 'работает' : 'безработный'}</b></div>`;
 }
 function roundRect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+function drawCouplingTo(ctx, dpr, prevWagon, wagon) {   // сцепка-буфер между соседними вагонами
+  if (!prevWagon || !prevWagon.pos || !wagon || !wagon.pos) return;
+  const a = map.latLngToContainerPoint([prevWagon.pos[0], prevWagon.pos[1]]), b = map.latLngToContainerPoint([wagon.pos[0], wagon.pos[1]]);
+  ctx.strokeStyle = 'rgba(28,22,12,.75)'; ctx.lineWidth = Math.max(1, mToPx(0.28)) * dpr; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(a.x * dpr, a.y * dpr); ctx.lineTo(b.x * dpr, b.y * dpr); ctx.stroke();
+}
 function drawVehicleShape(ctx, c, length, width, dpr, vehicleAngle) {
   if (c.type !== 'truck') {
     ctx.fillStyle = c.color; roundRect(ctx, -length / 2 * dpr, -width / 2 * dpr, length * dpr, width * dpr, Math.min(width / 2, 3) * dpr); ctx.fill();
@@ -3017,20 +3241,39 @@ function drawSim() {
   drawLightSignals(ctx, dpr, W, H);
   for (const train of sim.trains) {
     if (train.dead || !train.line || !train.line[train.seg + 1] && !train.turn) continue;
-    const pose = trainPose(train); if (!pose) continue;
-    const pos = pose.pos, cp = map.latLngToContainerPoint([pos[0], pos[1]]);
-    if (cp.x < -40 || cp.y < -40 || cp.x > W + 40 || cp.y > H + 40) continue;
-    const length = Math.max(12, mToPx(train.length)), width = Math.max(1.2, mToPx(train.width)), carCount = Math.max(2, train.cars || 3), carLength = length / carCount - Math.max(1, mToPx(.8));
-    ctx.save(); ctx.translate(cp.x * dpr, cp.y * dpr); ctx.rotate(-pose.angle);
+    updateTrainChain(train);
+    const wagons = train.wagons || []; if (!wagons.length) continue;
+    const carCount = wagons.length, carLength = mToPx(TRAIN_WAGON_LEN), width = Math.max(1.2, mToPx(train.width)), lite = mToPx(TRAIN_WAGON_GAP);
+    const nearWagon = wagons.find(w => w.pos);
+    if (!nearWagon) continue;
+    const cp0 = map.latLngToContainerPoint([nearWagon.pos[0], nearWagon.pos[1]]);
+    if (cp0.x < -80 || cp0.y < -80 || cp0.x > W + 80 || cp0.y > H + 80) { /* вне экрана — рисуем только если хвост близко */ }
     for (let i = 0; i < carCount; i++) {
-      const cx = -length * .5 + (i + .5) * (length / carCount);
-      ctx.fillStyle = i === 0 || i === carCount - 1 ? '#efc55b' : '#dba942'; roundRect(ctx, (cx - carLength * .5) * dpr, -width * .5 * dpr, carLength * dpr, width * dpr, Math.min(width * .45, 3) * dpr); ctx.fill();
-      ctx.fillStyle = 'rgba(36,43,52,.85)'; ctx.fillRect((cx - carLength * .22) * dpr, -width * .29 * dpr, carLength * .16 * dpr, width * .2 * dpr); ctx.fillRect((cx + carLength * .05) * dpr, -width * .29 * dpr, carLength * .16 * dpr, width * .2 * dpr);
+      const w = wagons[i]; if (!w || !w.pos) continue;
+      const cp = map.latLngToContainerPoint([w.pos[0], w.pos[1]]);
+      if (cp.x < -60 || cp.y < -60 || cp.x > W + 60 || cp.y > H + 60) { drawCouplingTo(ctx, dpr, wagons[i - 1], w); continue; }
+      ctx.save(); ctx.translate(cp.x * dpr, cp.y * dpr); ctx.rotate(-w.angle);
+      if (i === 0) {                                          // локомотив: нос, капот, окна кабины
+        const gl = carLength * .42;
+        ctx.fillStyle = TRAIN_LOCO_COLORS[train._locoColor || 0]; roundRect(ctx, -carLength * .5 * dpr, -width / 2 * dpr, carLength * dpr, width * dpr, Math.min(width * .45, 3) * dpr); ctx.fill();
+        ctx.fillStyle = 'rgba(20,24,30,.35)'; ctx.fillRect(-carLength * .5 * dpr, -width * .5 * dpr, carLength * .35 * dpr, width * dpr);
+        ctx.fillStyle = '#3a2f22'; ctx.fillRect((carLength * .42) * dpr, -width * .16 * dpr, carLength * .1 * dpr, width * .32 * dpr);
+        ctx.fillStyle = '#9fd4ff'; ctx.fillRect((carLength * .15) * dpr, -width * .34 * dpr, carLength * .16 * dpr, width * .3 * dpr);
+        ctx.fillStyle = '#ffe9b0'; ctx.beginPath(); ctx.arc(carLength * .5 * dpr, 0, Math.max(1.6, width * .16) * dpr, 0, 6.2832); ctx.fill();
+      } else {                                                // пассажирский вагон
+        ctx.fillStyle = '#dba942'; roundRect(ctx, -carLength * .5 * dpr, -width * .5 * dpr, carLength * dpr, width * dpr, Math.min(width * .45, 3) * dpr); ctx.fill();
+        ctx.fillStyle = '#8a6d2f'; ctx.fillRect(-carLength * .5 * dpr, -width * .5 * dpr, carLength * dpr, width * .12 * dpr);
+      }
+      // окна вагона
+      const winW = carLength * .1, winGap = carLength * .14, winX0 = -carLength * .42;
+      ctx.fillStyle = 'rgba(36,43,52,.85)';
+      for (let k = 0; k < 4; k++) ctx.fillRect((winX0 + k * (winW + winGap)) * dpr, -width * .27 * dpr, winW * dpr, width * .2 * dpr);
+      ctx.restore();
+      if (i > 0) drawCouplingTo(ctx, dpr, wagons[i - 1], w);
     }
-    ctx.restore();
     const passengerCount = (train.passengers?.length || 0) + (train.inboundPassengers || 0);
     if (passengerCount > 0) {
-      const badgeX = (cp.x + Math.max(8, length * .42)) * dpr, badgeY = (cp.y - 11) * dpr;
+      const front = wagons[0].pos, cp = map.latLngToContainerPoint(front), badgeX = (cp.x + Math.max(10, mToPx(TRAIN_COUPLING))) * dpr, badgeY = (cp.y - 11) * dpr;
       ctx.fillStyle = 'rgba(19,24,30,.94)'; roundRect(ctx, badgeX, badgeY, 22 * dpr, 14 * dpr, 5 * dpr); ctx.fill();
       ctx.fillStyle = '#fff1bd'; ctx.font = `700 ${9 * dpr}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(passengerCount), badgeX + 11 * dpr, badgeY + 7 * dpr);
     }
