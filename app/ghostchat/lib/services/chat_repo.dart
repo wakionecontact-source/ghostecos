@@ -273,6 +273,24 @@ enum KeySyncOutcome {
   error,
 }
 
+/// Состояние пары v2 для экрана ключей: сервер знает нашу identity или нет.
+class V2PairReport {
+  /// Сервер знает именно нашу identity — пара рабочая.
+  final bool ready;
+
+  /// Пары нет ни у нас, ни на сервере: ключ создан локально и ждёт решения.
+  final bool created;
+
+  /// На сервере лежит зашифрованная паролем копия приватной части.
+  final bool hasServerCopy;
+
+  const V2PairReport({
+    required this.ready,
+    required this.created,
+    required this.hasServerCopy,
+  });
+}
+
 /// Публичное состояние серверной копии. В обычном периодическом watcher'е
 /// используется только metadata; зашифрованный blob запрашивается лишь на
 /// экране входа или после явного согласия пользователя на восстановление.
@@ -2345,6 +2363,77 @@ class ChatRepo {
   }
 
   /// Seed-фраза v2 (12 слов) — бэкап личности + привязка других устройств (веба).
+  /// Проверяет пару v2, ничего не публикуя: решение об отправке копии — за юзером.
+  Future<V2PairReport> inspectV2Pair() async {
+    final account = _myUsername ?? await AuthService.username();
+    if (account == null || account.trim().isEmpty) {
+      return const V2PairReport(ready: false, created: true, hasServerCopy: false);
+    }
+    await CryptoV2.instance.ensureKeys(account: account);
+    final local = CryptoV2.instance.identityPubB64;
+    var hasServerCopy = false;
+    try {
+      final me = await _api.chatGet('/v2/identity/me');
+      if (me is Map) {
+        final enc = me['identity_priv_encrypted'] as String?;
+        hasServerCopy = enc != null && enc.isNotEmpty;
+      }
+    } catch (e) {
+      appLog.debug('crypto', '[v2 identity me] $e');
+    }
+    final raw = await _api.chatGet(
+      '/v2/keys/${Uri.encodeComponent(account.trim().toLowerCase())}',
+    );
+    final serverIdentity = raw is Map ? raw['identity_pub'] as String? : null;
+    if (serverIdentity == null || serverIdentity.isEmpty) {
+      return const V2PairReport(ready: false, created: true, hasServerCopy: false);
+    }
+    return V2PairReport(
+      ready: serverIdentity == local,
+      created: false,
+      hasServerCopy: hasServerCopy,
+    );
+  }
+
+  /// Публикует пару v2 и, если юзер согласился, кладёт копию identity на сервер.
+  /// Копия шифруется паролем аккаунта — отдельно от v1.
+  Future<bool> publishV2Pair({
+    required String password,
+    required bool uploadCopy,
+    required bool rotate,
+  }) async {
+    final account = _myUsername ?? await AuthService.username();
+    if (account == null || account.trim().isEmpty) return false;
+    if (uploadCopy && password.trim().isEmpty) return false;
+    await CryptoV2.instance.ensureKeys(account: account);
+    final body = <String, dynamic>{
+      'identity_pub': CryptoV2.instance.identityPubB64,
+      'proof_signature': base64.encode(await CryptoV2.instance.proofSignature()),
+    };
+    try {
+      // rotate обнуляет прежнюю identity и ключи устройств — только по согласию.
+      if (rotate) await _api.chatPost('/v2/identity/rotate', body);
+      if (uploadCopy) {
+        body.addAll(
+          await CryptoV2.instance.exportEncryptedIdentityForServer(password),
+        );
+      }
+      await _api.chatPost('/v2/identity/publish', body);
+      await _api.chatPost('/v2/device/publish', {
+        'device_pub': CryptoV2.instance.devicePubB64,
+        'signed_prekey_sig': base64.encode(
+          await CryptoV2.instance.signedPrekeySig(),
+        ),
+        'replace': true,
+      });
+      _v2Published = true;
+      return true;
+    } catch (e) {
+      appLog.warn('security', '[v2 pair publish] $e');
+      return false;
+    }
+  }
+
   Future<String?> v2Mnemonic() async {
     final account = _myUsername ?? await AuthService.username();
     if (account == null || account.trim().isEmpty) return null;

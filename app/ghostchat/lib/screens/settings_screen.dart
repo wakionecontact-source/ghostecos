@@ -4938,6 +4938,10 @@ class _KeysScreen extends StatelessWidget {
           ? 'Ключ не совпал с публичным ключом аккаунта.'
           : 'Не удалось расшифровать ключ. Проверь пароль.',
     );
+    // v1 поднят — сразу проверяем пару v2 и спрашиваем про её копию отдельно.
+    if (r == KeySyncOutcome.ok && context.mounted) {
+      await _v2Pair(context, password: pwd);
+    }
   }
 
   Future<void> _changeStorage(BuildContext context) async {
@@ -4978,6 +4982,74 @@ class _KeysScreen extends StatelessWidget {
       r == KeySyncOutcome.ok
           ? 'Место хранения изменено'
           : 'Не удалось изменить место хранения. Ключ не удалён.',
+    );
+  }
+
+  /// Проверяет пару v2 и отдельно спрашивает, отправлять ли её копию на сервер.
+  Future<void> _v2Pair(BuildContext context, {String? password}) async {
+    V2PairReport report;
+    try {
+      report = await ChatRepo.instance.inspectV2Pair();
+    } catch (e) {
+      _toast('Не удалось проверить ключ v2');
+      return;
+    }
+    if (!context.mounted) return;
+    if (report.ready && report.hasServerCopy) {
+      _toast('Копия ключа v2 уже на сервере');
+      return;
+    }
+    final String question;
+    if (report.created) {
+      question = 'Ключ v2 создан на этом устройстве. Отправить его копию на сервер?';
+    } else if (!report.ready) {
+      question =
+          'Копии ключа v2 на сервере нет. Создать новый ключ v2? '
+          'Прежние сообщения v2 останутся нечитаемыми.';
+    } else {
+      question = 'Отправить зашифрованную паролем копию ключа v2 на сервер?';
+    }
+    final choice = await _askV2Upload(context, question, dual: report.created);
+    if (choice == null) return;
+    final pwd = choice ? password ?? await _askPassword(context) : password;
+    if (choice && (pwd == null || pwd.isEmpty)) return;
+    _toast('Публикую ключ v2…');
+    final done = await ChatRepo.instance.publishV2Pair(
+      password: pwd ?? '',
+      uploadCopy: choice,
+      rotate: !report.ready,
+    );
+    _toast(done ? 'Ключ v2 отправлен' : 'Не удалось отправить ключ v2');
+  }
+
+  /// Выбор отправки копии: true — с копией, false — только на устройстве.
+  Future<bool?> _askV2Upload(
+    BuildContext context,
+    String question, {
+    required bool dual,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (d) => AlertDialog(
+        backgroundColor: GE.bgDeep,
+        title: Text('Ключ v2', style: TextStyle(color: GE.text)),
+        content: Text(question, style: TextStyle(color: GE.sub)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(d),
+            child: Text('Отмена', style: TextStyle(color: GE.sub)),
+          ),
+          if (dual)
+            TextButton(
+              onPressed: () => Navigator.pop(d, false),
+              child: Text('Только на устройстве', style: TextStyle(color: GE.sub)),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(d, true),
+            child: Text('Отправить копию', style: TextStyle(color: GE.primary)),
+          ),
+        ],
+      ),
     );
   }
 
@@ -5129,6 +5201,12 @@ class _KeysScreen extends StatelessWidget {
                 () => _restoreServer(context),
                 sub:
                     'Повторно введи пароль — ключ проверяется по публичной части',
+              ),
+              _tile(
+                Icons.enhanced_encryption_outlined,
+                'Ключ v2 на сервере',
+                () => _v2Pair(context),
+                sub: 'Проверит пару v2 и отдельно спросит про копию identity',
               ),
               _tile(
                 CupertinoIcons.arrow_left_right,

@@ -6,14 +6,16 @@ import { fromBase64, toBase64 } from '../crypto/bytes';
 import {
   createDeviceKeyPair,
   deviceKeyPairFromPrivate,
+  identityClaimSignature,
   identityFromMnemonic,
   identityFromSeed,
+  randomSeed,
   signDevicePrekey,
   verifySignedPrekey,
   type DeviceKeyPair,
   type IdentityKeyPair,
 } from '../crypto/identity';
-import { importEncryptedIdentity } from '../crypto/identity-backup';
+import { exportEncryptedIdentity, importEncryptedIdentity } from '../crypto/identity-backup';
 
 /** Пара «identity аккаунта + ключ этого устройства» — как CryptoV2 в приложении. */
 export interface V2Keys {
@@ -116,8 +118,94 @@ export async function unlockV2(api: ChatClient, options: V2UnlockOptions): Promi
   return keys;
 }
 
-/** Привязка нового устройства по seed-фразе — как в настройках приложения. */
-export async function bindDeviceWithMnemonic(
+/** Состояние пары v2: готово, создано локально или недоступно без копии. */
+export type V2PairState = 'ready' | 'created' | 'locked';
+
+export interface V2PairCheck {
+  state: V2PairState;
+  keys: V2Keys;
+  hasServerBackup: boolean;
+  serverIdentity: string | null;
+}
+
+function freshV2Keys(): V2Keys {
+  return { identity: identityFromSeed(randomSeed()), device: createDeviceKeyPair() };
+}
+
+/**
+ * Проверяет пару v2 после разблокировки v1.
+ * Нет пары ни на сервере, ни на устройстве — создаём локально, но не публикуем:
+ * решение об отправке зашифрованной копии остаётся за пользователем.
+ */
+export async function checkV2Pair(
+  api: ChatClient,
+  options: { username: string; password?: string; replaceDevice?: boolean },
+): Promise<V2PairCheck> {
+  const me = await api.myIdentity();
+  const stored = await v2FromDevice();
+  const hasServerBackup = !!me.identity_priv_encrypted && !!me.identity_salt;
+
+  if (me.identity_pub) {
+    if (stored && toBase64(stored.identity.publicKey) === me.identity_pub) {
+      await ensureDevicePublished(api, options.username, stored, options.replaceDevice ?? false);
+      return { state: 'ready', keys: stored, hasServerBackup, serverIdentity: me.identity_pub };
+    }
+    if (hasServerBackup && options.password) {
+      const restored = await unlockV2(api, {
+        password: options.password,
+        username: options.username,
+        replace: options.replaceDevice,
+      });
+      if (restored) {
+        return { state: 'ready', keys: restored, hasServerBackup: true, serverIdentity: me.identity_pub };
+      }
+    }
+    // Копии нет, локальной пары тоже: прежнюю identity этим паролем не вернуть.
+    return {
+      state: 'locked',
+      keys: stored ?? freshV2Keys(),
+      hasServerBackup,
+      serverIdentity: me.identity_pub,
+    };
+  }
+
+  return {
+    state: 'created',
+    keys: stored ?? freshV2Keys(),
+    hasServerBackup: false,
+    serverIdentity: null,
+  };
+}
+
+export interface V2PairPublish {
+  username: string;
+  keys: V2Keys;
+  /** Отправлять ли на сервер зашифрованную копию identity — отдельный вопрос. */
+  uploadCopy: boolean;
+  password?: string;
+  /** Явная замена уже опубликованной identity (копии нет). */
+  rotate?: boolean;
+}
+
+/** Публикует пару v2 и сохраняет её в сейфе устройства. */
+export async function activateV2Pair(api: ChatClient, options: V2PairPublish): Promise<void> {
+  const identityPub = toBase64(options.keys.identity.publicKey);
+  const proof = toBase64(identityClaimSignature(options.keys.identity));
+  if (options.rotate) await api.rotateIdentity({ identity_pub: identityPub, proof_signature: proof });
+  const backup =
+    options.uploadCopy && options.password
+      ? await exportEncryptedIdentity(options.keys.identity, options.password)
+      : {};
+  await api.publishIdentity({ identity_pub: identityPub, proof_signature: proof, ...backup });
+  await ensureDevicePublished(api, options.username, options.keys, true);
+  await saveDeviceVault({
+    identitySeed: options.keys.identity.seed,
+    identityPublic: options.keys.identity.publicKey,
+    devicePrivate: options.keys.device.privateKey,
+  });
+}
+
+/** Привязка нового устройства по seed-фразе — как в настройках приложения. */export async function bindDeviceWithMnemonic(
   api: ChatClient,
   username: string,
   mnemonic: string,

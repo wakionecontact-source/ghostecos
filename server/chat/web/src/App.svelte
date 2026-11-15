@@ -14,7 +14,7 @@
     type WebSession,
   } from './lib/auth/session';
   import { completeLogin, fetchUserInfo } from './lib/auth/sso';
-  import { clearDeviceVault, hasVault } from './lib/auth/vault';
+  import { clearDeviceVault } from './lib/auth/vault';
   import type { AccountKey } from './lib/crypto/account-key';
   import { unlockV2, type V2Keys } from './lib/chat/keys';
   import { applyPrefs, loadPrefs } from './lib/ui/prefs';
@@ -26,7 +26,6 @@
   let account = $state<AccountKey | null>(null);
   let v2 = $state<V2Keys | null>(null);
   let pending = $state<{ token: string; username: string; approvalId: string; code?: string } | null>(null);
-  let vaultExists = $state(false);
   let loginError = $state('');
 
   const CALLBACK_PATH = '/v2/chat/sso/callback';
@@ -73,7 +72,6 @@
     if (persist) saveSession(value);
     session = value;
     pending = null;
-    vaultExists = await hasVault();
 
     // Ключ уже лежит в хранилище устройства — пароль не спрашиваем.
     const stored = await accountFromDevice();
@@ -138,7 +136,6 @@
   <Unlock
     api={chatApi(session.token)}
     username={session.username}
-    hasVault={vaultExists}
     onready={unlocked}
     onlogout={logout}
   />

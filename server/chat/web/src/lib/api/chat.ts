@@ -142,6 +142,10 @@ export function chatApi(token: string) {
       identity_kdf?: string;
     }) => requestJson<{ status: string }>('/api/chat/v2/identity/publish', { ...opts, body }),
 
+    /** Явная замена identity v2, когда серверная копия недоступна. */
+    rotateIdentity: (body: { identity_pub: string; proof_signature: string }) =>
+      requestJson<{ status: string }>('/api/chat/v2/identity/rotate', { ...opts, body }),
+
     publishDevice: (body: {
       device_pub: string;
       signed_prekey_sig: string;
