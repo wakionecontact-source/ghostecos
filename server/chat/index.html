@@ -1705,22 +1705,6 @@ body.emoji-open .reply-bar { transform: translateY(-60vh) !important; transition
 // GhostChat web — E2E-зашифрованный мессенджер
 // ════════════════════════════════════════════════════════════════════
 const API='/api/soc', CHAT_API='/api/chat';
-// Test-multi инжектор: если страницу открыли из тестовой панели мульти-аккаунтов,
-// она передаёт ?_test_token=...&_test_me=... — кладём их в localStorage и
-// чистим URL чтобы при F5 параметры не висели.
-(function _injectTestMulti(){
-  try {
-    const u = new URL(location.href);
-    const tt = u.searchParams.get('_test_token');
-    const tm = u.searchParams.get('_test_me');
-    if (tt){ localStorage.setItem('gs_token', tt); }
-    if (tm){ try { JSON.parse(tm); localStorage.setItem('gs_me', tm); } catch(_){} }
-    if (tt || tm){
-      u.searchParams.delete('_test_token'); u.searchParams.delete('_test_me');
-      history.replaceState(null, '', u.pathname + (u.search ? u.search : ''));
-    }
-  } catch(_){}
-})();
 let token=localStorage.getItem('gs_token');
 let me=null;
 try { me = JSON.parse(localStorage.getItem('gs_me')||'null'); }

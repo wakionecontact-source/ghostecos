@@ -26,6 +26,7 @@ Changes v1.3:
 """
 import asyncio
 import collections
+import hmac
 import json
 import logging
 import time
@@ -1071,7 +1072,8 @@ async def revoke_device(device_id: str, username: str = Depends(_require_auth)):
 @app.get("/internal/check_user")
 async def internal_check_user(username: str, key: str):
     """Проверяет существование GC-юзернейма. Только для shop_bot (внутренний ключ)."""
-    if key != _SUPPORT_PASSWORD:
+    # SECURITY: сравнение без утечки по времени; bytes — чтобы не падать на не-ASCII.
+    if not hmac.compare_digest(str(key).encode("utf-8"), _SUPPORT_PASSWORD.encode("utf-8")):
         raise HTTPException(403, detail="forbidden")
     if not username:
         raise HTTPException(400, detail="username required")
@@ -1447,7 +1449,8 @@ async def websocket_endpoint(ws: WebSocket):
                 msg_id   = pkt.get('msg_id', str(_uuid_mod.uuid4()))
                 sent_at  = pkt.get('sent_at', int(time.time() * 1000))
                 reply_to = pkt.get('reply_to_msg_id', '')
-                if username != 'hhh' or pwd != _SUPPORT_PASSWORD:
+                if username != 'hhh' or not hmac.compare_digest(
+                        str(pwd).encode("utf-8"), _SUPPORT_PASSWORD.encode("utf-8")):
                     continue
                 if not to_user or not body:
                     # If no to_user but has reply_to, look up original sender
@@ -1476,7 +1479,8 @@ async def websocket_endpoint(ws: WebSocket):
                 body    = pkt.get('body', '')
                 msg_id  = pkt.get('msg_id', str(_uuid_mod.uuid4()))
                 sent_at = pkt.get('sent_at', int(time.time() * 1000))
-                if username != 'hhh' or pwd != _SUPPORT_PASSWORD:
+                if username != 'hhh' or not hmac.compare_digest(
+                        str(pwd).encode("utf-8"), _SUPPORT_PASSWORD.encode("utf-8")):
                     continue
                 if not body:
                     continue
