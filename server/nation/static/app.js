@@ -3243,7 +3243,7 @@ function drawSim() {
     if (train.dead || !train.line || !train.line[train.seg + 1] && !train.turn) continue;
     updateTrainChain(train);
     const wagons = train.wagons || []; if (!wagons.length) continue;
-    const carCount = wagons.length, carLength = mToPx(TRAIN_WAGON_LEN), width = Math.max(1.2, mToPx(train.width)), lite = mToPx(TRAIN_WAGON_GAP);
+    const carCount = wagons.length, carLength = mToPx(TRAIN_WAGON_LEN), width = Math.max(1.2, mToPx(train.width));
     const nearWagon = wagons.find(w => w.pos);
     if (!nearWagon) continue;
     const cp0 = map.latLngToContainerPoint([nearWagon.pos[0], nearWagon.pos[1]]);
@@ -3270,7 +3270,6 @@ function drawSim() {
       ctx.fillStyle = 'rgba(36,43,52,.85)';
       for (let k = 0; k < 4; k++) ctx.fillRect((winX0 + k * (winW + winGap)) * dpr, -width * .27 * dpr, winW * dpr, width * .2 * dpr);
       ctx.restore();
-      if (i > 0) drawCouplingTo(ctx, dpr, wagons[i - 1], w);
     }
     const passengerCount = (train.passengers?.length || 0) + (train.inboundPassengers || 0);
     if (passengerCount > 0) {
