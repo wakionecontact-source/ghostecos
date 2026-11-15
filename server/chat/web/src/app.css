@@ -1,0 +1,316 @@
+﻿@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/v2/shared/fonts/inter-cyrillic.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/v2/shared/fonts/inter-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+
+/* Палитра GhostSocial v2: нейтральный тёмный, стекло, лавандовый акцент. */
+:root {
+  color-scheme: dark;
+  --bg: #111113;
+  --text: #f1f1f4;
+  --muted: #777782;
+  --accent: #b39af4;
+  --accent-deep: #8a6ee0;
+  --border: #28282e;
+  --border-strong: #3a3a43;
+  --card: #1b1b1f;
+  --card-blur: rgba(27, 27, 31, 0.76);
+  --header-blur: rgba(27, 27, 31, 0.72);
+  --row-hover: #1b1b1f;
+  --row-active: #242429;
+  --field: #17171a;
+  --danger: #f47174;
+  --bubble-mine-from: #6d4fd0;
+  --bubble-mine-to: #a285f0;
+  --bubble-mine-text: #fbf8ff;
+  --radius-sm: 6px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --font: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+::selection {
+  background: var(--accent);
+  color: #16101f;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a43 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  border-radius: 8px;
+  background: #3a3a43;
+}
+
+/* ── Примитивы GhostSocial v2 ────────────────────────── */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 49px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--header-blur);
+  backdrop-filter: blur(18px) saturate(1.4);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: baseline;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.brand em {
+  color: var(--accent);
+  font-style: normal;
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-blur);
+  backdrop-filter: blur(12px) saturate(1.3);
+  -webkit-backdrop-filter: blur(12px) saturate(1.3);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.pill:hover {
+  background: var(--row-hover);
+  color: var(--text);
+}
+
+.pill.active {
+  background: var(--row-active);
+  color: var(--accent);
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--row-active);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s ease, transform 0.18s ease, color 0.18s ease;
+}
+
+.button:hover {
+  background: var(--border);
+}
+
+.button:active {
+  transform: scale(0.98);
+}
+
+.button.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: #16101f;
+}
+
+.button.primary:hover {
+  background: #c4b0f7;
+}
+
+.button:disabled {
+  opacity: 0.55;
+  cursor: default;
+  transform: none;
+}
+
+.field {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--text);
+  font-size: 14px;
+  outline: 0;
+  transition: border-color 0.18s ease;
+}
+
+.field:focus {
+  border-color: var(--border-strong);
+}
+
+.field::placeholder {
+  color: var(--muted);
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--row-active);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.fade-in {
+  animation: fadeIn 0.28s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+  animation-delay: var(--delay, 0s);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── Иконки приложения ──────────────────────────────
+   Шрифт Cupertino Icons — тот же, что во Flutter-сборке приложения. */
+@font-face {
+  font-family: 'Cupertino Icons';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('./assets/fonts/CupertinoIcons.ttf') format('truetype');
+}
+
+.ci {
+  font-family: 'Cupertino Icons';
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1;
+  display: inline-block;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.ci-chat::before { content: '\f3fb'; }
+.ci-chat-fill::before { content: '\f8be'; }
+.ci-people::before { content: '\f740'; }
+.ci-people-fill::before { content: '\f741'; }
+.ci-person::before { content: '\f47d'; }
+.ci-person-fill::before { content: '\f47e'; }
+.ci-gear::before { content: '\f411'; }
+.ci-gear-fill::before { content: '\f412'; }
+.ci-plus::before { content: '\f489'; }
+.ci-search::before { content: '\f4a5'; }
+.ci-back::before { content: '\f3cf'; }
+.ci-paperclip::before { content: '\f732'; }
+.ci-smiley::before { content: '\f7e3'; }
+.ci-send::before { content: '\f366'; }
+.ci-clock::before { content: '\f4be'; }
+.ci-check::before { content: '\f3fd'; }
+.ci-saved::before { content: '\f8dd'; }
+
+/* Активная вкладка — заливка, как в приложении. */
+.tabbar button.active .ci-chat::before { content: '\f8be'; }
+.tabbar button.active .ci-people::before { content: '\f741'; }
+.tabbar button.active .ci-person::before { content: '\f47e'; }
+.tabbar button.active .ci-gear::before { content: '\f412'; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-in {
+    animation: none;
+  }
+}
+
