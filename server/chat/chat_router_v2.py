@@ -17,9 +17,13 @@ v1 эндпойнты не трогаются, старая переписка �
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, List
-import base64, hashlib, time
+import base64, time
+from chat_client_idempotency import begin as idem_begin, save as idem_save
 
-from social_router import auth_member, db, ws_hub, _rate_limit, _record_dm_direction
+from ecos_core.identity import db
+from ecos_core.client import auth_member
+from ecos_core.shared import _rate_limit, _record_dm_direction
+from ecos_core.realtime import ws_hub
 from key_security import validate_identity_backup
 
 try:
@@ -45,23 +49,6 @@ def _is_b64(s: str, expected_len: Optional[int] = None) -> bool:
     if expected_len is not None and len(raw) != expected_len:
         return False
     return True
-
-
-def _device_pk_for_token(c, tok: str, user_id: int) -> Optional[int]:
-    """Устройство текущего запроса: прямой токен устройства либо веб-сессия."""
-    if not tok:
-        return None
-    row = c.execute(
-        "SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1", (tok, user_id)
-    ).fetchone()
-    if row:
-        return int(row["id"])
-    row = c.execute(
-        "SELECT device_pk FROM auth_sessions WHERE token_hash=? AND user_id=? "
-        "AND status='active' ORDER BY last_seen_at DESC LIMIT 1",
-        (hashlib.sha256(tok.encode("utf-8")).hexdigest(), user_id),
-    ).fetchone()
-    return int(row["device_pk"]) if row and row["device_pk"] else None
 
 
 def _verify_ed25519(identity_pub_b64: str, signature_b64: str, data: bytes) -> bool:
@@ -133,7 +120,7 @@ def publish_identity(body: IdentityPublishBody, authorization: Optional[str] = H
             # A complete encrypted backup replaces the previous one. A plain
             # identity/device refresh must never erase the existing backup.
             c.execute(
-                "UPDATE users SET v2_identity_pub=?, v2_identity_priv_encrypted=?, v2_identity_salt=? WHERE id=?",
+                "UPDATE users SET v2_identity_pub=?, in_ghostchat=1, v2_identity_priv_encrypted=?, v2_identity_salt=? WHERE id=?",
                 (
                     body.identity_pub,
                     checked_backup["encrypted"],
@@ -143,7 +130,7 @@ def publish_identity(body: IdentityPublishBody, authorization: Optional[str] = H
             )
         else:
             c.execute(
-                "UPDATE users SET v2_identity_pub=? WHERE id=?",
+                "UPDATE users SET v2_identity_pub=?, in_ghostchat=1 WHERE id=?",
                 (body.identity_pub, user["id"]),
             )
         c.commit()
@@ -237,13 +224,14 @@ def publish_device(body: DevicePublishBody, authorization: Optional[str] = Heade
         device_pub_raw = base64.b64decode(body.device_pub)
         if not _verify_ed25519(id_row["v2_identity_pub"], body.signed_prekey_sig, device_pub_raw):
             raise HTTPException(400, "signed_prekey_sig: подпись не проходит проверку identity")
-        # Находим текущее устройство: прямой токен устройства либо веб-сессия.
+        # Находим текущее устройство по токену.
         tok = (authorization or "").split(" ", 1)[-1] if authorization else ""
-        dev_id = _device_pk_for_token(c, tok, int(user["id"]))
-        if dev_id is None:
+        from ecos_core.sessions import device_for_token
+        dev = device_for_token(c, tok, user["id"])
+        if not dev:
             raise HTTPException(404, "Текущее устройство не найдено")
         cur = c.execute(
-            "SELECT v2_device_pub FROM user_devices WHERE id=?", (dev_id,)
+            "SELECT v2_device_pub FROM user_devices WHERE id=?", (dev["id"],)
         ).fetchone()
         if (
             cur
@@ -254,10 +242,10 @@ def publish_device(body: DevicePublishBody, authorization: Optional[str] = Heade
             raise HTTPException(409, "v2_device_key_replace: у устройства уже другой v2-ключ")
         c.execute(
             "UPDATE user_devices SET v2_device_pub=?, v2_signed_prekey_sig=? WHERE id=?",
-            (body.device_pub, body.signed_prekey_sig, dev_id),
+            (body.device_pub, body.signed_prekey_sig, dev["id"]),
         )
         c.commit()
-        return {"status": "ok", "device_id": dev_id}
+        return {"status": "ok", "device_id": dev["id"]}
     finally:
         c.close()
 
@@ -328,10 +316,13 @@ def whois_by_identity(identity_pub: str, authorization: Optional[str] = Header(N
 
 class EnvelopeForDevice(BaseModel):
     target_device_id: int = Field(gt=0)   # одно из устройств получателя
+    target_device_pub: Optional[str] = None
     envelope: str = Field(max_length=10_000)           # base64 — eph_pub || iv || ct (формат см. спеку)
 
 
 class SendV2Body(BaseModel):
+    client_message_id: Optional[str] = Field(default=None, min_length=16, max_length=128)
+    sender_identity_pub: Optional[str] = Field(default=None, max_length=100)
     to_username: str = Field(min_length=1, max_length=64)
     envelopes: List[EnvelopeForDevice] = Field(max_length=32)  # по одному на каждое устройство получателя
 
@@ -348,6 +339,13 @@ def send_v2(body: SendV2Body, authorization: Optional[str] = Header(None)):
         raise HTTPException(400, "слишком много target-устройств в одном /send")
     c = db()
     try:
+        replay = idem_begin(c, user["id"], "dm-v2", body)
+        if replay is not None:
+            return replay
+        if body.sender_identity_pub is not None:
+            own = c.execute("SELECT v2_identity_pub FROM users WHERE id=?", (user["id"],)).fetchone()
+            if not own or own["v2_identity_pub"] != body.sender_identity_pub:
+                raise HTTPException(409, "v2_identity_key_stale: восстановите актуальный ключ аккаунта")
         target_user = c.execute(
             "SELECT id, v2_identity_pub FROM users WHERE username=?",
             (body.to_username.lower(),),
@@ -356,6 +354,18 @@ def send_v2(body: SendV2Body, authorization: Optional[str] = Header(None)):
             raise HTTPException(404, "Получатель не найден")
         if not target_user["v2_identity_pub"]:
             raise HTTPException(409, "У получателя нет identity v2")
+        if target_user["id"] != user["id"]:
+            from chat_router import _is_blocked
+            from ecos_core.shared import _get_privacy_flags
+            if _is_blocked(c, user["id"], target_user["id"]):
+                raise HTTPException(403, "Пользователь заблокирован")
+            privacy = _get_privacy_flags(c, target_user["id"]).get("message_privacy", "all")
+            if privacy == "nobody" or (privacy == "contacts" and not c.execute(
+                    "SELECT 1 FROM chat_contacts WHERE owner_id=? AND contact_id=?",
+                    (target_user["id"], user["id"])).fetchone()):
+                raise HTTPException(403, "Получатель ограничил личные сообщения")
+        if len({env.target_device_id for env in body.envelopes}) != len(body.envelopes):
+            raise HTTPException(422, "Повторяющийся target_device_id")
         now_ = int(time.time())
         ids = []
         for env in body.envelopes:
@@ -366,14 +376,15 @@ def send_v2(body: SendV2Body, authorization: Optional[str] = Header(None)):
                 raise HTTPException(400, "envelope: ожидается base64")
             # Проверим, что target_device_id принадлежит получателю.
             d = c.execute(
-                "SELECT id FROM user_devices "
+                "SELECT id, v2_device_pub FROM user_devices "
                 "WHERE id=? AND user_id=? AND is_active=1 AND is_blocked=0 AND expires_at>? "
                 "AND v2_device_pub IS NOT NULL",
                 (env.target_device_id, target_user["id"], now_),
             ).fetchone()
             if not d:
-                # Не существует / отключено / без v2 ключа — пропускаем, не ошибка.
-                continue
+                raise HTTPException(409, "v2_device_key_stale")
+            if env.target_device_pub is not None and env.target_device_pub != d["v2_device_pub"]:
+                raise HTTPException(409, "v2_device_key_stale")
             cur = c.execute(
                 "INSERT INTO chat_dm_v2 (receiver_user_id, receiver_device_id, envelope, created_at) "
                 "VALUES (?, ?, ?, ?)",
@@ -382,6 +393,8 @@ def send_v2(body: SendV2Body, authorization: Optional[str] = Header(None)):
             ids.append(cur.lastrowid)
         if ids:
             _record_dm_direction(c, int(user["id"]), int(target_user["id"]))
+        response = {"status": "ok", "delivered_to_devices": len(ids), "ids": ids}
+        idem_save(c, user["id"], "dm-v2", body, response)
         c.commit()
         try:
             ws_hub.send_to(target_user["id"], "chat.v2.new", {"count": len(ids)})
@@ -393,11 +406,13 @@ def send_v2(body: SendV2Body, authorization: Optional[str] = Header(None)):
                 from fcm_helper import get_tokens_for_user, send_wake_push
                 toks = get_tokens_for_user(c, target_user["id"])
                 if toks:
-                    send_wake_push(toks)
+                    # push в фоне: блокирующий вызов FCM задерживал ответ и давал 504
+                    import threading as _t
+                    _t.Thread(target=send_wake_push, args=(toks,), daemon=True).start()
             except Exception as _e:
                 import logging as _lg
                 _lg.getLogger('gc').warning(f"FCM v2 push fail: {_e}")
-        return {"status": "ok", "delivered_to_devices": len(ids), "ids": ids}
+        return response
     finally:
         c.close()
 
@@ -409,10 +424,8 @@ def pending_v2(authorization: Optional[str] = Header(None)):
     tok = (authorization or "").split(" ", 1)[-1] if authorization else ""
     c = db()
     try:
-        dev = c.execute(
-            "SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1",
-            (tok, user["id"]),
-        ).fetchone()
+        from ecos_core.sessions import device_for_token
+        dev = device_for_token(c, tok, user["id"])
         if not dev:
             raise HTTPException(404, "Текущее устройство не найдено")
         rows = c.execute(
@@ -445,10 +458,8 @@ def ack_v2(body: AckV2Body, authorization: Optional[str] = Header(None)):
     tok = (authorization or "").split(" ", 1)[-1] if authorization else ""
     c = db()
     try:
-        dev = c.execute(
-            "SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1",
-            (tok, user["id"]),
-        ).fetchone()
+        from ecos_core.sessions import device_for_token
+        dev = device_for_token(c, tok, user["id"])
         if not dev:
             raise HTTPException(404, "Текущее устройство не найдено")
         placeholders = ",".join("?" * len(body.ids))

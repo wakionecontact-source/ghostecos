@@ -18,19 +18,16 @@ WebSocket-события (через ws_hub):
 - chat.new — новое сообщение получателю (если онлайн), затем удаляется
 """
 from fastapi import APIRouter, Header, HTTPException, UploadFile, File, Form, Response, Query
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from typing import Optional
 import asyncio, base64, hashlib, json, time
 
-from social_router import (
-    _get_privacy_flags,
-    _profile_visibility,
-    _record_dm_direction,
-    _rate_limit,
-    auth_member,
-    db,
-    ws_hub,
-)
+from ecos_core.identity import db
+from ecos_core.client import auth_member
+from ecos_core.shared import _get_privacy_flags, _record_dm_direction, _rate_limit
+from ecos_core.profile import _profile_visibility
+from ecos_core.realtime import ws_hub
 from key_security import validate_key_upload
 
 MAX_FILE_SIZE = 100 * 1024 * 1024
@@ -362,7 +359,9 @@ def _deliver_message(
 
         toks = get_tokens_for_user(c, to_user["id"])
         if toks:
-            send_wake_push(toks)
+            # push в фоне: блокирующий вызов FCM задерживал ответ и давал 504
+            import threading as _t
+            _t.Thread(target=send_wake_push, args=(toks,), daemon=True).start()
     except Exception as exc:
         _lg.getLogger("gc").warning("FCM push fail: %s", exc)
     return {
@@ -530,6 +529,7 @@ def upload_keys(body: KeysUploadBody, authorization: Optional[str] = Header(None
         raise HTTPException(400, "x25519_pub: неизвестный формат ключа (v1 65 байт, v2 32 байта)")
 
     tok = (authorization or "").split(" ", 1)[-1] if authorization else ""
+    from ecos_core.sessions import device_for_token
 
     if key_type == "v2":
         # Ключ устройства без подписи identity бесполезен: получатель не сможет
@@ -541,12 +541,12 @@ def upload_keys(body: KeysUploadBody, authorization: Optional[str] = Header(None
             raise HTTPException(
                 400, "signed_prekey_sig: нужна подпись identity над ключом устройства"
             )
-        dev_id = _device_pk_for_token(c, tok, int(user["id"]))
-        if dev_id is None:
+        dev = device_for_token(c, tok, user["id"])
+        if not dev:
             c.close()
             raise HTTPException(404, "Текущее устройство не найдено")
         cur_dev = c.execute(
-            "SELECT v2_device_pub FROM user_devices WHERE id=?", (dev_id,)
+            "SELECT v2_device_pub FROM user_devices WHERE id=?", (dev["id"],)
         ).fetchone()
         if (
             cur_dev
@@ -558,11 +558,11 @@ def upload_keys(body: KeysUploadBody, authorization: Optional[str] = Header(None
             raise HTTPException(409, "v2_device_key_replace: у устройства уже другой v2-ключ")
         c.execute(
             "UPDATE user_devices SET v2_device_pub=?, v2_signed_prekey_sig=? WHERE id=?",
-            (body.x25519_pub, body.signed_prekey_sig, dev_id),
+            (body.x25519_pub, body.signed_prekey_sig, dev["id"]),
         )
         c.commit()
         c.close()
-        return {"status": "ok", "key_type": "v2", "device_id": dev_id}
+        return {"status": "ok", "key_type": "v2", "device_id": dev["id"]}
 
     cur = c.execute("SELECT x25519_pub FROM users WHERE id=?", (user["id"],)).fetchone()
     if (
@@ -574,10 +574,7 @@ def upload_keys(body: KeysUploadBody, authorization: Optional[str] = Header(None
         c.close()
         raise HTTPException(409, "v1_key_replace: у аккаунта уже опубликован другой ключ v1")
 
-    dev = c.execute(
-        "SELECT id, is_owner FROM user_devices WHERE token=? AND user_id=? LIMIT 1",
-        (tok, user["id"]),
-    ).fetchone()
+    dev = device_for_token(c, tok, user["id"])
     if dev:
         c.execute(
             "UPDATE user_devices SET pub_key=? WHERE id=?",
@@ -720,10 +717,8 @@ def list_my_devices(authorization: Optional[str] = Header(None)):
     try:
         devs = _da.list_user_devices(c, user["id"])
         tok = (authorization or "").split(" ", 1)[-1] if authorization else ""
-        cur = c.execute(
-            "SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1",
-            (tok, user["id"]),
-        ).fetchone()
+        from ecos_core.sessions import device_for_token
+        cur = device_for_token(c, tok, user["id"])
         cur_id = cur["id"] if cur else None
         for d in devs:
             d["is_current"] = (d["id"] == cur_id)
@@ -766,10 +761,8 @@ def revoke_my_device(device_pk: int, authorization: Optional[str] = Header(None)
     c = db()
     try:
         tok = (authorization or "").split(" ", 1)[-1] if authorization else ""
-        cur = c.execute(
-            "SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1",
-            (tok, user["id"]),
-        ).fetchone()
+        from ecos_core.sessions import device_for_token
+        cur = device_for_token(c, tok, user["id"])
         if cur and cur["id"] == device_pk:
             raise HTTPException(400, "Нельзя отозвать текущее устройство — выйдите через «Выход»")
         ok = _da.revoke_device(c, user["id"], device_pk)
@@ -882,7 +875,7 @@ def approve_pending(request_id: str, body: TdaApproveBody,
     try:
         from security import verify_argon2
     except Exception:
-        from social_router import verify_argon2
+        from ecos_core.shared import verify_argon2
     code = (body.code or "").strip()
     if not code:
         raise HTTPException(422, "Введите код")
@@ -1174,7 +1167,7 @@ def get_user_pub_key(username: str, authorization: Optional[str] = Header(None))
 
 @router.post("/send")
 async def send_message(body: SendBody, authorization: Optional[str] = Header(None)):
-    user = auth_member(authorization)
+    user = await run_in_threadpool(auth_member, authorization)
     if body.plain_text is not None:
         if body.ciphertext is not None:
             raise HTTPException(422, "Укажите только один формат сообщения")
@@ -1861,7 +1854,7 @@ async def file_upload(
     """Загрузить зашифрованный blob. Клиент шифрует на своей стороне (AES-GCM),
     сервер хранит только ciphertext — не знает имя, тип, содержимое.
     Возвращает file_id, который sender передаёт receiver-у в сообщении (с ключом)."""
-    user = auth_member(authorization)
+    user = await run_in_threadpool(auth_member, authorization)
     _rate_limit(f"fileup:{user['id']}", limit=20, window=3600)
     # Стримим чанками — иначе 100MB×10 параллельных uploads = 1GB RAM spike
     chunks = []
