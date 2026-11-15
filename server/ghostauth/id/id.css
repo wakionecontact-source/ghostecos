@@ -1,0 +1,266 @@
+/* GhostID · кабинет аккаунтов /id. Палитра и приёмы — как на /v2/auth. */
+:root, :root[data-theme="purple"] {
+  color-scheme: dark;
+  --bg: #351180;
+  --text: #fff;
+  --muted: rgba(255, 255, 255, .76);
+  --faint: rgba(255, 255, 255, .56);
+  --lavender: #d0b0ff;
+  --panel: rgba(255, 255, 255, .16);
+  --panel-hover: rgba(255, 255, 255, .23);
+  --field: rgba(255, 255, 255, .105);
+  --field-focus: rgba(255, 255, 255, .18);
+  --mini-bg: #fff;
+  --mini-ink: #351180;
+  --primary-bg: #fff;
+  --primary-ink: #351180;
+  --danger: #ff9a9a;
+  --line: rgba(255, 255, 255, .14);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #130d20;
+  --text: #f7f3ff;
+  --muted: #cfc3dc;
+  --faint: #a99ab9;
+  --lavender: #d0b0ff;
+  --panel: #2a1d3b;
+  --panel-hover: #342449;
+  --field: #261a36;
+  --field-focus: #3b2a50;
+  --mini-bg: #d0b0ff;
+  --mini-ink: #241431;
+  --primary-bg: #d0b0ff;
+  --primary-ink: #1b1128;
+  --danger: #ff8f8f;
+  --line: rgba(208, 176, 255, .16);
+}
+* { box-sizing: border-box; }
+html { min-width: 320px; min-height: 100%; background: var(--bg); }
+body { min-width: 320px; min-height: 100svh; margin: 0; background: var(--bg); color: var(--text); }
+button, input, textarea { font: inherit; }
+button, a { -webkit-tap-highlight-color: transparent; }
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--lavender); outline-offset: 3px; }
+::selection { background: var(--lavender); color: var(--bg); }
+[hidden] { display: none !important; }
+
+.page {
+  width: min(100%, 1080px);
+  min-height: 100svh;
+  margin: 0 auto;
+  padding: clamp(16px, 3vw, 34px) max(20px, env(safe-area-inset-right)) 48px max(20px, env(safe-area-inset-left));
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Шапка ── */
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 44px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text); font-size: 17px; font-weight: 730; letter-spacing: -.045em; text-decoration: none; white-space: nowrap; }
+.brand-mark { width: 24px; height: 24px; border-radius: 7px; object-fit: cover; }
+.brand em { color: var(--lavender); font-style: normal; }
+.top-actions { display: flex; align-items: center; gap: 14px; }
+.top-label { color: var(--faint); font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.theme-control { flex: none; }
+
+/* ── Заголовок экрана ── */
+.id-main { width: min(100%, 860px); margin: 0 auto; padding-top: clamp(28px, 6vw, 64px); }
+.eyebrow { display: block; margin-bottom: 18px; color: var(--lavender); font-size: 11px; font-weight: 740; letter-spacing: .13em; text-transform: uppercase; }
+.id-head h1 { margin: 0 0 14px; font-size: clamp(42px, 6.4vw, 74px); line-height: 1.02; font-weight: 670; letter-spacing: -.06em; text-wrap: balance; }
+.id-head h1 em { color: var(--lavender); font-style: normal; }
+.id-copy { max-width: 430px; margin: 0 0 clamp(24px, 4vw, 40px); color: var(--muted); font-size: 15px; line-height: 1.55; }
+
+/* ── Пустое состояние ── */
+.id-empty { padding: 26px; border-radius: 20px; background: var(--panel); }
+.empty-title { margin: 0 0 8px; font-size: 20px; font-weight: 660; letter-spacing: -.03em; }
+.empty-copy { max-width: 380px; margin: 0 0 20px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.primary-link { display: inline-flex; align-items: center; min-height: 44px; padding: 0 20px; border-radius: 12px; background: var(--primary-bg); color: var(--primary-ink); font-size: 14px; font-weight: 680; text-decoration: none; }
+
+/* ── Активный аккаунт ── */
+.id-active { position: relative; margin-bottom: 26px; }
+.active-card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  padding: clamp(20px, 3vw, 26px);
+  border-radius: 20px;
+  background: var(--panel);
+  transform: rotate(-.8deg);
+}
+.card-sticker {
+  position: absolute;
+  top: -15px;
+  right: 22px;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: var(--mini-bg);
+  color: var(--mini-ink);
+  transform: rotate(7deg);
+}
+.card-sticker svg { width: 21px; height: 21px; fill: currentColor; }
+.active-avatar {
+  flex: 0 0 72px;
+  width: 72px;
+  height: 72px;
+  border-radius: 20px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--field-focus);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  color: var(--text);
+  font-size: 27px;
+  font-weight: 660;
+}
+.active-copy { min-width: 0; flex: 1 1 auto; }
+.active-overline { margin: 0 0 4px; color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
+.active-name { margin: 0; font-size: clamp(22px, 3.4vw, 28px); font-weight: 670; letter-spacing: -.04em; overflow-wrap: anywhere; }
+.active-handle { margin: 3px 0 0; color: var(--lavender); font-size: 14px; font-weight: 620; overflow-wrap: anywhere; }
+.active-meta-line { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0 0; }
+.active-id { color: var(--faint); font-size: 12px; letter-spacing: .02em; }
+.active-balance { padding: 3px 9px; border-radius: 999px; background: var(--field); color: var(--text); font-size: 12px; font-weight: 620; }
+.active-about { margin: 12px 0 0; color: var(--muted); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+
+.active-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+button.primary, button.ghost, .file-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 660;
+  cursor: pointer;
+  transition: background .18s ease, opacity .18s ease, transform .12s ease;
+}
+button.primary { background: var(--primary-bg); color: var(--primary-ink); }
+button.ghost { background: var(--field); color: var(--text); }
+button.primary:hover { transform: translateY(-1px); }
+button.ghost:hover { background: var(--panel-hover); }
+button:active { transform: scale(.98); }
+button[disabled] { opacity: .55; cursor: default; transform: none; }
+.ghost.small { min-height: 36px; padding: 0 13px; font-size: 12px; }
+
+/* ── Продукты ── */
+.products { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.products a { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: 14px; background: var(--field); text-decoration: none; transition: background .18s ease; }
+.products a:hover { background: var(--panel-hover); }
+.products span { font-size: 13px; font-weight: 650; }
+.products small { color: var(--faint); font-size: 11px; }
+
+/* ── Список аккаунтов ── */
+.id-list-wrap { margin-top: 8px; }
+.list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; padding: 0 2px; color: var(--faint); font-size: 11px; font-weight: 720; letter-spacing: .1em; text-transform: uppercase; }
+.list-count { letter-spacing: 0; text-transform: none; font-weight: 500; }
+.id-list { display: flex; flex-direction: column; gap: 6px; }
+.account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 15px;
+  background: var(--field);
+  transition: background .15s ease;
+}
+.account:hover { background: var(--panel-hover); }
+.account-avatar {
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--field-focus);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  font-size: 15px;
+  font-weight: 640;
+}
+.account-copy { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; }
+.account-name { font-size: 14px; font-weight: 630; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.account-handle { color: var(--faint); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.account-switch {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.account-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.icon-btn svg { width: 17px; height: 17px; }
+.icon-btn:hover { background: var(--field-focus); color: var(--text); }
+.icon-btn.danger:hover { background: rgba(255, 90, 90, .2); color: var(--danger); }
+
+.add-account { display: flex; align-items: center; gap: 12px; width: 100%; margin-top: 6px; padding: 10px 12px; border: 0; border-radius: 15px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.add-account:hover { background: var(--field); }
+.add-plus { flex: 0 0 40px; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: var(--field); color: var(--lavender); }
+.add-plus svg { width: 18px; height: 18px; }
+.add-copy { display: flex; flex-direction: column; gap: 2px; }
+.add-copy strong { color: var(--lavender); font-size: 14px; font-weight: 620; }
+.add-copy small { color: var(--faint); font-size: 12px; }
+.id-hint { min-height: 18px; margin: 10px 2px 0; color: var(--danger); font-size: 12px; line-height: 1.4; }
+.id-hint.is-ok { color: var(--lavender); }
+
+/* ── Модальное окно профиля ── */
+.modal { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 18px; background: rgba(9, 4, 20, .62); }
+.modal-card { position: relative; width: min(100%, 440px); max-height: calc(100svh - 36px); overflow-y: auto; padding: 26px; border-radius: 22px; background: var(--bg); box-shadow: 0 24px 70px rgba(0, 0, 0, .45); }
+:root[data-theme="purple"] .modal-card { background: #2c0e6c; border: 1px solid rgba(255, 255, 255, .12); }
+.modal-close { position: absolute; top: 14px; right: 14px; display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 10px; background: var(--field); color: var(--muted); cursor: pointer; }
+.modal-close svg { width: 16px; height: 16px; }
+.modal-close:hover { background: var(--field-focus); color: var(--text); }
+.modal-title { margin: 0 0 4px; font-size: 22px; font-weight: 670; letter-spacing: -.04em; }
+.modal-sub { margin: 0 0 20px; color: var(--faint); font-size: 13px; }
+.editor-avatar-row { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
+.editor-avatar { flex: 0 0 62px; width: 62px; height: 62px; border-radius: 18px; display: grid; place-items: center; overflow: hidden; background: var(--field-focus) center / cover no-repeat; font-size: 22px; font-weight: 660; }
+.editor-avatar-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.file-btn { position: relative; background: var(--primary-bg); color: var(--primary-ink); min-height: 36px; padding: 0 13px; font-size: 12px; }
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.field-title { color: var(--faint); font-size: 11px; font-weight: 680; letter-spacing: .08em; text-transform: uppercase; }
+.field input, .field textarea { width: 100%; padding: 11px 13px; border: 0; border-radius: 12px; background: var(--field); color: var(--text); font-size: 14px; outline: none; resize: vertical; transition: background .18s ease; }
+.field input:focus, .field textarea:focus { background: var(--field-focus); }
+.field input::placeholder, .field textarea::placeholder { color: var(--faint); }
+.modal-status { min-height: 18px; margin: 0 0 12px; color: var(--danger); font-size: 12px; line-height: 1.4; }
+.modal-status.is-ok { color: var(--lavender); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ── Адаптив ── */
+@media (max-width: 620px) {
+  .active-card { transform: none; flex-direction: column; gap: 14px; }
+  .card-sticker { top: -12px; right: 16px; }
+  .products { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .active-actions button { flex: 1 1 auto; }
+  .modal-card { padding: 22px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}

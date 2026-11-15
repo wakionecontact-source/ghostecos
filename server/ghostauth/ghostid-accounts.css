@@ -1,0 +1,121 @@
+/* GhostID · экран сохранённых аккаунтов (без рамок, как остальные экраны) */
+.ghostid-accounts {
+  display: block;
+  margin: 0;
+  padding: 0;
+}
+.ghostid-accounts[hidden] { display: none !important; }
+
+.ghostid-accounts-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 0 2px;
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted, #9aa0b4);
+  opacity: .7;
+}
+.ghostid-accounts-count { font-size: 11px; letter-spacing: 0; text-transform: none; }
+
+.ghostid-accounts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.ghostid-account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 10px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--field, rgba(255, 255, 255, .08));
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background .14s ease;
+}
+.ghostid-account:hover { background: var(--panel-hover, rgba(255, 255, 255, .16)); }
+.ghostid-account.is-current { cursor: default; box-shadow: inset 0 0 0 1px rgba(208, 176, 255, .45); }
+
+.ghostid-account-avatar {
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(208, 176, 255, .32);
+}
+.ghostid-account-avatar.has-image {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+.ghostid-account-plus {
+  background: rgba(255, 255, 255, .10);
+  color: #9aa0b4;
+  font-size: 15px;
+}
+.ghostid-account-plus svg { display: block; width: 18px; height: 18px; }
+
+.ghostid-accounts-sep {
+  flex: 0 0 auto;
+  height: 1px;
+  margin: 8px 4px 6px;
+  background: rgba(255, 255, 255, .10);
+}
+
+.ghostid-account-copy { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.ghostid-account-copy strong {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ghostid-account-handle {
+  font-size: 12px;
+  color: var(--muted, #8b90a5);
+  opacity: .85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ghostid-account-drop {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, .06);
+  color: var(--muted, #9aa0b4);
+  opacity: .85;
+  cursor: pointer;
+  transition: background .14s ease, color .14s ease, opacity .14s ease;
+}
+.ghostid-account-drop svg { width: 15px; height: 15px; display: block; }
+.ghostid-account-drop:hover { opacity: 1; }
+.ghostid-account-drop:hover { opacity: 1; color: #ff8f8f; background: rgba(255, 90, 90, .18); }
+
+.ghostid-account-add { background: transparent; box-shadow: none; outline: none; }
+.ghostid-account-add .ghostid-account-copy strong { color: var(--lavender, #d0b0ff); font-weight: 500; }
+
+.ghostid-accounts-hint { margin: 8px 0 0; font-size: 12px; color: #ff8f8f; }

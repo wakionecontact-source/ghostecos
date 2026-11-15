@@ -1,5 +1,7 @@
-(function () {
+(async function () {
   "use strict";
+
+  if (window.GhostAuthTelegramReady) await window.GhostAuthTelegramReady;
 
   const params = new URLSearchParams(location.search);
   const returnTarget = params.has("return")
@@ -84,6 +86,10 @@
     localStorage.setItem("gs_me", JSON.stringify(data));
     cookieSet(data.token);
     saveOnboardingProducts();
+    if (window.GhostIDAccounts) {
+      window.GhostIDAccounts.add(data.token, data).catch(function () {});
+      window.dispatchEvent(new Event("ghostid-accounts-changed"));
+    }
   }
 
   function goBack() { location.replace(returnTarget); }
@@ -522,9 +528,13 @@
         permissions.append(item);
       }
     }
-    if (logo) logo.hidden = true;
+    const gdaiService = String(authClient.clientId || "").trim().toLowerCase() === "gdai";
+    if (logo) {
+      logo.hidden = true;
+      logo.classList.toggle("service-logo--gdai", gdaiService);
+    }
     if (fallback) fallback.hidden = false;
-    const serviceIcon = safeAvatarUrl(authClient.icon);
+    const serviceIcon = gdaiService ? "/auth/gdai-avatar.jpg" : safeAvatarUrl(authClient.icon);
     if (logo && serviceIcon) {
       logo.onload = () => { logo.hidden = false; if (fallback) fallback.hidden = true; };
       logo.onerror = () => { logo.hidden = true; if (fallback) fallback.hidden = false; };
@@ -602,6 +612,18 @@
       const allowedOrigins = Array.isArray(authClient.redirectOrigins) ? authClient.redirectOrigins : [];
       if (!allowedOrigins.includes(redirectUrl.origin) || redirectUrl.protocol !== "https:") {
         throw new Error("Сервис вернул небезопасную ссылку перехода.");
+      }
+
+      // Persist the explicitly selected first-party GhostSocial account on this device.
+      // External SSO clients continue to receive only their scoped authorization code.
+      if (authClient.clientId === 'ghostsocial' && authClient.trusted && redirectUrl.origin === location.origin) {
+        if (selectedClientAccount.token) {
+          saveSession({ ...selectedClientAccount.profile, token: selectedClientAccount.token });
+        } else {
+          const stored = localStorage.getItem('gs_token') || '';
+          if (stored.startsWith('guest_')) localStorage.removeItem('gs_token');
+          localStorage.setItem('gs_me', JSON.stringify(selectedClientAccount.profile));
+        }
       }
 
       // The Telegram WebApp SDK object can exist in an ordinary browser too.
@@ -812,7 +834,7 @@
             }
           }
         } else if (nativeMode) showNativeHandoff(data);
-        else showSignedIn(data);
+        else { /* экран «Вы уже вошли» выключен: показываем список аккаунтов */ }
       } catch (error) {
         if (clientFlow && error && (error.status === 401 || error.status === 403)) {
           clientAccounts = clientAccounts.filter((item) => item.verified);

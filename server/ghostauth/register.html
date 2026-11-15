@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07070b">
+  <title>Регистрация · GhostEcos</title>
+  <link rel="stylesheet" href="/liquid.css?v=20260826-matte-label">
+  <link rel="stylesheet" href="/ghost-player.css?v=20260826-player-ready">
+  <link rel="stylesheet" href="/auth/auth.css">
+  <script>
+    window.LIQUID_GLASS_SEL = '.auth-card, .brand-mark, .intro-point, .primary-btn, .secondary-btn, .seed-box';
+    window.LIQUID_AUTO_SEL = '.auth-intro, .auth-card, .intro-point, .field, .primary-btn, .secondary-btn';
+  </script>
+</head>
+<body class="liquid-auth" data-ghost-player-page="auth">
+  <main class="auth-shell">
+    <section class="auth-intro" data-anim="anim-rise">
+      <a class="brand" href="/"><span class="brand-mark glass-lite" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 16.5V7.8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v8.7"/><path d="M7 10.5c1.4-1.4 2.8-1.4 4.2 0s2.8 1.4 4.2 0 2.8-1.4 4.2 0 2.8 1.4 4.2 0"/><path d="M8 20h8"/></svg></span><span>GhostEcos</span></a>
+      <p class="eyebrow">Новый аккаунт</p>
+      <h1>Создай свой<br><span>профиль призрака.</span></h1>
+      <p class="intro-copy">Один аккаунт свяжет продукты экосистемы, но каждый продукт сохранит свой интерфейс и назначение.</p>
+      <div class="intro-points">
+        <div class="intro-point glass-lite"><span class="intro-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="9" r="4"/><path d="M12 12l8 8M17 17l2-2M15 15l2-2"/><path d="M5 20a4 4 0 0 1 8 0"/></svg></span><span>Регистрация сразу включает SSO</span></div>
+        <div class="intro-point glass-lite"><span class="intro-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M9 20v-6h6v6"/></svg></span><span>Имя пользователя станет вашим постоянным адресом</span></div>
+        <div class="intro-point glass-lite"><span class="intro-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h5M8 16h3"/><path d="m15.5 15.5 1.5 1.5 3-3"/></svg></span><span>После регистрации сохраните резервную фразу</span></div>
+      </div>
+    </section>
+
+    <section class="auth-card glass-strong" data-anim="anim-spring-in" aria-labelledby="register-title">
+      <div class="card-head">
+        <p class="card-kicker">GhostEcos SSO</p>
+        <h2 id="register-title">Регистрация</h2>
+        <p>Поля ниже создают один общий аккаунт для всех продуктов.</p>
+      </div>
+      <div data-form-wrap>
+        <form class="auth-form" data-auth-form="register" novalidate>
+          <p class="hint">Имя пользователя: латиница, цифры, нижнее подчёркивание и точка.</p>
+          <div class="field"><label for="username">Имя пользователя</label><input id="username" name="username" autocomplete="username" autocapitalize="none" required placeholder="username"></div>
+          <div class="field"><label for="display_name">Отображаемое имя</label><input id="display_name" name="display_name" autocomplete="name" required placeholder="Как вас будут видеть"></div>
+          <div class="field"><label for="password">Пароль</label><input id="password" name="password" type="password" autocomplete="new-password" required placeholder="Минимум 8 символов"></div>
+          <div class="field"><label for="password_confirm">Повторите пароль</label><input id="password_confirm" name="password_confirm" type="password" autocomplete="new-password" required placeholder="Ещё раз"></div>
+          <label class="check"><input type="checkbox" name="age_18_confirm"><span>Мне уже исполнилось 18 лет, я принимаю <a href="/terms">условия пользования</a> и <a href="/privacy">политику приватности</a>.</span></label>
+          <div class="auth-error" data-status role="status" aria-live="polite"></div>
+          <button class="primary-btn glass-btn" type="submit">Создать аккаунт</button>
+        </form>
+      </div>
+      <div class="success-panel" data-success>
+        <div class="success-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 4.5 4.5L19 7"/></svg></div>
+        <h2>Аккаунт создан</h2>
+        <p class="intro-copy">Сохрани резервную фразу. Она понадобится для восстановления доступа.</p>
+        <div class="seed-box" data-seed></div>
+        <button class="primary-btn glass-btn" type="button" data-success-continue>Продолжить</button>
+      </div>
+      <div class="card-foot"><span>Уже есть аккаунт?</span><a data-login-link href="/login">Войти</a></div>
+      <p class="legal">Регистрация создаёт общий SSO-сеанс и не требует отдельного входа в продукты.</p>
+    </section>
+  </main>
+  <script src="/mesh.js" defer></script>
+<script src="/liquid.js?v=20260826-player-ready" defer></script>
+  <script src="/auth/auth.js?v=20261014-guest-sso-2" defer></script>
+  <script src="/ghost-player.js?v=20260826-player-ready"></script>
+</body>
+</html>

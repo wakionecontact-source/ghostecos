@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#351180">
+  <meta name="description" content="Аккаунты GhostID: вход, переключение и управление аккаунтами GhostEcos на этом устройстве.">
+  <title>Аккаунты · GhostID</title>
+  <script src="/v2/shared/theme-init.js?v=1"></script>
+  <link rel="stylesheet" href="/v2/shared/theme-controls.css?v=1">
+  <script src="/v2/shared/theme-controls.js?v=1" defer></script>
+  <link rel="stylesheet" href="/auth/id/id.css?v=20261115-1">
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <a class="brand" href="/home" aria-label="GhostEcos">
+        <img class="brand-mark" src="/favicon.png" alt="" width="24" height="24">
+        <span>Ghost<em>Ecos</em></span>
+      </a>
+      <div class="top-actions">
+        <span class="top-label">GhostID</span>
+        <button class="theme-control" type="button" data-ghostecos-theme></button>
+      </div>
+    </header>
+
+    <main class="id-main">
+      <section class="id-head">
+        <span class="eyebrow">GhostID</span>
+        <h1>Твои <em>аккаунты.</em></h1>
+        <p class="id-copy">Все сохранённые сессии на этом устройстве: переключение, правка профиля и выход.</p>
+      </section>
+
+      <section class="id-empty" data-empty hidden>
+        <p class="empty-title">Пока ни одного аккаунта</p>
+        <p class="empty-copy">Войди или создай аккаунт GhostID — он появится здесь и в приложениях экосистемы.</p>
+        <a class="primary-link" href="/v2/auth?return=%2Fid">Войти в GhostID</a>
+      </section>
+
+      <section class="id-active" data-active hidden>
+        <article class="active-card">
+          <span class="card-sticker" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 2 4 6v6c0 5 3.4 8.7 8 10 4.6-1.3 8-5 8-10V6l-8-4Zm0 5a2.6 2.6 0 1 1 0 5.2A2.6 2.6 0 0 1 12 7Zm0 11c-2 0-3.8-1-4.8-2.5.9-1.6 2.8-2.5 4.8-2.5s3.9.9 4.8 2.5C15.8 17 14 18 12 18Z"/></svg>
+          </span>
+          <div class="active-avatar" data-active-avatar aria-hidden="true">G</div>
+          <div class="active-copy">
+            <p class="active-overline">Активный аккаунт</p>
+            <h2 class="active-name" data-active-name>GhostID</h2>
+            <p class="active-handle" data-active-handle></p>
+            <p class="active-meta-line">
+              <span class="active-id" data-active-id></span>
+              <span class="active-balance" data-active-balance hidden></span>
+            </p>
+            <p class="active-about" data-active-about hidden></p>
+          </div>
+        </article>
+        <div class="active-actions">
+          <button class="primary" type="button" data-edit-active>Изменить профиль</button>
+          <button class="ghost" type="button" data-logout-active>Выйти на устройстве</button>
+        </div>
+        <nav class="products" aria-label="Приложения GhostEcos">
+          <a href="/v2/chat"><span>GhostChat</span><small>чаты и звонки</small></a>
+          <a href="/social"><span>GhostSocial</span><small>лента и профиль</small></a>
+          <a href="/bank/"><span>GhostBank</span><small>GOST и платежи</small></a>
+          <a href="/v2/sound/"><span>GhostSound</span><small>музыка</small></a>
+        </nav>
+      </section>
+
+      <section class="id-list-wrap" data-list-wrap hidden>
+        <header class="list-head">
+          <span data-list-title>Другие аккаунты</span>
+          <span class="list-count" data-count></span>
+        </header>
+        <div class="id-list" data-list role="list"></div>
+        <button class="add-account" type="button" data-add>
+          <span class="add-plus" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </span>
+          <span class="add-copy"><strong>Добавить аккаунт</strong><small>войти под другим GhostID</small></span>
+        </button>
+        <p class="id-hint" data-hint role="status" aria-live="polite"></p>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal" data-editor hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="editor-title">
+      <button class="modal-close" type="button" data-close aria-label="Закрыть">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <h2 id="editor-title" class="modal-title">Профиль GhostID</h2>
+      <p class="modal-sub" data-editor-account></p>
+      <div class="editor-avatar-row">
+        <span class="editor-avatar" data-editor-avatar aria-hidden="true">G</span>
+        <div class="editor-avatar-actions">
+          <label class="file-btn">
+            Загрузить фото
+            <input type="file" accept="image/jpeg,image/png,image/webp" data-avatar-input hidden>
+          </label>
+          <button class="ghost small" type="button" data-avatar-remove>Удалить фото</button>
+        </div>
+      </div>
+      <label class="field">
+        <span class="field-title">Имя</span>
+        <input name="display_name" maxlength="100" autocomplete="name" placeholder="Как к тебе обращаться">
+      </label>
+      <label class="field">
+        <span class="field-title">О себе</span>
+        <textarea name="about" maxlength="256" rows="3" placeholder="Коротко о себе"></textarea>
+      </label>
+      <p class="modal-status" data-editor-status role="status" aria-live="polite"></p>
+      <div class="modal-actions">
+        <button class="ghost" type="button" data-cancel>Отмена</button>
+        <button class="primary" type="button" data-save>Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/auth/ghostid-accounts.js?v=20261114-accounts-10" defer></script>
+  <script src="/auth/id/id.js?v=20261115-1" defer></script>
+</body>
+</html>
