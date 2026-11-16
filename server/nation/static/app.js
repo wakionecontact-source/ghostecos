@@ -3590,7 +3590,7 @@ function wire() {
   syncNameBtn();
   document.getElementById('flag').onclick = () => document.getElementById('palette').classList.toggle('hidden');
   document.querySelectorAll('.layer').forEach(b => { b.onclick = () => { const id = b.dataset.layer; if (id === currentLayer) return; map.removeLayer(layers[currentLayer]); layers[id].addTo(map); currentLayer = id; document.querySelectorAll('.layer').forEach(x => x.classList.toggle('active', x === b)); }; });
-  const panKeys = { w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0] }, held = {};
+  const panKeys = { KeyW: [0, -1], KeyS: [0, 1], KeyA: [-1, 0], KeyD: [1, 0] }, held = {};   // e.code — работает в любой раскладке
   function stopPan() { for (const k of Object.keys(held)) delete held[k]; panTimer = 0; }
   let panTimer = 0;
   function stepPan() {                                    // сдвиг карты в сторону зажатой клавиши (плавно, как в играх)
@@ -3602,8 +3602,8 @@ function wire() {
   }
   document.addEventListener('keydown', e => {
     const k = e.key.toLowerCase();
-    if (panKeys[k] && !(e.ctrlKey || e.metaKey || e.altKey) && !(e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable))) {
-      if (!held[k]) { held[k] = true; if (panTimer) { clearInterval(panTimer); panTimer = 0; } panTimer = setInterval(stepPan, 50); }   // не звать stopPan — он чистит held
+    if (panKeys[e.code] && !(e.ctrlKey || e.metaKey || e.altKey) && !(e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable))) {
+      if (!held[e.code]) { held[e.code] = true; if (panTimer) { clearInterval(panTimer); panTimer = 0; } panTimer = setInterval(stepPan, 50); }   // не звать stopPan — он чистит held
       return;
     }
     if ((e.ctrlKey || e.metaKey) && k === 's') { e.preventDefault(); exportFile(); }
@@ -3615,7 +3615,7 @@ function wire() {
     else if (e.key === 'Escape') { closeCtxMenu(); closeWalkBar(); if (genSel.active) endGenSelect(); else if (draw.active) { cancelDraw(); setToolIdle(); } else if (borderEdit.active) { exitBorderEdit(); setToolIdle(); } else if (selected) deselect(); else document.getElementById('palette').classList.add('hidden'); }
     else if (e.key === 'Backspace' && draw.active) { e.preventDefault(); undoVertex(); }
   });
-  document.addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (panKeys[k] && held[k]) { delete held[k]; if (!Object.keys(held).length) stopPan(); } });
+  document.addEventListener('keyup', e => { if (panKeys[e.code] && held[e.code]) { delete held[e.code]; if (!Object.keys(held).length) stopPan(); } });
   window.addEventListener('blur', stopPan);
 }
 
