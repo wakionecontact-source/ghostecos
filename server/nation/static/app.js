@@ -62,7 +62,7 @@ function migrate(s) {
   delete s.railSwitches;
   s.exits = Array.isArray(s.exits) ? s.exits.filter(x => x && isFinite(x.lat) && isFinite(x.lng)) : [];
   s.parking = Array.isArray(s.parking) ? s.parking.filter(x => x && isFinite(x.lat) && isFinite(x.lng)) : [];
-  s.stations = s.stations.map((x, i) => ({ ...x, name: typeof x.name === 'string' && x.name.trim() ? x.name.trim() : `Station ${i + 1}`, railKey: typeof x.railKey === 'string' ? x.railKey : null, railSegment: Number.isInteger(x.railSegment) ? x.railSegment : null, railT: Number.isFinite(Number(x.railT)) ? Math.max(0, Math.min(1, Number(x.railT))) : null, rot: Number.isFinite(Number(x.rot)) ? Number(x.rot) : 0, w: clampWH(Number(x.w) || 13), h: clampWH(Number(x.h) || 8), side: x.side === 1 || x.side === -1 ? x.side : 1 }));
+  s.stations = s.stations.map((x, i) => ({ ...x, name: typeof x.name === 'string' && x.name.trim() ? x.name.trim() : `Station ${i + 1}`, railKey: typeof x.railKey === 'string' ? x.railKey : null, railSegment: Number.isInteger(x.railSegment) ? x.railSegment : null, railT: Number.isFinite(Number(x.railT)) ? Math.max(0, Math.min(1, Number(x.railT))) : null, railKey2: typeof x.railKey2 === 'string' ? x.railKey2 : null, railSegment2: Number.isInteger(x.railSegment2) ? x.railSegment2 : null, railT2: Number.isFinite(Number(x.railT2)) ? Math.max(0, Math.min(1, Number(x.railT2))) : null, rot: Number.isFinite(Number(x.rot)) ? Number(x.rot) : 0, w: clampWH(Number(x.w) || 13), h: clampWH(Number(x.h) || 8), side: x.side === 1 || x.side === -1 ? x.side : 1 }));
   s.exits = s.exits.map((x, i) => ({ ...x, name: typeof x.name === 'string' && x.name.trim() ? x.name.trim() : `Exit ${i + 1}`, modes: [...new Set((Array.isArray(x.modes) ? x.modes : []).filter(mode => ['road', 'walk', 'rail'].includes(mode)))] }));
   s.parking = s.parking.map(x => ({ ...x, w: clampWH(Number(x.w) || 22), h: clampWH(Number(x.h) || 9), rot: Number.isFinite(Number(x.rot)) ? Number(x.rot) : 0, capacity: Math.max(2, Math.min(20, Math.round(Number(x.capacity) || 6))) }));
   s.simulation = normalizeSimulation(s.simulation);
@@ -840,8 +840,12 @@ function stationPreview(latlng) {                 // предпросмотр с
   if (!hit || hit.distance > Math.max(22, mToPx(LINE_M.rail) * 2.4)) { if (hoverHL) clearHover(); return; }
   const a = hit.line[hit.segment], b = hit.line[hit.segment + 1], segLen = distMeters(a[0], a[1], b[0], b[1]) || 1;
   const railT = Math.max(0, Math.min(1, distMeters(a[0], a[1], hit.point.lat, hit.point.lng) / segLen));
-  const ref = { line: hit.line, seg: hit.segment, point: [hit.point.lat, hit.point.lng] }, side = stationSideOfPoint(ref, latlng);
+  const ref = { line: hit.line, seg: hit.segment, point: [hit.point.lat, hit.point.lng] };
+  let side = stationSideOfPoint(ref, latlng);
+  const second = secondRailAt([hit.point.lat, hit.point.lng], hit.line);
+  if (second) side = -stationSideOfPoint(ref, { lat: second.point[0], lng: second.point[1] });
   const pseudo = { lat: hit.point.lat, lng: hit.point.lng, railKey: roadKey(hit.line), railSegment: hit.segment, railT, rot: 0, side };
+  if (second) { pseudo.railKey2 = roadKey(second.line); pseudo.railSegment2 = second.segment; pseudo.railT2 = second.t; }
   const g = stationGeometry(pseudo);
   const access = stationAccessInfo(pseudo);
   clearHover();
@@ -1234,13 +1238,18 @@ function nearestRailPointForStation(station) {
   return best;
 }
 const STATION_PLATFORM_LEN = 150, STATION_PLATFORM_W = 5.5, STATION_RAIL_GAP = 1.2, STATION_BUILD_HALF = 5;   // станция под 8-9 вагонов
+function stationRailRefByKey(key, segment, t) {          // привязка станции к линии по сохранённому ключу
+  if (!key) return null;
+  const line = state.rails.find(l => roadKey(l) === key);
+  if (!line || line.length < 2) return null;
+  const seg = Math.max(0, Math.min(line.length - 2, Number.isInteger(segment) ? segment : 0));
+  const tt = Math.max(0, Math.min(1, Number.isFinite(Number(t)) ? Number(t) : 0));
+  return { line, seg, t: tt, point: lerpPos(line, seg, tt) };
+}
+function stationRailRef2(station) { return stationRailRefByKey(station.railKey2, station.railSegment2, station.railT2); }
 function stationRailRef(station) {                       // путь станции + позиция (seg,t): ищем по railKey, иначе ближайший рельс
-  const line = station.railKey ? state.rails.find(l => roadKey(l) === station.railKey) : null;
-  if (line && line.length >= 2) {
-    const seg = Math.max(0, Math.min(line.length - 2, Number.isInteger(station.railSegment) ? station.railSegment : 0));
-    const t = Math.max(0, Math.min(1, Number.isFinite(Number(station.railT)) ? Number(station.railT) : 0));
-    return { line, seg, t, point: lerpPos(line, seg, t) };
-  }
+  const direct = stationRailRefByKey(station.railKey, station.railSegment, station.railT);
+  if (direct) return direct;
   const hit = nearestRailPointForStation(station);
   if (!hit || !hit.line || !lineDExists(hit.line)) return null;
   const len = distMeters(hit.line[hit.segment][0], hit.line[hit.segment][1], hit.line[hit.segment + 1][0], hit.line[hit.segment + 1][1]) || 1;
@@ -1257,12 +1266,12 @@ function stationSideOfPoint(ref, clickLatLng) {         // сторона кур
   const cross = tan.e * cn - tan.n * ce;                 // положительный — левее хода
   return cross >= 0 ? 1 : -1;
 }
-function stationPlatformShape(ref, side, halfLen = STATION_PLATFORM_LEN / 2, width = STATION_PLATFORM_W) {
+function stationPlatformShape(ref, side, halfLen = STATION_PLATFORM_LEN / 2, width = STATION_PLATFORM_W, innerOffset = STATION_RAIL_GAP) {
   // лента платформы (полигон), повторяющая изгибы рельса вокруг позиции станции, со смещением на сторону
   const cum = [0]; for (let i = 1; i < ref.line.length; i++) cum.push(cum[i - 1] + distMeters(ref.line[i - 1][0], ref.line[i - 1][1], ref.line[i][0], ref.line[i][1]));
   let base = cum[ref.seg] + ref.t * distMeters(ref.line[ref.seg][0], ref.line[ref.seg][1], ref.line[ref.seg + 1][0], ref.line[ref.seg + 1][1]);
   const total = cum[cum.length - 1] || 1, d0 = Math.max(0, base - halfLen), d1 = Math.min(total, base + halfLen);
-  const inner = [], outer = [], gap = STATION_RAIL_GAP + (side === 1 ? 0 : width), gapFar = gap + width;
+  const inner = [], outer = [], gap = innerOffset + (side === 1 ? 0 : width), gapFar = gap + width;
   for (let d = d0; d <= d1 + 1e-6; d += 2.5) {
     const dd = Math.min(d, d1), at = linePointAtDistance(ref.line, dd);
     const p = lerpPos(ref.line, at[2], Math.max(0, Math.min(1, (dd - cum[at[2]]) / (distMeters(ref.line[at[2]][0], ref.line[at[2]][1], ref.line[at[2] + 1][0], ref.line[at[2] + 1][1]) || 1))));
@@ -1276,23 +1285,44 @@ function stationPlatformShape(ref, side, halfLen = STATION_PLATFORM_LEN / 2, wid
 function stationGeometry(station) {
   const ref = stationRailRef(station);
   const side = station.side == null ? 1 : station.side;
-  let point, e, n, angle, platformPoly, mid;
+  let point, e, n, angle, platformPoly, mid, platMid;
+  let platformSide = side, platformInner = STATION_RAIL_GAP, platformWidth = STATION_PLATFORM_W, dual = false, dualDir = 0;
   if (ref) {
     point = ref.point;
     const tan = tangentAt(ref.line, ref.seg); e = tan.e; n = tan.n; angle = Math.atan2(n, e) * 180 / Math.PI;
-    platformPoly = stationPlatformShape(ref, side);
-    const idx = Math.floor(platformPoly.length / 2), midp = platformPoly[idx];   // середина дальнего края платформы (side inf)
-    const midNear = platformPoly[idx + 1] || platformPoly[idx], de = (midNear[0] - midp[0]) * MPD_LAT / (distMeters(midp[0], midp[1], midNear[0], midNear[1]) || 1), dn = (midNear[1] - midp[1]) * mPerDegLng(midp[0]) / (distMeters(midp[0], midp[1], midNear[0], midNear[1]) || 1);
-    mid = offset(midp[0], midp[1], dn * (side > 0 ? -1 : 1) * (STATION_BUILD_HALF + 1), -de * (side > 0 ? -1 : 1) * (STATION_BUILD_HALF + 1));
+    const ref2 = stationRailRef2(station);
+    if (ref2) {                                          // вторая линия по другую сторону: платформа островом между путями
+      const de = (ref2.point[1] - point[1]) * mPerDegLng(point[0]), dn = (ref2.point[0] - point[0]) * MPD_LAT;
+      const signed = de * (-n) + dn * e, gap = Math.abs(signed);   // >0 — вторая линия левее хода
+      if (gap > STATION_RAIL_GAP * 2 + 1 && gap <= 40) {
+        dual = true; dualDir = signed >= 0 ? 1 : -1;
+        platformWidth = Math.max(2.4, Math.min(12, gap - STATION_RAIL_GAP * 2));
+        platformInner = Math.max(STATION_RAIL_GAP, (gap - platformWidth) / 2);
+        platformSide = dualDir;
+      }
+    }
+    platformPoly = stationPlatformShape(ref, platformSide, STATION_PLATFORM_LEN / 2, platformWidth, platformInner);
+    const midM = platformInner + platformWidth / 2;
+    platMid = offset(point[0], point[1], -n * midM * platformSide, e * midM * platformSide);
+    if (dual) {                                          // здание снаружи путей, на стороне клика
+      const bM = STATION_RAIL_GAP + STATION_BUILD_HALF + 1.5;
+      mid = offset(point[0], point[1], -n * bM * side, e * bM * side);
+    } else {
+      const idx = Math.floor(platformPoly.length / 2), midp = platformPoly[idx];   // середина дальнего края платформы (side inf)
+      const midNear = platformPoly[idx + 1] || platformPoly[idx], dde = (midNear[0] - midp[0]) * MPD_LAT / (distMeters(midp[0], midp[1], midNear[0], midNear[1]) || 1), ddn = (midNear[1] - midp[1]) * mPerDegLng(midp[0]) / (distMeters(midp[0], midp[1], midNear[0], midNear[1]) || 1);
+      mid = offset(midp[0], midp[1], ddn * (side > 0 ? -1 : 1) * (STATION_BUILD_HALF + 1), -dde * (side > 0 ? -1 : 1) * (STATION_BUILD_HALF + 1));
+    }
   } else {
     point = [station.lat, station.lng]; e = Math.cos((Number(station.rot) || 0) * Math.PI / 180); n = Math.sin((Number(station.rot) || 0) * Math.PI / 180);
     angle = Number(station.rot) || 0;
     const half = STATION_PLATFORM_LEN / 2, gap = STATION_RAIL_GAP + STATION_PLATFORM_W;
     platformPoly = [ [e * half + n * gap, n * half - e * gap], [-e * half + n * gap, n * half - e * gap], [-e * half + n * gap, -n * half - e * gap], [e * half + n * gap, -n * half - e * gap] ].map(d => offset(point[0], point[1], d[0], d[1]));
     mid = offset(point[0], point[1], n * (STATION_RAIL_GAP + STATION_PLATFORM_W + STATION_BUILD_HALF + 1.5), -e * (STATION_RAIL_GAP + STATION_PLATFORM_W + STATION_BUILD_HALF + 1.5));
+    const midM = STATION_RAIL_GAP + STATION_PLATFORM_W / 2;
+    platMid = offset(point[0], point[1], -n * midM * platformSide, e * midM * platformSide);
   }
-  const platform = { lat: point[0], lng: point[1], w: STATION_PLATFORM_LEN, h: STATION_PLATFORM_W, rot: angle }, building = { lat: mid[0], lng: mid[1], w: 26, h: STATION_BUILD_HALF * 2, rot: angle };
-  return { point, platform, building, e, n, angle, platformPoly: platformPoly.map(p => [p[0], p[1]]) };
+  const platform = { lat: point[0], lng: point[1], w: STATION_PLATFORM_LEN, h: platformWidth, rot: angle }, building = { lat: mid[0], lng: mid[1], w: 26, h: STATION_BUILD_HALF * 2, rot: angle };
+  return { point, platform, building, e, n, angle, platformPoly: platformPoly.map(p => [p[0], p[1]]), platformSide, platformInner, platformWidth, platformMid: platMid, dual, dualDir };
 }
 function stationEntryPoint(station) { const building = stationGeometry(station).building; return [building.lat, building.lng]; }
 function stationSnapLines() { return (state.stations || []).map(station => [stationEntryPoint(station)]); }
@@ -1369,15 +1399,35 @@ function refreshStationAccessInRunningSim(addedLine, drawMode) {
     }
   }
 }
+function secondRailAt(point, firstLine) {              // вторая ЖД-линия рядом — для двусторонней станции
+  let second = null;
+  for (const line of state.rails) {
+    if (line === firstLine || !line || line.length < 2) continue;
+    for (let i = 1; i < line.length; i++) {
+      const p = projOnSegLL(point, line[i - 1], line[i]), distance = distMeters(point[0], point[1], p[0], p[1]);
+      if (!second || distance < second.distance) {
+        const len = distMeters(line[i - 1][0], line[i - 1][1], line[i][0], line[i][1]) || 1;
+        second = { line, segment: i - 1, point: p, distance, t: Math.max(0, Math.min(1, distMeters(line[i - 1][0], line[i - 1][1], p[0], p[1]) / len)) };
+      }
+    }
+  }
+  if (!second || second.distance > 26 || second.distance <= STATION_RAIL_GAP * 2 + 1) return null;   // далеко или дубль
+  return second;
+}
 function placeStation(latlng) {
   const hit = nearestLinePointForGroups(latlng, ['rails']);
   if (!hit || hit.distance > Math.max(22, mToPx(LINE_M.rail) * 2.4)) { flash('Станция ставится на железнодорожный путь', true); return; }
   if (state.stations.some(s => distMeters(s.lat, s.lng, hit.point.lat, hit.point.lng) < 18)) { flash('Здесь уже есть станция', true); return; }
   const a = hit.line[hit.segment], b = hit.line[hit.segment + 1], E = (b[1] - a[1]) * mPerDegLng(a[0]), N = (b[0] - a[0]) * MPD_LAT, segmentLength = Math.hypot(E, N) || 1, railT = Math.max(0, Math.min(1, distMeters(a[0], a[1], hit.point.lat, hit.point.lng) / segmentLength)), angle = Math.atan2(N, E) * 180 / Math.PI;
-  const ref = { line: hit.line, seg: hit.segment, point: [hit.point.lat, hit.point.lng] }, side = stationSideOfPoint(ref, latlng);
+  const ref = { line: hit.line, seg: hit.segment, point: [hit.point.lat, hit.point.lng] };
+  let side = stationSideOfPoint(ref, latlng);
+  // вторая линия рядом — станция двусторонняя: платформа островом между путями, вокзал снаружи
+  const second = secondRailAt([hit.point.lat, hit.point.lng], hit.line);
+  if (second) side = -stationSideOfPoint(ref, { lat: second.point[0], lng: second.point[1] });   // вокзал снаружи от обоих путей
   const station = { lat: hit.point.lat, lng: hit.point.lng, name: 'Станция ' + (state.stations.length + 1), railKey: roadKey(hit.line), railSegment: hit.segment, railT, rot: angle, w: 13, h: 8, side };
+  if (second) { station.railKey2 = roadKey(second.line); station.railSegment2 = second.segment; station.railT2 = second.t; }
   pushUndo(); state.stations.push(station); save(); renderTransport(); updateStats();
-  flash(stationAccessInfo(station) ? 'Станция подключена к пешеходной сети' : 'Станция построена; подведи к входу дорогу, переулок или тропу');
+  flash(second ? 'Двусторонняя станция: платформа между двумя путями' : (stationAccessInfo(station) ? 'Станция подключена к пешеходной сети' : 'Станция построена; подведи к входу дорогу, переулок или тропу'));
 }
 function placeParking(latlng) {
   const hit = nearestLinePointForGroups(latlng, ['roads', 'alleys']);
@@ -1830,8 +1880,34 @@ function prepareCitizenEntry(cit) {
 }
 function stationNearTrain(train, radius = 7) {
   if (!train || !train.line || !Array.isArray(state.stations)) return null;
-  const point = lerpPos(train.line, train.seg, train.t);
-  return state.stations.find(x => { const distance = distMeters(x.lat, x.lng, point[0], point[1]); return distance <= radius && (!x.railKey || x.railKey === roadKey(train.line) || distance <= 2.5); }) || null;
+  const point = lerpPos(train.line, train.seg, train.t), key = roadKey(train.line);
+  return state.stations.find(x => {
+    if (x.railKey === key) return distMeters(x.lat, x.lng, point[0], point[1]) <= radius;
+    if (x.railKey2 === key) {                       // поезд на второй линии двусторонней станции
+      const ref2 = stationRailRef2(x);
+      return Boolean(ref2) && distMeters(ref2.point[0], ref2.point[1], point[0], point[1]) <= radius;
+    }
+    const distance = distMeters(x.lat, x.lng, point[0], point[1]);
+    return distance <= radius && (!x.railKey || distance <= 2.5);
+  }) || null;
+}
+function stationRailLines(station) {                     // обе линии станции (или ближайшая как fallback)
+  const lines = [];
+  for (const key of [station.railKey, station.railKey2]) {
+    if (!key) continue;
+    const line = state.rails.find(l => roadKey(l) === key);
+    if (line && line.length >= 2 && !lines.includes(line)) lines.push(line);
+  }
+  if (!lines.length) { const hit = nearestRailPointForStation(station); if (hit && hit.line) lines.push(hit.line); }
+  return lines;
+}
+function stationSideForTrain(station, train) {           // сторона платформы относительно конкретного поезда
+  const g = stationGeometry(station), fallback = g.platformSide || (station.side == null ? 1 : station.side);
+  if (!train || !train.line || !train.line[train.seg + 1]) return fallback;
+  const pose = lerpPos(train.line, train.seg, train.t), tan = segmentVector(train.line, train.seg, train.fwd);
+  const de = (g.platformMid[1] - pose[1]) * mPerDegLng(pose[0]), dn = (g.platformMid[0] - pose[0]) * MPD_LAT;
+  const proj = de * (-tan.n) + dn * tan.e;               // проекция на левую нормаль курса
+  return proj >= 0 ? 1 : -1;
 }
 function railBendBetween(line, seg, fwd, otherLine, otherSeg, otherFwd) {   // отклонение курса при переходе (радианы)
   const a = segmentVector(line, seg, fwd), b = segmentVector(otherLine, otherSeg, otherFwd);
@@ -1974,7 +2050,7 @@ function railComponentLines(startLine) {
   return component;
 }
 function passengerDestinationForTrain(train, origin) {
-  const component = railComponentLines(train.line), destinations = state.stations.filter(station => station !== origin && sim.stationAccess?.has(station) && component.has(nearestRailPointForStation(station)?.line));
+  const component = railComponentLines(train.line), destinations = state.stations.filter(station => station !== origin && sim.stationAccess?.has(station) && stationRailLines(station).some(line => component.has(line)));
   const exits = [];
   for (const line of component) for (const atEnd of [false, true]) {
     const exit = lineEndpointExit(line, atEnd, 'rail'); if (exit && !exits.includes(exit)) exits.push(exit);
@@ -2010,21 +2086,21 @@ function spawnInboundPassengers(train, station) {
 }
 function boardingCount(train) { return sim.peds.filter(p => p._board && p._board.train === train).length; }
 function startBoarding(p, train, station, slot, side) {      // ожидающий подходит к двери вагона и садится
-  const door = trainDoorPos(train, slot, side), from = stationQueuePosition(station, p.waitSlot || 0);
+  const door = trainDoorPos(train, slot, side, station), from = stationQueuePosition(station, p.waitSlot || 0);
   p._board = { train, station, from, to: door, t: 0, dur: rand(0.9, 1.5), slot, requestedDestination: (p.transit && p.transit.requestedDestination) || null };
   p.transit = { state: 'boarding', stationKey: stationSimKey(station) };
   p.waitingAtStation = null; p.waitSlot = null; p.goal = null;
   p.status = 'садится в поезд';
 }
 function startAlight(p, train, station, slot, side) {         // пассажир выходит из вагона на платформу
-  const door = trainDoorPos(train, slot, side), to = stationQueuePosition(station, sim.peds.filter(o => o !== p && o.waitingAtStation === station).length);
+  const door = trainDoorPos(train, slot, side, station), to = stationQueuePosition(station, sim.peds.filter(o => o !== p && o.waitingAtStation === station).length);
   p._board = { train, station, from: door, to, t: 0, dur: rand(0.9, 1.5), alight: true };
   p.transit = { state: 'boarding', stationKey: stationSimKey(station) };
   p.status = 'выходит из поезда';
 }
 function handleTrainStationStop(train, station) {
   if (!Array.isArray(train.passengers)) train.passengers = [];
-  const key = stationSimKey(station), side = station.side == null ? 1 : station.side, remaining = [];
+  const key = stationSimKey(station), side = stationSideForTrain(station, train), remaining = [];
   for (let i = 0; i < train.passengers.length; i++) {
     const passenger = train.passengers[i], destination = passenger.transit?.destination;
     if (destination?.type === 'station' && destination.stationKey === key) {
@@ -2570,20 +2646,26 @@ function orientToGoal(cit) {                                   // выбрать
 }
 function lerpPos(line, seg, t) { const a = line[seg], b = line[seg + 1]; t = Math.max(0, Math.min(1, t)); return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; }
 function stationQueuePosition(station, slot = 0) {
-  const g = stationGeometry(station), half = STATION_PLATFORM_LEN / 2 - 3, side = station.side == null ? 1 : station.side;
+  const g = stationGeometry(station), half = STATION_PLATFORM_LEN / 2 - 3, side = g.platformSide || (station.side == null ? 1 : station.side);
   // люди вдоль платформы: колонка (столбец) — вдоль пути, ряд — вглубь платформы от края у путей
   const columns = 32, column = slot % columns, row = Math.floor(slot / columns);
-  const along = -half + (half * 2) * (column + .5) / columns, inM = STATION_RAIL_GAP + 1 + row * 1.05;
+  const along = -half + (half * 2) * (column + .5) / columns, inM = (g.platformInner ?? STATION_RAIL_GAP) + 1 + row * 1.05;
   return offset(g.point[0], g.point[1], g.e * along - g.n * inM * side, g.n * along + g.e * inM * side);
 }
 function trainAtStation(station) {                 // поезд, который сейчас стоит у станции (dwell)
   return sim.trains.find(t => !t.dead && t.stationKey === station && t.dwell > 0) || null;
 }
-function trainDoorPos(train, slot, side = 1) {      // позиция у дверей вагона (край платформы у поезда)
+function trainDoorPos(train, slot, side = 1, station = null) {      // позиция у дверей вагона (край платформы у поезда)
   const wagons = train.wagons || []; if (!wagons.length) return null;
   const w = wagons[slot % wagons.length]; if (!w || !w.pos) return null;
   const e = Math.cos(w.angle), n = Math.sin(w.angle), off = STATION_RAIL_GAP + 1.4;
-  return offset(w.pos[0], w.pos[1], -n * off * side, e * off * side);
+  let dir = side;
+  if (station) {                                        // сторона дверей — всегда к платформе, независимо от направления
+    const g = stationGeometry(station);
+    const de = (g.platformMid[1] - w.pos[1]) * mPerDegLng(w.pos[0]), dn = (g.platformMid[0] - w.pos[0]) * MPD_LAT;
+    dir = (de * (-n) + dn * e) >= 0 ? 1 : -1;
+  }
+  return offset(w.pos[0], w.pos[1], -n * off * dir, e * off * dir);
 }
 function pedestrianPosition(p) {
   if (!p || p.dead || p.transit?.state === 'onTrain') return null;
