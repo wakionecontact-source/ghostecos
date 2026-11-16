@@ -319,9 +319,19 @@ function updateDrawHint() {
 function projSeg(p, a, b) { const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy; if (l2 === 0) return a; let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2; t = Math.max(0, Math.min(1, t)); return L.point(a.x + t * dx, a.y + t * dy); }
 function plannedLineArrays() { return (state.plannedLines || []).map(p => p.pts).filter(line => line && line.length >= 2); }
 function networkLines(includePaths = false, includePlans = true) { return state.roads.concat(state.rails, state.alleys, includePaths ? state.paths : [], includePlans ? plannedLineArrays() : []); }
-function snapLineInfo(latlng, radius = SNAP_PX, excludeLine = null, includePaths = false, includePlans = true, candidates = null) { // вершины приоритетно, затем любой сегмент
+function snapLineInfo(latlng, radius = SNAP_PX, excludeLine = null, includePaths = false, includePlans = true, candidates = null, endpointsOnly = false) { // вершины приоритетно, затем любой сегмент
   const p = map.latLngToLayerPoint(latlng), lines = candidates || networkLines(includePaths, includePlans);
   let bestV = null, bestVD = radius * 1.7;
+  if (endpointsOnly) {                              // только концы линий (для притягивания концов дорог)
+    for (const line of lines) {
+      if (line === excludeLine || line.length < 2) continue;
+      for (const idx of [0, line.length - 1]) {
+        const v = map.latLngToLayerPoint(L.latLng(line[idx][0], line[idx][1])), d = p.distanceTo(v);
+        if (d < bestVD) { bestVD = d; bestV = { point: L.latLng(line[idx][0], line[idx][1]), line, vertex: idx }; }
+      }
+    }
+    return bestV || null;
+  }
   for (const line of lines) {
     if (line === excludeLine) continue;
     for (let i = 0; i < line.length; i++) {
@@ -344,7 +354,8 @@ function snapLine(latlng) { const hit = snapLineInfo(latlng); return hit ? hit.p
 function snapDrawLine(latlng) {
   const stations = isStationAccessDrawMode(draw.mode) && !draw.plan ? stationSnapLines() : [];
   const candidates = draw.mode === 'path' ? pedestrianBaseLines().concat(stations) : networkLines(true, true).concat(stations);
-  const hit = snapLineInfo(latlng, SNAP_PX, null, true, true, candidates);
+  // конец линии липнет только к КОНЦУ другой линии (не к середине), чтобы не было наложений на полотно
+  const hit = snapLineInfo(latlng, SNAP_PX, null, true, true, candidates, draw.points.length === 0);
   return hit ? hit.point : null;
 }
 function insertNetworkVertex(line, point) {
@@ -377,7 +388,7 @@ function connectNetworkLine(points, includePaths = false) {
 function joinLineEndpoints(points, includePaths = false, candidates = null) {
   if (!points.length) return;
   for (const index of [0, points.length - 1]) {
-    const hit = snapLineInfo(L.latLng(points[index][0], points[index][1]), CONNECT_PX, null, includePaths, true, candidates);
+    const hit = snapLineInfo(L.latLng(points[index][0], points[index][1]), CONNECT_PX, null, includePaths, true, candidates, true);   // к концам линий, не к середине
     if (hit) points[index] = [hit.point.lat, hit.point.lng];
   }
 }
@@ -399,8 +410,8 @@ function repairNetworkConnections(includePaths = false, protectedPoints = [], on
       const isPedestrianPath = state.paths.includes(line);
       const candidates = isPedestrianPath ? pedestrianLines.filter(candidate => candidate !== line) : null;
       const hit = isPedestrianPath
-        ? snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, line, true, false, candidates)
-        : snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, line, includePaths);
+        ? snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, line, true, false, candidates, true)
+        : snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, line, includePaths, true, null, true);   // к концам линий, не к середине
       if (!hit) continue;
       const point = [hit.point.lat, hit.point.lng];
       if (distMeters(from[0], from[1], point[0], point[1]) < 0.01) continue;
