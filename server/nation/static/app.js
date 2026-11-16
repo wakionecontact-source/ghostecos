@@ -176,6 +176,7 @@ function setTool(tool) {
   if (borderEdit.active) exitBorderEdit();
   closeCtxMenu(); closeWalkBar();
   deselect(); clearHover();
+  if (stationAssign) { stationAssign = null; renderTransport(); }   // сброс режима присваивания второго пути
   activeTool = (activeTool === tool) ? null : tool;
   if (activeTool === 'district' && (!state.border || state.border.length < 3)) { setToolIdle(); flash('Сначала нарисуй границу страны — затем можно делить её на районы', true); return; }
   document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === activeTool));
@@ -447,7 +448,14 @@ function onMapClick(e) {
   }
   if (activeTool === 'split') { splitRoadAt(e.latlng); return; }
   if (activeTool === 'select') { deselect(); return; }
-  if (activeTool === 'station') { placeStation(e.latlng); return; }
+  if (activeTool === 'station') {
+    if (stationAssign) {                               // режим присваивания второго пути
+      const target = stationAssign; stationAssign = null;
+      assignStationSecondRail(target, e.latlng); renderTransport();
+      return;
+    }
+    placeStation(e.latlng); return;
+  }
   if (activeTool === 'parking') { placeParking(e.latlng); return; }
   if (activeTool === 'exit') { placeExit(e.latlng); return; }
   if (activeTool === 'light') {
@@ -841,11 +849,8 @@ function stationPreview(latlng) {                 // предпросмотр с
   const a = hit.line[hit.segment], b = hit.line[hit.segment + 1], segLen = distMeters(a[0], a[1], b[0], b[1]) || 1;
   const railT = Math.max(0, Math.min(1, distMeters(a[0], a[1], hit.point.lat, hit.point.lng) / segLen));
   const ref = { line: hit.line, seg: hit.segment, point: [hit.point.lat, hit.point.lng] };
-  let side = stationSideOfPoint(ref, latlng);
-  const second = secondRailAt([hit.point.lat, hit.point.lng], hit.line);
-  if (second) side = -stationSideOfPoint(ref, { lat: second.point[0], lng: second.point[1] });
+  const side = stationSideOfPoint(ref, latlng);
   const pseudo = { lat: hit.point.lat, lng: hit.point.lng, railKey: roadKey(hit.line), railSegment: hit.segment, railT, rot: 0, side };
-  if (second) { pseudo.railKey2 = roadKey(second.line); pseudo.railSegment2 = second.segment; pseudo.railT2 = second.t; }
   const g = stationGeometry(pseudo);
   const access = stationAccessInfo(pseudo);
   clearHover();
@@ -1399,20 +1404,26 @@ function refreshStationAccessInRunningSim(addedLine, drawMode) {
     }
   }
 }
-function secondRailAt(point, firstLine) {              // вторая ЖД-линия рядом — для двусторонней станции
-  let second = null;
-  for (const line of state.rails) {
-    if (line === firstLine || !line || line.length < 2) continue;
-    for (let i = 1; i < line.length; i++) {
-      const p = projOnSegLL(point, line[i - 1], line[i]), distance = distMeters(point[0], point[1], p[0], p[1]);
-      if (!second || distance < second.distance) {
-        const len = distMeters(line[i - 1][0], line[i - 1][1], line[i][0], line[i][1]) || 1;
-        second = { line, segment: i - 1, point: p, distance, t: Math.max(0, Math.min(1, distMeters(line[i - 1][0], line[i - 1][1], p[0], p[1]) / len)) };
-      }
-    }
+let stationAssign = null;                              // станция, ожидающая клика по второму пути
+function assignStationSecondRail(station, latlng) {    // ручное присвоение второго ЖД-пути станции
+  const hit = nearestLinePointForGroups(latlng, ['rails']);
+  if (!hit || hit.distance > Math.max(22, mToPx(LINE_M.rail) * 2.4)) { flash('Кликни по второму ЖД-пути', true); return false; }
+  const key = roadKey(hit.line);
+  if (key === station.railKey) {                       // клик по своему пути — снять второй
+    if (!station.railKey2) { flash('Это путь самой станции; кликни по соседнему пути', true); return false; }
+    pushUndo(); station.railKey2 = null; station.railSegment2 = null; station.railT2 = null;
+    save(); flash('Второй путь снят со станции'); return true;
   }
-  if (!second || second.distance > 26 || second.distance <= STATION_RAIL_GAP * 2 + 1) return null;   // далеко или дубль
-  return second;
+  const point = [hit.point.lat, hit.point.lng], gap = distMeters(station.lat, station.lng, point[0], point[1]);
+  if (gap > 26) { flash('Второй путь слишком далеко (до 26 м)', true); return false; }
+  if (gap <= STATION_RAIL_GAP * 2 + 1) { flash('Пути почти совпадают — выбери соседний путь', true); return false; }
+  const a = hit.line[hit.segment], b = hit.line[hit.segment + 1], len = distMeters(a[0], a[1], b[0], b[1]) || 1;
+  const ref1 = stationRailRef(station);
+  pushUndo();
+  station.railKey2 = key; station.railSegment2 = hit.segment;
+  station.railT2 = Math.max(0, Math.min(1, distMeters(a[0], a[1], point[0], point[1]) / len));
+  if (ref1) station.side = -stationSideOfPoint(ref1, { lat: point[0], lng: point[1] });   // вокзал снаружи от обоих путей
+  save(); flash('Второй путь присвоен станции'); return true;
 }
 function placeStation(latlng) {
   const hit = nearestLinePointForGroups(latlng, ['rails']);
@@ -1421,13 +1432,9 @@ function placeStation(latlng) {
   const a = hit.line[hit.segment], b = hit.line[hit.segment + 1], E = (b[1] - a[1]) * mPerDegLng(a[0]), N = (b[0] - a[0]) * MPD_LAT, segmentLength = Math.hypot(E, N) || 1, railT = Math.max(0, Math.min(1, distMeters(a[0], a[1], hit.point.lat, hit.point.lng) / segmentLength)), angle = Math.atan2(N, E) * 180 / Math.PI;
   const ref = { line: hit.line, seg: hit.segment, point: [hit.point.lat, hit.point.lng] };
   let side = stationSideOfPoint(ref, latlng);
-  // вторая линия рядом — станция двусторонняя: платформа островом между путями, вокзал снаружи
-  const second = secondRailAt([hit.point.lat, hit.point.lng], hit.line);
-  if (second) side = -stationSideOfPoint(ref, { lat: second.point[0], lng: second.point[1] });   // вокзал снаружи от обоих путей
   const station = { lat: hit.point.lat, lng: hit.point.lng, name: 'Станция ' + (state.stations.length + 1), railKey: roadKey(hit.line), railSegment: hit.segment, railT, rot: angle, w: 13, h: 8, side };
-  if (second) { station.railKey2 = roadKey(second.line); station.railSegment2 = second.segment; station.railT2 = second.t; }
   pushUndo(); state.stations.push(station); save(); renderTransport(); updateStats();
-  flash(second ? 'Двусторонняя станция: платформа между двумя путями' : (stationAccessInfo(station) ? 'Станция подключена к пешеходной сети' : 'Станция построена; подведи к входу дорогу, переулок или тропу'));
+  flash(stationAccessInfo(station) ? 'Станция подключена к пешеходной сети' : 'Станция построена; клик по станции инструментом «Станция» присвоит второй путь');
 }
 function placeParking(latlng) {
   const hit = nearestLinePointForGroups(latlng, ['roads', 'alleys']);
@@ -1463,16 +1470,24 @@ function renderTransport() {
     poly.on('click', e => { if (activeTool !== 'erase') return; L.DomEvent.stop(e); pushUndo(); state.parking = state.parking.filter(x => x !== p); save(); renderTransport(); updateStats(); });
   });
   state.stations.forEach(s => {
-    const g = stationGeometry(s), access = stationAccessInfo(s);
+    const g = stationGeometry(s), access = stationAccessInfo(s), assigning = stationAssign === s;
     const connectedClass = access ? ' connected' : '';
-    const platform = L.polygon(g.platformPoly, { pane: 'pane-builds', className: `station-platform${connectedClass}`, color: access ? '#42dc83' : '#e4c875', weight: 1.4, fillColor: access ? '#477758' : '#8d7651', fillOpacity: .84 }).addTo(transportLayer);
-    const building = L.polygon(rectCorners(g.building), { pane: 'pane-builds', className: `station-building${connectedClass}`, color: access ? '#42dc83' : '#ffd975', weight: 1.4, fillColor: access ? '#315b48' : '#5a4352', fillOpacity: .96 }).addTo(transportLayer);
+    const accent = assigning ? '#4aa3ff' : access ? '#42dc83' : null;
+    const platform = L.polygon(g.platformPoly, { pane: 'pane-builds', className: `station-platform${connectedClass}`, color: accent || '#e4c875', weight: assigning ? 2.6 : 1.4, fillColor: assigning ? '#2f5d8d' : access ? '#477758' : '#8d7651', fillOpacity: .84 }).addTo(transportLayer);
+    const building = L.polygon(rectCorners(g.building), { pane: 'pane-builds', className: `station-building${connectedClass}`, color: accent || '#ffd975', weight: assigning ? 2.6 : 1.4, fillColor: assigning ? '#2f5d8d' : access ? '#315b48' : '#5a4352', fillOpacity: .96 }).addTo(transportLayer);
     const railA = offset(g.point[0], g.point[1], -g.n * 3, g.e * 3), railB = offset(g.point[0], g.point[1], g.n * 3, -g.e * 3);
     L.polyline([railA, railB], { pane: 'pane-edit', color: '#f7df8c', weight: Math.max(1, railPx() * .38), opacity: .95, interactive: false, lineCap: 'round' }).addTo(transportLayer);
     const m = L.marker([g.building.lat, g.building.lng], { pane: 'markerPane', icon: transportIcon(access ? 'station connected' : 'station', 'ЖД') }).addTo(transportLayer);
     m.bindTooltip((s.name || 'Станция') + (access ? ` · вход подключён · пеший подход ${fmtLen(access.distance)}` : ' · нет пешеходной сети'), { direction: 'top', offset: [0, -8] });
     const stationClick = e => {
       if (activeTool === 'erase') { L.DomEvent.stop(e); pushUndo(); state.stations = state.stations.filter(x => x !== s); save(); renderTransport(); updateStats(); return; }
+      if (activeTool === 'station') {                  // клик по станции — режим присваивания второго пути
+        L.DomEvent.stop(e);
+        stationAssign = stationAssign === s ? null : s;
+        renderTransport();
+        flash(stationAssign ? `${s.name}: клик по второму ЖД-пути присвоит его (повторный клик по станции — отмена)` : 'Присваивание второго пути отменено');
+        return;
+      }
       connectDrawToStation(s, e);
     };
     platform.on('click', stationClick); building.on('click', stationClick); m.on('click', stationClick);
