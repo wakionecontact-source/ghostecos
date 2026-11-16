@@ -262,8 +262,6 @@ function finishDraw(fromDoubleClick) {
   }
   pushUndo();
   if (isDriveDrawMode(draw.mode) || ['rail', 'path'].includes(draw.mode)) {
-    const endpointCandidates = draw.mode === 'path' ? pedestrianBaseLines() : null;
-    joinLineEndpoints(pts, true, endpointCandidates);   // конец новой линии притягивается к сети — как и раньше
     stationPoints.forEach(({ index, point }) => { if (index < pts.length) pts[index] = point; });
     connectNetworkLine(pts, true);
   }
@@ -367,48 +365,13 @@ function connectNetworkLine(points, includePaths = false) {
   }
   return changed;
 }
-function joinLineEndpoints(points, includePaths = false, candidates = null) {
-  if (!points.length) return;
-  for (const index of [0, points.length - 1]) {
-    const from = points[index];
-    const hit = snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, null, includePaths, candidates, false);   // полный магнит: липнет в любом месте линии
-    if (!hit) continue;
-    const d = distMeters(from[0], from[1], hit.point.lat, hit.point.lng);
-    if (d > 35) continue;   // конец подтягивается только если он УЖЕ рядом; не прыгаем через пол-карты
-    points[index] = [hit.point.lat, hit.point.lng];
-  }
-}
 function repairNetworkConnections(includePaths = false, protectedPoints = [], onlyLines = null) {
   const network = networkLines(includePaths);
-  const pedestrianLines = includePaths ? pedestrianBaseLines() : [];
   let changed = false;
-  const movable = onlyLines ? new Set(onlyLines) : null;   // null — никакие линии не двигаем (по умолчанию)
-
-  // Подтягиваем концы только свеженарисованных линий: это чинит Т-образные стыки и
-  // зазоры. Уже существующие линии не двигаем — их концы остаются на месте.
-  for (let lineIndex = 0; lineIndex < network.length; lineIndex++) {
-    const line = network[lineIndex];
-    if (line.length < 2) continue;
-    if (!movable || !movable.has(line)) continue;   // без onlyLines не трогаем вообще ничего
-    for (const index of [0, line.length - 1]) {
-      const from = line[index];
-      if (protectedPoints.some(point => distMeters(from[0], from[1], point[0], point[1]) < .1)) continue;
-      const isPedestrianPath = state.paths.includes(line);
-      const candidates = isPedestrianPath ? pedestrianLines.filter(candidate => candidate !== line) : null;
-      const hit = isPedestrianPath
-        ? snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, line, true, candidates, false)
-        : snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, line, includePaths, null, false);   // полный магнит (только для новых линий)
-      if (!hit) continue;
-      const point = [hit.point.lat, hit.point.lng];
-      if (distMeters(from[0], from[1], point[0], point[1]) < 0.01) continue;
-      line[index] = point;
-      changed = true;
-      if (insertNetworkVertex(hit.line, hit.point)) changed = true;
-    }
-  }
 
   // Разрезаем обе линии в каждой настоящей точке пересечения. Без этого
   // визуальный крест не становился узлом сети для машин и пешеходов.
+  // Концы линий никогда не двигаем: линия остаётся там, где её отпустили.
   for (let a = 0; a < network.length; a++) for (let b = a + 1; b < network.length; b++) {
     const left = network[a], right = network[b], hits = [];
     for (let i = 1; i < left.length; i++) for (let j = 1; j < right.length; j++) {
@@ -1052,53 +1015,9 @@ function railTies(latlngs, halfM, spacingM) {
   }
   return out;
 }
-function railSuperPaths() {                        // объединяет ЖД-линии, стыкующиеся «в продолжение» (параллельно, угол < 15°), в сплошные пути
-  const lines = state.rails.filter(l => l && l.length >= 2);
-  if (lines.length < 2) return lines;
-  const ANG_TOL = 15 * Math.PI / 180, DIST_TOL = 6;
-  const headingOf = (line, atEnd) => { const a = atEnd ? line[line.length - 2] : line[0], b = atEnd ? line[line.length - 1] : line[1]; return Math.atan2((b[0] - a[0]) * MPD_LAT, (b[1] - a[1]) * mPerDegLng(a[0])); };
-  const parallel = (h1, h2) => { let d = Math.abs(angleDelta(h1, h2)); if (d > Math.PI / 2) d = Math.PI - d; return d < ANG_TOL; };   // параллельность без учёта направления — стык «продолжение» или «разворот»
-  const segLen = (a, b) => distMeters(a[0], a[1], b[0], b[1]);
-  const used = new Set(), chains = [];
-  for (const start of lines) {
-    if (used.has(start)) continue;
-    const chain = [start]; used.add(start);
-    let grew = true;
-    while (grew) {                                  // наращиваем цепочку с обоих концов, пока есть коллинеарное продолжение
-      grew = false;
-      for (const side of [false, true]) {           // false — хвост (дописываем), true — голова (дописываем в начало)
-        const line = chain[side ? 0 : chain.length - 1];
-        const joinPt = side ? line[0] : line[line.length - 1];
-        const joinH = headingOf(line, !side);
-        for (const next of lines) {
-          if (used.has(next) || next === line) continue;
-          const head = [next[0], headingOf(next, false)], tailPt = next[next.length - 1], tailH = headingOf(next, true);
-          const viaHead = segLen(joinPt, head[0]) <= DIST_TOL && parallel(joinH, head[1]);
-          const viaTail = segLen(joinPt, tailPt) <= DIST_TOL && parallel(joinH, tailH);
-          if (viaHead || viaTail) {
-            const piece = viaHead ? next : next.slice().reverse();
-            if (side) chain.unshift(piece); else chain.push(piece);
-            used.add(next); grew = true; break;
-          }
-        }
-        if (grew) break;
-      }
-    }
-    chains.push(chain);
-  }
-  return chains.map(chain => {
-    const pts = chain[0].slice();
-    for (let i = 1; i < chain.length; i++) {        // дублирующуюся точку стыка не пишем второй раз
-      const prevLast = pts[pts.length - 1], cur = chain[i], k0 = segLen(prevLast, cur[0]) <= DIST_TOL ? 1 : 0;
-      for (let k = k0; k < cur.length; k++) pts.push(cur[k]);
-    }
-    return pts;
-  });
-}
 function renderRails() {
   railLayer.clearLayers(); const w = railPx(), gravelW = Math.max(2.5, w), gravelTextureW = Math.max(1.3, w * .62), tieW = Math.max(1.8, w * .28), railW = Math.max(1, w * .18), halfBed = LINE_M.rail * .5, gauge = LINE_M.rail * .34;
-  const paths = railSuperPaths();                       // сплошные пути через коллинеарные стыки — текстура без швов
-  paths.forEach(path => {
+  state.rails.forEach(path => {
     const bed = tagW(L.polyline(path, { pane: 'pane-rail', color: '#47413b', weight: gravelW, opacity: .98, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(railLayer), LINE_M.rail);
     tagW(L.polyline(path, { pane: 'pane-rail', color: '#85735f', weight: gravelTextureW, opacity: .7, dashArray: '1.5 3.5', lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(railLayer), LINE_M.rail * .62);
     railTies(path, halfBed, 5.5).forEach(seg => tagW(L.polyline(seg, { pane: 'pane-rail', color: '#b7a486', weight: tieW, opacity: .94, lineCap: 'round', interactive: false }).addTo(railLayer), LINE_M.rail * .28));
