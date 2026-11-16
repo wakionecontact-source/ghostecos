@@ -279,17 +279,17 @@ function finishDraw(fromDoubleClick) {
   const saveAsPlan = draw.plan && ['road', 'alley', 'path'].includes(draw.mode);
   if (isDriveDrawMode(draw.mode) || ['rail', 'path'].includes(draw.mode)) {
     const endpointCandidates = draw.mode === 'path' ? pedestrianBaseLines() : null;
-    if (draw.mode !== 'rail') joinLineEndpoints(pts, true, endpointCandidates);   // для ЖД автопритягивание концов отключено
+    joinLineEndpoints(pts, true, endpointCandidates);   // конец новой линии притягивается к сети — как и раньше
     stationPoints.forEach(({ index, point }) => { if (index < pts.length) pts[index] = point; });
     connectNetworkLine(pts, true);
   }
   if (draw.mode === 'borders') { state.border = pts; renderTerritory(); if (isMP()) mpClaim(); }
-  else if (saveAsPlan) { state.plannedLines.push({ mode: draw.mode, pts }); repairNetworkConnections(true); renderPlannedLines(); }
-  else if (isDriveDrawMode(draw.mode) && baseLineMode(draw.mode) === 'road') { state.roads.push(pts); setLineMeta(pts, drawLineMeta(draw.mode)); repairNetworkConnections(true, stationPoints.map(x => x.point)); setLineWalk(pts, stationPoints.length ? 'both' : 'none'); renderRoads(); renderCrossings(); renderZebras(); if (!stationPoints.length) openWalkBar(pts); }
-  else if (draw.mode === 'rail') { state.rails.push(pts); renderRails(); renderCrossings(); }   // ЖД: без автоподтягивания концов к сети
-  else if (isDriveDrawMode(draw.mode) && baseLineMode(draw.mode) === 'alley') { state.alleys.push(pts); setLineMeta(pts, drawLineMeta(draw.mode)); repairNetworkConnections(true, stationPoints.map(x => x.point)); setLineWalk(pts, 'none'); renderAlleys(); renderCrossings(); if (!stationPoints.length) openWalkBar(pts); }
+  else if (saveAsPlan) { state.plannedLines.push({ mode: draw.mode, pts }); repairNetworkConnections(true, stationPoints.map(x => x.point), [pts]); renderPlannedLines(); }
+  else if (isDriveDrawMode(draw.mode) && baseLineMode(draw.mode) === 'road') { state.roads.push(pts); setLineMeta(pts, drawLineMeta(draw.mode)); repairNetworkConnections(true, stationPoints.map(x => x.point), [pts]); setLineWalk(pts, stationPoints.length ? 'both' : 'none'); renderRoads(); renderCrossings(); renderZebras(); if (!stationPoints.length) openWalkBar(pts); }
+  else if (draw.mode === 'rail') { state.rails.push(pts); repairNetworkConnections(true, [], [pts]); renderRails(); renderCrossings(); }
+  else if (isDriveDrawMode(draw.mode) && baseLineMode(draw.mode) === 'alley') { state.alleys.push(pts); setLineMeta(pts, drawLineMeta(draw.mode)); repairNetworkConnections(true, stationPoints.map(x => x.point), [pts]); setLineWalk(pts, 'none'); renderAlleys(); renderCrossings(); if (!stationPoints.length) openWalkBar(pts); }
   else if (draw.mode === 'district') { state.districts.push({ pts, color: FLAG_COLORS[randInt(FLAG_COLORS.length)] }); renderDistricts(); }
-  else { state.paths.push(pts); repairNetworkConnections(true, stationPoints.map(x => x.point)); renderPaths(); }
+  else { state.paths.push(pts); repairNetworkConnections(true, stationPoints.map(x => x.point), [pts]); renderPaths(); }
   save(); renderTransport();
   if (stationPoints.length && !saveAsPlan) refreshStationAccessInRunningSim(pts, drawMode);
   clearDraw(); setToolIdle(); updateStats();
@@ -342,7 +342,6 @@ function snapLineInfo(latlng, radius = SNAP_PX, excludeLine = null, includePaths
 }
 function snapLine(latlng) { const hit = snapLineInfo(latlng); return hit ? hit.point : null; }
 function snapDrawLine(latlng) {
-  if (draw.mode === 'rail') return null;                 // ЖД: без прилипания концов к сети (автоконнект отключён)
   const stations = isStationAccessDrawMode(draw.mode) && !draw.plan ? stationSnapLines() : [];
   const candidates = draw.mode === 'path' ? pedestrianBaseLines().concat(stations) : networkLines(true, true).concat(stations);
   const hit = snapLineInfo(latlng, SNAP_PX, null, true, true, candidates);
@@ -382,16 +381,18 @@ function joinLineEndpoints(points, includePaths = false, candidates = null) {
     if (hit) points[index] = [hit.point.lat, hit.point.lng];
   }
 }
-function repairNetworkConnections(includePaths = false, protectedPoints = []) {
+function repairNetworkConnections(includePaths = false, protectedPoints = [], onlyLines = null) {
   const network = networkLines(includePaths, true);
   const pedestrianLines = includePaths ? pedestrianBaseLines() : [];
   let changed = false;
+  const movable = onlyLines ? new Set(onlyLines) : null;   // null — ничего не двигаем (по умолчанию)
 
-  // Подтягиваем концы к ближайшей линии: это чинит Т-образные стыки и
-  // старые дороги, которые были нарисованы с небольшим зазором.
+  // Подтягиваем концы только свеженарисованных линий: это чинит Т-образные стыки и
+  // зазоры. Уже существующие линии не двигаем — их концы остаются на месте.
   for (let lineIndex = 0; lineIndex < network.length; lineIndex++) {
     const line = network[lineIndex];
     if (line.length < 2) continue;
+    if (movable && !movable.has(line)) continue;
     for (const index of [0, line.length - 1]) {
       const from = line[index];
       if (protectedPoints.some(point => distMeters(from[0], from[1], point[0], point[1]) < .1)) continue;
@@ -400,9 +401,7 @@ function repairNetworkConnections(includePaths = false, protectedPoints = []) {
       const hit = isPedestrianPath
         ? snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, line, true, false, candidates)
         : snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, line, includePaths);
-      // При стыке «конец с концом» двигаем только более новую линию.
-      // Иначе две близкие дороги могли начать перетягивать концы друг у друга.
-      if (!hit || network.indexOf(hit.line) >= lineIndex) continue;
+      if (!hit) continue;
       const point = [hit.point.lat, hit.point.lng];
       if (distMeters(from[0], from[1], point[0], point[1]) < 0.01) continue;
       line[index] = point;
