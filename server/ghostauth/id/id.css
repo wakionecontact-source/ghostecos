@@ -271,26 +271,6 @@ svg { display: block; width: 100%; height: 100%; }
     var(--surface);
 }
 
-.music::before {
-  position: absolute;
-  inset: -40%;
-  background-image: var(--banner-image);
-  background-size: cover;
-  background-position: center;
-  filter: blur(26px) saturate(1.25);
-  opacity: .32;
-  content: "";
-  pointer-events: none;
-}
-
-.music::after {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(17, 17, 19, .42), rgba(17, 17, 19, .72));
-  content: "";
-  pointer-events: none;
-}
-
 .music > * { position: relative; z-index: 1; }
 
 .music[hidden] { display: none !important; }
@@ -494,18 +474,6 @@ svg { display: block; width: 100%; height: 100%; }
   background:
     linear-gradient(120deg, rgba(255, 255, 255, .07), rgba(255, 255, 255, .015) 70%),
     var(--surface);
-}
-
-.account::before {
-  position: absolute;
-  inset: -60% -20%;
-  background-image: var(--banner-image);
-  background-size: cover;
-  background-position: center;
-  filter: blur(22px) saturate(1.2);
-  opacity: .28;
-  content: "";
-  pointer-events: none;
 }
 
 .account > * { position: relative; z-index: 1; }

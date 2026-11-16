@@ -70,6 +70,7 @@
 
   var state = {
     details: {},
+    loading: {},
     editingId: '',
     editorAvatar: '',
     saving: false,
@@ -222,18 +223,64 @@
   function paintBanner(details) {
     var media = details.mediaBanner && details.mediaBanner.url ? details.mediaBanner.url : '';
     var src = safeUrl(media);
-    if (els.bannerImage) {
-      if (!src) {
-        els.bannerImage.hidden = true;
-        els.bannerImage.removeAttribute('src');
-      } else {
-        els.bannerImage.onerror = function () { els.bannerImage.hidden = true; };
-        els.bannerImage.src = src;
-        els.bannerImage.hidden = false;
-      }
+    if (!els.bannerImage) return;
+    if (!src) {
+      els.bannerImage.hidden = true;
+      els.bannerImage.removeAttribute('src');
+      return;
     }
-    var layer = src ? 'url("' + src.replace(/"/g, '%22') + '")' : 'none';
-    document.documentElement.style.setProperty('--banner-image', layer);
+    els.bannerImage.onerror = function () { els.bannerImage.hidden = true; };
+    els.bannerImage.src = src;
+    els.bannerImage.hidden = false;
+  }
+
+  /** Цвет из #rgb/#rrggbb в «r, g, b» для rgba(). */
+  function hexRgb(raw) {
+    var hex = String(raw || '').trim().replace('#', '');
+    if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+    if (!/^[0-9a-f]{6}$/i.test(hex)) return '255, 255, 255';
+    return parseInt(hex.slice(0, 2), 16) + ', ' +
+      parseInt(hex.slice(2, 4), 16) + ', ' +
+      parseInt(hex.slice(4, 6), 16);
+  }
+
+  /** Фон баннера: свечения из banner_config, иначе простой градиент. */
+  function bannerBackground(banner) {
+    var colors = banner && Array.isArray(banner.colors) ? banner.colors : [];
+    var bg = banner && banner.background_color ? String(banner.background_color) : '#141018';
+    var lights = banner && Array.isArray(banner.lights) ? banner.lights : [];
+    var layers = [];
+    for (var i = 0; i < lights.length && i < 6; i++) {
+      var light = lights[i] || {};
+      var color = colors[Number(light.color_index) || 0] || '#b39af4';
+      var pos = Array.isArray(light.position) ? light.position : [0.5, 0.5];
+      var x = Math.max(0, Math.min(1, Number(pos[0]) || 0)) * 100;
+      var y = Math.max(0, Math.min(1, Number(pos[1]) || 0)) * 100;
+      var strength = Math.max(0.15, Math.min(1, Number(light.strength) || 0.6));
+      var rgb = hexRgb(color);
+      layers.push('radial-gradient(circle at ' + x.toFixed(1) + '% ' + y.toFixed(1) + '%, rgba(' +
+        rgb + ', ' + (strength * 0.8).toFixed(2) + ') 0%, rgba(' + rgb + ', 0) 58%)');
+    }
+    layers.push('linear-gradient(135deg, ' + bg + ', ' + bg + ')');
+    return layers.join(', ');
+  }
+
+  /** Фон строки аккаунта: своё медиа, иначе свой градиент баннера. */
+  function accountBackground(entry) {
+    var details = state.details[entry.profile.id] || {};
+    var media = details.mediaBanner && details.mediaBanner.url ? safeUrl(details.mediaBanner.url) : '';
+    if (media) {
+      return 'linear-gradient(180deg, rgba(17, 17, 19, .5), rgba(17, 17, 19, .74)), url("' +
+        media.replace(/"/g, '%22') + '")';
+    }
+    return bannerBackground(details.banner);
+  }
+
+  function paintMusicBack(details) {
+    if (!els.music) return;
+    els.music.style.backgroundImage =
+      'linear-gradient(180deg, rgba(17, 17, 19, .3), rgba(17, 17, 19, .55)), ' +
+      bannerBackground(details.banner);
   }
 
   function stopMusic() {
@@ -400,6 +447,7 @@
 
     paintAvatar(els.avatar, profile);
     paintBanner(details);
+    paintMusicBack(details);
     els.name.textContent = profile.display_name || ('@' + (profile.username || 'ghost'));
     els.verified.hidden = !details.verified;
     els.handle.textContent = profile.username ? '@' + profile.username : '';
@@ -432,6 +480,9 @@
     var row = document.createElement('div');
     row.className = 'account';
     row.setAttribute('role', 'listitem');
+    row.style.backgroundImage = accountBackground(entry);
+    row.style.backgroundSize = 'cover';
+    row.style.backgroundPosition = 'center';
 
     var switchBtn = document.createElement('button');
     switchBtn.type = 'button';
@@ -499,6 +550,13 @@
       els.list.append(accountRow(others[i]));
     }
     els.list.hidden = !others.length;
+
+    for (var j = 0; j < list.length; j++) {
+      var item = list[j];
+      if (!state.details[item.profile.id] && !state.loading[item.profile.id]) {
+        loadDetails(item);
+      }
+    }
   }
 
   // ── Данные активного аккаунта ────────────────────
@@ -506,6 +564,8 @@
   async function loadDetails(entry) {
     if (!entry) return;
     var id = entry.profile.id;
+    if (state.loading[id]) return;
+    state.loading[id] = true;
     var headers = apiHeaders(entry.token);
     var me = null;
     try {
@@ -516,12 +576,18 @@
           me.avatar_url = me.avatar_url || '';
         }
       } else if (response.status === 401 || response.status === 403) {
-        state.details[id] = { expired: true };
-        renderActive(entry);
-        hint('Сессия @' + entry.profile.username + ' истекла. Убери аккаунт или войди снова.');
+        state.loading[id] = false;
+        state.details[id] = Object.assign({}, state.details[id], { expired: true });
+        if (activeEntry() && activeEntry().profile.id === id) {
+          renderActive(entry);
+          hint('Сессия @' + entry.profile.username + ' истекла. Убери аккаунт или войди снова.');
+        }
         return;
       }
-    } catch (_) {}
+    } catch (_) {
+      state.loading[id] = false;
+      return;
+    }
 
     var details = state.details[id] || {};
     if (me) {
@@ -530,11 +596,13 @@
       details.display_name = String(me.display_name || '');
       details.created_at = String(me.created_at || '');
       details.verified = Boolean(me.is_verified);
+      details.banner = me.banner && typeof me.banner === 'object' ? me.banner : null;
       details.mediaBanner = me.media_banner && typeof me.media_banner === 'object' ? me.media_banner : null;
       details.profile_music = Array.isArray(me.profile_music) ? me.profile_music : [];
       details.followers_count = me.followers_count;
       details.following_count = me.following_count;
       details.likes_received = me.likes_received;
+      delete details.expired;
       entry.profile.username = details.username || entry.profile.username;
       entry.profile.display_name = details.display_name || entry.profile.display_name;
       if (me.avatar_url) entry.profile.avatar_url = me.avatar_url;
@@ -550,11 +618,12 @@
     } catch (_) {}
 
     state.details[id] = details;
+    state.loading[id] = false;
     var current = activeEntry();
     if (current && current.profile.id === id) {
       renderActive(entry);
-      render();
     }
+    render();
   }
 
   // ── Действия ─────────────────────────────────────
@@ -565,7 +634,6 @@
       hint('Не удалось переключить аккаунт');
       return;
     }
-    state.details = {};
     hint('Переключились на @' + picked.profile.username, true);
     render();
     loadDetails(picked);
@@ -587,7 +655,6 @@
     } else {
       hint('Аккаунт @' + entry.profile.username + ' убран с устройства', true);
     }
-    state.details = {};
     render();
     loadDetails(activeEntry());
   }
