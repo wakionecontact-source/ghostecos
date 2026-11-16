@@ -354,8 +354,10 @@ function snapLine(latlng) { const hit = snapLineInfo(latlng); return hit ? hit.p
 function snapDrawLine(latlng) {
   const stations = isStationAccessDrawMode(draw.mode) && !draw.plan ? stationSnapLines() : [];
   const candidates = draw.mode === 'path' ? pedestrianBaseLines().concat(stations) : networkLines(true, true).concat(stations);
-  // конец линии липнет только к КОНЦУ другой линии (не к середине), чтобы не было наложений на полотно
-  const hit = snapLineInfo(latlng, SNAP_PX, null, true, true, candidates, draw.points.length === 0);
+  // Дороги/рельсы: любая новая точка (это всегда текущий конец линии) липнет только к КОНЦАМ
+  // других линий, чтобы не накладываться на середину полотна. Тропинки — к чему угодно (выход к дороге в любом месте).
+  const endpointsOnly = draw.mode !== 'path';
+  const hit = snapLineInfo(latlng, SNAP_PX, null, true, true, candidates, endpointsOnly);
   return hit ? hit.point : null;
 }
 function insertNetworkVertex(line, point) {
