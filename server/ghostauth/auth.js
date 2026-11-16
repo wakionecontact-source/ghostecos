@@ -4,6 +4,13 @@
   if (window.GhostAuthTelegramReady) await window.GhostAuthTelegramReady;
 
   const params = new URLSearchParams(location.search);
+  // Пароль из адресной строки убираем сразу: такие ссылки оседают в логах и истории браузера.
+  if (params.has("password") || params.has("username")) {
+    params.delete("password");
+    params.delete("username");
+    const clean = params.toString();
+    history.replaceState(null, "", location.pathname + (clean ? "?" + clean : "") + location.hash);
+  }
   const returnTarget = params.has("return")
     ? safeReturn(params.get("return"))
     : (sameOriginReferrer() || "/home");
@@ -60,10 +67,17 @@
     } catch (_) { return ""; }
   }
 
-  function cookieSet(token) {
+  // Срок cookie обязан совпадать со сроком токена: иначе фронт «залогинен»,
+  // а сервер уже отвечает 401.
+  const SESSION_FALLBACK_SECONDS = 30 * 24 * 3600;
+
+  function cookieSet(token, maxAgeSeconds) {
     const secure = location.protocol === "https:" ? "; Secure" : "";
+    const maxAge = Math.floor(Number(maxAgeSeconds)) > 0
+      ? Math.floor(Number(maxAgeSeconds))
+      : SESSION_FALLBACK_SECONDS;
     document.cookie = "gs_token=" + encodeURIComponent(token) +
-      "; Path=/; Max-Age=31536000; SameSite=Lax" + secure;
+      "; Path=/; Max-Age=" + maxAge + "; SameSite=Lax" + secure;
   }
 
   function cookieClear() {
@@ -84,7 +98,7 @@
     if (!data || !data.token) throw new Error("Сервер не вернул сессию");
     localStorage.setItem("gs_token", data.token);
     localStorage.setItem("gs_me", JSON.stringify(data));
-    cookieSet(data.token);
+    cookieSet(data.token, data.expires_in);
     saveOnboardingProducts();
     if (window.GhostIDAccounts) {
       window.GhostIDAccounts.add(data.token, data).catch(function () {});
@@ -255,7 +269,15 @@
     const endpoint = ssoRequestId
       ? "/api/sso/requests/" + encodeURIComponent(ssoRequestId)
       : "/api/sso/clients/" + encodeURIComponent(clientId);
-    const response = await fetch(endpoint, { credentials: "same-origin", cache: "no-store", headers: { Accept: "application/json" } });
+    const load = () => fetch(endpoint, { credentials: "same-origin", cache: "no-store", headers: { Accept: "application/json" } });
+    let response = await load();
+    // Ссылка входа живёт 30 минут: просим продлить, чтобы человек не упирался в тупик.
+    if (response.status === 410 && ssoRequestId) {
+      const renewed = await fetch("/api/v2/auth/requests/" + encodeURIComponent(ssoRequestId) + "/renew", {
+        method: "POST", credentials: "same-origin", cache: "no-store", headers: { Accept: "application/json" },
+      }).catch(() => null);
+      if (renewed && renewed.ok) response = await load();
+    }
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(errorText(data, "Не удалось загрузить запрос входа"));
     const client = data.client;
@@ -521,11 +543,18 @@
     if (consentDestination) consentDestination.textContent = serviceNote || "Проверь данные для входа в «" + authClient.name + "».";
     if (permissions) {
       permissions.replaceChildren();
-      for (const description of (Array.isArray(authClient.permissions) ? authClient.permissions : [])) {
-        if (typeof description !== "string" || !description.trim()) continue;
-        const item = document.createElement("li");
-        item.textContent = description;
-        permissions.append(item);
+      const details = Array.isArray(authClient.scopesDetail) ? authClient.scopesDetail : [];
+      if (details.length) {
+        for (const detail of details) {
+          permissions.append(permissionItem(detail));
+        }
+      } else {
+        for (const description of (Array.isArray(authClient.permissions) ? authClient.permissions : [])) {
+          if (typeof description !== "string" || !description.trim()) continue;
+          const item = document.createElement("li");
+          item.textContent = description;
+          permissions.append(item);
+        }
       }
     }
     const gdaiService = String(authClient.clientId || "").trim().toLowerCase() === "gdai";
@@ -559,11 +588,51 @@
     }
   }
 
+  /** Пункт анкеты: обязательные данные залочены, остальные снимаются галочкой. */
+  function permissionItem(detail) {
+    const item = document.createElement("li");
+    item.className = "permission-item";
+    const label = document.createElement("label");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = true;
+    box.disabled = Boolean(detail.required);
+    box.dataset.scope = String(detail.id || "");
+    const text = document.createElement("span");
+    const title = document.createElement("strong");
+    title.textContent = String(detail.title || detail.id || "");
+    const hint = document.createElement("small");
+    hint.textContent = String(detail.description || "");
+    text.append(title, hint);
+    label.append(box, text);
+    item.append(label);
+    return item;
+  }
+
+  /** Выданный набор данных из анкеты; пустой список не отправляем. */
+  function grantedScopes() {
+    const boxes = document.querySelectorAll("#client-permissions input[data-scope]");
+    if (!boxes.length) return null;
+    const scopes = [];
+    for (const box of boxes) {
+      if (box.checked && box.dataset.scope) scopes.push(box.dataset.scope);
+    }
+    return scopes;
+  }
+
+  /** Подтверждение входа: отправляет согласие и уводит на callback сервиса. */
   async function authorizeClient({ automatic = false } = {}) {
     const status = document.getElementById("client-account-status");
     const button = document.getElementById("client-continue");
-    if (!authClient || !selectedClientAccount || !selectedClientAccount.verified || !button) return;
-    if (!automatic && !document.getElementById("client-consent")?.checked) return;
+    if (!authClient || !button) return;
+    if (!selectedClientAccount || !selectedClientAccount.verified) {
+      if (status) status.textContent = "Аккаунт не подтверждён — войдите заново.";
+      return;
+    }
+    if (!automatic && !document.getElementById("client-consent")?.checked) {
+      if (status) status.textContent = "Отметьте согласие с условиями внизу анкеты.";
+      return;
+    }
     if (automatic && (!ssoRequest || ssoRequest.prompt !== "auto" || !authClient.trusted)) return;
     const endpoint = ssoRequest
       ? "/api/sso/requests/" + encodeURIComponent(ssoRequestId) + "/approve"
@@ -593,7 +662,7 @@
         method: "POST",
         credentials: "same-origin",
         headers,
-        body: JSON.stringify(ssoRequest ? { consent: true, ...(automatic ? { automatic: true } : {}) } : {
+        body: JSON.stringify(ssoRequest ? { consent: true, ...(automatic ? { automatic: true } : {}), ...(grantedScopes() ? { scopes: grantedScopes() } : {}) } : {
           client_id: authClient.clientId,
           consent: true,
           terms_version: authClient.termsVersion || "current",
@@ -820,6 +889,11 @@
         const data = await response.json();
         if (!data || !(data.id || data.user_id) || data.is_guest) throw new Error("Аккаунт не найден");
         try { localStorage.setItem("gs_me", JSON.stringify(data)); } catch (_) {}
+        // Сессия продлена сервером — продлеваем и cookie, чтобы сроки не разъезжались.
+        const expiresAt = Number(data.session_expires_at || 0);
+        if (cached && expiresAt > 0) {
+          cookieSet(cached, expiresAt - Math.floor(Date.now() / 1000));
+        }
         if (clientFlow) {
           const account = addClientAccount(data, cached, true);
           if (account) {
@@ -836,6 +910,8 @@
         } else if (nativeMode) showNativeHandoff(data);
         else { /* экран «Вы уже вошли» выключен: показываем список аккаунтов */ }
       } catch (error) {
+        // Мёртвый токен нельзя оставлять в браузере: иначе интерфейс врёт про вход.
+        if (error && (error.status === 401 || error.status === 403)) clearSiteSession();
         if (clientFlow && error && (error.status === 401 || error.status === 403)) {
           clientAccounts = clientAccounts.filter((item) => item.verified);
           selectedClientAccount = clientAccounts[0] || null;
