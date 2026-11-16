@@ -46,15 +46,51 @@ def _bearer(header):
 
 
 def _source_active(user_id, source_hash):
+    """Источник входа: сессия GhostID, устройство или токен соцсети."""
     if not source_hash:
         return False
+    now = int(time.time())
     c = db()
     try:
-        rows = c.execute("SELECT * FROM soc_tokens WHERE user_id=?", (user_id,)).fetchall()
-        rows = [r for r in rows if "expires_at" not in r.keys() or not r["expires_at"] or r["expires_at"] > int(time.time())]
-        rows += c.execute("SELECT token FROM user_devices WHERE user_id=? AND is_active=1 "
-                          "AND is_blocked=0 AND expires_at>?", (user_id, int(time.time()))).fetchall()
-        return any(r["token"] and secrets.compare_digest(sso._hash(r["token"]), source_hash) for r in rows)
+        # Вход из браузера держит источник в auth_sessions — без неё любой вход считался отозванным.
+        if c.execute("SELECT 1 FROM auth_sessions WHERE user_id=? AND token_hash=? AND status='active' "
+                     "AND revoked_at IS NULL AND ended_at IS NULL AND expires_at>?",
+                     (user_id, source_hash, now)).fetchone():
+            return True
+        for r in c.execute("SELECT token, expires_at FROM soc_tokens WHERE user_id=?", (user_id,)).fetchall():
+            if (not r["expires_at"] or r["expires_at"] > now) and r["token"] and \
+                    secrets.compare_digest(sso._hash(r["token"]), source_hash):
+                return True
+        for r in c.execute("SELECT token FROM user_devices WHERE user_id=? AND is_active=1 AND is_blocked=0 "
+                           "AND (expires_at=0 OR expires_at>?)", (user_id, now)).fetchall():
+            if r["token"] and secrets.compare_digest(sso._hash(r["token"]), source_hash):
+                return True
+        return False
+    finally:
+        c.close()
+
+
+def _touch(g):
+    """Скользящий вход: срок продлевается при использовании и сгорает при бездействии."""
+    now = int(time.time())
+    mark = now + sso.CHAT_TOKEN_TTL
+    # ВАЖНО: не чаще раза в час, иначе каждая вкладка писала бы в БД на каждый запрос.
+    edge = mark - 3600
+    with sso._db() as c:
+        _schema(c)
+        c.execute("UPDATE access_tokens SET expires_at=? WHERE token_hash=? AND expires_at<?",
+                  (mark, g["token_hash"], edge))
+        row = c.execute("SELECT device_pk FROM chat_web_sessions WHERE token_hash=?",
+                        (g["token_hash"],)).fetchone()
+        c.execute("UPDATE chat_web_sessions SET expires_at=? WHERE token_hash=? AND expires_at<?",
+                  (mark, g["token_hash"], edge))
+    if not row or not row["device_pk"]:
+        return
+    c = db()
+    try:
+        c.execute("UPDATE user_devices SET expires_at=? WHERE id=? AND expires_at>0 AND expires_at<?",
+                  (mark, row["device_pk"], edge))
+        c.commit()
     finally:
         c.close()
 
@@ -74,6 +110,7 @@ def grant(token, origin=None):
         result = dict(r)
     if not _source_active(result["user_id"], result.get("source_hash")):
         raise HTTPException(401, "Исходная сессия отозвана: повтори вход")
+    _touch(result)
     return result
 
 
@@ -87,7 +124,8 @@ def device_session(token, origin=None):
     c = db()
     try:
         d = c.execute("SELECT * FROM user_devices WHERE id=? AND user_id=? AND is_active=1 "
-                      "AND is_blocked=0 AND expires_at>?", (r["device_pk"], g["user_id"], int(time.time()))).fetchone()
+                      "AND is_blocked=0 AND (expires_at=0 OR expires_at>?)",
+                      (r["device_pk"], g["user_id"], int(time.time()))).fetchone()
         if not d:
             raise HTTPException(401, "Устройство отозвано или его вход истёк")
         return g, dict(d)
@@ -116,12 +154,19 @@ def _proof(body, token):
 
 
 def _record(g, pub, native_token):
+    import device_auth as _da
     c = db()
     try:
-        d = c.execute("SELECT * FROM user_devices WHERE token=? AND user_id=?", (native_token, g["user_id"])).fetchone()
-        if not d or not d["is_active"] or d["is_blocked"] or d["expires_at"] <= time.time():
+        # Новые токены устройств лежат только хешем, поэтому сначала пробуем их.
+        d = _da.auth_device_token(c, native_token) if native_token else None
+        if not d:
+            d = c.execute("SELECT * FROM user_devices WHERE token=? AND user_id=?",
+                          (native_token, g["user_id"])).fetchone()
+        # ВАЖНО: expires_at=0 у устройства значит «бессрочно», как и в остальном чате.
+        if not d or int(d["user_id"]) != int(g["user_id"]) or not d["is_active"] or d["is_blocked"] or (
+                d["expires_at"] and d["expires_at"] <= time.time()):
             raise HTTPException(401, "Устройство недоступно")
-        device_pk = d["id"]
+        device_pk = int(d["id"])
     finally:
         c.close()
     with sso._db() as c:
@@ -130,6 +175,44 @@ def _record(g, pub, native_token):
                   "VALUES (?,?,?,?,?) ON CONFLICT(token_hash) DO UPDATE SET device_pk=excluded.device_pk, "
                   "pending_request=NULL, approval_handle=NULL", (g["token_hash"], g["user_id"], pub, device_pk, g["expires_at"]))
     return {"status": "ready", "device_id": device_pk, "user_id": str(g["user_id"]), "expires_at": g["expires_at"]}
+
+
+def _rebind_known_browser(g, pub):
+    """Тот же браузер с новым токеном получает прежнее устройство без одобрения.
+
+    Proof уже подтвердил владение ключом браузера, поэтому привязка по browser_pub
+    безопасна: нового устройства не создаём и одобрение не спрашиваем.
+    """
+    with sso._db() as c:
+        _schema(c)
+        row = c.execute(
+            "SELECT device_pk FROM chat_web_sessions WHERE user_id=? AND browser_pub=? "
+            "AND device_pk IS NOT NULL ORDER BY expires_at DESC LIMIT 1",
+            (g["user_id"], pub),
+        ).fetchone()
+    if not row:
+        return None
+    c = db()
+    try:
+        d = c.execute(
+            "SELECT * FROM user_devices WHERE id=? AND user_id=? AND is_active=1 "
+            "AND is_blocked=0 AND (expires_at=0 OR expires_at>?)",
+            (row["device_pk"], g["user_id"], int(time.time())),
+        ).fetchone()
+    finally:
+        c.close()
+    if not d:
+        return None
+    with sso._db() as c:
+        _schema(c)
+        c.execute(
+            "INSERT INTO chat_web_sessions (token_hash,user_id,browser_pub,device_pk,expires_at) "
+            "VALUES (?,?,?,?,?) ON CONFLICT(token_hash) DO UPDATE SET device_pk=excluded.device_pk, "
+            "browser_pub=excluded.browser_pub, pending_request=NULL, approval_handle=NULL",
+            (g["token_hash"], g["user_id"], pub, int(d["id"]), g["expires_at"]),
+        )
+    return {"status": "ready", "device_id": int(d["id"]), "user_id": str(g["user_id"]),
+            "expires_at": g["expires_at"]}
 
 
 @router.post("/session")
@@ -159,6 +242,9 @@ def enroll(body: Enrollment, request: Request):
                     "expires_in": max(0, pending["expires_at"] - int(time.time())), "resumed": True}
         with sso._db() as c:
             c.execute("DELETE FROM chat_web_sessions WHERE token_hash=?", (g["token_hash"],))
+    bound = _rebind_known_browser(g, body.browser_pub)
+    if bound:
+        return bound
     c = db()
     user = c.execute("SELECT * FROM users WHERE id=?", (g["user_id"],)).fetchone()
     if not user:
@@ -169,7 +255,7 @@ def enroll(body: Enrollment, request: Request):
     result = _complete_login(c, dict(user), request.client.host if request.client else "web",
                              did, body.device_name, "web-v2-sso")
     if not result.get("requires_approval"):
-        return _record(g, body.browser_pub, result["token"])
+        return _record(g, body.browser_pub, result.get("device_token") or result["token"])
     handle = secrets.token_urlsafe(32)
     with sso._db() as c:
         _schema(c)

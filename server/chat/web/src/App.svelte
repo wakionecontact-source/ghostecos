@@ -5,12 +5,16 @@
   import Login from './components/Login.svelte';
   import Unlock from './components/Unlock.svelte';
   import { chatApi } from './lib/api/chat';
+  import { setTokenRefresher } from './lib/api/http';
   import { accountFromDevice } from './lib/auth/account';
   import {
     clearSession,
     enroll,
+    ensureDevice,
+    ensureFresh,
     loadSession,
     saveSession,
+    type RefreshPart,
     type WebSession,
   } from './lib/auth/session';
   import { completeLogin, fetchUserInfo } from './lib/auth/sso';
@@ -25,22 +29,49 @@
   let session = $state<WebSession | null>(null);
   let account = $state<AccountKey | null>(null);
   let v2 = $state<V2Keys | null>(null);
-  let pending = $state<{ token: string; username: string; approvalId: string; code?: string } | null>(null);
+  let pending = $state<{
+    token: string;
+    username: string;
+    approvalId: string;
+    code?: string;
+    refresh?: RefreshPart;
+  } | null>(null);
   let loginError = $state('');
+  // Пароль из сейфа GhostID живёт только в памяти вкладки.
+  let vaultPassword = $state('');
 
   const CALLBACK_PATH = '/v2/chat/sso/callback';
 
   onMount(() => {
     applyPrefs(loadPrefs());
+    setTokenRefresher(refreshSessionToken);
     void boot();
   });
+
+  /** Обновляет токен после 401: сессия GhostID живёт дольше токена сервиса. */
+  async function refreshSessionToken(stale: string): Promise<string | null> {
+    if (!session || session.token !== stale) return null;
+    const next = await ensureFresh({ ...session, expiresAt: 0 });
+    if (!next) {
+      clearSession();
+      session = null;
+      stage = 'login';
+      return null;
+    }
+    session = next;
+    const bound = await ensureDevice(next);
+    session = bound;
+    saveSession(bound);
+    return bound.token;
+  }
 
   async function boot() {
     if (location.pathname.replace(/\/$/, '') === CALLBACK_PATH) {
       try {
         const sso = await completeLogin(new URLSearchParams(location.search));
+        if (sso.password) vaultPassword = sso.password;
         const user = await fetchUserInfo(sso.token);
-        const result = await enroll(sso.token, user.username);
+        const result = await enroll(sso.token, user.username, sso);
         history.replaceState({}, '', '/v2/chat');
         if ('deviceId' in result) {
           await acceptSession(result);
@@ -50,6 +81,7 @@
             username: user.username,
             approvalId: result.approvalId,
             code: result.code,
+            refresh: sso,
           };
           stage = 'approval';
         }
@@ -62,10 +94,15 @@
 
     const saved = loadSession();
     if (saved) {
-      await acceptSession(saved, false);
-    } else {
-      stage = 'login';
+      // Токен мог истечь, пока вкладка была закрыта — продлеваем молча.
+      const fresh = await ensureFresh(saved);
+      if (fresh) {
+        // Токен после refresh сервер не связывает с устройством — привязываем заново.
+        await acceptSession(await ensureDevice(fresh));
+        return;
+      }
     }
+    stage = 'login';
   }
 
   async function acceptSession(value: WebSession, persist = true) {
@@ -129,6 +166,7 @@
     username={pending.username}
     approvalId={pending.approvalId}
     code={pending.code}
+    refresh={pending.refresh}
     onready={(value) => void acceptSession(value)}
     oncancel={cancelApproval}
   />
@@ -136,6 +174,7 @@
   <Unlock
     api={chatApi(session.token)}
     username={session.username}
+    initialPassword={vaultPassword}
     onready={unlocked}
     onlogout={logout}
   />
