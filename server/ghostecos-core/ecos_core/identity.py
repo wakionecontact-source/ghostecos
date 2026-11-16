@@ -2,6 +2,7 @@
 
 The API contract and existing SQLite schema are kept unchanged during the migration.
 """
+import json
 import os
 import sqlite3
 import time
@@ -46,7 +47,16 @@ def _sso_session_user(token: str) -> Optional[dict]:
         return None
     if not row:
         return None
-    scopes = {item for item in str(row["scopes"] or "").split() if item}
+    # v2 хранит scopes JSON-массивом, замороженный SSO — строкой через пробел.
+    raw = str(row["scopes"] or "")
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, list):
+        scopes = {str(item) for item in parsed if str(item).strip()}
+    else:
+        scopes = {item for item in raw.split() if item}
     if not scopes & {"identity", "profile", "chat"}:
         return None
     user_id = int(row["user_id"] or 0)
