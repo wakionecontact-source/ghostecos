@@ -94,14 +94,64 @@ svg { display: block; width: 100%; height: 100%; }
 
 /* ── Баннер и аватар ────────────────────────────── */
 
+@property --gs-banner-notch-radius {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 72px;
+}
 .banner {
   position: relative;
   width: 100%;
-  height: clamp(96px, 25vw, 120px);
+  height: clamp(88px, 24.5vw, 110px);
+  flex: none;
   overflow: hidden;
   border-radius: 999px;
-  background: linear-gradient(120deg, #2b1b45, #141018 72%);
+  background: linear-gradient(120deg, #301754, #171026 72%);
+  --gs-banner-notch-radius: 72px;
+  --gs-banner-notch-duration: 750ms;
+  -webkit-mask-image: radial-gradient(circle var(--gs-banner-notch-radius) at 50% 100%, transparent 0, transparent calc(var(--gs-banner-notch-radius) - 1px), #000 var(--gs-banner-notch-radius));
+  mask-image: radial-gradient(circle var(--gs-banner-notch-radius) at 50% 100%, transparent 0, transparent calc(var(--gs-banner-notch-radius) - 1px), #000 var(--gs-banner-notch-radius));
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  transition: --gs-banner-notch-radius var(--gs-banner-notch-duration) cubic-bezier(.62, .02, .92, .42);
 }
+.banner.gs-banner-mode-media {
+  z-index: 2;
+  background-image: none !important;
+}
+.banner.gs-banner-notch-open {
+  --gs-banner-notch-radius: 0px;
+  z-index: 5;
+}
+.banner .gs-banner-media {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+.banner.gs-banner-media-loaded .gs-banner-media { opacity: 1; }
+.banner.gs-banner-media-loaded .banner-image { display: none !important; }
+.banner .gs-banner-media-shade {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: #000;
+  pointer-events: none;
+}
+.gs-banner-avatar-gradient {
+  position: absolute;
+  height: 58px;
+  z-index: 6;
+  pointer-events: none;
+  background: linear-gradient(to bottom, var(--bg) 0%, var(--bg) 8%, color-mix(in srgb, var(--bg) 72%, transparent) 48%, transparent 100%);
+  opacity: 0;
+  transition: opacity 180ms ease-out;
+}
+.gs-banner-avatar-gradient.is-visible { opacity: 1; }
 
 .banner-image {
   position: absolute;
@@ -127,15 +177,22 @@ svg { display: block; width: 100%; height: 100%; }
   align-self: center;
   display: grid;
   place-items: center;
+  box-sizing: border-box;
   width: 110px;
   height: 110px;
-  margin: -55px 0 0;
+  margin: -70px 0 29px;
   overflow: hidden;
+  border: 0;
   border-radius: 50%;
-  background: var(--surface-2) center/cover no-repeat;
+  background: var(--surface-2);
   color: var(--primary);
   font-size: 34px;
   font-weight: 650;
+}
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .avatar.is-clickable { cursor: pointer; }
@@ -145,7 +202,6 @@ svg { display: block; width: 100%; height: 100%; }
 .identity {
   width: 100%;
   min-width: 0;
-  margin-top: 10px;
 }
 
 .name-row {
@@ -771,4 +827,78 @@ svg { display: block; width: 100%; height: 100%; }
   .content { padding-top: 26px; }
   .modal { align-items: center; }
   .modal-card::before { display: none; }
+}
+
+
+/* ── Баннер-медиа: слой затемнения над вырезом ──── */
+
+.banner.gs-banner-mode-media::after { z-index: 3; }
+.gs-media-banner-status[hidden] { display: none !important; }
+
+.banner.gs-banner-mode-media:not(.gs-banner-media-loaded) {
+  background-image: var(--gs-profile-banner-gradient, linear-gradient(120deg, #301754, #171026 72%)) !important;
+}
+
+/* ── Просмотр аватарки ──────────────────────────── */
+
+.av-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, .92);
+  backdrop-filter: blur(10px);
+  cursor: zoom-out;
+}
+
+.av-lightbox.is-open { display: flex; }
+
+.av-lb-img {
+  max-width: 92vw;
+  max-height: 85vh;
+  border-radius: 12px;
+  cursor: default;
+}
+
+.av-lb-close,
+.av-lb-edit {
+  position: absolute;
+  top: 18px;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .15);
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.av-lb-close { right: 18px; }
+.av-lb-edit { right: 70px; font-size: 15px; }
+.av-lb-edit[hidden] { display: none !important; }
+
+.av-lb-title {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.gs-media-banner-status {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim, #9aa0aa);
+  font-size: 13px;
+  text-align: center;
+  pointer-events: none;
 }

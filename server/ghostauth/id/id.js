@@ -21,6 +21,7 @@
   var els = {
     empty: document.querySelector('[data-empty]'),
     active: document.querySelector('[data-active]'),
+    banner: document.querySelector('[data-banner]'),
     bannerImage: document.querySelector('[data-banner-image]'),
     avatar: document.querySelector('[data-avatar]'),
     name: document.querySelector('[data-name]'),
@@ -95,11 +96,366 @@
     return name.charAt(0).toUpperCase() || 'G';
   }
 
-  function paintAvatar(node, profile) {
+  // ── Баннер, аватар, вырез: код из GhostSocial v2 ───
+
+  /** Картинка может прийти строкой или объектом — берём url. */
+  function profileImageSource(value, depth) {
+    if (typeof value === 'string') return value;
+    if (!value || typeof value !== 'object' || (depth || 0) > 3) return '';
+    const candidate = value.url || value.src || value.image_url || value.avatar_url ||
+      value.banner_url || value.background_image || value.image;
+    return typeof candidate === 'string' ? candidate : profileImageSource(candidate, (depth || 0) + 1);
+  }
+
+  function profileSafeUrl(value) {
+    try {
+      const url = new URL(String(value || ''), location.origin);
+      return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : '';
+    } catch (_) { return ''; }
+  }
+
+  function profilePosition(value, fallback) {
+    fallback = fallback || '50% 50%';
+    if (Array.isArray(value) && value.length >= 2) {
+      const raw = value.slice(0, 2).map(Number);
+      const scale = raw.some(number => Math.abs(number) > 1) ? 100 : 1;
+      return raw.map(number => Number.isFinite(number)
+        ? Math.round(Math.min(1, Math.max(0, number / scale)) * 100) + '%'
+        : '50%').join(' ');
+    }
+    if (value && typeof value === 'object' && value.x != null && value.y != null) {
+      return profilePosition([value.x, value.y], fallback);
+    }
+    if (typeof value === 'string' && /^[a-z0-9.% -]{1,40}$/i.test(value.trim())) return value.trim();
+    return fallback;
+  }
+
+  function bannerHex(value, fallback) {
+    const hex = String(value || '').trim().replace(/^#/, '');
+    return /^[0-9a-f]{6}$/i.test(hex) ? '#' + hex.toUpperCase() : fallback;
+  }
+
+  function bannerRgb(hex) {
+    return (hex.slice(1).match(/../g) || ['00', '00', '00']).map(part => parseInt(part, 16)).join(',');
+  }
+
+  /** Градиент баннера по banner_config: solid, linear или lights. */
+  function bannerDesign(rawBanner) {
+    let raw = rawBanner;
+    let config = raw;
+    if (typeof raw === 'string') {
+      try { config = JSON.parse(raw); }
+      catch (_) { config = null; }
+    }
+    const nested = config && typeof config === 'object' ? config : {};
+    const settings = nested.config && typeof nested.config === 'object' ? nested.config : nested;
+    const colors = Array.isArray(settings.colors)
+      ? settings.colors.map(color => bannerHex(color, '')).filter(Boolean) : [];
+    let background = bannerHex(settings.background_color, '#171026');
+    let base = '';
+    const layers = [];
+    const clamp = (value, min, max) => Math.min(max, Math.max(min, Number.isFinite(Number(value)) ? Number(value) : min));
+    const type = String(settings.type || 'solid').toLowerCase();
+    if (type === 'solid' && colors.length) background = colors[0];
+    else if (type === 'linear' && colors.length) {
+      const angle = clamp(settings.angle == null ? 135 : settings.angle, -360, 360);
+      const stops = Array.isArray(settings.stops) ? settings.stops : [];
+      const points = colors.map((color, index) => {
+        const stop = stops[index] != null ? clamp(stops[index], 0, 1) : (colors.length === 1 ? 0 : index / (colors.length - 1));
+        return color + ' ' + Math.round(stop * 100) + '%';
+      });
+      base = 'linear-gradient(' + angle + 'deg, ' + points.join(', ') + ')';
+    } else if (type === 'lights') background = bannerHex(settings.background_color, '#020617');
+    let lights = Array.isArray(settings.lights) ? settings.lights.slice(0, 10) : [];
+    if (type === 'lights' && colors.length) {
+      const hasIndexedLights = lights.some(light => light && light.color_index != null);
+      const edgePoint = (index, count) => {
+        const t = ((index + 0.5) / Math.max(1, count)) * 4;
+        if (t < 1) return [t, 0];
+        if (t < 2) return [1, t - 1];
+        if (t < 3) return [3 - t, 1];
+        return [0, 4 - t];
+      };
+      lights = colors.map((_, index) => {
+        const configured = lights.find(light => light && Number(light.color_index) === index) ||
+          (!hasIndexedLights ? lights[index] : null);
+        if (configured && Array.isArray(configured.position) && configured.position.length >= 2) return configured;
+        return { color_index: index, position: edgePoint(index, colors.length), strength: 0.48 };
+      });
+    }
+    lights.slice(0, 10).forEach((light, fallbackIndex) => {
+      if (!colors.length || !light || !Array.isArray(light.position) || light.position.length < 2) return;
+      const index = Math.trunc(clamp(
+        light.color_index == null ? (type === 'lights' ? fallbackIndex : 0) : light.color_index,
+        0, colors.length - 1
+      ));
+      const rgb = bannerRgb(colors[index]);
+      const x = Math.round(clamp(light.position[0], 0, 1) * 100);
+      const y = Math.round(clamp(light.position[1], 0, 1) * 100);
+      const strength = clamp(light.strength == null ? 0.65 : light.strength, 0, 1);
+      if (strength <= 0) return;
+      const radiusX = 59 + Math.round(strength * 10);
+      const radiusY = 107 + Math.round(strength * 10);
+      layers.push('radial-gradient(ellipse ' + radiusX + '% ' + radiusY + '% at ' + x + '% ' + y +
+        '%, rgba(' + rgb + ', ' + (strength * 0.45).toFixed(3) + ') 0%, transparent 100%)');
+    });
+    if (type !== 'solid' && colors.length && !layers.length && Array.isArray(settings.light)) {
+      const x = Math.round(clamp(settings.light[0], 0, 1) * 100);
+      const y = Math.round(clamp(settings.light[1], 0, 1) * 100);
+      layers.unshift('radial-gradient(ellipse 65% 130% at ' + x + '% ' + y +
+        '%, rgba(' + bannerRgb(colors[0]) + ', .62), transparent 72%)');
+    }
+    if (base) layers.push(base);
+    const image = layers.length
+      ? layers.join(',')
+      : ((colors.length || bannerHex(settings.background_color, ''))
+        ? 'none' : 'linear-gradient(120deg,#301754,#171026 72%)');
+    return { color: background, image: image };
+  }
+
+  /** Красит баннер и ставит картинку-фолбэк, если медиа нет. */
+  function renderBanner(data) {
+    const cover = els.banner;
+    const image = els.bannerImage;
+    if (!cover || !image) return;
+    const raw = data.banner || data.banner_config || data.banner_settings;
+    let rawImage = '';
+    if (typeof raw === 'string' && raw.charAt(0) !== '{') rawImage = raw;
+    const design = bannerDesign(raw);
+    cover.style.backgroundColor = design.color;
+    cover.style.backgroundImage = design.image;
+    cover._gsBannerDesign = design;
+    const source = data.banner_url || data.profile_banner_url || data.banner_image_url || data.cover_url ||
+      profileImageSource(data.banner) || rawImage;
+    const url = profileSafeUrl(source);
+    image.hidden = !url;
+    if (!url) { image.removeAttribute('src'); return; }
+    image.style.objectPosition = profilePosition(
+      data.banner_position || data.banner_focus || data.banner_focus_point
+    );
+    image.onerror = () => { image.hidden = true; image.removeAttribute('src'); };
+    if (image.getAttribute('src') !== url) image.src = url;
+  }
+
+  /** Аватарка: инициал или картинка, как в карточке профиля соцсети. */
+  function setAvatar(element, data, displayName) {
+    if (!element) return '';
+    const source = data.avatar_url || data.profile_avatar_url || data.profile_picture_url || data.avatar;
+    const url = profileSafeUrl(profileImageSource(source));
+    const letter = Array.from(String(displayName || data.username || '?'))[0] || '?';
+    element.replaceChildren();
+    element.textContent = letter.toUpperCase();
+    element.style.background = url ? 'transparent' : '';
+    element.style.cursor = url ? 'pointer' : '';
+    if (!url) return '';
+    const image = document.createElement('img');
+    image.src = url;
+    image.alt = '';
+    image.loading = 'eager';
+    image.decoding = 'async';
+    image.referrerPolicy = 'no-referrer';
+    image.style.objectPosition = profilePosition(data.avatar_position || data.avatar_focus);
+    image.style.width = '100%';
+    image.style.height = '100%';
+    image.style.objectFit = 'cover';
+    image.addEventListener('error', () => {
+      element.replaceChildren();
+      element.textContent = letter.toUpperCase();
+      element.style.background = '';
+      element.style.cursor = '';
+    }, { once: true });
+    element.replaceChildren(image);
+    return url;
+  }
+
+  /** Вырез под аватаркой: клик открывает медиа на месте аватарки. */
+  function bannerNotchController(node) {
+    if (!node || node.dataset.gsNotchController === '1') return;
+    node.dataset.gsNotchController = '1';
+    const card = node.parentElement;
+    let gradient = card && card.querySelector(':scope > .gs-banner-avatar-gradient');
+    if (card && !gradient) {
+      gradient = document.createElement('div');
+      gradient.className = 'gs-banner-avatar-gradient';
+      gradient.setAttribute('aria-hidden', 'true');
+      card.appendChild(gradient);
+    }
+    const positionGradient = () => {
+      if (!gradient || !card) return;
+      gradient.style.top = Math.max(0, node.offsetTop + node.offsetHeight - 1) + 'px';
+      gradient.style.left = node.offsetLeft + 'px';
+      gradient.style.width = node.offsetWidth + 'px';
+    };
+    positionGradient();
+    if (typeof ResizeObserver !== 'undefined' && !node._gsGradientResizeObserver) {
+      node._gsGradientResizeObserver = new ResizeObserver(positionGradient);
+      node._gsGradientResizeObserver.observe(node);
+    }
+    let open = false;
+    let timer = null;
+    let generation = 0;
+    let lastTapAt = 0;
+    const setOpen = (next, duration = 750) => {
+      generation++;
+      if (timer) { clearTimeout(timer); timer = null; }
+      open = !!next;
+      node.style.setProperty('--gs-banner-notch-radius', open ? '0px' : '72px');
+      node.style.setProperty('--gs-banner-notch-duration', duration + 'ms');
+      node.classList.remove('gs-banner-notch-wave');
+      node.classList.toggle('gs-banner-notch-open', open);
+      if (gradient) gradient.classList.toggle('is-visible', open);
+      positionGradient();
+      node.setAttribute('aria-expanded', open ? 'true' : 'false');
+      return generation;
+    };
+    node.addEventListener('click', (event) => {
+      if (!node.classList.contains('gs-banner-media-loaded')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const now = Date.now();
+      if (now - lastTapAt < 90) return;
+      lastTapAt = now;
+      setOpen(!open, 550);
+    });
+    node._gsBannerNotchPlay = () => {
+      const current = setOpen(true, 850);
+      timer = setTimeout(() => {
+        if (current !== generation) return;
+        const next = setOpen(false, 550);
+        timer = setTimeout(() => { if (next === generation) timer = null; }, 700);
+      }, 4050);
+    };
+  }
+
+  /** Медиа-баннер: cover + zoom + ручной сдвиг, ровно как в соцсети. */
+  function renderMediaBanner(data) {
+    const node = els.banner;
+    const fallbackImage = els.bannerImage;
     if (!node) return;
-    var url = safeUrl(profile.avatar_url);
-    node.textContent = url ? '' : initial(profile);
+    const banner = data.media_banner || data.mediaBanner;
+    const rawUrl = banner && banner.url;
+    const url = profileSafeUrl(rawUrl);
+    node.querySelectorAll('.gs-banner-media, .gs-banner-media-shade, .gs-media-banner-status')
+      .forEach(el => el.remove());
+    node.classList.remove('gs-banner-mode-media', 'gs-banner-media-loaded', 'gs-banner-media-error');
+    node.style.setProperty('--gs-banner-notch-radius', '72px');
+    bannerNotchController(node);
+    node.removeAttribute('aria-hidden');
+    if (fallbackImage) fallbackImage.hidden = false;
+    if (!rawUrl) return;
+    if (!url) {
+      node.classList.add('gs-banner-media-error');
+      const status = document.createElement('div');
+      status.className = 'gs-media-banner-status';
+      status.textContent = 'Не удалось загрузить баннер';
+      node.appendChild(status);
+      return;
+    }
+    const type = banner.type === 'video' ? 'video' : 'image';
+    const x = Math.max(0, Math.min(100, Number.isFinite(Number(banner.position_x)) ? Number(banner.position_x) : 50));
+    const y = Math.max(0, Math.min(100, Number.isFinite(Number(banner.position_y)) ? Number(banner.position_y) : 50));
+    const zoom = Math.max(1, Math.min(3, Number(banner.zoom) || 1));
+    const shadeStrength = Math.max(0, Math.min(1, Number(banner.overlay) || 0));
+    const blurPx = Math.max(0, Math.min(16, Number(banner.blur) || 0));
+    const media = document.createElement(type === 'video' ? 'video' : 'img');
+    media.className = 'gs-banner-media';
+    media.alt = '';
+    // object-position не двигает масштабированное медиа — считаем рамку явно.
+    const applyFrame = () => {
+      const bw = node.clientWidth;
+      const bh = node.clientHeight;
+      const iw = media.naturalWidth || media.videoWidth || 0;
+      const ih = media.naturalHeight || media.videoHeight || 0;
+      if (!bw || !bh || !iw || !ih) return;
+      const scale = Math.max(bw / iw, bh / ih) * zoom;
+      const w = iw * scale;
+      const h = ih * scale;
+      const ox = Math.max(0, w - bw);
+      const oy = Math.max(0, h - bh);
+      media.style.inset = 'auto';
+      media.style.maxWidth = 'none';
+      media.style.maxHeight = 'none';
+      media.style.objectFit = 'fill';
+      media.style.transform = 'none';
+      media.style.width = w + 'px';
+      media.style.height = h + 'px';
+      media.style.left = (-(x / 100) * ox) + 'px';
+      media.style.top = (-(y / 100) * oy) + 'px';
+    };
+    if (!node._gsBannerFrameObserver && typeof ResizeObserver === 'function') {
+      node._gsBannerFrameObserver = new ResizeObserver(() => applyFrame());
+      node._gsBannerFrameObserver.observe(node);
+    }
+    if (blurPx > 0) media.style.filter = 'blur(' + blurPx + 'px)';
+    if (type === 'video') {
+      media.autoplay = true;
+      media.loop = true;
+      media.muted = true;
+      media.playsInline = true;
+      media.preload = 'auto';
+    }
+    const status = document.createElement('div');
+    status.className = 'gs-media-banner-status';
+    status.textContent = '';
+    status.hidden = true;
+    node.append(media);
+    if (shadeStrength > 0) {
+      const shade = document.createElement('div');
+      shade.className = 'gs-banner-media-shade';
+      shade.style.opacity = String(shadeStrength);
+      node.append(shade);
+    }
+    const loaded = () => {
+      applyFrame();
+      node.classList.add('gs-banner-mode-media', 'gs-banner-media-loaded');
+      node.classList.remove('gs-banner-media-error');
+      if (fallbackImage) fallbackImage.hidden = true;
+      node.style.backgroundImage = 'none';
+      status.remove();
+      node.style.setProperty('--gs-banner-notch-radius', '72px');
+      requestAnimationFrame(() => {
+        if (typeof node._gsBannerNotchPlay === 'function') node._gsBannerNotchPlay();
+      });
+    };
+    const failed = () => {
+      media.remove();
+      node.classList.remove('gs-banner-mode-media', 'gs-banner-media-loaded');
+      node.classList.add('gs-banner-media-error');
+      if (fallbackImage) fallbackImage.hidden = false;
+      status.remove();
+    };
+    media.addEventListener(type === 'video' ? 'loadeddata' : 'load', loaded, { once: true });
+    media.addEventListener('error', failed, { once: true });
+    media.src = url;
+    applyFrame();
+    if (type === 'video') media.load();
+    if (type === 'image' && media.complete && media.naturalWidth > 0) loaded();
+  }
+
+  /** Баннер профиля: сначала градиент, потом слой медиа поверх. */
+  function paintBanner(details) {
+    renderBanner(details);
+    try {
+      renderMediaBanner(details);
+    } catch (bannerError) {
+      console.error('[GhostID] Баннер не переключился на медиа:', bannerError);
+      if (els.banner) {
+        els.banner.classList.remove('gs-banner-mode-media', 'gs-banner-media-loaded');
+        els.banner.removeAttribute('aria-hidden');
+      }
+    }
+  }
+
+  /** Карточка профиля: аватарка-картинка, у строк списка — фоном. */
+  function paintAvatar(node, profile, asImage) {
+    if (!node) return '';
+    const data = profile || {};
+    if (asImage) return setAvatar(node, data, data.display_name || data.username);
+    const url = profileSafeUrl(profileImageSource(data.avatar_url));
+    node.replaceChildren();
+    node.textContent = url ? '' : initial(data);
     node.style.backgroundImage = url ? 'url("' + url.replace(/"/g, '%22') + '")' : '';
+    return url;
   }
 
   /** Дата регистрации приходит в UTC — показываем по Москве, как в соцсети. */
@@ -217,70 +573,57 @@
       }
     };
   }
-
-  // ── Баннер и плеер ───────────────────────────────
-
-  function paintBanner(details) {
-    var media = details.mediaBanner && details.mediaBanner.url ? details.mediaBanner.url : '';
-    var src = safeUrl(media);
-    if (!els.bannerImage) return;
-    if (!src) {
-      els.bannerImage.hidden = true;
-      els.bannerImage.removeAttribute('src');
-      return;
+  /** Просмотр аватарки на весь экран, как в соцсети. */
+  function openAvatarLightbox(url, title, editable) {
+    let box = document.getElementById('profAvLb');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'profAvLb';
+      box.className = 'av-lightbox';
+      box.innerHTML =
+        '<button type="button" class="av-lb-close" aria-label="Закрыть">×</button>' +
+        '<button type="button" class="av-lb-edit" aria-label="Сменить фото" title="Сменить">◉</button>' +
+        '<img class="av-lb-img" alt="">' +
+        '<div class="av-lb-title"></div>';
+      box.addEventListener('click', (event) => { if (event.target === box) closeAvatarLightbox(); });
+      box.querySelector('.av-lb-close').addEventListener('click', closeAvatarLightbox);
+      box.querySelector('.av-lb-img').addEventListener('click', (event) => event.stopPropagation());
+      box.querySelector('.av-lb-edit').addEventListener('click', (event) => {
+        event.stopPropagation();
+        closeAvatarLightbox();
+        const entry = activeEntry();
+        if (entry) openEditor(entry);
+      });
+      document.body.appendChild(box);
     }
-    els.bannerImage.onerror = function () { els.bannerImage.hidden = true; };
-    els.bannerImage.src = src;
-    els.bannerImage.hidden = false;
+    box.querySelector('.av-lb-img').src = url;
+    box.querySelector('.av-lb-title').textContent = title || '';
+    box.querySelector('.av-lb-edit').hidden = !editable;
+    box.classList.add('is-open');
   }
 
-  /** Цвет из #rgb/#rrggbb в «r, g, b» для rgba(). */
-  function hexRgb(raw) {
-    var hex = String(raw || '').trim().replace('#', '');
-    if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
-    if (!/^[0-9a-f]{6}$/i.test(hex)) return '255, 255, 255';
-    return parseInt(hex.slice(0, 2), 16) + ', ' +
-      parseInt(hex.slice(2, 4), 16) + ', ' +
-      parseInt(hex.slice(4, 6), 16);
-  }
-
-  /** Фон баннера: свечения из banner_config, иначе простой градиент. */
-  function bannerBackground(banner) {
-    var colors = banner && Array.isArray(banner.colors) ? banner.colors : [];
-    var bg = banner && banner.background_color ? String(banner.background_color) : '#141018';
-    var lights = banner && Array.isArray(banner.lights) ? banner.lights : [];
-    var layers = [];
-    for (var i = 0; i < lights.length && i < 6; i++) {
-      var light = lights[i] || {};
-      var color = colors[Number(light.color_index) || 0] || '#b39af4';
-      var pos = Array.isArray(light.position) ? light.position : [0.5, 0.5];
-      var x = Math.max(0, Math.min(1, Number(pos[0]) || 0)) * 100;
-      var y = Math.max(0, Math.min(1, Number(pos[1]) || 0)) * 100;
-      var strength = Math.max(0.15, Math.min(1, Number(light.strength) || 0.6));
-      var rgb = hexRgb(color);
-      layers.push('radial-gradient(circle at ' + x.toFixed(1) + '% ' + y.toFixed(1) + '%, rgba(' +
-        rgb + ', ' + (strength * 0.8).toFixed(2) + ') 0%, rgba(' + rgb + ', 0) 58%)');
-    }
-    layers.push('linear-gradient(135deg, ' + bg + ', ' + bg + ')');
-    return layers.join(', ');
+  function closeAvatarLightbox() {
+    const box = document.getElementById('profAvLb');
+    if (box) box.classList.remove('is-open');
   }
 
   /** Фон строки аккаунта: своё медиа, иначе свой градиент баннера. */
   function accountBackground(entry) {
-    var details = state.details[entry.profile.id] || {};
-    var media = details.mediaBanner && details.mediaBanner.url ? safeUrl(details.mediaBanner.url) : '';
+    const details = state.details[entry.profile.id] || {};
+    const media = details.mediaBanner && details.mediaBanner.url
+      ? profileSafeUrl(details.mediaBanner.url) : '';
     if (media) {
       return 'linear-gradient(180deg, rgba(17, 17, 19, .5), rgba(17, 17, 19, .74)), url("' +
         media.replace(/"/g, '%22') + '")';
     }
-    return bannerBackground(details.banner);
+    return bannerDesign(details.banner).image;
   }
 
   function paintMusicBack(details) {
     if (!els.music) return;
     els.music.style.backgroundImage =
       'linear-gradient(180deg, rgba(17, 17, 19, .3), rgba(17, 17, 19, .55)), ' +
-      bannerBackground(details.banner);
+      bannerDesign(details.banner).image;
   }
 
   function stopMusic() {
@@ -445,7 +788,7 @@
     var details = state.details[profile.id] || {};
     els.active.hidden = false;
 
-    paintAvatar(els.avatar, profile);
+    paintAvatar(els.avatar, profile, true);
     paintBanner(details);
     paintMusicBack(details);
     els.name.textContent = profile.display_name || ('@' + (profile.username || 'ghost'));
@@ -846,7 +1189,15 @@
     els.avatar.classList.add('is-clickable');
     els.avatar.addEventListener('click', function () {
       var entry = activeEntry();
-      if (entry) openEditor(entry);
+      if (!entry) return;
+      var details = state.details[entry.profile.id] || {};
+      if (details.expired) return;
+      var src = safeUrl(entry.profile.avatar_url);
+      if (src) {
+        openAvatarLightbox(src, entry.profile.display_name || ('@' + entry.profile.username), true);
+      } else {
+        openEditor(entry);
+      }
     });
   }
   if (els.editActive) {
