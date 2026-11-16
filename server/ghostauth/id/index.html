@@ -10,9 +10,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/auth/id/id.css?v=20261116-13">
+  <link rel="stylesheet" href="/auth/id/id.css?v=20261116-14">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <script>if (window.innerWidth >= 900) document.documentElement.classList.add("gs-pc");</script>
 </head>
-<body>
+<body class="ghostsocial-v2 gs-v2-ready">
   <header class="topbar">
     <a class="brand" href="/home" aria-label="GhostEcos">
       <img class="brand-mark" src="/favicon.png" alt="" width="24" height="24">
@@ -28,64 +30,58 @@
       <a class="btn primary" href="/v2/auth?return=%2Fid">Войти в GhostID</a>
     </section>
 
-    <section class="profile-card" data-active hidden>
-      <div class="banner" data-banner>
-        <img class="banner-image" data-banner-image alt="" decoding="async" hidden>
-        <audio data-music-audio preload="none" hidden></audio>
-      </div>
-      <div class="avatar" data-avatar aria-hidden="true">G</div>
+        <div class="profile-card gs-profile-card" data-active hidden>
+      <div class="gs-profile-banner" id="profBanner" aria-hidden="true"><img id="profBannerImage" class="gs-profile-banner-image" alt="" loading="eager" decoding="async" hidden></div>
+      <div class="prof-av" id="profAv" style="cursor:pointer;" onclick="onProfAvClick(event)">?</div>
+      <div id="profStatus" class="daily-status gs-profile-status" role="note" aria-label="Статус" hidden><span class="gs-profile-status-value"></span></div>
+      <input type="file" id="profAvFile" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="onProfAvFileChosen(this)">
+      <div class="gs-profile-body">
+        <div class="gs-profile-identity">
+          <div class="gs-profile-name-row">
+            <div class="prof-name" id="profName">—</div>
+            <button id="profAvEditBtn" type="button" title="Редактировать профиль" aria-label="Редактировать профиль" style="width:28px;height:28px;border-radius:50%;border:0;background:transparent;color:#a855f7;cursor:pointer;display:none;align-items:center;justify-content:center;padding:0;font-size:12px;" onclick="openEditProfile()"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+            <button id="profAccountsBtn" type="button" title="Мои аккаунты" aria-label="Мои аккаунты" aria-haspopup="true" aria-expanded="false" onclick="gsAccountsToggle(event)"><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button>
+            <div class="gs-accounts-menu" id="gsAccountsMenu" hidden>
+              <div class="gs-accounts-menu-head"><span>Аккаунты</span><span id="gsAccountsCount"></span></div>
+              <div class="gs-accounts-list" id="gsAccountsList" role="menu"></div>
+              <button type="button" class="gs-accounts-menu-add" onclick="gsAccountsAddAccount()"><i class="fa-solid fa-plus" aria-hidden="true"></i><span>Добавить аккаунт</span></button>
+            </div>
 
-      <div class="identity">
-        <div class="name-row">
-          <h1 class="name" data-name>—</h1>
-          <span class="verified" data-verified hidden title="Подтверждённый аккаунт" aria-label="Подтверждённый аккаунт">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 14.6 5l3.6-.3.8 3.5 3 2-1.6 3.2 1 3.5-3.3 1.6-1.9 3-3.4-.9-3.4.9-1.9-3L4.2 17l1-3.5L3.6 10l3-2 .8-3.5L11 4.8 12 2.5Z" fill="currentColor"/><path d="M8.6 12.2 11 14.6l4.5-4.9" fill="none" stroke="#111113" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </span>
-          <button class="icon-action" type="button" data-edit-active title="Изменить профиль" aria-label="Изменить профиль">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4Zm11.5-14.5 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
+          </div>
+          <div class="gs-profile-badges" id="profBadges" hidden></div>
+          <div class="prof-username" id="profUser">—</div>
         </div>
-        <p class="handle" data-handle></p>
+        <div class="stats-row gs-profile-stats">
+          <div class="stat-box"><div class="stat-val" id="sFollowing">0</div><div class="stat-lbl">Подписки</div></div>
+          <div class="stat-box"><div class="stat-val" id="sFollowers">0</div><div class="stat-lbl">Подписчики</div><small class="gs-profile-stat-today" id="profFollowersToday" hidden></small></div>
+          <div class="stat-box"><div class="stat-val" id="sReceived">0</div><div class="stat-lbl">Лайки</div></div>
+          <div class="stat-box gs-profile-hidden-count" aria-hidden="true"><div class="stat-val" id="sPosts">0</div><div class="stat-lbl">Постов</div></div>
+        </div>
+        <div class="gs-profile-bio" id="profBio" hidden></div>
+        <div class="gs-profile-created" id="profCreated" hidden><i class="fa-solid fa-calendar-day gs-profile-created-icon" aria-hidden="true"></i><span id="profCreatedText"></span></div>
+        <div class="gs-profile-music" id="profMusic" hidden role="group" aria-label="Музыка профиля">
+          <button type="button" class="gs-profile-music-info" id="profMusicListBtn" aria-label="Открыть список музыки профиля" aria-haspopup="dialog">
+            <img class="gs-profile-music-cover" id="profMusicCover" alt="" loading="lazy" decoding="async" hidden>
+            <span class="gs-profile-music-placeholder" aria-hidden="true"><i class="fa-solid fa-music"></i></span>
+            <span class="gs-profile-music-copy"><strong id="profMusicTitle"></strong><small id="profMusicArtist" hidden></small></span>
+          </button>
+          <button type="button" class="gs-profile-music-play" id="profMusicPlay" aria-label="Включить музыку профиля" aria-pressed="false"><i class="fa-solid fa-play" data-music-icon aria-hidden="true"></i></button>
+        </div>
+        <div class="gs-profile-metadata" aria-hidden="true">
+          <div class="gs-profile-field gs-profile-user-meta"><span class="gs-profile-field-icon" aria-hidden="true">@</span><span class="gs-profile-field-copy"><strong id="profUserMeta"></strong><small>Имя пользователя</small></span></div>
+          <div class="gs-profile-field gs-profile-id" id="profId" hidden><span class="gs-profile-field-icon" aria-hidden="true">#</span><span class="gs-profile-field-copy"><strong id="profIdValue"></strong><small>ID пользователя</small></span></div>
+          <div class="gs-profile-divider" aria-hidden="true"></div>
+        </div>
+        <div id="profReputation" class="rep-badge" style="display:none;"></div>
+        <button type="button" id="profStatusEdit" class="gs-profile-status-edit" hidden onclick="openStatusModal()">Что у вас нового? Добавить или изменить статус</button>
+
       </div>
-
-      <div class="stats">
-        <div class="stat"><div class="stat-val" data-stat-following>0</div><div class="stat-lbl">Подписки</div></div>
-        <div class="stat"><div class="stat-val" data-stat-followers>0</div><div class="stat-lbl">Подписчики</div></div>
-        <div class="stat"><div class="stat-val" data-stat-likes>0</div><div class="stat-lbl">Лайки</div></div>
-      </div>
-
-      <p class="bio" data-about hidden></p>
-      <p class="joined" data-joined hidden>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 3v4M16 3v4M3.5 10h17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-        <span data-joined-text></span>
-      </p>
-
-      <div class="music" data-music hidden role="group" aria-label="Музыка профиля">
-        <button class="music-info" type="button" data-music-open aria-haspopup="dialog" aria-label="Открыть список музыки профиля">
-          <span class="music-cover" data-music-cover hidden aria-hidden="true"></span>
-          <span class="music-copy">
-            <strong data-music-title></strong>
-            <small data-music-artist hidden></small>
-          </span>
-        </button>
-        <span class="music-time" data-music-time>0:00</span>
-        <button class="music-play" type="button" data-music-play aria-pressed="false" aria-label="Включить музыку профиля">
-          <svg class="ic-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10-6.5-10-6.5Z" fill="currentColor"/></svg>
-          <svg class="ic-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="5" width="3.6" height="14" rx="1.2" fill="currentColor"/><rect x="13.4" y="5" width="3.6" height="14" rx="1.2" fill="currentColor"/></svg>
-        </button>
-        <span class="music-progress" data-music-progress aria-hidden="true"><span data-music-fill></span></span>
-      </div>
-
-      <p class="id-line">
-        <span data-active-id></span>
-        <span class="balance" data-active-balance hidden></span>
-      </p>
-
-      <div class="profile-actions">
-        <a class="btn primary" href="/v2/social">Открыть в GhostSocial</a>
-        <button class="btn ghost" type="button" data-logout-active>Выйти на устройстве</button>
-      </div>
-    </section>
+    </div>
+    <div class="profile-actions">
+      <span class="balance" data-active-balance hidden></span>
+      <button class="btn ghost" type="button" data-logout-active>Выйти</button>
+    </div>
+    <audio data-music-audio preload="none" hidden></audio>
 
     <section class="accounts" data-list-wrap hidden>
       <header class="accounts-head">
@@ -148,6 +144,6 @@
   </div>
 
   <script src="/auth/ghostid-accounts.js?v=20261114-accounts-10" defer></script>
-  <script src="/auth/id/id.js?v=20261116-11" defer></script>
+  <script src="/auth/id/id.js?v=20261116-14" defer></script>
 </body>
 </html>

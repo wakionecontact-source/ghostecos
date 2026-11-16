@@ -1,20 +1,1039 @@
+/* ══ Тема: дословно из ghostsocial-v2-ui.css ══ */
+
+:root {
+  color-scheme: dark;
+  --bg: #111113; --surface: #1b1b1f; --surface2: #242429;
+  --text: #f1f1f4; --sub: #9b9ba5; --muted: #777782;
+  --primary: #b39af4; --primary2: #b39af4; --accent: #b39af4;
+  --border: #28282e; --border-strong: #3a3a43;
+  --red: #f27889; --green: #82cfa7;
+  --nav-h: calc(48px + env(safe-area-inset-bottom, 0px));
+  --head-h: calc(56px + env(safe-area-inset-top, 0px));
+  --feed-h: 71px; --content-w: 640px;
+}
+
+html { min-height: 100%; scroll-padding-top: calc(var(--head-h) + var(--feed-h) + 12px); }
+
+body.ghostsocial-v2 {
+  margin: 0; min-height: 100vh; min-height: 100dvh;
+  background: var(--bg); color: var(--text);
+  font: 14px/1.5 Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased; overflow-x: clip;
+}
+
+:root { --gs-ease: cubic-bezier(.2,.8,.2,1); --gs-fast: 160ms; --gs-move: 240ms; }
+
+/* ══ Карточка профиля: дословно из ghostsocial-v2-ui.css ══ */
+
+.post-av,.user-card-av,.notif-av,.comment-av,.share-contact-av,.gsm-av,.prof-av { display: grid; place-items: center; flex-shrink: 0; overflow: hidden; border-radius: 50%; background: var(--surface2); color: var(--primary); font-weight: 600; }
+
+.post-av img,.prof-av img,.user-card-av img,.notif-av img { width: 100%; height: 100%; object-fit: cover; }
+
+.user-badges { display: inline-flex; align-items: center; gap: 3px; margin-left: 4px; font-size: 10px; color: var(--primary); }
+
+.ub-verified { display: inline-grid; place-items: center; width: 14px; height: 14px; border-radius: 50%; background: var(--primary); color: var(--bg); font-size: 8px; }
+
+.prof-av { width: 82px; height: 82px; font-size: 26px; margin-bottom: 5px; }
+
+.prof-name { font-size: 21px; font-weight: 650; letter-spacing: -.5px; }
+
+.prof-username { color: var(--sub); font-size: 13px; }
+
+.daily-status { font-size: 13px; color: var(--sub); }
+
+.rep-badge { font-size: 11px; color: var(--sub); }
+
+.stats-row { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); width: 100%; margin: 12px 0; }
+
+.stat-box { text-align: center; min-width: 0; padding: 4px; }
+
+.stat-val { font-size: 17px; font-weight: 600; }
+
+.stat-lbl { font-size: 10px; color: var(--sub); }
+
+body.ghostsocial-v2 .gs-profile-card.gs-loading-mask { min-height: 0; padding: 0; gap: 0; }
+
+body.ghostsocial-v2 .gs-profile-card.gs-loading-mask > :not([data-gs-mask]) { display: none !important; }
+
+body.ghostsocial-v2 .gs-profile-card.gs-loading-mask > .gs-loading-mask-content {
+  position: relative;
+  inset: auto;
+  align-items: flex-start;
+}
+
+body.ghostsocial-v2 .gs-profile-card.gs-content-reveal { animation-name: gs-profile-content-arrive; }
+
+a,[role="button"],summary,.post-av,.prof-av,.user-card,.notif-card,.poll-option,.react-pill,.com-react,.emoji-btn,.mskc-fdot,.msk-play-overlay,.mskc-vslider-thumb {
+  transition: color var(--gs-fast),background-color var(--gs-fast),border-color var(--gs-fast),opacity var(--gs-fast),scale var(--gs-fast),translate var(--gs-move) var(--gs-ease);
+}
+
+@media (hover:hover) {
+.post-av:hover,.prof-av:hover,a[role="button"]:hover,summary:hover { opacity: .84; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+.gs-media-placeholder,a,[role="button"],summary,.post-av,.prof-av,.user-card,.notif-card,.poll-option,.react-pill,.com-react,.emoji-btn,.mskc-fdot,.msk-play-overlay,.mskc-vslider-thumb { transition: none !important; }
+}
+
+body.ghostsocial-v2 .gs-profile-banner {
+  position: relative;
+  width: calc(100% + 32px);
+  height: clamp(118px, 28vw, 152px);
+  flex: none;
+  overflow: hidden;
+  margin: 0 -16px 0;
+  border-radius: 20px 20px 15px 15px;
+  background: linear-gradient(120deg, #301754, #171026 72%);
+}
+
+body.ghostsocial-v2 .gs-profile-banner::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(0deg, rgba(19,13,32,.1), transparent 65%);
+  content: "";
+  pointer-events: none;
+}
+
+body.ghostsocial-v2 .gs-profile-banner-image {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+body.ghostsocial-v2 .gs-profile-banner-image[hidden] { display: none !important; }
+
+body.ghostsocial-v2 .gs-profile-card > .prof-av {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  margin: -43px 0 0;
+  border-radius: 25px;
+}
+
+body.ghostsocial-v2 .gs-profile-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+body.ghostsocial-v2 .gs-profile-name-row .prof-name {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+body.ghostsocial-v2 .gs-profile-name-row .prof-name > .user-badges {
+  flex: 0 0 auto;
+  margin-left: 0;
+  line-height: 1;
+}
+
+body.ghostsocial-v2 .gs-profile-badges {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+}
+
+body.ghostsocial-v2 .gs-profile-badges[hidden],
+body.ghostsocial-v2 .gs-profile-music[hidden],
+body.ghostsocial-v2 .gs-profile-id[hidden],
+body.ghostsocial-v2 .gs-profile-bio[hidden],
+body.ghostsocial-v2 .gs-profile-stat-today[hidden] { display: none !important; }
+
+body.ghostsocial-v2 .gs-profile-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 3px 8px;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 999px;
+  background: rgba(255,255,255,.08);
+  color: #f4edff;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.2;
+}
+
+body.ghostsocial-v2 .gs-profile-badge.prefix { color: #d2b4ff; }
+
+body.ghostsocial-v2 .gs-profile-badge.role { color: #ffd99a; }
+
+body.ghostsocial-v2 .gs-profile-bio {
+  width: 100%;
+  color: #f0eafa;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  text-align: center;
+  white-space: pre-wrap;
+}
+
+body.ghostsocial-v2 .gs-profile-id {
+  width: 100%;
+  color: var(--gs2-muted);
+  font-size: 11px;
+  text-align: left;
+}
+
+body.ghostsocial-v2 .gs-profile-stat-today {
+  display: block;
+  margin-top: 3px;
+  color: #9ee2b8;
+  font-size: 9px;
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+body.ghostsocial-v2 .gs-profile-music {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 38px;
+  padding: 7px 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.2);
+  border-radius: 12px;
+  background: linear-gradient(120deg, #45246f, #231536);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+body.ghostsocial-v2 .gs-profile-music i {
+  flex: none;
+  width: 15px;
+  text-align: center;
+}
+
+body.ghostsocial-v2 .gs-profile-music span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.ghostsocial-v2 .gs-profile-music.is-playing { border-color: rgba(210,180,255,.65); }
+
+body.ghostsocial-v2 .gs-profile-music.is-error { color: #f1a5ae; }
+
+body.ghostsocial-v2 .gs-profile-card > .daily-status,
+body.ghostsocial-v2 .gs-profile-card > .rep-badge { text-align: center; }
+
+body.ghostsocial-v2 .gs-profile-banner {
+  height: clamp(88px, 24.5vw, 110px);
+  border-radius: 999px;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .prof-av {
+  width: 110px;
+  height: 110px;
+  box-sizing: border-box;
+  margin: -70px 0 29px;
+  border: 4px solid #070918;
+  border-radius: 50%;
+}
+
+body.ghostsocial-v2 .gs-profile-music {
+  width: 100%;
+  min-height: 70px;
+  padding: 8px 22px 8px 8px;
+  border-radius: 999px;
+  background-color: #171026;
+  background-image: linear-gradient(120deg, #301754, #171026 72%);
+}
+
+body.ghostsocial-v2 .gs-profile-music-cover,
+body.ghostsocial-v2 .gs-profile-music-placeholder {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  flex: 0 0 54px;
+  overflow: hidden;
+  border-radius: 50%;
+}
+
+body.ghostsocial-v2 .gs-profile-music-cover { object-fit: cover; }
+
+body.ghostsocial-v2 .gs-profile-music-cover[hidden] { display: none !important; }
+
+body.ghostsocial-v2 .gs-profile-music-placeholder {
+  background: rgba(255,255,255,.1);
+  color: rgba(255,255,255,.75);
+}
+
+body.ghostsocial-v2 .gs-profile-music-placeholder[hidden] { display: none !important; }
+
+body.ghostsocial-v2 .gs-profile-music-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  text-align: left;
+}
+
+body.ghostsocial-v2 .gs-profile-music-copy strong {
+  overflow: hidden;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.ghostsocial-v2 .gs-profile-music-copy small {
+  overflow: hidden;
+  color: rgba(255,255,255,.72);
+  font-size: 11px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.ghostsocial-v2 .gs-profile-music-copy small[hidden] { display: none !important; }
+
+body.ghostsocial-v2 .gs-profile-music > [data-music-icon] {
+  width: 18px;
+  margin-left: auto;
+  font-size: 17px;
+}
+
+body.ghostsocial-v2 .gs-profile-banner {
+  -webkit-mask-image: radial-gradient(circle 72px at 50% 100%, transparent 0, transparent 71px, #000 71px);
+  mask-image: radial-gradient(circle 72px at 50% 100%, transparent 0, transparent 71px, #000 71px);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .prof-av {
+  margin: -63px 0 29px;
+  border: 0;
+}
+
+body.ghostsocial-v2 .gs-profile-music {
+  border: 0;
+  box-shadow: none;
+}
+
+body.ghostsocial-v2 .gs-profile-metadata {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(18px, 4.8vw, 28px);
+  width: 100%;
+  margin-top: clamp(28px, 8vw, 62px);
+  text-align: left;
+}
+
+body.ghostsocial-v2 .gs-profile-card:has(> .gs-profile-music[hidden]) .gs-profile-metadata {
+  margin-top: 16px;
+}
+
+body.ghostsocial-v2 .gs-profile-field {
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+body.ghostsocial-v2 .gs-profile-field-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  min-height: 36px;
+  color: #a855f7;
+  font-size: 25px;
+  line-height: 1;
+  text-align: center;
+}
+
+body.ghostsocial-v2 .gs-profile-field-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+body.ghostsocial-v2 .gs-profile-field-copy strong {
+  overflow-wrap: anywhere;
+  color: #f5f3ff;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+body.ghostsocial-v2 .gs-profile-field-copy small {
+  color: var(--gs2-muted, #788096);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+body.ghostsocial-v2 .gs-profile-divider {
+  width: 100%;
+  height: 1px;
+  background: rgba(160, 166, 190, .25);
+}
+
+body.ghostsocial-v2 .gs-profile-id[hidden],
+body.ghostsocial-v2 .gs-profile-status[hidden] { display: none !important; }
+
+body.ghostsocial-v2 .gs-profile-card:has(> .gs-profile-status:not([hidden])) > .prof-av {
+  margin-bottom: 4px;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-profile-status {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  flex: none;
+  box-sizing: border-box;
+  width: fit-content;
+  min-width: 96px;
+  max-width: min(86%, 300px);
+  min-height: 48px;
+  margin: 20px 0 16px;
+  padding: 12px 20px 13px;
+  overflow: visible;
+  border: 1px solid rgba(216,204,233,.85);
+  border-radius: 24px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12), 0 1px 3px rgba(0,0,0,.08);
+  color: #282232;
+  font-size: 15px;
+  font-style: normal;
+  font-weight: 500;
+  line-height: 1.45;
+  letter-spacing: .005em;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  text-align: center;
+  text-wrap: balance;
+  animation: gs-profile-thought-float 5.8s ease-in-out infinite;
+}
+
+body.ghostsocial-v2 .gs-profile-status::before,
+body.ghostsocial-v2 .gs-profile-status::after {
+  content: '';
+  position: absolute;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgba(216,204,233,.85);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 4px rgba(0,0,0,.12);
+  pointer-events: none;
+  animation: gs-profile-thought-dot 3.4s ease-in-out infinite;
+}
+
+body.ghostsocial-v2 .gs-profile-status::before {
+  top: -13px;
+  left: calc(50% - 5px);
+  width: 9px;
+  height: 9px;
+}
+
+body.ghostsocial-v2 .gs-profile-status::after {
+  top: -24px;
+  left: calc(50% + 7px);
+  width: 5px;
+  height: 5px;
+  animation-delay: -.7s;
+}
+
+body.ghostsocial-v2 .gs-profile-status-value {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  transform: none;
+  animation: gs-profile-thought-text .3s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+body.ghostsocial-v2 .gs-profile-card > .gs-profile-status,
+  body.ghostsocial-v2 .gs-profile-status::before,
+  body.ghostsocial-v2 .gs-profile-status::after,
+  body.ghostsocial-v2 .gs-profile-status-value { animation: none; }
+}
+
+body.ghostsocial-v2 .gs-profile-card > .rep-badge {
+  align-self: flex-end;
+  margin: 36px 0 0;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .stats-row { margin-top: 14px; }
+
+body.ghostsocial-v2 .gs-profile-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 20px;
+  width: 100%;
+  min-width: 0;
+}
+
+body.ghostsocial-v2 .gs-profile-identity {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+}
+
+body.ghostsocial-v2 .gs-profile-body .gs-profile-name-row {
+  justify-content: flex-start;
+  gap: 7px;
+  width: 100%;
+}
+
+body.ghostsocial-v2 .gs-profile-body .gs-profile-name-row .prof-name {
+  justify-content: flex-start;
+  color: var(--text);
+  font-size: clamp(22px, 5.8vw, 28px);
+  font-weight: 780;
+  letter-spacing: -.035em;
+  line-height: 1.12;
+  text-align: left;
+}
+
+body.ghostsocial-v2 .gs-profile-body .gs-profile-name-row .user-badges { flex: none; }
+
+body.ghostsocial-v2 .gs-profile-body .prof-username {
+  margin-top: 5px;
+  color: var(--sub);
+  font-size: 14px;
+  line-height: 1.35;
+  text-align: left;
+}
+
+body.ghostsocial-v2 .gs-profile-badges[hidden],
+body.ghostsocial-v2 .gs-profile-bio[hidden],
+body.ghostsocial-v2 .gs-profile-music[hidden],
+body.ghostsocial-v2 .gs-profile-id[hidden],
+body.ghostsocial-v2 .gs-profile-stat-today[hidden] { display: none !important; }
+
+body.ghostsocial-v2 .gs-profile-body > .gs-profile-badges { display: none !important; }
+
+body.ghostsocial-v2 .gs-profile-body > .gs-profile-bio {
+  display: block;
+  width: 100%;
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.48;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+body.ghostsocial-v2 .gs-profile-body > .gs-profile-bio[hidden] { display: none !important; }
+
+body.ghostsocial-v2 .gs-profile-body > .gs-profile-metadata,
+body.ghostsocial-v2 .gs-profile-body > .rep-badge { display: none !important; }
+
+body.ghostsocial-v2 .gs-profile-body > .gs-profile-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
+  margin: 0;
+  gap: 4px;
+}
+
+body.ghostsocial-v2 .gs-profile-stats .stat-box {
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+}
+
+body.ghostsocial-v2 .gs-profile-stats .stat-val {
+  color: var(--text);
+  font-size: clamp(19px, 5vw, 24px);
+  font-weight: 750;
+  line-height: 1.2;
+}
+
+body.ghostsocial-v2 .gs-profile-stats .stat-lbl {
+  margin-top: 2px;
+  color: var(--sub);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+body.ghostsocial-v2 .gs-profile-stats .gs-profile-hidden-count { display: none !important; }
+
+@media (max-width: 380px) {
+body.ghostsocial-v2 .gs-profile-body { gap: 16px; }
+body.ghostsocial-v2 .gs-profile-stats .stat-lbl { font-size: 10px; }
+}
+
+body.ghostsocial-v2 .gs-profile-body { position: relative; }
+
+body.ghostsocial-v2 #screenFullProfile .gs-profile-identity { padding-right: 150px; }
+
+@media (max-width: 420px) {
+body.ghostsocial-v2 #screenFullProfile .gs-profile-identity { padding-right: 140px; }
+}
+
+body.ghostsocial-v2 .gs-profile-card { position: relative; overflow: visible; }
+
+body.ghostsocial-v2 .gs-profile-card > .gs-profile-status {
+  position: absolute;
+  top: calc(clamp(88px, 24.5vw, 110px) + 54px);
+  right: 16px;
+  z-index: 4;
+  align-self: auto;
+  width: fit-content;
+  max-width: min(220px, calc(50% - 70px));
+  min-height: 44px;
+  margin: 0;
+  padding: 10px 14px;
+}
+
+body.ghostsocial-v2 .gs-profile-status::before {
+  top: -11px;
+  left: 18px;
+}
+
+body.ghostsocial-v2 .gs-profile-status::after {
+  top: -21px;
+  left: 6px;
+}
+
+body.ghostsocial-v2 .gs-profile-body .gs-profile-name-row .prof-name > .user-badges {
+  order: -1;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+body.ghostsocial-v2 .post-name .user-badges {
+  margin-left: 0;
+  margin-right: 4px;
+}
+
+body.ghostsocial-v2 .user-badges { gap: 2px; margin-left: 2px; }
+
+body.ghostsocial-v2 .post-name .user-badges {
+  order: -1;
+  margin-left: 0;
+  margin-right: 1px;
+}
+
+body.ghostsocial-v2 .gs-profile-body .gs-profile-name-row .prof-name { gap: 2px; }
+
+body.ghostsocial-v2 .gs-profile-body .gs-profile-name-row .prof-name > .user-badges { margin: 0; }
+
+body.ghostsocial-v2 #screenFullProfile .gs-profile-identity { padding-right: 0 !important; }
+
+body.ghostsocial-v2 #screenProfile > .gs-profile-card > .gs-profile-tools {
+  position: absolute;
+  top: calc(clamp(88px, 24.5vw, 110px) + 54px);
+  left: 16px;
+  right: auto;
+  z-index: 6;
+  width: auto;
+  margin: 0;
+  border: 0;
+  transform-origin: top left;
+}
+
+body.ghostsocial-v2 #screenProfile > .gs-profile-card > .gs-profile-tools[open] {
+  top: calc(clamp(88px, 24.5vw, 110px) + 54px);
+  left: 16px;
+  right: auto;
+  width: min(230px, 80vw);
+  margin: 0;
+}
+
+body.ghostsocial-v2 #mskFeed .msk-info .name > .user-badges {
+  order:0; flex:none; margin:0 3px 0 0;
+}
+
+.gs-reposter-name .user-badges { display: inline-flex; vertical-align: middle; margin-left: 3px; }
+
+body.ghostsocial-v2 .gs-profile-music {
+  gap: 10px;
+  cursor: default;
+}
+
+body.ghostsocial-v2 .gs-profile-music-info {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  gap: 10px;
+  min-width: 0;
+  min-height: 54px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+body.ghostsocial-v2 .gs-profile-music-play {
+  display: grid;
+  place-items: center;
+  flex: 0 0 42px;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255,255,255,.13);
+  color: #fff;
+  cursor: pointer;
+  transition: background-color .16s ease, transform .16s ease;
+}
+
+body.ghostsocial-v2 .gs-profile-music-play:active { transform: scale(.94); }
+
+body.ghostsocial-v2 .gs-profile-music.is-playing .gs-profile-music-play { background: rgba(184,150,255,.38); }
+
+body.ghostsocial-v2 .gs-profile-music-play > [data-music-icon] {
+  width: auto;
+  margin: 0;
+  font-size: 16px;
+}
+
+body.ghostsocial-v2 .gs-profile-music-sheet { padding-bottom: calc(20px + env(safe-area-inset-bottom,0px)); }
+
+body.ghostsocial-v2 .gs-profile-music-count { margin-top: 4px; color: var(--muted); font-size: 12px; }
+
+body.ghostsocial-v2 .gs-profile-music {
+  transition: filter 320ms ease;
+}
+
+body.ghostsocial-v2 .gs-profile-music.is-playing {
+  filter: brightness(1.045);
+}
+
+body.ghostsocial-v2 .gs-profile-music-play {
+  filter: brightness(.88);
+  transition: background-color 320ms ease, color 320ms ease, filter 320ms ease, box-shadow 320ms ease, transform 140ms ease;
+}
+
+body.ghostsocial-v2 .gs-profile-music.is-playing .gs-profile-music-play {
+  filter: brightness(1.24);
+  box-shadow: 0 0 15px rgba(184,150,255,.24);
+}
+
+body.ghostsocial-v2 .gs-profile-music-play > [data-music-icon] {
+  transition: filter 320ms ease, transform 180ms ease;
+}
+
+body.ghostsocial-v2 .gs-profile-music.is-playing .gs-profile-music-play > [data-music-icon] {
+  transform: scale(1.04);
+}
+
+body.ghostsocial-v2 .gs-profile-music { transition: filter 180ms ease; }
+
+body.ghostsocial-v2 .gs-profile-music-play {
+  transition: background-color 180ms ease, color 180ms ease, filter 180ms ease, box-shadow 180ms ease, transform 140ms ease;
+}
+
+body.ghostsocial-v2 .gs-profile-music-play > [data-music-icon] { transition: filter 180ms ease, transform 180ms ease; }
+
+body.ghostsocial-v2 .gs-profile-editor-banner .gs-profile-banner-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+body.ghostsocial-v2 .gs-profile-banner-action {
+  position: absolute;
+  top: 11px;
+  right: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 999px;
+  background: rgba(12,10,18,.62);
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+}
+
+body.ghostsocial-v2 .gs-profile-editor-banner .gs-profile-banner-action:active { transform: scale(.97); }
+
+body.ghostsocial-v2 .gs-profile-banner-action {
+  border: 0;
+}
+
+body.ghostsocial-v2 .gs-profile-banner {
+  width: calc(100% + 12px);
+  margin: 0 -6px 0;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-media-banner {
+  display: block;
+  position: relative;
+  box-sizing: border-box;
+  flex: none;
+  width: calc(100% + 32px);
+  height: clamp(118px, 28vw, 152px);
+  margin: 0 -16px 0;
+  overflow: hidden;
+  border-radius: 20px 20px 15px 15px;
+  background: #171026;
+  isolation: isolate;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-media-banner[hidden] { display: none !important; }
+
+body.ghostsocial-v2 .gs-profile-card > .gs-media-banner img,
+body.ghostsocial-v2 .gs-profile-card > .gs-media-banner video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-media-banner:not(.gs-media-banner-loaded) {
+  position:absolute;
+  z-index:3;
+  top:0;
+  left:-16px;
+  width:calc(100% + 32px);
+  height:clamp(88px, 24.5vw, 110px);
+  margin:0;
+  border-radius:999px;
+  background:#211631;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-media-banner.gs-media-banner-loaded {
+  position:relative;
+  top:auto;
+  left:auto;
+  width:calc(100% + 32px);
+  height:clamp(88px, 24.5vw, 110px);
+  margin:0 -16px 0;
+}
+
+body.ghostsocial-v2 .gs-profile-card { position: relative; }
+
+body.ghostsocial-v2 .gs-profile-card > .gs-media-banner {
+  display: block;
+  position: relative;
+  z-index: 2;
+  top: auto;
+  left: auto;
+  box-sizing: border-box;
+  flex: none;
+  width: calc(100% + 32px);
+  height: clamp(88px, 24.5vw, 110px);
+  margin: 0 -16px 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: transparent;
+  opacity: 1;
+  pointer-events: none;
+  transition: opacity 380ms ease;
+  -webkit-mask-image: radial-gradient(circle 72px at 50% 100%, transparent 0, transparent 71px, #000 71px);
+  mask-image: radial-gradient(circle 72px at 50% 100%, transparent 0, transparent 71px, #000 71px);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-media-banner[hidden] { display: none !important; }
+
+body.ghostsocial-v2 .gs-profile-card > .gs-media-banner.gs-media-banner-loaded { opacity: 1; }
+
+body.ghostsocial-v2 .gs-profile-card > .gs-media-banner img,
+body.ghostsocial-v2 .gs-profile-card > .gs-media-banner video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-profile-banner[hidden] { display:none !important; }
+
+body.ghostsocial-v2 .gs-profile-card > .gs-profile-banner.gs-gradient-banner-covered { opacity: 0; }
+
+body.ghostsocial-v2 .gs-profile-card > .gs-profile-banner { transition: opacity 380ms ease; }
+
+body.ghostsocial-v2 .gs-profile-card > .gs-media-banner { color:#fff; }
+
+body.ghostsocial-v2 .gs-profile-card > .gs-media-banner .gs-media-banner-status {
+  position:absolute; inset:0; z-index:3; display:flex; align-items:center; justify-content:center;
+  padding:12px; box-sizing:border-box; text-align:center; font-size:12px; line-height:1.35;
+  font-weight:600; color:#fff; background:#211631; overflow-wrap:anywhere;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-media-banner.gs-media-banner-error .gs-media-banner-status {
+  background:#421f2b; color:#ffdce4;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-profile-banner.gs-banner-mode-media {
+  background: #171026;
+  background-image: none !important;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-profile-banner .gs-banner-media {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 1;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-profile-banner .gs-media-banner-status {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  box-sizing: border-box;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: #fff;
+  background: #211631;
+  overflow-wrap: anywhere;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-profile-banner.gs-banner-media-loaded .gs-profile-banner-image { display: none !important; }
+
+body.ghostsocial-v2 .gs-profile-card > .gs-profile-banner .gs-banner-media {
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-profile-banner.gs-banner-media-loaded .gs-banner-media {
+  opacity: 1;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-profile-banner.gs-banner-mode-media:not(.gs-banner-media-loaded) {
+  background-image: var(--gs-profile-banner-gradient, linear-gradient(120deg,#301754,#171026 72%)) !important;
+}
+
+@property --gs-banner-notch-radius {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 72px;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-profile-banner.gs-banner-mode-media {
+  z-index: 2;
+  --gs-banner-notch-radius: 72px;
+  --gs-banner-notch-duration: 750ms;
+  -webkit-mask-image: radial-gradient(circle var(--gs-banner-notch-radius) at 50% 100%, transparent 0, transparent calc(var(--gs-banner-notch-radius) - 1px), #000 var(--gs-banner-notch-radius)) !important;
+  mask-image: radial-gradient(circle var(--gs-banner-notch-radius) at 50% 100%, transparent 0, transparent calc(var(--gs-banner-notch-radius) - 1px), #000 var(--gs-banner-notch-radius)) !important;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  transition: --gs-banner-notch-radius var(--gs-banner-notch-duration) cubic-bezier(0.62, 0.02, 0.92, 0.42);
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-profile-banner.gs-banner-mode-media .gs-banner-media {
+  z-index: 2;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-profile-banner.gs-banner-mode-media::after {
+  z-index: 3;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-profile-banner.gs-banner-mode-media.gs-banner-notch-open {
+  --gs-banner-notch-radius: 0px;
+  z-index: 5;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-banner-avatar-gradient {
+  position: absolute;
+  height: 58px;
+  z-index: 6;
+  pointer-events: none;
+  background: linear-gradient(to bottom, var(--bg, #070918) 0%, var(--bg, #070918) 8%, color-mix(in srgb, var(--bg, #070918) 72%, transparent) 48%, transparent 100%);
+  opacity: 0;
+  transition: opacity 180ms ease-out;
+}
+
+body.ghostsocial-v2 .gs-profile-card > .gs-banner-avatar-gradient.is-visible { opacity: 1; }
+
+body.ghostsocial-v2 .gs-profile-card > .gs-banner-avatar-gradient { max-width: 100%; }
+
+body.ghostsocial-v2 .gs-profile-card > .prof-av {
+  position: relative;
+  z-index: 1 !important;
+}
+
+body.ghostsocial-v2 button,
+body.ghostsocial-v2 [role="button"],
+body.ghostsocial-v2 a,
+body.ghostsocial-v2 label,
+body.ghostsocial-v2 summary,
+body.ghostsocial-v2 .prof-av,
+body.ghostsocial-v2 .fp-avatar {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+html.gs-pc body.ghostsocial-v2.gs-v2-ready .gs-profile-card > .gs-profile-banner {
+  height: 160px !important;
+}
+
+html.gs-pc body.ghostsocial-v2.gs-v2-ready .gs-profile-card > .gs-profile-status {
+  top: calc(160px + 54px) !important;
+}
+
+.gs-profile-created{display:inline-flex;align-items:center;justify-content:center;gap:5px;font-size:11.5px;color:var(--muted, #9ca3af);opacity:.85;margin-top:3px;line-height:1.35;text-align:center;word-break:break-word}
+
+body.ghostsocial-v2 .gs-profile-body > .gs-profile-created{justify-content:flex-start;text-align:left;margin-top:4px;font-size:11.5px;padding-left:1px}
+
+.gs-profile-created-icon{font-size:11.5px;opacity:.8}
+
+.gs-profile-created[hidden]{display:none}
+
+.gs-profile-status-edit { width: 100%; min-height: 42px; margin-top: 8px; padding: 11px 14px; border: 1px dashed var(--border-strong); border-radius: 12px; background: transparent; color: var(--sub); font-family: inherit; font-size: 12px; text-align: left; cursor: pointer; transition: color .15s ease, border-color .15s ease; }
+
+.gs-profile-status-edit:hover { border-color: var(--primary); color: var(--primary); }
+
+
+/* ══ Оболочка GhostID ══ */
+
 /* GhostID · /id — кабинет аккаунтов в дизайне GhostSocial v2.
    Тема и тайпскейл повторяют /social/assets/ghostsocial-v2-ui.css. */
 :root {
-  --bg: #111113;
-  --surface: #1b1b1f;
-  --surface-2: #242429;
-  --text: #f2f2f4;
-  --sub: #9a9aa4;
-  --muted: #6f6f78;
-  --border: #28282e;
-  --border-strong: #3a3a43;
-  --primary: #b39af4;
-  --red: #f27889;
-  --green: #82cfa7;
-  --radius: 8px;
-  --content-w: 780px;
-  --banner-image: none;
+  --content-w: 812px;
 }
 
 * { box-sizing: border-box; }
@@ -83,168 +1102,7 @@ svg { display: block; width: 100%; height: 100%; }
   padding: 18px 16px calc(40px + env(safe-area-inset-bottom, 0px));
 }
 
-.profile-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  width: 100%;
-  min-width: 0;
-}
-
-/* ── Баннер и аватар: значения из GhostSocial v2 ── */
-
-@property --gs-banner-notch-radius {
-  syntax: "<length>";
-  inherits: false;
-  initial-value: 72px;
-}
-
-.banner {
-  position: relative;
-  width: calc(100% + 12px);
-  height: clamp(88px, 24.5vw, 110px);
-  flex: none;
-  overflow: hidden;
-  margin: 0 -6px 0;
-  border-radius: 999px;
-  background: linear-gradient(120deg, #301754, #171026 72%);
-  --gs-banner-notch-radius: 72px;
-  --gs-banner-notch-duration: 750ms;
-  -webkit-mask-image: radial-gradient(circle var(--gs-banner-notch-radius) at 50% 100%, transparent 0, transparent calc(var(--gs-banner-notch-radius) - 1px), #000 calc(var(--gs-banner-notch-radius) - 1px));
-  mask-image: radial-gradient(circle var(--gs-banner-notch-radius) at 50% 100%, transparent 0, transparent calc(var(--gs-banner-notch-radius) - 1px), #000 calc(var(--gs-banner-notch-radius) - 1px));
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  transition: --gs-banner-notch-radius var(--gs-banner-notch-duration) cubic-bezier(.62, .02, .92, .42);
-}
-
-/* На компьютере баннер выше — как в соцсети. */
-@media (min-width: 900px) {
-  .banner { height: 160px; }
-}
-
-.banner::after {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(0deg, rgba(19, 13, 32, .1), transparent 65%);
-  content: "";
-  pointer-events: none;
-}
-
-.banner-image {
-  position: absolute;
-  inset: 0;
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.banner-image[hidden] { display: none !important; }
-
-.banner.gs-banner-mode-media {
-  z-index: 2;
-  background-color: #171026;
-  background-image: none !important;
-}
-
-.banner.gs-banner-mode-media:not(.gs-banner-media-loaded) {
-  background-image: var(--gs-profile-banner-gradient, linear-gradient(120deg, #301754, #171026 72%)) !important;
-}
-
-.banner.gs-banner-mode-media::after { z-index: 3; }
-
-.banner.gs-banner-notch-open {
-  --gs-banner-notch-radius: 0px;
-  z-index: 5;
-}
-
-.banner .gs-banner-media {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  opacity: 0;
-  transition: opacity 180ms ease;
-}
-
-.banner.gs-banner-media-loaded .gs-banner-media { opacity: 1; }
-.banner.gs-banner-media-loaded .banner-image { display: none !important; }
-
-.banner .gs-banner-media-shade {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  background: #000;
-  pointer-events: none;
-}
-
-.banner .gs-media-banner-status {
-  position: absolute;
-  inset: 0;
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 12px;
-  box-sizing: border-box;
-  text-align: center;
-  font-size: 13px;
-  line-height: 1.35;
-  font-weight: 600;
-  color: #fff;
-  background: #211631;
-  overflow-wrap: anywhere;
-}
-
-.gs-media-banner-status[hidden] { display: none !important; }
-
-/* Градиент живёт рядом с баннером, а не внутри маски. */
-.gs-banner-avatar-gradient {
-  position: absolute;
-  max-width: 100%;
-  height: 58px;
-  z-index: 6;
-  pointer-events: none;
-  background: linear-gradient(to bottom, var(--bg, #070918) 0%, var(--bg, #070918) 8%, color-mix(in srgb, var(--bg, #070918) 72%, transparent) 48%, transparent 100%);
-  opacity: 0;
-  transition: opacity 180ms ease-out;
-}
-
-.gs-banner-avatar-gradient.is-visible { opacity: 1; }
-
-.avatar {
-  position: relative;
-  z-index: 1 !important;
-  align-self: center;
-  display: grid;
-  place-items: center;
-  box-sizing: border-box;
-  width: 110px;
-  height: 110px;
-  flex: none;
-  margin: -63px 0 29px;
-  overflow: hidden;
-  border: 0;
-  border-radius: 50%;
-  background: var(--surface-2);
-  color: var(--primary);
-  font-size: 26px;
-  font-weight: 600;
-  transition: opacity .12s ease;
-}
-
-.avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.avatar.is-clickable { cursor: pointer; }
-.avatar.is-clickable:hover { opacity: .84; }
+.profile-card { display: flex; flex-direction: column; align-items: center; padding: 26px 16px 20px; gap: 8px; }
 
 /* ── Имя и ник ──────────────────────────────────── */
 
@@ -877,57 +1735,3 @@ svg { display: block; width: 100%; height: 100%; }
   .modal { align-items: center; }
   .modal-card::before { display: none; }
 }
-
-
-/* ── Просмотр аватарки ──────────────────────────── */
-
-.av-lightbox {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, .92);
-  backdrop-filter: blur(10px);
-  cursor: zoom-out;
-}
-
-.av-lightbox.is-open { display: flex; }
-
-.av-lb-img {
-  max-width: 92vw;
-  max-height: 85vh;
-  border-radius: 12px;
-  cursor: default;
-}
-
-.av-lb-close,
-.av-lb-edit {
-  position: absolute;
-  top: 18px;
-  display: grid;
-  place-items: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, .15);
-  color: #fff;
-  font-size: 18px;
-  line-height: 1;
-}
-
-.av-lb-close { right: 18px; }
-.av-lb-edit { right: 70px; font-size: 15px; }
-.av-lb-edit[hidden] { display: none !important; }
-
-.av-lb-title {
-  position: absolute;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  color: #fff;
-  font-size: 15px;
-  font-weight: 600;
-}
-
