@@ -1,11 +1,15 @@
 ﻿<script lang="ts">
   import { onMount, untrack } from 'svelte';
   import ChatView from './ChatView.svelte';
+  import CallOverlay from './CallOverlay.svelte';
+  import RoomView from './RoomView.svelte';
   import ChatsTab from './tabs/ChatsTab.svelte';
   import ContactsTab from './tabs/ContactsTab.svelte';
   import ProfileTab from './tabs/ProfileTab.svelte';
+  import RoomsTab from './tabs/RoomsTab.svelte';
   import SettingsTab from './tabs/SettingsTab.svelte';
   import { fetchMe, type MeProfile } from '../lib/api/me';
+  import type { RoomSummary } from '../lib/api/chat';
   import type { WebSession } from '../lib/auth/session';
   import { ChatStore } from '../lib/chat/store.svelte';
   import type { V2Keys } from '../lib/chat/keys';
@@ -20,10 +24,11 @@
 
   let { session, account, v2, onlogout }: Props = $props();
 
-  type Tab = 'chats' | 'contacts' | 'profile' | 'settings';
+  type Tab = 'chats' | 'rooms' | 'contacts' | 'profile' | 'settings';
 
   let tab = $state<Tab>('chats');
   let peer = $state<string | null>(null);
+  let room = $state<RoomSummary | null>(null);
   let picker = $state(false);
   let me = $state<MeProfile | null>(null);
   let meError = $state('');
@@ -38,6 +43,7 @@
 
   const titles: Record<Tab, string> = {
     chats: 'GhostChat',
+    rooms: 'Группы и каналы',
     contacts: 'Контакты',
     profile: 'Профиль',
     settings: 'Настройки',
@@ -105,6 +111,24 @@
           {/if}
         </div>
       </div>
+    {:else if tab === 'rooms'}
+      <div class="split">
+        <div class="listcol">
+          <RoomsTab {store} onopen={(next) => (room = next)} />
+        </div>
+        <div class="threadpane">
+          {#if room}
+            {#key room.id}
+              <RoomView {store} {room} onclose={() => (room = null)} />
+            {/key}
+          {:else}
+            <div class="pane-empty">
+              <p class="pane-title">Выбери группу</p>
+              <p class="pane-hint">Сообщения в группах и каналах тоже шифруются на устройстве.</p>
+            </div>
+          {/if}
+        </div>
+      </div>
     {:else if tab === 'contacts'}
       <ContactsTab {store} token={session.token} onopen={open} />
     {:else if tab === 'profile'}
@@ -126,12 +150,16 @@
       <span class="ci ci-chat"></span>
       <span>Чаты</span>
     </button>
-    <button class:active={tab === 'contacts'} onclick={() => (tab = 'contacts')}>
+    <button class:active={tab === 'rooms'} onclick={() => (tab = 'rooms')}>
       <span class="ci ci-people"></span>
+      <span>Группы</span>
+    </button>
+    <button class:active={tab === 'contacts'} onclick={() => (tab = 'contacts')}>
+      <span class="ci ci-person"></span>
       <span>Контакты</span>
     </button>
     <button class:active={tab === 'profile'} onclick={() => (tab = 'profile')}>
-      <span class="ci ci-person"></span>
+      <span class="ci ci-person-fill"></span>
       <span>Профиль</span>
     </button>
     <button class:active={tab === 'settings'} onclick={() => (tab = 'settings')}>
@@ -152,6 +180,16 @@
       {/key}
     </div>
   {/if}
+
+  {#if room}
+    <div class="overlay thread">
+      {#key room.id}
+        <RoomView {store} {room} onclose={() => (room = null)} />
+      {/key}
+    </div>
+  {/if}
+
+  <CallOverlay {store} title={store.titleOf(store.calls.peer)} />
 
   {#if picker}
     <div class="overlay picker">
@@ -290,7 +328,7 @@
 
   .tabbar {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     border-top: 1px solid var(--border);
     background: var(--header-blur);
     backdrop-filter: blur(18px) saturate(1.4);

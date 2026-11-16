@@ -196,6 +196,41 @@
     });
   }
 
+  /* ── Поиск по переписке ─────────────────────── */
+
+  let searchOpen = $state(false);
+  let searchQuery = $state('');
+  let matchPos = $state(0);
+
+  const hits = $derived.by(() => {
+    const term = searchQuery.trim().toLowerCase();
+    if (!term) return [] as number[];
+    const found: number[] = [];
+    messages.forEach((message, index) => {
+      if (message.text && message.text.toLowerCase().includes(term)) found.push(index);
+    });
+    return found;
+  });
+
+  const hitUids = $derived(new Set(hits.map((index) => messages[index]?.uid)));
+
+  function toggleSearch(): void {
+    searchOpen = !searchOpen;
+    if (!searchOpen) {
+      searchQuery = '';
+      matchPos = 0;
+    }
+  }
+
+  async function jumpMatch(step: number): Promise<void> {
+    if (hits.length === 0) return;
+    matchPos = (matchPos + step + hits.length) % hits.length;
+    const uid = messages[hits[matchPos]]?.uid;
+    await tick();
+    if (uid === undefined) return;
+    scroller?.querySelector(`[data-uid="${uid}"]`)?.scrollIntoView({ block: 'center' });
+  }
+
   /* ── Действия с чатом ───────────────────────── */
 
   let menuOpen = $state(false);
@@ -253,6 +288,33 @@
     </span>
 
     <button
+      class="search-toggle"
+      aria-label="Аудиозвонок"
+      title="Аудиозвонок"
+      onclick={() => void store.calls.start(peer, false)}
+    >
+      <span class="ci ci-chat"></span>
+    </button>
+
+    <button
+      class="search-toggle"
+      aria-label="Видеозвонок"
+      title="Видеозвонок"
+      onclick={() => void store.calls.start(peer, true)}
+    >
+      <span class="ci ci-people"></span>
+    </button>
+
+    <button
+      class="search-toggle"
+      aria-label="Поиск по сообщениям"
+      aria-expanded={searchOpen}
+      onclick={toggleSearch}
+    >
+      <span class="ci ci-search"></span>
+    </button>
+
+    <button
       class="menu-btn"
       aria-label="Действия с чатом"
       aria-expanded={menuOpen}
@@ -267,6 +329,39 @@
   </header>
   {#if notice}<p class="notice">{notice}</p>{/if}
 
+  {#if searchOpen}
+    <div class="searchbar">
+      <span class="ci ci-search"></span>
+      <input
+        class="search-input"
+        bind:value={searchQuery}
+        oninput={() => {
+          matchPos = 0;
+          void jumpMatch(0);
+        }}
+        placeholder="Поиск по сообщениям"
+        aria-label="Поиск по сообщениям"
+      />
+      <span class="search-count">{hits.length ? `${matchPos + 1}/${hits.length}` : '0/0'}</span>
+      <button
+        class="search-step"
+        type="button"
+        aria-label="Предыдущее совпадение"
+        disabled={hits.length === 0}
+        onclick={() => void jumpMatch(-1)}
+      >↑</button>
+      <button
+        class="search-step"
+        type="button"
+        aria-label="Следующее совпадение"
+        disabled={hits.length === 0}
+        onclick={() => void jumpMatch(1)}
+      >↓</button>
+      <button class="search-step" type="button" aria-label="Закрыть поиск" onclick={toggleSearch}
+      >✕</button>
+    </div>
+  {/if}
+
   <div class="messages" bind:this={scroller}>
     {#if loading}
       <p class="hint center">Загружаем сообщения…</p>
@@ -280,7 +375,13 @@
         {#if newDay}
           <div class="day"><span>{dayLabel(message.ts)}</span></div>
         {/if}
-        <div class="row" class:mine={message.mine} class:grouped={grouped}>
+        <div
+          class="row"
+          class:mine={message.mine}
+          class:grouped={grouped}
+          data-uid={message.uid}
+          class:hit={hitUids.has(message.uid)}
+        >
           <div class="bubble" class:mine={message.mine}>
             <span class="meta">
               <time>{timeLabel(message.ts)}</time>
@@ -878,6 +979,79 @@
     margin: 0 14px 6px;
     color: var(--danger);
     font-size: 13px;
+  }
+
+  .search-toggle {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    margin-right: 2px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 16px;
+    cursor: pointer;
+  }
+
+  .search-toggle:hover {
+    background: var(--row-hover);
+    color: var(--text);
+  }
+
+  .searchbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--card);
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .search-input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font-size: 14px;
+    outline: 0;
+  }
+
+  .search-count {
+    color: var(--muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .search-step {
+    width: 26px;
+    height: 26px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  .search-step:hover:not(:disabled) {
+    background: var(--row-hover);
+    color: var(--text);
+  }
+
+  .search-step:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  .row.hit .bubble {
+    outline: 1px solid var(--accent);
+    outline-offset: 1px;
   }
 </style>
 

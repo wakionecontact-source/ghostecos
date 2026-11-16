@@ -1,8 +1,16 @@
-﻿import { chatApi, type ChatClient, type Contact } from '../api/chat';
+﻿import { chatApi, type ChatClient, type Contact, type RoomSummary } from '../api/chat';
 import { ChatSocket } from '../api/ws';
+import { CallStore } from './calls.svelte';
 import type { AccountKey } from '../crypto/account-key';
 import { loadPrefs } from '../ui/prefs';
 import { v2FromDevice, type V2Keys } from './keys';
+import {
+  listRooms,
+  loadRoom,
+  roomMembers,
+  sendRoomMessage,
+  type RoomMessage,
+} from './rooms';
 import {
   clearThread,
   downloadAttachment,
@@ -41,6 +49,10 @@ export class ChatStore {
 
   contacts = $state<Contact[]>([]);
   threads = $state<ThreadSummary[]>([]);
+  rooms = $state<RoomSummary[]>([]);
+  roomsLoading = $state(false);
+  /** Звонки живут на том же сокете, что и сообщения. */
+  readonly calls = new CallStore();
   presence = $state<Record<string, boolean>>({});
   online = $state(false);
   ready = $state(false);
@@ -110,6 +122,7 @@ export class ChatStore {
 
     const socket = new ChatSocket(this.token);
     this.socket = socket;
+    const offCalls = this.calls.attach(socket);
     const off = socket.on((event) => {
       if (!alive) return;
       if (event.type === 'socket.open') {
@@ -164,6 +177,8 @@ export class ChatStore {
     return () => {
       alive = false;
       off();
+      offCalls();
+      this.calls.dispose();
       socket.close();
       this.socket = null;
       if (this.timer !== null) window.clearInterval(this.timer);
@@ -296,8 +311,7 @@ export class ChatStore {
   }
 
   /** Вложение уходит зашифрованным; ключ остаётся в E2E-конверте. */
-  async sendFile(peer: string, file: File, caption = ''): Promise<void> {
-    await sendFile(
+  async sendFile(peer: string, file: File, caption = ''): Promise<void> {    await sendFile(
       { api: this.api, account: this.account, v2: await this.ensureV2() },
       peer,
       file,
@@ -331,6 +345,50 @@ export class ChatStore {
     this.threads = await listThreads();
     this.unread = { ...this.unread, [peer]: 0 };
     this.notify();
+  }
+
+  /* ── Группы и каналы ─────────────────────────── */
+
+  /** Список моих групп и каналов; тянем при входе и по кнопке обновления. */
+  async loadRooms(): Promise<RoomSummary[]> {
+    if (this.roomsLoading) return this.rooms;
+    this.roomsLoading = true;
+    try {
+      this.rooms = await listRooms(this.api);
+      return this.rooms;
+    } finally {
+      this.roomsLoading = false;
+    }
+  }
+
+  /** Лента комнаты: конверты открываются ключом текущего устройства. */
+  async openRoom(room: RoomSummary): Promise<RoomMessage[]> {
+    return loadRoom(this.api, await this.ensureV2(), room, this.username);
+  }
+
+  async sendRoom(room: RoomSummary, text: string): Promise<void> {
+    await sendRoomMessage(this.api, await this.ensureV2(), room, this.username, text);
+    this.notify();
+  }
+
+  /** Создание группы или канала: набор полей один, различается только маршрут. */
+  async createRoom(
+    kind: 'group' | 'channel',
+    username: string,
+    title: string,
+  ): Promise<RoomSummary> {
+    const body = {
+      username: username.trim().replace(/^@/, ''),
+      title: title.trim(),
+    };
+    const room =
+      kind === 'channel' ? await this.api.createChannel(body) : await this.api.createGroup(body);
+    await this.loadRooms();
+    return room;
+  }
+
+  roomMembersOf(room: RoomSummary) {
+    return roomMembers(this.api, room);
   }
 
   private notify(): void {

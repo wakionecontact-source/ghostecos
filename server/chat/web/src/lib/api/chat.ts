@@ -119,6 +119,50 @@ export interface DeviceRow {
   is_current?: boolean;
 }
 
+/* ── Группы и каналы (комнаты) ── */
+
+/** Комната в списке «мои»: группа или канал, поля общие как в приложении. */
+export interface RoomSummary {
+  room_type: string;
+  id: number;
+  username: string | null;
+  title: string;
+  about?: string;
+  visibility?: string;
+  history_mode?: string;
+  encryption_mode?: string;
+  members_count?: number;
+  role?: string | null;
+  avatar_url?: string | null;
+  last_message_at?: number | null;
+  last_message_text?: string | null;
+}
+
+export interface RoomMember {
+  id: number;
+  username: string;
+  display_name?: string;
+  role?: string;
+  joined_at?: number;
+}
+
+/** Ответ истории комнаты: зашифрованный payload либо конверт под наше устройство. */
+export interface RoomMessageRow {
+  id: number;
+  sender_username?: string;
+  payload?: string | null;
+  envelope?: string | null;
+  created_at?: number | string;
+  attachment_file_ids?: number[];
+}
+
+export interface RoomSendBody {
+  payload?: string;
+  envelopes?: { target_device_id: number; target_device_pub?: string; envelope: string }[];
+  client_message_id?: string;
+  attachment_file_ids?: number[];
+}
+
 export interface ChatApi {
   token: string;
 }
@@ -332,6 +376,53 @@ export function chatApi(token: string) {
       if (!response.ok) throw new Error(`Файл недоступен (${response.status})`);
       return new Uint8Array(await response.arrayBuffer());
     },
+
+    /* ── Группы и каналы (комнаты) ── */
+
+    roomsMy: () => requestJson<{ rooms: RoomSummary[] }>('/api/chat/v2/rooms/my', opts),
+
+    roomMessages: (roomType: string, roomId: number, afterId = 0, limit = 100) =>
+      requestJson<{ messages: RoomMessageRow[] }>(
+        `/api/chat/v2/rooms/${roomType}/${roomId}/messages?after_id=${afterId}&limit=${limit}`,
+        opts,
+      ),
+
+    roomSend: (roomType: string, roomId: number, body: RoomSendBody) =>
+      requestJson<{ status: string; message_id: number; created_at?: number | string }>(
+        `/api/chat/v2/rooms/${roomType}/${roomId}/send`,
+        { ...opts, body },
+      ),
+
+    roomMembers: (roomType: string, roomId: number) =>
+      requestJson<{ members: RoomMember[] }>(
+        `/api/chat/v2/rooms/${roomType}/${roomId}/members`,
+        opts,
+      ),
+
+    createGroup: (body: {
+      username: string;
+      title: string;
+      about?: string;
+      visibility?: string;
+      history_mode?: string;
+    }) => requestJson<RoomSummary>('/api/chat/v2/rooms/groups', { ...opts, body }),
+
+    createChannel: (body: {
+      username: string;
+      title: string;
+      about?: string;
+      visibility?: string;
+      history_mode?: string;
+    }) => requestJson<RoomSummary>('/api/chat/v2/channels', { ...opts, body }),
+
+    joinGroup: (groupId: number) =>
+      requestJson<RoomSummary>(`/api/chat/v2/rooms/groups/${groupId}/join`, { ...opts, body: {} }),
+
+    joinChannel: (username: string) =>
+      requestJson<RoomSummary>(
+        `/api/chat/v2/channels/${encodeURIComponent(username)}/join`,
+        { ...opts, body: {} },
+      ),
 
     ackFile: (fileId: number) =>
       requestJson<{ deleted: number }>(`/api/chat/file/${fileId}/ack`, { ...opts, body: {} }),
