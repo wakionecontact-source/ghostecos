@@ -10,8 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/auth/id/id.css?v=20261116-14">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="/auth/id/id.css?v=20261116-15">
   <script>if (window.innerWidth >= 900) document.documentElement.classList.add("gs-pc");</script>
 </head>
 <body class="ghostsocial-v2 gs-v2-ready">
@@ -30,58 +29,13 @@
       <a class="btn primary" href="/v2/auth?return=%2Fid">Войти в GhostID</a>
     </section>
 
-        <div class="profile-card gs-profile-card" data-active hidden>
-      <div class="gs-profile-banner" id="profBanner" aria-hidden="true"><img id="profBannerImage" class="gs-profile-banner-image" alt="" loading="eager" decoding="async" hidden></div>
-      <div class="prof-av" id="profAv" style="cursor:pointer;" onclick="onProfAvClick(event)">?</div>
-      <div id="profStatus" class="daily-status gs-profile-status" role="note" aria-label="Статус" hidden><span class="gs-profile-status-value"></span></div>
-      <input type="file" id="profAvFile" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="onProfAvFileChosen(this)">
-      <div class="gs-profile-body">
-        <div class="gs-profile-identity">
-          <div class="gs-profile-name-row">
-            <div class="prof-name" id="profName">—</div>
-            <button id="profAvEditBtn" type="button" title="Редактировать профиль" aria-label="Редактировать профиль" style="width:28px;height:28px;border-radius:50%;border:0;background:transparent;color:#a855f7;cursor:pointer;display:none;align-items:center;justify-content:center;padding:0;font-size:12px;" onclick="openEditProfile()"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
-            <button id="profAccountsBtn" type="button" title="Мои аккаунты" aria-label="Мои аккаунты" aria-haspopup="true" aria-expanded="false" onclick="gsAccountsToggle(event)"><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button>
-            <div class="gs-accounts-menu" id="gsAccountsMenu" hidden>
-              <div class="gs-accounts-menu-head"><span>Аккаунты</span><span id="gsAccountsCount"></span></div>
-              <div class="gs-accounts-list" id="gsAccountsList" role="menu"></div>
-              <button type="button" class="gs-accounts-menu-add" onclick="gsAccountsAddAccount()"><i class="fa-solid fa-plus" aria-hidden="true"></i><span>Добавить аккаунт</span></button>
-            </div>
-
-          </div>
-          <div class="gs-profile-badges" id="profBadges" hidden></div>
-          <div class="prof-username" id="profUser">—</div>
-        </div>
-        <div class="stats-row gs-profile-stats">
-          <div class="stat-box"><div class="stat-val" id="sFollowing">0</div><div class="stat-lbl">Подписки</div></div>
-          <div class="stat-box"><div class="stat-val" id="sFollowers">0</div><div class="stat-lbl">Подписчики</div><small class="gs-profile-stat-today" id="profFollowersToday" hidden></small></div>
-          <div class="stat-box"><div class="stat-val" id="sReceived">0</div><div class="stat-lbl">Лайки</div></div>
-          <div class="stat-box gs-profile-hidden-count" aria-hidden="true"><div class="stat-val" id="sPosts">0</div><div class="stat-lbl">Постов</div></div>
-        </div>
-        <div class="gs-profile-bio" id="profBio" hidden></div>
-        <div class="gs-profile-created" id="profCreated" hidden><i class="fa-solid fa-calendar-day gs-profile-created-icon" aria-hidden="true"></i><span id="profCreatedText"></span></div>
-        <div class="gs-profile-music" id="profMusic" hidden role="group" aria-label="Музыка профиля">
-          <button type="button" class="gs-profile-music-info" id="profMusicListBtn" aria-label="Открыть список музыки профиля" aria-haspopup="dialog">
-            <img class="gs-profile-music-cover" id="profMusicCover" alt="" loading="lazy" decoding="async" hidden>
-            <span class="gs-profile-music-placeholder" aria-hidden="true"><i class="fa-solid fa-music"></i></span>
-            <span class="gs-profile-music-copy"><strong id="profMusicTitle"></strong><small id="profMusicArtist" hidden></small></span>
-          </button>
-          <button type="button" class="gs-profile-music-play" id="profMusicPlay" aria-label="Включить музыку профиля" aria-pressed="false"><i class="fa-solid fa-play" data-music-icon aria-hidden="true"></i></button>
-        </div>
-        <div class="gs-profile-metadata" aria-hidden="true">
-          <div class="gs-profile-field gs-profile-user-meta"><span class="gs-profile-field-icon" aria-hidden="true">@</span><span class="gs-profile-field-copy"><strong id="profUserMeta"></strong><small>Имя пользователя</small></span></div>
-          <div class="gs-profile-field gs-profile-id" id="profId" hidden><span class="gs-profile-field-icon" aria-hidden="true">#</span><span class="gs-profile-field-copy"><strong id="profIdValue"></strong><small>ID пользователя</small></span></div>
-          <div class="gs-profile-divider" aria-hidden="true"></div>
-        </div>
-        <div id="profReputation" class="rep-badge" style="display:none;"></div>
-        <button type="button" id="profStatusEdit" class="gs-profile-status-edit" hidden onclick="openStatusModal()">Что у вас нового? Добавить или изменить статус</button>
-
+    <div class="id-profile" data-active hidden>
+      <div class="ge-profile-host" id="idProfile"></div>
+      <div class="profile-actions">
+        <span class="balance" data-active-balance hidden></span>
+        <button class="btn ghost" type="button" data-logout-active>Выйти</button>
       </div>
     </div>
-    <div class="profile-actions">
-      <span class="balance" data-active-balance hidden></span>
-      <button class="btn ghost" type="button" data-logout-active>Выйти</button>
-    </div>
-    <audio data-music-audio preload="none" hidden></audio>
 
     <section class="accounts" data-list-wrap hidden>
       <header class="accounts-head">
@@ -98,17 +52,6 @@
       <p class="hint" data-hint role="status" aria-live="polite"></p>
     </section>
   </main>
-
-  <div class="modal" data-music-sheet hidden>
-    <div class="modal-card sheet" role="dialog" aria-modal="true" aria-labelledby="music-title">
-      <button class="modal-close" type="button" data-music-close aria-label="Закрыть">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      </button>
-      <h2 id="music-title" class="modal-title">Музыка профиля</h2>
-      <p class="modal-sub" data-music-count></p>
-      <div class="track-list" data-track-list></div>
-    </div>
-  </div>
 
   <div class="modal" data-editor hidden>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="editor-title">
@@ -144,6 +87,7 @@
   </div>
 
   <script src="/auth/ghostid-accounts.js?v=20261114-accounts-10" defer></script>
-  <script src="/auth/id/id.js?v=20261116-14" defer></script>
+  <script src="/auth/ui/ge-profile/ge-profile.js?v=20261116-15"></script>
+  <script src="/auth/id/id.js?v=20261116-15" defer></script>
 </body>
 </html>

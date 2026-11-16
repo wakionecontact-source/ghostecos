@@ -1,0 +1,1330 @@
+/* ── Профиль GhostEcos ────────────────────────────────
+   Самодостаточный блок: свои токены, свой скоуп .ge-profile.
+   От хоста ничего не наследует (кроме явного переопределения токенов)
+   и наружу не протекает. Значения сняты с живого GhostSocial v2. */
+
+.ge-profile {
+  /* ── Палитра ── */
+  --ge-bg: #111113;
+  --ge-surface: #1b1b1f;
+  --ge-surface-2: #242429;
+  --ge-text: #f1f1f4;
+  --ge-sub: #9b9ba5;
+  --ge-muted: #777782;
+  --ge-primary: #b39af4;
+  --ge-primary-ink: #1a1427;
+  --ge-border: #28282e;
+  --ge-border-strong: #3a3a43;
+  --ge-icon: #a855f7;
+  --ge-green: #82cfa7;
+  --ge-font: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+
+  /* ── Геометрия ── */
+  --ge-avatar-size: 110px;
+  --ge-banner-height: clamp(88px, 24.5vw, 110px);
+  --ge-notch: 71px;
+  --ge-action-height: 42px;
+  --ge-grid-radius: 0;
+
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ge-text);
+  font: 14px/1.5 var(--ge-font);
+  text-align: center;
+  color-scheme: dark;
+  -webkit-font-smoothing: antialiased;
+}
+
+.ge-profile *,
+.ge-profile *::before,
+.ge-profile *::after {
+  box-sizing: border-box;
+}
+
+.ge-profile [hidden] {
+  display: none !important;
+}
+
+.ge-profile :focus-visible {
+  outline: 2px solid var(--ge-primary);
+  outline-offset: 3px;
+}
+
+/* ── Карточка ───────────────────────────────────────── */
+
+.ge-profile__card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 26px 16px 20px;
+  overflow: visible;
+}
+
+/* ── Обложка ── */
+
+.ge-profile__banner {
+  position: relative;
+  flex: none;
+  width: calc(100% + 12px);
+  height: var(--ge-banner-height);
+  margin: 0 -6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: linear-gradient(120deg, #301754, #171026 72%);
+  -webkit-mask-image: radial-gradient(circle var(--ge-notch) at 50% 100%,
+    transparent 0, transparent var(--ge-notch), #000 var(--ge-notch));
+  mask-image: radial-gradient(circle var(--ge-notch) at 50% 100%,
+    transparent 0, transparent var(--ge-notch), #000 var(--ge-notch));
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+.ge-profile__banner::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(0deg, rgba(19, 13, 32, .1), transparent 65%);
+  pointer-events: none;
+}
+
+.ge-profile__banner img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* ── Аватар ── */
+
+.ge-profile__avatar {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--ge-avatar-size);
+  height: var(--ge-avatar-size);
+  margin: calc(var(--ge-avatar-size) * -.573) 0 29px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ge-surface-2);
+  color: var(--ge-primary);
+  font-size: calc(var(--ge-avatar-size) * .24);
+  font-weight: 600;
+  line-height: 1;
+  text-transform: uppercase;
+  user-select: none;
+}
+
+.ge-profile__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ge-profile--no-banner .ge-profile__avatar {
+  margin-top: 0;
+}
+
+/* ── Статус-облачко ─────────────────────────────────── */
+
+.ge-profile__status {
+  position: absolute;
+  z-index: 4;
+  top: calc(var(--ge-banner-height) + 54px);
+  right: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  max-width: min(220px, calc(50% - 70px));
+  min-height: 44px;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid rgba(216, 204, 233, .85);
+  border-radius: 24px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .12), 0 1px 3px rgba(0, 0, 0, .08);
+  color: #282232;
+  font-size: 15px;
+  font-style: normal;
+  font-weight: 500;
+  line-height: 1.45;
+  letter-spacing: .005em;
+  text-align: center;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  animation: ge-profile-float 5.8s ease-in-out infinite;
+}
+
+.ge-profile__status::before,
+.ge-profile__status::after {
+  content: '';
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid rgba(216, 204, 233, .85);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, .12);
+  pointer-events: none;
+  animation: ge-profile-dot 3.4s ease-in-out infinite;
+}
+
+.ge-profile__status::before {
+  top: -11px;
+  left: 18px;
+  width: 9px;
+  height: 9px;
+}
+
+.ge-profile__status::after {
+  top: -21px;
+  left: 6px;
+  width: 5px;
+  height: 5px;
+  animation-delay: -.7s;
+}
+
+.ge-profile--status-inline .ge-profile__status {
+  position: relative;
+  top: auto;
+  right: auto;
+  align-self: center;
+  max-width: min(86%, 300px);
+  margin: 20px 0 16px;
+  padding: 12px 20px 13px;
+}
+
+.ge-profile--status-inline .ge-profile__status::before {
+  top: -13px;
+  left: calc(50% - 5px);
+}
+
+.ge-profile--status-inline .ge-profile__status::after {
+  top: -24px;
+  left: calc(50% + 7px);
+}
+
+@keyframes ge-profile-float {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -3px, 0); }
+}
+
+@keyframes ge-profile-dot {
+  0%, 100% { opacity: .65; transform: scale(.82); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+/* ── Тело ───────────────────────────────────────────── */
+
+.ge-profile__body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 20px;
+  width: 100%;
+  min-width: 0;
+}
+
+.ge-profile__identity {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+}
+
+.ge-profile__name-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+}
+
+.ge-profile__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  color: var(--ge-text);
+  font-size: clamp(22px, 5.8vw, 28px);
+  font-weight: 780;
+  letter-spacing: -.035em;
+  line-height: 1.12;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.ge-profile__handle {
+  margin-top: 5px;
+  color: var(--ge-sub);
+  font-size: 14px;
+  line-height: 1.35;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.ge-profile__badges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.ge-profile__badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .08);
+  color: #f4edff;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.2;
+}
+
+.ge-profile__badge--prefix { color: #d2b4ff; }
+.ge-profile__badge--role { color: #ffd99a; }
+
+/* ── Действия ── */
+
+.ge-profile__actions {
+  display: flex;
+  align-items: stretch;
+  gap: 9px;
+  width: 100%;
+  margin: 0;
+}
+
+.ge-profile__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: var(--ge-action-height);
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--ge-surface);
+  color: var(--ge-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color .18s, color .18s, transform .18s, opacity .18s;
+}
+
+.ge-profile__button:hover,
+.ge-profile__button:focus-visible {
+  background: var(--ge-surface-2);
+}
+
+.ge-profile__button:active {
+  transform: scale(.97);
+}
+
+.ge-profile__button[disabled] {
+  opacity: .5;
+  cursor: default;
+}
+
+.ge-profile__button--primary {
+  background: var(--ge-primary);
+  color: var(--ge-primary-ink);
+}
+
+.ge-profile__button--primary:hover,
+.ge-profile__button--primary:focus-visible {
+  background: #c4aef8;
+}
+
+.ge-profile__button--primary.is-active {
+  background: transparent;
+  border: 1px solid var(--ge-border-strong);
+  color: var(--ge-sub);
+}
+
+.ge-profile__button--soft {
+  background: rgba(179, 154, 244, .14);
+  color: var(--ge-primary);
+}
+
+.ge-profile__button--soft:hover,
+.ge-profile__button--soft:focus-visible {
+  background: rgba(179, 154, 244, .22);
+}
+
+.ge-profile__button--danger {
+  color: var(--ge-red);
+}
+
+.ge-profile__icon-btn {
+  display: grid;
+  place-items: center;
+  flex: 0 0 36px;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: var(--ge-surface);
+  color: var(--ge-text);
+  cursor: pointer;
+  transition: background-color .18s, color .18s, transform .18s;
+}
+
+.ge-profile__icon-btn:hover,
+.ge-profile__icon-btn:focus-visible {
+  background: var(--ge-surface-2);
+}
+
+.ge-profile__icon-btn:active {
+  transform: scale(.94);
+}
+
+.ge-profile__button svg,
+.ge-profile__icon-btn svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+/* ── Статистика ── */
+
+.ge-profile__stats {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 4px;
+  width: 100%;
+  margin: 0;
+  text-align: left;
+}
+
+.ge-profile__stat {
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+}
+
+.ge-profile__stat-value {
+  color: var(--ge-text);
+  font-size: clamp(19px, 5vw, 24px);
+  font-weight: 750;
+  line-height: 1.2;
+}
+
+.ge-profile__stat-label {
+  margin-top: 2px;
+  color: var(--ge-sub);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.ge-profile__stat-extra {
+  display: block;
+  margin-top: 3px;
+  color: #9ee2b8;
+  font-size: 9px;
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+/* ── Текст ── */
+
+.ge-profile__bio {
+  width: 100%;
+  margin: 0;
+  color: var(--ge-text);
+  font-size: 15px;
+  line-height: 1.48;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ge-profile__created {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  width: 100%;
+  margin-top: 4px;
+  color: var(--ge-muted);
+  font-size: 11.5px;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.ge-profile__created svg {
+  flex: none;
+  width: 11.5px;
+  height: 11.5px;
+  opacity: .8;
+}
+
+/* ── Музыка ── */
+
+.ge-profile__music {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 70px;
+  padding: 8px 22px 8px 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background-color: #171026;
+  background-image: linear-gradient(120deg, #301754, #171026 72%);
+  color: #fff;
+  text-align: left;
+  transition: filter .18s ease;
+}
+
+.ge-profile__music.is-playing {
+  filter: brightness(1.045);
+}
+
+.ge-profile__music-info {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  gap: 10px;
+  min-width: 0;
+  min-height: 54px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ge-profile__music-cover,
+.ge-profile__music-placeholder {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  flex: 0 0 54px;
+  overflow: hidden;
+  border-radius: 50%;
+}
+
+.ge-profile__music-cover {
+  object-fit: cover;
+}
+
+.ge-profile__music-placeholder {
+  background: rgba(255, 255, 255, .1);
+  color: rgba(255, 255, 255, .75);
+}
+
+.ge-profile__music-placeholder svg {
+  width: 20px;
+  height: 20px;
+}
+
+.ge-profile__music-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  text-align: left;
+}
+
+.ge-profile__music-title {
+  overflow: hidden;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ge-profile__music-artist {
+  overflow: hidden;
+  color: rgba(255, 255, 255, .72);
+  font-size: 11px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ge-profile__music-play {
+  display: grid;
+  place-items: center;
+  flex: 0 0 42px;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .13);
+  color: #fff;
+  cursor: pointer;
+  filter: brightness(.88);
+  transition: background-color .18s ease, filter .18s ease,
+    box-shadow .18s ease, transform .14s ease;
+}
+
+.ge-profile__music-play svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ge-profile__music-play:active {
+  transform: scale(.94);
+}
+
+.ge-profile__music.is-playing .ge-profile__music-play {
+  background: rgba(184, 150, 255, .38);
+  filter: brightness(1.24);
+  box-shadow: 0 0 15px rgba(184, 150, 255, .24);
+}
+
+/* ── Метаданные ── */
+
+.ge-profile__meta {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(18px, 4.8vw, 28px);
+  width: 100%;
+  margin-top: clamp(28px, 8vw, 62px);
+  text-align: left;
+}
+
+.ge-profile__card:has(.ge-profile__music[hidden]) .ge-profile__meta {
+  margin-top: 16px;
+}
+
+.ge-profile__field {
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+}
+
+.ge-profile__field-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  min-height: 36px;
+  color: var(--ge-icon);
+  font-size: 25px;
+  line-height: 1;
+  text-align: center;
+}
+
+.ge-profile__field-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ge-profile__field-value {
+  color: #f5f3ff;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.ge-profile__field-label {
+  color: #788096;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.ge-profile__divider {
+  width: 100%;
+  height: 1px;
+  background: rgba(160, 166, 190, .25);
+}
+
+/* ── Кнопка статуса ── */
+
+.ge-profile__status-edit {
+  width: 100%;
+  min-height: 42px;
+  margin-top: 8px;
+  padding: 11px 14px;
+  border: 1px dashed var(--ge-border-strong);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ge-sub);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: color .15s ease, border-color .15s ease;
+}
+
+.ge-profile__status-edit:hover,
+.ge-profile__status-edit:focus-visible {
+  border-color: var(--ge-primary);
+  color: var(--ge-primary);
+}
+
+/* ── Вкладки ── */
+
+.ge-profile__tabs {
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+  border-top: 1px solid var(--ge-border);
+  border-bottom: 1px solid var(--ge-border);
+}
+
+.ge-profile__tab {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-height: 48px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ge-sub);
+  font: inherit;
+  font-size: 0;
+  cursor: pointer;
+  transition: color .18s;
+}
+
+.ge-profile__tab svg {
+  width: 18px;
+  height: 18px;
+}
+
+.ge-profile__tab.is-active {
+  color: var(--ge-text);
+}
+
+.ge-profile__tab.is-active::after {
+  content: '';
+  position: absolute;
+  right: 22%;
+  bottom: 0;
+  left: 22%;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--ge-primary);
+}
+
+/* ── Сетка постов ── */
+
+.ge-profile__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 2px;
+  width: 100%;
+}
+
+.ge-profile__tile {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  aspect-ratio: 1;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--ge-grid-radius);
+  background: #19191f;
+  color: var(--ge-text);
+  cursor: pointer;
+}
+
+.ge-profile__tile img,
+.ge-profile__tile video {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  object-fit: cover;
+}
+
+.ge-profile__tile--text {
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  background: linear-gradient(145deg, #24202d, #15151a 72%);
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.ge-profile__tile-text {
+  display: -webkit-box;
+  max-height: 100%;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+}
+
+/* ── Пустое состояние ── */
+
+.ge-profile__empty {
+  grid-column: 1 / -1;
+  padding: 28px 16px;
+  color: var(--ge-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ── Модификаторы ── */
+
+.ge-profile--compact {
+  --ge-avatar-size: 82px;
+  --ge-banner-height: 78px;
+  --ge-notch: 52px;
+}
+
+.ge-profile--compact .ge-profile__card {
+  padding: 20px 12px 16px;
+}
+
+.ge-profile--compact .ge-profile__avatar {
+  margin-bottom: 22px;
+}
+
+.ge-profile--compact .ge-profile__body {
+  gap: 16px;
+}
+
+.ge-profile--surface .ge-profile__card {
+  border-radius: 20px;
+  background: var(--ge-bg);
+}
+
+/* ── Уменьшенное движение ── */
+
+@media (prefers-reduced-motion: reduce) {
+  .ge-profile__status,
+  .ge-profile__status::before,
+  .ge-profile__status::after,
+  .ge-profile__button,
+  .ge-profile__icon-btn,
+  .ge-profile__music,
+  .ge-profile__music-play,
+  .ge-profile__tab {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ── Узкие экраны ── */
+
+@media (max-width: 380px) {
+  .ge-profile__body {
+    gap: 16px;
+  }
+
+  .ge-profile__stat-label {
+    font-size: 10px;
+  }
+}
+
+/* ── Кнопки-элементы ──────────────────────────────────
+   У своего профиля аватар и статус кликабельны. */
+
+button.ge-profile__avatar,
+button.ge-profile__status {
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+button.ge-profile__avatar {
+  transition: transform .16s ease, box-shadow .16s ease;
+}
+
+button.ge-profile__avatar:hover,
+button.ge-profile__avatar:focus-visible {
+  transform: scale(1.02);
+  box-shadow: 0 0 0 2px var(--ge-primary);
+}
+
+button.ge-profile__status {
+  font-family: var(--ge-font);
+}
+
+button.ge-profile__status:hover,
+button.ge-profile__status:focus-visible {
+  border-color: var(--ge-primary);
+}
+
+/* ── Верификация ── */
+
+.ge-profile__verified {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--ge-primary);
+  color: var(--ge-primary-ink);
+  vertical-align: middle;
+}
+
+.ge-profile__verified svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2.6;
+}
+
+/* ── Репутация ── */
+
+.ge-profile__reputation {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: center;
+  padding: 5px 11px;
+  border: 1px solid var(--ge-border);
+  border-radius: 999px;
+  background: var(--ge-surface);
+  color: var(--ge-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ge-profile__reputation svg {
+  width: 13px;
+  height: 13px;
+  color: var(--ge-primary);
+}
+
+/* ── Скелетон загрузки ── */
+
+.ge-profile--loading {
+  pointer-events: none;
+}
+
+.ge-profile__skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--ge-surface-2);
+}
+
+.ge-profile__skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .07), transparent);
+  transform: translateX(-100%);
+  animation: ge-profile-shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes ge-profile-shimmer {
+  to { transform: translateX(100%); }
+}
+
+.ge-profile__skeleton--line {
+  width: min(70%, 220px);
+  height: 14px;
+}
+
+.ge-profile__skeleton--line.lg {
+  width: min(58%, 190px);
+  height: 24px;
+}
+
+.ge-profile__skeleton--line.sm {
+  width: min(40%, 120px);
+  height: 12px;
+}
+
+.ge-profile__skeleton--stats {
+  width: 100%;
+  height: 56px;
+}
+
+.ge-profile__skeleton--grid {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  margin-top: 8px;
+  border-radius: var(--ge-grid-radius);
+}
+
+/* ── Ошибка загрузки ── */
+
+.ge-profile--error {
+  padding: 28px 20px;
+}
+
+.ge-profile__error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 26px 20px;
+  border: 1px solid var(--ge-border);
+  border-radius: 18px;
+  background: var(--ge-surface);
+  color: var(--ge-sub);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ge-profile__error strong {
+  color: var(--ge-text);
+  font-size: 15px;
+}
+
+/* ── Уведомление ── */
+
+.ge-profile__toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  z-index: 12001;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 11px 16px;
+  border: 1px solid rgba(183, 148, 244, .28);
+  border-radius: 14px;
+  background: rgba(24, 20, 32, .94);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, .45);
+  color: #f6f2fb;
+  font: 600 13px/1.35 Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 10px);
+  transition: opacity .18s ease, transform .18s ease;
+}
+
+.ge-profile__toast.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* ── Шиты ─────────────────────────────────────────────
+   Редактор, статус и музыка. Корень получает класс .ge-profile,
+   поэтому токены и сбросы работают без дублирования. */
+
+.ge-profile__sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(8, 8, 14, .72);
+  -webkit-backdrop-filter: blur(16px) saturate(120%);
+  backdrop-filter: blur(16px) saturate(120%);
+  text-align: left;
+}
+
+.ge-profile__sheet-panel {
+  width: min(420px, 100%);
+  max-height: calc(100vh - 40px);
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+  padding: 20px;
+  border: 1px solid var(--ge-border-strong);
+  border-radius: 20px;
+  background: var(--ge-surface);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .55);
+  color: var(--ge-text);
+  text-align: left;
+}
+
+.ge-profile__sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.ge-profile__sheet-head strong {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.ge-profile__sheet-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: var(--ge-surface-2);
+  color: var(--ge-sub);
+  cursor: pointer;
+}
+
+.ge-profile__sheet-close:hover,
+.ge-profile__sheet-close:focus-visible {
+  color: var(--ge-text);
+}
+
+.ge-profile__sheet-close svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ge-profile__sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ge-profile__sheet-avatar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.ge-profile__sheet-avatar-view {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 64px;
+  height: 64px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--ge-surface-2);
+  color: var(--ge-primary);
+  font-size: 22px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.ge-profile__sheet-avatar-view img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ge-profile__sheet-avatar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ge-profile__sheet-avatar-actions .ge-profile__button {
+  flex: 0 0 auto;
+  width: auto;
+  min-height: 36px;
+  font-size: 12px;
+}
+
+.ge-profile__sheet-avatar-actions svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ge-profile__field-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--ge-sub);
+  font-size: 12px;
+}
+
+.ge-profile__field-edit input,
+.ge-profile__field-edit textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--ge-border);
+  border-radius: 12px;
+  background: var(--ge-bg);
+  color: var(--ge-text);
+  font: inherit;
+  font-family: var(--ge-font);
+  font-size: 14px;
+  line-height: 1.45;
+  outline: none;
+  resize: vertical;
+}
+
+.ge-profile__field-edit input:focus,
+.ge-profile__field-edit textarea:focus {
+  border-color: var(--ge-primary);
+}
+
+.ge-profile__sheet-hint {
+  margin: 0;
+  color: var(--ge-sub);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ge-profile__sheet-counter {
+  align-self: flex-end;
+  color: var(--ge-muted);
+  font-size: 11px;
+}
+
+.ge-profile__sheet-error {
+  min-height: 16px;
+  margin: 0;
+  color: #f87171;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ge-profile__sheet-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.ge-profile__sheet-foot .ge-profile__button {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 120px;
+  min-height: 38px;
+}
+
+/* ── Список музыки ── */
+
+.ge-profile__tracks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ge-profile__track {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px;
+  border-radius: 12px;
+}
+
+.ge-profile__track:hover {
+  background: var(--ge-surface-2);
+}
+
+.ge-profile__track-play,
+.ge-profile__track-remove {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ge-surface-2);
+  color: var(--ge-text);
+  cursor: pointer;
+}
+
+.ge-profile__track-play svg,
+.ge-profile__track-remove svg {
+  width: 15px;
+  height: 15px;
+}
+
+.ge-profile__track-remove {
+  color: #f87171;
+}
+
+.ge-profile__track-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ge-profile__track-copy strong {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ge-profile__track-copy small {
+  overflow: hidden;
+  color: var(--ge-sub);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Контейнер и кастомный элемент ── */
+
+.ge-profile-host,
+ge-profile {
+  display: block;
+  width: 100%;
+}
+
+/* ── Уменьшенное движение для новых анимаций ── */
+
+@media (prefers-reduced-motion: reduce) {
+  .ge-profile__skeleton::after,
+  button.ge-profile__avatar,
+  .ge-profile__toast {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ── Шит на узких экранах ── */
+
+@media (max-width: 460px) {
+  .ge-profile__sheet {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .ge-profile__sheet-panel {
+    width: 100%;
+    max-height: 92vh;
+    max-height: 92dvh;
+    border-radius: 20px 20px 0 0;
+    padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0px));
+  }
+}

@@ -1,0 +1,193 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Профиль GhostEcos — демо модуля</title>
+<style>
+  /* ── Только фон демо-страницы, к модулю не относится ── */
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh;
+    background: #111113;
+    color: #f1f1f4;
+    font: 14px/1.5 Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .demo {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 28px;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 28px 16px 60px;
+  }
+  .demo__col { min-width: 0; }
+  .demo__title {
+    margin: 0 0 10px;
+    color: #9b9ba5;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .demo__frame {
+    border: 1px solid #28282e;
+    border-radius: 20px;
+    overflow: hidden;
+    background: #111113;
+  }
+  .demo__frame--surface { background: #17171c; }
+  .demo__frame--narrow { max-width: 340px; }
+  .demo__log {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 16px 40px;
+    color: #777782;
+    font-size: 12px;
+  }
+  .demo__log code { color: #b39af4; }
+</style>
+</head>
+<body>
+
+<main class="demo">
+  <section class="demo__col">
+    <h2 class="demo__title">Свой профиль</h2>
+    <div class="demo__frame" id="own"></div>
+  </section>
+
+  <section class="demo__col">
+    <h2 class="demo__title">Чужой профиль</h2>
+    <div class="demo__frame" id="public"></div>
+  </section>
+
+  <section class="demo__col">
+    <h2 class="demo__title">Компактный вариант</h2>
+    <div class="demo__frame demo__frame--narrow" id="compact"></div>
+  </section>
+
+  <section class="demo__col">
+    <h2 class="demo__title">Пустой профиль</h2>
+    <div class="demo__frame" id="empty"></div>
+  </section>
+</main>
+
+<p class="demo__log" id="log">Клики приходят как <code>ge-profile:action</code>,
+  <code>ge-profile:tab</code>, <code>ge-profile:follow</code>,
+  <code>ge-profile:profile</code>.</p>
+
+<!-- Одна строка подключения: модуль сам подставит ge-profile.css -->
+<script src="ge-profile.js"></script>
+<script>
+  // Картинки-заглушки, чтобы сетка не выглядела пустой.
+  const shot = (from, to) => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">` +
+    `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">` +
+    `<stop offset="0" stop-color="${from}"/><stop offset="1" stop-color="${to}"/>` +
+    `</linearGradient></defs><rect width="300" height="300" fill="url(#g)"/></svg>`
+  );
+
+  const banner = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="200">` +
+    `<defs><linearGradient id="b" x1="0" y1="0" x2="1" y2="1">` +
+    `<stop offset="0" stop-color="#3b1e6b"/><stop offset="1" stop-color="#151024"/>` +
+    `</linearGradient></defs><rect width="640" height="200" fill="url(#b)"/>` +
+    `<circle cx="520" cy="40" r="70" fill="#b39af4" opacity=".18"/>` +
+    `<circle cx="140" cy="170" r="90" fill="#7c3aed" opacity=".22"/></svg>`
+  );
+
+  const stats = (following, followers, likes, today) => [
+    { id: 'following', value: following, label: 'Подписки' },
+    { id: 'followers', value: followers, label: 'Подписчики', extra: today || '' },
+    { id: 'likes', value: likes, label: 'Лайки' },
+  ];
+
+  const posts = [
+    { src: shot('#2b1d43', '#141019') },
+    { text: 'Собрал профиль как модуль: разметка, стили и данные в одном пакете.' },
+    { src: shot('#1f2f43', '#101519') },
+    { src: shot('#3a2547', '#151018') },
+    { text: 'Одинаковый вид в соцсети, мессенджере и любом сервисе — без копий CSS.' },
+    { src: shot('#22333a', '#0f1418') },
+  ];
+
+  // Свой профиль: isMe включает правку аватара, статуса и профиля.
+  GeProfile.mount(document.getElementById('own'), {
+    isMe: true,
+    banner: { src: banner },
+    avatar: { letter: 'А' },
+    name: 'Анна Петрова',
+    handle: '@anna_p',
+    badges: [
+      { text: '@anna_p', tone: 'prefix' },
+      { text: 'Создатель', tone: 'role' },
+    ],
+    status: 'Пишу движок для своей сети',
+    stats: stats('128', '1024', '9431', '+12 сегодня'),
+    bio: 'Строю приватную экосистему: чат, соцсеть, банк.\nКаждый решает сам, что о нём знают.',
+    created: 'Присоединился 12 марта 2025',
+    reputation: { score: 412, band: 'high', label: 'Репутация 412' },
+    music: { title: 'Nightcall', artist: 'Kavinsky', cover: shot('#241a33', '#120e18') },
+    meta: [
+      { icon: '@', value: '@anna_p', label: 'Имя пользователя' },
+      { icon: '#', value: '1', label: 'ID пользователя' },
+    ],
+    posts,
+  });
+
+  // Чужой профиль: действия собираются автоматически из isMe/amFollowing.
+  GeProfile.mount(document.getElementById('public'), {
+    banner: { src: banner },
+    avatar: { src: shot('#7c3aed', '#2b1d43') },
+    name: 'Мария Орлова',
+    handle: '@orlova',
+    verified: true,
+    amFollowing: false,
+    stats: stats('57', '3812', '21907'),
+    bio: 'Дизайн, звук и немного кода.',
+    created: 'Присоединился 4 июня 2024',
+    meta: [{ icon: '@', value: '@orlova', label: 'Имя пользователя' }],
+    posts: posts.slice(0, 3),
+  });
+
+  GeProfile.mount(document.getElementById('compact'), {
+    compact: true,
+    avatar: { letter: 'А' },
+    name: 'Аня',
+    handle: '@anya',
+    amFollowing: true,
+    stats: stats('12', '74', '310'),
+    posts: posts.slice(3, 6),
+  });
+
+  // Пустой профиль: сетка и вкладка репостов показывают пустое состояние.
+  GeProfile.mount(document.getElementById('empty'), {
+    compact: true,
+    avatar: { letter: 'Н' },
+    name: 'Новый пользователь с очень длинным именем, которое не должно ломать вёрстку',
+    handle: '@newcomer_with_a_very_long_handle_2026',
+    stats: stats('0', '0', '0'),
+  });
+
+  // ── Лог событий ──
+  const log = document.getElementById('log');
+  const write = (text) => { log.textContent = text; };
+  document.addEventListener('ge-profile:action', (event) => {
+    write('ge-profile:action → ' + event.detail.action);
+  });
+  document.addEventListener('ge-profile:tab', (event) => {
+    write('ge-profile:tab → ' + event.detail.tab);
+  });
+  document.addEventListener('ge-profile:post', (event) => {
+    write('ge-profile:post → #' + event.detail.index);
+  });
+  document.addEventListener('ge-profile:follow', (event) => {
+    write('ge-profile:follow → ' + (event.detail.following ? 'подписан' : 'отписан'));
+  });
+  document.addEventListener('ge-profile:profile', () => {
+    write('ge-profile:profile → данные обновлены');
+  });
+</script>
+</body>
+</html>
