@@ -36,17 +36,19 @@
     musicCover: document.querySelector('[data-music-cover]'),
     musicTitle: document.querySelector('[data-music-title]'),
     musicArtist: document.querySelector('[data-music-artist]'),
+    musicTime: document.querySelector('[data-music-time]'),
+    musicFill: document.querySelector('[data-music-fill]'),
+    musicOpen: document.querySelector('[data-music-open]'),
     musicPlay: document.querySelector('[data-music-play]'),
     audio: document.querySelector('[data-music-audio]'),
+    musicSheet: document.querySelector('[data-music-sheet]'),
+    musicSheetClose: document.querySelector('[data-music-close]'),
+    musicCount: document.querySelector('[data-music-count]'),
+    trackList: document.querySelector('[data-track-list]'),
     activeId: document.querySelector('[data-active-id]'),
     activeBalance: document.querySelector('[data-active-balance]'),
     editActive: document.querySelector('[data-edit-active]'),
     logoutActive: document.querySelector('[data-logout-active]'),
-    accountsToggle: document.querySelector('[data-accounts-toggle]'),
-    accountsMenu: document.querySelector('[data-accounts-menu]'),
-    menuList: document.querySelector('[data-menu-list]'),
-    menuCount: document.querySelector('[data-menu-count]'),
-    addMenu: document.querySelector('[data-add-menu]'),
     listWrap: document.querySelector('[data-list-wrap]'),
     list: document.querySelector('[data-list]'),
     listTitle: document.querySelector('[data-list-title]'),
@@ -71,13 +73,15 @@
     editingId: '',
     editorAvatar: '',
     saving: false,
-    busyAvatar: false
+    busyAvatar: false,
+    tracks: [],
+    trackIndex: 0
   };
   var hintTimer = 0;
 
   // ── Общие помощники ──────────────────────────────
 
-  function safeAvatar(raw) {
+  function safeUrl(raw) {
     if (!raw) return '';
     try {
       var url = new URL(String(raw), location.origin);
@@ -92,7 +96,7 @@
 
   function paintAvatar(node, profile) {
     if (!node) return;
-    var url = safeAvatar(profile.avatar_url);
+    var url = safeUrl(profile.avatar_url);
     node.textContent = url ? '' : initial(profile);
     node.style.backgroundImage = url ? 'url("' + url.replace(/"/g, '%22') + '")' : '';
   }
@@ -115,6 +119,23 @@
   function formatCount(value) {
     var number = Number(value);
     return isFinite(number) ? String(number) : '0';
+  }
+
+  /** Кошелёк отдаёт число, но старые ответы могли прийти объектом. */
+  function normalBalance(raw) {
+    var value = raw;
+    if (value && typeof value === 'object') {
+      value = value.balance != null ? value.balance : (value.amount != null ? value.amount : null);
+    }
+    var number = Number(value);
+    return value == null || !isFinite(number) ? null : number;
+  }
+
+  function formatTime(seconds) {
+    var total = Math.max(0, Math.round(Number(seconds) || 0));
+    var minutes = Math.floor(total / 60);
+    var rest = total % 60;
+    return minutes + ':' + (rest < 10 ? '0' : '') + rest;
   }
 
   function apiHeaders(token) {
@@ -196,33 +217,51 @@
     };
   }
 
-  // ── Музыка профиля ───────────────────────────────
+  // ── Баннер и плеер ───────────────────────────────
 
   function paintBanner(details) {
-    var image = els.bannerImage;
-    if (!image) return;
     var media = details.mediaBanner && details.mediaBanner.url ? details.mediaBanner.url : '';
-    var src = safeAvatar(media);
-    if (!src) {
-      image.hidden = true;
-      image.removeAttribute('src');
-      return;
+    var src = safeUrl(media);
+    if (els.bannerImage) {
+      if (!src) {
+        els.bannerImage.hidden = true;
+        els.bannerImage.removeAttribute('src');
+      } else {
+        els.bannerImage.onerror = function () { els.bannerImage.hidden = true; };
+        els.bannerImage.src = src;
+        els.bannerImage.hidden = false;
+      }
     }
-    image.onerror = function () { image.hidden = true; };
-    image.src = src;
-    image.hidden = false;
+    var layer = src ? 'url("' + src.replace(/"/g, '%22') + '")' : 'none';
+    document.documentElement.style.setProperty('--banner-image', layer);
   }
 
   function stopMusic() {
-    if (!els.audio) return;
-    els.audio.pause();
-    els.music.classList.remove('is-playing');
-    els.musicPlay.setAttribute('aria-pressed', 'false');
-    els.musicPlay.setAttribute('aria-label', 'Включить музыку профиля');
+    if (els.audio) els.audio.pause();
+    if (els.music) els.music.classList.remove('is-playing');
+    if (els.musicPlay) {
+      els.musicPlay.setAttribute('aria-pressed', 'false');
+      els.musicPlay.setAttribute('aria-label', 'Включить музыку профиля');
+    }
+    renderTrackList();
+  }
+
+  function paintMusicProgress(seconds, duration) {
+    if (els.musicFill) {
+      var share = duration > 0 ? Math.min(1, seconds / duration) : 0;
+      els.musicFill.style.width = (share * 100).toFixed(2) + '%';
+    }
+    if (els.musicTime) els.musicTime.textContent = formatTime(seconds);
+  }
+
+  function currentTrack() {
+    return state.tracks[state.trackIndex] || null;
   }
 
   function paintMusic(tracks) {
-    var track = tracks && tracks.length ? tracks[0] : null;
+    state.tracks = Array.isArray(tracks) ? tracks : [];
+    state.trackIndex = 0;
+    var track = currentTrack();
     if (!track || !els.music) {
       if (els.music) els.music.hidden = true;
       return;
@@ -233,33 +272,121 @@
     els.musicArtist.textContent = artist;
     els.musicArtist.hidden = !artist;
 
-    var cover = safeAvatar(track.cover_url);
+    var cover = safeUrl(track.cover_url);
     els.musicCover.hidden = false;
     els.musicCover.classList.toggle('has-image', Boolean(cover));
     els.musicCover.style.backgroundImage = cover ? 'url("' + cover.replace(/"/g, '%22') + '")' : '';
 
-    var audioUrl = safeAvatar(track.url);
+    var audioUrl = safeUrl(track.url);
     var playable = Boolean(audioUrl && els.audio);
     els.musicPlay.hidden = !playable;
-    if (!playable) return;
-    els.audio.src = audioUrl;
-    els.audio.onended = stopMusic;
+    if (els.audio) {
+      els.audio.onended = stopMusic;
+      if (playable) {
+        els.audio.src = audioUrl;
+      } else {
+        els.audio.removeAttribute('src');
+      }
+    }
+    paintMusicProgress(0, Number(track.duration_ms || 0) / 1000);
+    renderTrackList();
+  }
+
+  function playTrack(index) {
+    if (!state.tracks.length) return;
+    var track = state.tracks[index];
+    if (!track) return;
+    var audioUrl = safeUrl(track.url);
+    if (!audioUrl || !els.audio) {
+      hint('У этого трека нет аудиофайла');
+      return;
+    }
+    var changed = index !== state.trackIndex;
+    state.trackIndex = index;
+    if (changed) {
+      els.musicTitle.textContent = String(track.name || 'Музыка профиля');
+      var artist = String(track.artist || '').trim();
+      els.musicArtist.textContent = artist;
+      els.musicArtist.hidden = !artist;
+      var cover = safeUrl(track.cover_url);
+      els.musicCover.classList.toggle('has-image', Boolean(cover));
+      els.musicCover.style.backgroundImage = cover ? 'url("' + cover.replace(/"/g, '%22') + '")' : '';
+      els.audio.src = audioUrl;
+      paintMusicProgress(0, Number(track.duration_ms || 0) / 1000);
+    }
+    els.audio.play().then(function () {
+      els.music.classList.add('is-playing');
+      els.musicPlay.setAttribute('aria-pressed', 'true');
+      els.musicPlay.setAttribute('aria-label', 'Выключить музыку профиля');
+      renderTrackList();
+    }).catch(function () { stopMusic(); });
   }
 
   function toggleMusic() {
     if (!els.audio || !els.audio.src) return;
     if (els.audio.paused) {
-      els.audio.play().then(function () {
-        els.music.classList.add('is-playing');
-        els.musicPlay.setAttribute('aria-pressed', 'true');
-        els.musicPlay.setAttribute('aria-label', 'Выключить музыку профиля');
-      }).catch(function () { stopMusic(); });
+      playTrack(state.trackIndex);
     } else {
       stopMusic();
     }
   }
 
-  // ── Рендер ───────────────────────────────────────
+  function renderTrackList() {
+    if (!els.trackList) return;
+    els.trackList.replaceChildren();
+    if (els.musicCount) {
+      els.musicCount.textContent = state.tracks.length
+        ? state.tracks.length + ' ' + (state.tracks.length === 1 ? 'трек' : 'трека')
+        : 'Плейлист пуст';
+    }
+    for (var i = 0; i < state.tracks.length; i++) {
+      els.trackList.append(trackRow(state.tracks[i], i));
+    }
+  }
+
+  function trackRow(track, index) {
+    var playing = index === state.trackIndex && els.audio && !els.audio.paused;
+    var row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'track' + (index === state.trackIndex ? ' is-current' : '');
+
+    var cover = document.createElement('span');
+    cover.className = 'track-cover';
+    var image = safeUrl(track.cover_url);
+    if (image) {
+      cover.classList.add('has-image');
+      cover.style.backgroundImage = 'url("' + image.replace(/"/g, '%22') + '")';
+    }
+
+    var copy = document.createElement('span');
+    copy.className = 'track-copy';
+    var name = document.createElement('span');
+    name.className = 'track-name';
+    name.textContent = String(track.name || 'Трек');
+    var artist = document.createElement('span');
+    artist.className = 'track-artist';
+    artist.textContent = String(track.artist || '');
+    copy.append(name, artist);
+
+    var tail = document.createElement('span');
+    if (playing) {
+      tail.className = 'track-bars';
+      tail.setAttribute('aria-label', 'Играет');
+      tail.innerHTML = '<i></i><i></i><i></i>';
+    } else {
+      tail.className = 'track-state';
+      tail.textContent = formatTime(Number(track.duration_ms || 0) / 1000);
+    }
+
+    row.append(cover, copy, tail);
+    row.addEventListener('click', function () {
+      if (playing) stopMusic();
+      else playTrack(index);
+    });
+    return row;
+  }
+
+  // ── Рендер профиля ───────────────────────────────
 
   function renderActive(entry) {
     if (!entry) {
@@ -271,10 +398,9 @@
     var details = state.details[profile.id] || {};
     els.active.hidden = false;
 
-    var displayName = profile.display_name || ('@' + (profile.username || 'ghost'));
     paintAvatar(els.avatar, profile);
     paintBanner(details);
-    els.name.textContent = displayName;
+    els.name.textContent = profile.display_name || ('@' + (profile.username || 'ghost'));
     els.verified.hidden = !details.verified;
     els.handle.textContent = profile.username ? '@' + profile.username : '';
 
@@ -294,7 +420,7 @@
 
     els.activeId.textContent = 'GhostID ' + profile.id;
     if (els.activeBalance) {
-      var balance = details.balance;
+      var balance = normalBalance(details.balance);
       els.activeBalance.hidden = balance == null;
       els.activeBalance.textContent = balance == null ? '' : balance + ' GOST';
     }
@@ -352,46 +478,6 @@
     return row;
   }
 
-  function menuRow(entry, active) {
-    var row = document.createElement('button');
-    row.type = 'button';
-    row.className = 'menu-account';
-    row.setAttribute('role', 'menuitem');
-    if (active) row.setAttribute('aria-current', 'true');
-
-    var avatar = document.createElement('span');
-    avatar.className = 'menu-avatar';
-    paintAvatar(avatar, entry.profile);
-
-    var copy = document.createElement('span');
-    copy.className = 'menu-copy';
-    var name = document.createElement('span');
-    name.className = 'menu-name';
-    name.textContent = entry.profile.display_name || ('@' + entry.profile.username);
-    var handle = document.createElement('span');
-    handle.className = 'menu-handle';
-    handle.textContent = '@' + entry.profile.username;
-    copy.append(name, handle);
-    row.append(avatar, copy);
-
-    row.addEventListener('click', function () {
-      closeMenu();
-      if (active) return;
-      activate(entry);
-    });
-    return row;
-  }
-
-  function renderMenu(active, others) {
-    if (!els.menuList) return;
-    els.menuList.replaceChildren();
-    els.menuCount.textContent = store.list().length + ' из ' + store.MAX;
-    if (active) els.menuList.append(menuRow(active, true));
-    for (var i = 0; i < others.length; i++) {
-      els.menuList.append(menuRow(others[i], false));
-    }
-  }
-
   function render() {
     var active = activeEntry();
     var list = store.list();
@@ -400,7 +486,6 @@
       : list;
 
     renderActive(active);
-    renderMenu(active, others);
 
     var hasAny = Boolean(active) || list.length > 0;
     els.empty.hidden = hasAny;
@@ -459,7 +544,8 @@
       var wallet = await fetch(WALLET, { credentials: 'include', cache: 'no-store', headers: headers });
       if (wallet.ok) {
         var data = await wallet.json();
-        if (data && data.balance != null) details.balance = data.balance;
+        var balance = normalBalance(data && data.balance);
+        if (balance != null) details.balance = balance;
       }
     } catch (_) {}
 
@@ -510,19 +596,16 @@
     location.href = AUTH_URL;
   }
 
-  // ── Меню аккаунтов ───────────────────────────────
+  // ── Список музыки ────────────────────────────────
 
-  function closeMenu() {
-    if (!els.accountsMenu) return;
-    els.accountsMenu.hidden = true;
-    els.accountsToggle.setAttribute('aria-expanded', 'false');
+  function openMusic() {
+    if (!state.tracks.length || !els.musicSheet) return;
+    renderTrackList();
+    els.musicSheet.hidden = false;
   }
 
-  function toggleMenu() {
-    if (!els.accountsMenu) return;
-    var open = els.accountsMenu.hidden;
-    els.accountsMenu.hidden = !open;
-    els.accountsToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  function closeMusic() {
+    if (els.musicSheet) els.musicSheet.hidden = true;
   }
 
   // ── Редактор профиля ─────────────────────────────
@@ -693,11 +776,11 @@
   // ── Связывание событий ───────────────────────────
 
   if (els.avatar) {
+    els.avatar.classList.add('is-clickable');
     els.avatar.addEventListener('click', function () {
       var entry = activeEntry();
       if (entry) openEditor(entry);
     });
-    els.avatar.classList.add('is-clickable');
   }
   if (els.editActive) {
     els.editActive.addEventListener('click', function () {
@@ -711,12 +794,25 @@
       if (entry) forget(entry);
     });
   }
-  if (els.accountsToggle) els.accountsToggle.addEventListener('click', function (event) {
-    event.stopPropagation();
-    toggleMenu();
-  });
-  if (els.addMenu) els.addMenu.addEventListener('click', goAddAccount);
   if (els.musicPlay) els.musicPlay.addEventListener('click', toggleMusic);
+  if (els.musicOpen) els.musicOpen.addEventListener('click', openMusic);
+  if (els.musicSheetClose) els.musicSheetClose.addEventListener('click', closeMusic);
+  if (els.musicSheet) {
+    els.musicSheet.addEventListener('click', function (event) {
+      if (event.target === els.musicSheet) closeMusic();
+    });
+  }
+  if (els.audio) {
+    els.audio.addEventListener('timeupdate', function () {
+      paintMusicProgress(els.audio.currentTime, els.audio.duration || 0);
+    });
+    els.audio.addEventListener('pause', function () {
+      if (els.music) els.music.classList.remove('is-playing');
+    });
+    els.audio.addEventListener('play', function () {
+      if (els.music) els.music.classList.add('is-playing');
+    });
+  }
   if (els.add) els.add.addEventListener('click', goAddAccount);
   if (els.editorClose) els.editorClose.addEventListener('click', closeEditor);
   if (els.editorCancel) els.editorCancel.addEventListener('click', closeEditor);
@@ -733,13 +829,9 @@
       if (event.target === els.editor) closeEditor();
     });
   }
-  document.addEventListener('click', function (event) {
-    if (!els.accountsMenu || els.accountsMenu.hidden) return;
-    if (!els.accountsMenu.contains(event.target)) closeMenu();
-  });
   document.addEventListener('keydown', function (event) {
     if (event.key !== 'Escape') return;
-    if (!els.accountsMenu.hidden) closeMenu();
+    if (els.musicSheet && !els.musicSheet.hidden) closeMusic();
     if (!els.editor.hidden) closeEditor();
   });
   document.addEventListener('ghostid-accounts-changed', function () {

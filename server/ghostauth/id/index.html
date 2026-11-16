@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/auth/id/id.css?v=20261116-2">
+  <link rel="stylesheet" href="/auth/id/id.css?v=20261116-3">
 </head>
 <body>
   <header class="topbar">
@@ -44,17 +44,6 @@
           <button class="icon-action" type="button" data-edit-active title="Изменить профиль" aria-label="Изменить профиль">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4Zm11.5-14.5 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
-          <button class="icon-action" type="button" data-accounts-toggle aria-haspopup="true" aria-expanded="false" title="Мои аккаунты" aria-label="Мои аккаунты">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
-          <div class="accounts-menu" data-accounts-menu hidden>
-            <div class="accounts-menu-head"><span>Аккаунты</span><span data-menu-count></span></div>
-            <div class="accounts-menu-list" data-menu-list role="menu"></div>
-            <button class="accounts-menu-add" type="button" data-add-menu>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-              <span>Добавить аккаунт</span>
-            </button>
-          </div>
         </div>
         <p class="handle" data-handle></p>
       </div>
@@ -72,15 +61,19 @@
       </p>
 
       <div class="music" data-music hidden role="group" aria-label="Музыка профиля">
-        <span class="music-cover" data-music-cover hidden aria-hidden="true"></span>
-        <span class="music-copy">
-          <strong data-music-title></strong>
-          <small data-music-artist hidden></small>
-        </span>
+        <button class="music-info" type="button" data-music-open aria-haspopup="dialog" aria-label="Открыть список музыки профиля">
+          <span class="music-cover" data-music-cover hidden aria-hidden="true"></span>
+          <span class="music-copy">
+            <strong data-music-title></strong>
+            <small data-music-artist hidden></small>
+          </span>
+        </button>
+        <span class="music-time" data-music-time>0:00</span>
         <button class="music-play" type="button" data-music-play aria-pressed="false" aria-label="Включить музыку профиля">
           <svg class="ic-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10-6.5-10-6.5Z" fill="currentColor"/></svg>
           <svg class="ic-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="5" width="3.6" height="14" rx="1.2" fill="currentColor"/><rect x="13.4" y="5" width="3.6" height="14" rx="1.2" fill="currentColor"/></svg>
         </button>
+        <span class="music-progress" data-music-progress aria-hidden="true"><span data-music-fill></span></span>
       </div>
 
       <p class="id-line">
@@ -109,6 +102,17 @@
       <p class="hint" data-hint role="status" aria-live="polite"></p>
     </section>
   </main>
+
+  <div class="modal" data-music-sheet hidden>
+    <div class="modal-card sheet" role="dialog" aria-modal="true" aria-labelledby="music-title">
+      <button class="modal-close" type="button" data-music-close aria-label="Закрыть">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <h2 id="music-title" class="modal-title">Музыка профиля</h2>
+      <p class="modal-sub" data-music-count></p>
+      <div class="track-list" data-track-list></div>
+    </div>
+  </div>
 
   <div class="modal" data-editor hidden>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="editor-title">
@@ -144,6 +148,6 @@
   </div>
 
   <script src="/auth/ghostid-accounts.js?v=20261114-accounts-10" defer></script>
-  <script src="/auth/id/id.js?v=20261116-2" defer></script>
+  <script src="/auth/id/id.js?v=20261116-3" defer></script>
 </body>
 </html>
