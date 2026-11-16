@@ -92,70 +92,49 @@ svg { display: block; width: 100%; height: 100%; }
   min-width: 0;
 }
 
-/* ── Баннер и аватар ────────────────────────────── */
+/* ── Баннер и аватар: значения из GhostSocial v2 ── */
 
 @property --gs-banner-notch-radius {
   syntax: "<length>";
   inherits: false;
-  initial-value: 84px;
+  initial-value: 72px;
 }
+
 .banner {
   position: relative;
-  width: 100%;
+  width: calc(100% + 12px);
   height: clamp(88px, 24.5vw, 110px);
   flex: none;
   overflow: hidden;
+  margin: 0 -6px 0;
   border-radius: 999px;
   background: linear-gradient(120deg, #301754, #171026 72%);
-  --gs-banner-notch-radius: 84px;
+  --gs-banner-notch-radius: 72px;
   --gs-banner-notch-duration: 750ms;
-  -webkit-mask-image: radial-gradient(circle var(--gs-banner-notch-radius) at 50% 100%, transparent 0, transparent calc(var(--gs-banner-notch-radius) - 1px), #000 var(--gs-banner-notch-radius));
-  mask-image: radial-gradient(circle var(--gs-banner-notch-radius) at 50% 100%, transparent 0, transparent calc(var(--gs-banner-notch-radius) - 1px), #000 var(--gs-banner-notch-radius));
+  -webkit-mask-image: radial-gradient(circle var(--gs-banner-notch-radius) at 50% 100%, transparent 0, transparent calc(var(--gs-banner-notch-radius) - 1px), #000 calc(var(--gs-banner-notch-radius) - 1px));
+  mask-image: radial-gradient(circle var(--gs-banner-notch-radius) at 50% 100%, transparent 0, transparent calc(var(--gs-banner-notch-radius) - 1px), #000 calc(var(--gs-banner-notch-radius) - 1px));
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
   transition: --gs-banner-notch-radius var(--gs-banner-notch-duration) cubic-bezier(.62, .02, .92, .42);
 }
-.banner.gs-banner-mode-media {
-  z-index: 2;
-  background-image: none !important;
+
+/* На компьютере баннер выше — как в соцсети. */
+@media (min-width: 900px) {
+  .banner { height: 160px; }
 }
-.banner.gs-banner-notch-open {
-  --gs-banner-notch-radius: 0px;
-  z-index: 5;
-}
-.banner .gs-banner-media {
+
+.banner::after {
   position: absolute;
   inset: 0;
-  z-index: 2;
-  display: block;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  transition: opacity 180ms ease;
-}
-.banner.gs-banner-media-loaded .gs-banner-media { opacity: 1; }
-.banner.gs-banner-media-loaded .banner-image { display: none !important; }
-.banner .gs-banner-media-shade {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  background: #000;
+  background: linear-gradient(0deg, rgba(19, 13, 32, .1), transparent 65%);
+  content: "";
   pointer-events: none;
 }
-.gs-banner-avatar-gradient {
-  position: absolute;
-  height: 58px;
-  z-index: 6;
-  pointer-events: none;
-  background: linear-gradient(to bottom, var(--bg) 0%, var(--bg) 8%, color-mix(in srgb, var(--bg) 72%, transparent) 48%, transparent 100%);
-  opacity: 0;
-  transition: opacity 180ms ease-out;
-}
-.gs-banner-avatar-gradient.is-visible { opacity: 1; }
 
 .banner-image {
   position: absolute;
   inset: 0;
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -163,32 +142,101 @@ svg { display: block; width: 100%; height: 100%; }
 
 .banner-image[hidden] { display: none !important; }
 
-.banner::after {
+.banner.gs-banner-mode-media {
+  z-index: 2;
+  background-color: #171026;
+  background-image: none !important;
+}
+
+.banner.gs-banner-mode-media:not(.gs-banner-media-loaded) {
+  background-image: var(--gs-profile-banner-gradient, linear-gradient(120deg, #301754, #171026 72%)) !important;
+}
+
+.banner.gs-banner-mode-media::after { z-index: 3; }
+
+.banner.gs-banner-notch-open {
+  --gs-banner-notch-radius: 0px;
+  z-index: 5;
+}
+
+.banner .gs-banner-media {
   position: absolute;
   inset: 0;
-  background: linear-gradient(0deg, rgba(17, 17, 19, .18), transparent 62%);
-  content: "";
+  z-index: 2;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.banner.gs-banner-media-loaded .gs-banner-media { opacity: 1; }
+.banner.gs-banner-media-loaded .banner-image { display: none !important; }
+
+.banner .gs-banner-media-shade {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: #000;
   pointer-events: none;
 }
 
+.banner .gs-media-banner-status {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  box-sizing: border-box;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: #fff;
+  background: #211631;
+  overflow-wrap: anywhere;
+}
+
+.gs-media-banner-status[hidden] { display: none !important; }
+
+/* Градиент живёт рядом с баннером, а не внутри маски. */
+.gs-banner-avatar-gradient {
+  position: absolute;
+  max-width: 100%;
+  height: 58px;
+  z-index: 6;
+  pointer-events: none;
+  background: linear-gradient(to bottom, var(--bg, #070918) 0%, var(--bg, #070918) 8%, color-mix(in srgb, var(--bg, #070918) 72%, transparent) 48%, transparent 100%);
+  opacity: 0;
+  transition: opacity 180ms ease-out;
+}
+
+.gs-banner-avatar-gradient.is-visible { opacity: 1; }
+
 .avatar {
   position: relative;
-  z-index: 1;
+  z-index: 1 !important;
   align-self: center;
   display: grid;
   place-items: center;
   box-sizing: border-box;
   width: 110px;
   height: 110px;
-  margin: -70px 0 29px;
+  flex: none;
+  margin: -63px 0 29px;
   overflow: hidden;
   border: 0;
   border-radius: 50%;
   background: var(--surface-2);
   color: var(--primary);
-  font-size: 34px;
-  font-weight: 650;
+  font-size: 26px;
+  font-weight: 600;
+  transition: opacity .12s ease;
 }
+
 .avatar img {
   width: 100%;
   height: 100%;
@@ -196,6 +244,7 @@ svg { display: block; width: 100%; height: 100%; }
 }
 
 .avatar.is-clickable { cursor: pointer; }
+.avatar.is-clickable:hover { opacity: .84; }
 
 /* ── Имя и ник ──────────────────────────────────── */
 
@@ -830,15 +879,6 @@ svg { display: block; width: 100%; height: 100%; }
 }
 
 
-/* ── Баннер-медиа: слой затемнения над вырезом ──── */
-
-.banner.gs-banner-mode-media::after { z-index: 3; }
-.gs-media-banner-status[hidden] { display: none !important; }
-
-.banner.gs-banner-mode-media:not(.gs-banner-media-loaded) {
-  background-image: var(--gs-profile-banner-gradient, linear-gradient(120deg, #301754, #171026 72%)) !important;
-}
-
 /* ── Просмотр аватарки ──────────────────────────── */
 
 .av-lightbox {
@@ -891,14 +931,3 @@ svg { display: block; width: 100%; height: 100%; }
   font-weight: 600;
 }
 
-.gs-media-banner-status {
-  position: absolute;
-  inset: 0;
-  z-index: 4;
-  display: grid;
-  place-items: center;
-  color: var(--text-dim, #9aa0aa);
-  font-size: 13px;
-  text-align: center;
-  pointer-events: none;
-}

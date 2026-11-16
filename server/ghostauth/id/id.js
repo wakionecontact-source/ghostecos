@@ -299,7 +299,7 @@
       generation++;
       if (timer) { clearTimeout(timer); timer = null; }
       open = !!next;
-      node.style.setProperty('--gs-banner-notch-radius', open ? '0px' : '84px');
+      node.style.setProperty('--gs-banner-notch-radius', open ? '0px' : '72px');
       node.style.setProperty('--gs-banner-notch-duration', duration + 'ms');
       node.classList.remove('gs-banner-notch-wave');
       node.classList.toggle('gs-banner-notch-open', open);
@@ -338,7 +338,7 @@
     node.querySelectorAll('.gs-banner-media, .gs-banner-media-shade, .gs-media-banner-status')
       .forEach(el => el.remove());
     node.classList.remove('gs-banner-mode-media', 'gs-banner-media-loaded', 'gs-banner-media-error');
-    node.style.setProperty('--gs-banner-notch-radius', '84px');
+    node.style.setProperty('--gs-banner-notch-radius', '72px');
     bannerNotchController(node);
     node.removeAttribute('aria-hidden');
     if (fallbackImage) fallbackImage.hidden = false;
@@ -412,7 +412,7 @@
       if (fallbackImage) fallbackImage.hidden = true;
       node.style.backgroundImage = 'none';
       status.remove();
-      node.style.setProperty('--gs-banner-notch-radius', '84px');
+      node.style.setProperty('--gs-banner-notch-radius', '72px');
       requestAnimationFrame(() => {
         if (typeof node._gsBannerNotchPlay === 'function') node._gsBannerNotchPlay();
       });
