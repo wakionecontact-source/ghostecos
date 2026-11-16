@@ -37,6 +37,7 @@ export class CallStore {
   private pc: RTCPeerConnection | null = null;
   private local: MediaStream | null = null;
   private ice: RTCIceServer[] = DEFAULT_ICE;
+  private iceWaiters: Array<() => void> = [];
   private pendingOffer = '';
   private ringTimer: number | null = null;
   private unsubscribe: (() => void) | null = null;
@@ -48,6 +49,7 @@ export class CallStore {
       if (event.type === 'call.ice.ok') {
         const data = event.data as { ice_servers?: RTCIceServer[] } | undefined;
         if (data?.ice_servers?.length) this.ice = data.ice_servers;
+        this.flushIce();
         return;
       }
       if (event.type === 'call.signal') {
@@ -68,6 +70,21 @@ export class CallStore {
 
   private send(data: Record<string, unknown>): void {
     this.socket?.send('call.signal', data);
+  }
+
+  /** TURN-креды приходят только с сервера, поэтому ждём ответ, но не дольше 1.5 с. */
+  private requestIce(callId: string): Promise<void> {
+    return new Promise((resolve) => {
+      this.iceWaiters.push(resolve);
+      window.setTimeout(() => this.flushIce(), 1500);
+      this.socket?.send('call.ice', { request_id: callId });
+    });
+  }
+
+  private flushIce(): void {
+    const waiters = this.iceWaiters;
+    this.iceWaiters = [];
+    for (const resolve of waiters) resolve();
   }
 
   private fail(text: string): void {
@@ -115,7 +132,7 @@ export class CallStore {
     this.armRingTimeout();
 
     try {
-      this.socket?.send('call.ice', { request_id: this.callId });
+      await this.requestIce(this.callId);
       this.local = await this.media(video);
       const pc = this.peerConnection();
       this.pc = pc;
@@ -140,7 +157,7 @@ export class CallStore {
     this.clearRing();
     try {
       if (!this.socket) return;
-      this.socket.send('call.ice', { request_id: this.callId });
+      await this.requestIce(this.callId);
       this.local = await this.media(this.video);
       const pc = this.peerConnection();
       this.pc = pc;
