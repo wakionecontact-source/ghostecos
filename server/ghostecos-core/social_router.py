@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Header, HTTPException, Query, UploadFile, File, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Header, HTTPException, Query, UploadFile, File, Form, Request, WebSocket, WebSocketDisconnect
 import asyncio
+from starlette.concurrency import run_in_threadpool
 from typing import Any, Optional, List
 from pydantic import BaseModel, Field
 import password_auth as _password_auth
 from collections import defaultdict
-import sqlite3, secrets, os, uuid, json, io, hashlib, hmac, re, time, random, base64, shutil, math
-from urllib.parse import urljoin, urlsplit
+import sqlite3, secrets, os, uuid, json, io, hashlib, hmac, re, time, random, base64, shutil, math, mimetypes
 
 router = APIRouter(prefix="/api/soc", tags=["GhostSocial"])
 
@@ -24,6 +24,9 @@ from ecos_core.client import (
     issue_sso_jwt as core_issue_sso_jwt,
     delete_account as core_delete_account,
     award_gost as core_award_gost,
+    list_sessions as core_list_sessions,
+    logout as core_logout,
+    revoke_session as core_revoke_session,
 )  # centralized identity and wallet activity
 from ecos_core.shared import (
     _ctrl, _invis, _comb, _val_name, _val_username, _claim_public_handle,
@@ -102,6 +105,7 @@ class LoginBody(BaseModel):
     username: str
     password: str
     device_id: Optional[str] = None
+    device_token: Optional[str] = None
     device_name: Optional[str] = None
     platform: Optional[str] = None
 
@@ -120,6 +124,7 @@ class LoginChallengeBody(BaseModel):
     username: str
     client_nonce: str
     device_id: Optional[str] = None
+    device_token: Optional[str] = None
     device_name: Optional[str] = None
     platform: Optional[str] = None
 
@@ -137,6 +142,7 @@ class ChallengeProofBody(BaseModel):
 
 class LoginFinishBody(ChallengeProofBody):
     device_id: Optional[str] = None
+    device_token: Optional[str] = None
     device_name: Optional[str] = None
     platform: Optional[str] = None
 
@@ -147,15 +153,51 @@ class PollBody(BaseModel):
     options: List[str]
     is_quiz: bool = False
     correct_idx: Optional[int] = None
+    allow_multiple: bool = False
+    correct_idxs: Optional[List[int]] = None
+
+_FORMAT_MARKER_RES = [
+    re.compile(r"\*\*[^\n*]+\*\*"),        # **жирный**
+    re.compile(r"__[^\n_]+__"),               # __курсив__
+    re.compile(r"~~[^\n~]+~~"),               # ~~зачёркнутый~~
+    re.compile(r"`[^\n`]+`"),                        # `код`
+    re.compile(r"\[[^\[\]\n]+\]\(https?://[^\s()]+\)"),  # [текст](https://...)
+]
+
+
+def _is_formatting_segment_ok(text: str) -> bool:
+    """Участок с formatting=true обязан быть одной из разрешённых разметок целиком."""
+    return any(rx.fullmatch(text) for rx in _FORMAT_MARKER_RES)
+
+
+def _parse_segments(raw):
+    """Участки из БД; у старых постов поля нет -> None (показываем как обычный текст)."""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, list) else None
+    except Exception:
+        return None
+
+
+class SegmentBody(BaseModel):
+    text: str
+    formatting: bool = False  # True = этот участок оформлен разметкой; False = обычный текст (включая звёздочки)
+
 
 class PostBody(BaseModel):
     text: str
+    segments: Optional[List[SegmentBody]] = None  # участки с флагом formatting; сумма text должна равняться text
     media: Optional[List[dict]] = None
     poll: Optional[PollBody] = None
     is_nsfw: Optional[bool] = False  # 18+ контент с обязательным блюром в ленте
+    formatting: Optional[bool] = False  # включена ли разметка в тексте; у старых постов поля нет -> False
 
 class VoteBody(BaseModel):
-    option_idx: int
+    option_idx: int = -1
+    option_idxs: Optional[List[int]] = None
+    remove: bool = False
 
 class EditPostBody(BaseModel):
     text: Optional[str] = None
@@ -259,6 +301,14 @@ def _profile_music_text(raw: dict, key: str, fallback: str) -> str:
     return value
 
 
+def _safe_profile_cover(value: Any) -> Optional[str]:
+    """Обложка трека из поста: принимаем только наш /social/media/ файл, иначе без обложки."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value if re.fullmatch(r"/social/media/[A-Za-z0-9._-]+", value) else None
+
+
 def _normalize_profile_music_item(raw: dict) -> dict:
     """Validate one GhoSou reference or one legacy local profile track."""
     if not isinstance(raw, dict):
@@ -298,6 +348,31 @@ def _normalize_profile_music_item(raw: dict) -> dict:
             "album": album,
             "cover_url": cover_url,
             "duration_ms": duration,
+        }
+
+    if source == "post":
+        try:
+            source_post_id = int(raw.get("source_post_id") or 0)
+        except (TypeError, ValueError):
+            source_post_id = 0
+        if source_post_id <= 0:
+            raise HTTPException(422, "profile_music.source_post_id is required")
+        url = str(raw.get("url") or "").strip()
+        if not re.fullmatch(r"/social/media/[A-Za-z0-9._-]+", url):
+            raise HTTPException(422, "profile_music.url must reference uploaded media")
+        if url.rsplit(".", 1)[-1].lower() not in ALLOWED_AUDIO:
+            raise HTTPException(422, "profile_music.url must be an audio file")
+        return {
+            "source": "post",
+            "track_id": f"post:{source_post_id}:{url}",
+            "slug": None,
+            "url": url,
+            "name": name,
+            "artist": artist,
+            "album": album,
+            "cover_url": _safe_profile_cover(raw.get("cover_url")),
+            "duration_ms": duration,
+            "source_post_id": source_post_id,
         }
 
     if source not in {"legacy", "upload", "local"}:
@@ -347,13 +422,13 @@ def _normalize_profile_music_item(raw: dict) -> dict:
 
 
 def _normalize_profile_music(raw: Any) -> list:
-    """Normalize the playlist and enforce the three-track profile limit."""
+    """Normalize the playlist and enforce the 20-track profile limit."""
     if isinstance(raw, dict):
         raw = [raw]
     if not isinstance(raw, list):
         raise HTTPException(422, "profile_music must be a list")
-    if len(raw) > 3:
-        raise HTTPException(422, "В профиле можно сохранить максимум 3 трека")
+    if len(raw) > 20:
+        raise HTTPException(422, "В профиле можно сохранить максимум 20 треков")
     result = []
     seen = set()
     for item in raw:
@@ -535,6 +610,10 @@ async def websocket_endpoint(
                 msg = await asyncio.wait_for(websocket.receive_text(), timeout=90)
             except asyncio.TimeoutError:
                 break  # зомби-коннект → отключаем
+            # РљР°РґСЂ РѕРіСЂР°РЅРёС‡РµРЅ РєРѕРЅС‚СЂР°РєС‚РѕРј E2E (ciphertext <=16k), РєСЂСѓРїРЅРѕРµ РёРґС‘С‚ С„Р°Р№Р»Р°РјРё.
+            if len(msg) > 262144:
+                await websocket.close(code=1009)
+                break
             if msg == 'ping' or msg == 'cs.ping':
                 await websocket.send_text('pong')
                 continue
@@ -669,8 +748,7 @@ async def websocket_endpoint(
                     # it accepts a live offer addressed to this user.
                     rate_limit_error = he
                 if not call_id or kind not in {
-                    "offer", "ringing", "answer", "candidate", "media-offer", "media-answer",
-                    "hangup", "reject", "busy", "timeout",
+                    "offer", "ringing", "answer", "candidate", "hangup", "reject", "busy", "timeout",
                 }:
                     continue
                 if not to_user or to_user == username:
@@ -688,14 +766,6 @@ async def websocket_endpoint(
                     await _send_safe({"type": "call.signal.err", "data": {
                         "call_id": call_id,
                         "error": f"Аккаунт @{to_user} не найден",
-                    }})
-                    continue
-                if kind in {"media-offer", "media-answer"} and not _has_active_call(
-                    int(uid), int(peer["id"]), call_id
-                ):
-                    await _send_safe({"type": "call.signal.err", "data": {
-                        "call_id": call_id,
-                        "error": "Звонок уже завершён",
                     }})
                     continue
                 if kind == "offer":
@@ -727,7 +797,6 @@ async def websocket_endpoint(
                     # Clear both participants' setup counters before ICE exchange.
                     _rl_buckets.pop(f"call:{uid}", None)
                     _rl_buckets.pop(f"call:{peer['id']}", None)
-                    _remember_active_call(int(uid), int(peer["id"]), call_id)
                 elif rate_limit_error:
                     await _send_safe({"type": "call.signal.err", "data": {
                         "call_id": call_id,
@@ -738,9 +807,6 @@ async def websocket_endpoint(
                     _remember_call_offer(int(uid), int(peer["id"]), call_id)
                 elif kind in {"hangup", "reject", "busy", "timeout"}:
                     _clear_call_offer(int(uid), int(peer["id"]), call_id)
-                    _clear_active_call(int(uid), int(peer["id"]), call_id)
-                elif kind in {"media-offer", "media-answer"}:
-                    _remember_active_call(int(uid), int(peer["id"]), call_id)
                 forwarded = {
                     "call_id": call_id,
                     "kind": kind,
@@ -748,7 +814,6 @@ async def websocket_endpoint(
                 }
                 for field in (
                     "sdp", "candidate", "sdp_mid", "sdp_mline_index", "video",
-                    "ice_generation",
                 ):
                     if field in data:
                         forwarded[field] = data[field]
@@ -1263,7 +1328,7 @@ async def websocket_endpoint(
                     "SELECT 1 FROM soc_follows WHERE follower_id=? AND followee_id=?", (uid, u["id"]),
                 ).fetchone() is not None
                 rows = c.execute("""
-                    SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+                    SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments,
                            u.username, u.display_name, u.avatar_url,
                            (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
                     FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -1314,9 +1379,13 @@ async def websocket_endpoint(
                 # Token этой сессии — чтобы исключить self-device из other_device_pubkeys.
                 # WS не передаёт authorization, но у нас есть текущая token-переменная из handshake.
                 ws_token = token  # из ?token=… handshake-параметра
+                from ecos_core.sessions import device_for_token
+                current_device = device_for_token(c, ws_token, uid)
+                current_device_pk = int(current_device["id"]) if current_device else -1
                 other_devs = c.execute(
-                    "SELECT pub_key FROM user_devices WHERE user_id=? AND is_active=1 AND is_blocked=0 AND pub_key IS NOT NULL AND token != ?",
-                    (uid, ws_token),
+                    "SELECT pub_key FROM user_devices WHERE user_id=? AND is_active=1 "
+                    "AND is_blocked=0 AND pub_key IS NOT NULL AND id != ?",
+                    (uid, current_device_pk),
                 ).fetchall()
                 c.close()
                 storage_mode = row["key_storage_mode"] if row else None
@@ -1384,7 +1453,8 @@ async def websocket_endpoint(
                 try:
                     devs = _da.list_user_devices(c, uid)
                     ws_token = token  # из ?token=… handshake-параметра
-                    cur = c.execute("SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1", (ws_token, uid)).fetchone()
+                    from ecos_core.sessions import device_for_token
+                    cur = device_for_token(c, ws_token, uid)
                     cur_id = cur["id"] if cur else None
                     for d_ in devs:
                         d_["is_current"] = (d_["id"] == cur_id)
@@ -1433,7 +1503,8 @@ async def websocket_endpoint(
                 c = db()
                 try:
                     ws_token = token  # из ?token=… handshake-параметра
-                    cur = c.execute("SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1", (ws_token, uid)).fetchone()
+                    from ecos_core.sessions import device_for_token
+                    cur = device_for_token(c, ws_token, uid)
                     if cur and cur["id"] == pk:
                         await _send_safe({"type": "devices.revoke.err", "data": {"request_id": rid, "error": "Нельзя отозвать текущее устройство — выйдите через «Выход»"}})
                     else:
@@ -1709,6 +1780,8 @@ async def websocket_endpoint(
                             "UPDATE user_devices SET is_blocked=1, is_active=0 WHERE id=?",
                             (dev["id"],),
                         )
+                        from ecos_core.sessions import revoke_device_sessions
+                        revoke_device_sessions(c, int(dev["id"]))
                     else:
                         c.execute(
                             "INSERT INTO user_devices (user_id, device_id, device_name, platform, is_active, is_blocked, is_owner) "
@@ -1823,7 +1896,8 @@ async def websocket_endpoint(
                 else:
                     priv_to_store = None
                     salt_to_store = None
-                dev = c.execute("SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1", (token, uid)).fetchone()
+                from ecos_core.sessions import device_for_token
+                dev = device_for_token(c, token, uid)
                 if dev:
                     c.execute("UPDATE user_devices SET pub_key=? WHERE id=?", (x25519_pub, dev["id"]))
                 c.execute(
@@ -1888,7 +1962,7 @@ async def websocket_endpoint(
                     "SELECT 1 FROM soc_follows WHERE follower_id=? AND followee_id=?", (uid, u_dict["id"])
                 ).fetchone() is not None
                 rows = c.execute("""
-                    SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+                    SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments,
                            u.username, u.display_name, u.avatar_url,
                            (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
                     FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -2106,16 +2180,16 @@ def init():
             msg_id INTEGER NOT NULL,
             PRIMARY KEY (user_id, msg_id)
         );
-        -- Зашифрованные на клиенте файлы. Новые крупные вложения хранятся
-        -- отдельными ciphertext-файлами; blob оставлен для старых клиентов.
-        -- TTL: удаление после ack получателя или через 5 дней.
+        -- Зашифрованные на клиенте файлы. Сервер хранит только ciphertext blob —
+        -- не знает имя, тип, размер исходного файла. Расшифровка только у получателя.
+        -- TTL: ack-based — удаляется когда receiver подтвердил скачивание.
+        -- Hard cutoff: автоудаление через 7 дней (cleanup).
         CREATE TABLE IF NOT EXISTS chat_files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             sender_id INTEGER NOT NULL,
             receiver_id INTEGER NOT NULL,
             blob BLOB NOT NULL,
             size INTEGER NOT NULL,
-            file_path TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (sender_id) REFERENCES users(id),
             FOREIGN KEY (receiver_id) REFERENCES users(id)
@@ -2180,6 +2254,7 @@ def init():
             banner_visibility TEXT NOT NULL DEFAULT 'all',
             about_visibility TEXT NOT NULL DEFAULT 'all',
             music_visibility TEXT NOT NULL DEFAULT 'all',
+            created_visibility TEXT NOT NULL DEFAULT 'all',
             FOREIGN KEY (user_id) REFERENCES users(id)
         );
 
@@ -2383,6 +2458,7 @@ def init():
         ("banner_visibility", "TEXT NOT NULL DEFAULT 'all'"),
         ("about_visibility", "TEXT NOT NULL DEFAULT 'all'"),
         ("music_visibility", "TEXT NOT NULL DEFAULT 'all'"),
+        ("created_visibility", "TEXT NOT NULL DEFAULT 'all'"),
     ):
         try:
             c.execute(f"ALTER TABLE user_privacy ADD COLUMN {column} {definition}")
@@ -2398,6 +2474,10 @@ def init():
             c.execute(f"ALTER TABLE soc_profile_music ADD COLUMN {column} {definition}")
         except sqlite3.OperationalError:
             pass
+    try:
+        c.execute("ALTER TABLE soc_profile_music_tracks ADD COLUMN source_post_id INTEGER DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass
     try:
         c.execute("ALTER TABLE users ADD COLUMN is_official INTEGER NOT NULL DEFAULT 0")
     except sqlite3.OperationalError:
@@ -2582,6 +2662,10 @@ def init():
     except sqlite3.OperationalError: pass
 
     try: c.execute("ALTER TABLE soc_posts ADD COLUMN is_nsfw INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError: pass
+    try: c.execute("ALTER TABLE soc_posts ADD COLUMN formatting INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError: pass
+    try: c.execute("ALTER TABLE soc_posts ADD COLUMN segments TEXT DEFAULT NULL")
     except sqlite3.OperationalError: pass
     try: c.execute("ALTER TABLE soc_posts ADD COLUMN nsfw_set_by INTEGER")  # NULL=автор сам, INT=ID админа/мода
     except sqlite3.OperationalError: pass
@@ -3028,6 +3112,8 @@ def fmt_post(row: dict, user_id: int, reactions: Optional[dict] = None, am_follo
         "am_following": am_following,
         "is_nsfw": bool(is_nsfw),
         "nsfw_set_by_admin": bool(nsfw_by) if is_nsfw else False,
+        "formatting": bool(int(row["formatting"] or 0)) if "formatting" in row.keys() else False,
+        "segments": _parse_segments(row["segments"]) if "segments" in row.keys() else None,
     }
 
 def get_user_stats(c, user_id: int) -> dict:
@@ -3082,7 +3168,26 @@ def _val_media(media: Optional[List[dict]]) -> Optional[List[dict]]:
         name = m.get("name", "")
         if not isinstance(name, str):
             name = ""
-        clean.append({"url": url, "type": ftype, "name": name[:200]})
+        item = {"url": url, "type": ftype, "name": name[:200]}
+        if ftype == "audio":
+            raw_meta = m.get("metadata")
+            if not isinstance(raw_meta, dict):
+                raw_meta = {}
+            # Metadata is plain text except cover, which must be one of our
+            # own media URLs. Never persist data: URIs or arbitrary remote URLs.
+            meta = {}
+            for key in ("title", "artist", "album"):
+                value = raw_meta.get(key, m.get(key, ""))
+                meta[key] = value.strip()[:200] if isinstance(value, str) else ""
+            cover = raw_meta.get("cover", m.get("cover", ""))
+            meta["cover"] = cover if isinstance(cover, str) and _MEDIA_URL_RE.match(cover) else ""
+            try:
+                meta["duration"] = max(0, min(int(float(raw_meta.get("duration", m.get("duration", 0)) or 0)), 21600))
+            except (ValueError, TypeError):
+                meta["duration"] = 0
+            item["metadata"] = meta
+            item.update(meta)
+        clean.append(item)
     return clean
 
 # ── Notifications ───────────────────────────────────────────────────────────────
@@ -3103,8 +3208,6 @@ def _add_notif(c, recipient_id: int, actor_id: int, ntype: str, post_id: int = 0
 
 _CALL_OFFER_TTL_SECONDS = 120
 _pending_call_offers: dict[tuple[int, int, str], float] = {}
-_ACTIVE_CALL_TTL_SECONDS = 4 * 60 * 60
-_active_call_sessions: dict[tuple[int, int, str], float] = {}
 
 
 def _prune_call_offers(now: float | None = None):
@@ -3129,40 +3232,6 @@ def _consume_call_offer(caller_id: int, callee_id: int, call_id: str) -> bool:
 def _clear_call_offer(first_user_id: int, second_user_id: int, call_id: str):
     _pending_call_offers.pop((first_user_id, second_user_id, call_id), None)
     _pending_call_offers.pop((second_user_id, first_user_id, call_id), None)
-
-
-def _active_call_key(
-    first_user_id: int, second_user_id: int, call_id: str
-) -> tuple[int, int, str]:
-    first, second = sorted((first_user_id, second_user_id))
-    return first, second, call_id
-
-
-def _prune_active_calls(now: float | None = None):
-    now = time.monotonic() if now is None else now
-    expired_before = now - _ACTIVE_CALL_TTL_SECONDS
-    for key, touched_at in list(_active_call_sessions.items()):
-        if touched_at < expired_before:
-            _active_call_sessions.pop(key, None)
-
-
-def _remember_active_call(first_user_id: int, second_user_id: int, call_id: str):
-    now = time.monotonic()
-    _prune_active_calls(now)
-    _active_call_sessions[
-        _active_call_key(first_user_id, second_user_id, call_id)
-    ] = now
-
-
-def _has_active_call(first_user_id: int, second_user_id: int, call_id: str) -> bool:
-    _prune_active_calls()
-    return _active_call_key(first_user_id, second_user_id, call_id) in _active_call_sessions
-
-
-def _clear_active_call(first_user_id: int, second_user_id: int, call_id: str):
-    _active_call_sessions.pop(
-        _active_call_key(first_user_id, second_user_id, call_id), None
-    )
 
 
 
@@ -3518,6 +3587,22 @@ def guest_login(request: Request):
 def login(body: LoginBody, request: Request):
     return core_login(body.dict(), _client_ip(request))
 
+
+@router.get("/sessions")
+def list_auth_sessions(authorization: Optional[str] = Header(None)):
+    return core_list_sessions(authorization)
+
+
+@router.post("/logout")
+def logout_auth_session(authorization: Optional[str] = Header(None)):
+    return core_logout(authorization)
+
+
+@router.post("/sessions/{session_id}/revoke")
+def revoke_auth_session(session_id: str, authorization: Optional[str] = Header(None)):
+    return core_revoke_session(authorization, session_id)
+
+
 # ── Media upload ───────────────────────────────────────────────────────────────
 
 # Запуск ffmpeg БЕЗ блокировки event loop: отдельный процесс + низкий приоритет (nice).
@@ -3544,10 +3629,18 @@ async def _run_ffmpeg(cmd: list, timeout: int = 600) -> int:
             return 1
 
 
+def _make_public_media_readable(path):
+    # Public media is served by nginx, whose user is outside the app group.
+    # Keep the service umask for private files; publish only completed media.
+    mode = os.stat(path).st_mode & 0o777
+    os.chmod(path, mode | 0o004)
+
+
 @router.post("/upload")
 async def upload_media(request: Request, file: UploadFile = File(...), authorization: Optional[str] = Header(None)):
-    user = auth_member(authorization)
+    user = await run_in_threadpool(auth_member, authorization)
     _rate_limit(f"upload:{user['id']}", limit=60, window=3600)
+    _require_fresh_status(user["id"])
     ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
     mime = file.content_type or ""
     mime_ext = {
@@ -3568,11 +3661,42 @@ async def upload_media(request: Request, file: UploadFile = File(...), authoriza
         ftype, max_size = "audio", MAX_AUDIO
     else:
         raise HTTPException(400, f"Недопустимый тип файла: .{ext}")
-    data = await file.read()
-    if len(data) > max_size:
-        raise HTTPException(400, f"Файл слишком большой. Максимум: {max_size // 1024 // 1024}MB")
     filename = f"{uuid.uuid4()}.{ext}"
     filepath = os.path.join(MEDIA_DIR, filename)
+    if ftype == "audio":
+        total = 0
+        try:
+            with open(filepath, "wb") as output:
+                while True:
+                    part = await file.read(1024 * 1024)
+                    if not part:
+                        break
+                    total += len(part)
+                    if total > max_size:
+                        raise HTTPException(400, f"Файл слишком большой. Максимум: {max_size // 1024 // 1024}MB")
+                    output.write(part)
+        except HTTPException:
+            try:
+                os.remove(filepath)
+            except Exception:
+                pass
+            raise
+        except Exception:
+            try:
+                os.remove(filepath)
+            except Exception:
+                pass
+            raise HTTPException(400, "Не удалось сохранить аудио")
+        if total == 0:
+            try:
+                os.remove(filepath)
+            except Exception:
+                pass
+            raise HTTPException(400, "Аудиофайл пуст")
+    else:
+        data = await file.read(max_size + 1)
+        if len(data) > max_size:
+            raise HTTPException(400, f"Файл слишком большой. Максимум: {max_size // 1024 // 1024}MB")
     if ftype == "image":
         try:
             from PIL import Image
@@ -3611,18 +3735,76 @@ async def upload_media(request: Request, file: UploadFile = File(...), authoriza
         if ret == 0 and os.path.exists(compressed):
             os.remove(filepath)
             filepath, filename = compressed, os.path.basename(compressed)
-    elif ftype == "audio":
-        with open(filepath, "wb") as f:
-            f.write(data)
-        compressed = os.path.join(MEDIA_DIR, f"{uuid.uuid4()}.mp3")
-        ret = await _run_ffmpeg([
-            "nice", "-n", "19", "ffmpeg", "-i", filepath,
-            "-acodec", "libmp3lame", "-b:a", "128k", compressed, "-y", "-loglevel", "error"
-        ])
-        if ret == 0 and os.path.exists(compressed):
-            os.remove(filepath)
-            filepath, filename = compressed, os.path.basename(compressed)
-    return {"url": f"/social/media/{filename}", "type": ftype, "name": file.filename}
+    audio_metadata = None
+    if ftype == "audio":
+        # Audio files are deliberately stored byte-for-byte. Re-encoding here
+        # used to strip ID3/Vorbis/MP4 tags and embedded cover art before the
+        # post was created. The 15 MB audio upload limit makes transcoding
+        # unnecessary and preserving the original is lossless.
+        import subprocess
+        audio_metadata = {"title": "", "artist": "", "album": "", "cover": "", "duration": 0}
+        try:
+            audio_metadata = await asyncio.to_thread(_extract_audio_metadata, filepath, file.filename or "")
+        except Exception:
+            # Валидный аудиофайл должен загружаться даже без тегов.
+            pass
+    _make_public_media_readable(filepath)
+    result = {"url": f"/social/media/{filename}", "type": ftype, "name": file.filename}
+    if audio_metadata is not None:
+        result["metadata"] = audio_metadata
+    return result
+
+
+def _extract_audio_metadata(path: str, original_name: str = "") -> dict:
+    """Единое чтение метаданных аудио для постов и музыки профиля.
+
+    Возвращает {title, artist, album, cover, duration}: duration в секундах,
+    cover — /social/media/... или "". Если тега title нет, берём имя файла.
+    """
+    import subprocess
+    meta = {"title": "", "artist": "", "album": "", "cover": "", "duration": 0}
+    try:
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-print_format", "json",
+             "-show_entries", "format=duration:format_tags:stream=codec_type:stream_disposition=attached_pic",
+             path],
+            capture_output=True, text=True, timeout=20,
+        )
+        payload = json.loads(proc.stdout or "{}") if proc.returncode == 0 else {}
+    except Exception:
+        payload = {}
+    fmt = payload.get("format") or {}
+    tags = {str(k).lower(): str(v).strip() for k, v in (fmt.get("tags") or {}).items()}
+    meta["title"] = (tags.get("title") or tags.get("trackname") or "")[:200]
+    meta["artist"] = (tags.get("artist") or tags.get("album_artist") or tags.get("author") or "")[:200]
+    meta["album"] = (tags.get("album") or "")[:200]
+    try:
+        meta["duration"] = max(0, min(int(float(fmt.get("duration") or 0)), 21600))
+    except (ValueError, TypeError):
+        pass
+    if not meta["title"]:
+        meta["title"] = os.path.splitext(os.path.basename(original_name or ""))[0].strip()[:200]
+    has_cover = any((s.get("disposition") or {}).get("attached_pic") == 1 for s in payload.get("streams") or [])
+    if has_cover:
+        cover_name = f"{uuid.uuid4()}.jpg"
+        cover_path = os.path.join(MEDIA_DIR, cover_name)
+        try:
+            subprocess.run(
+                ["nice", "-n", "19", "ffmpeg", "-i", path, "-map", "0:v:0", "-frames:v", "1",
+                 "-vf", "scale='min(640,iw)':-2", "-q:v", "4", cover_path, "-y", "-loglevel", "error"],
+                capture_output=True, timeout=30,
+            )
+        except Exception:
+            pass
+        if os.path.exists(cover_path) and os.path.getsize(cover_path) > 0:
+            _make_public_media_readable(cover_path)
+            meta["cover"] = f"/social/media/{cover_name}"
+        else:
+            try:
+                os.remove(cover_path)
+            except OSError:
+                pass
+    return meta
 
 
 def _probe_profile_audio(path: str, fallback_name: str) -> dict:
@@ -3657,13 +3839,47 @@ def _probe_profile_audio(path: str, fallback_name: str) -> dict:
     }
 
 
+def _profile_music_from_post(post_id: int, audio_url: str) -> dict:
+    """Ссылка на аудио поста: проверяем, что оно реально прикреплено, и не копируем файл."""
+    if not _MEDIA_URL_RE.match(audio_url or ""):
+        raise HTTPException(400, "Некорректный URL аудио")
+    c = db()
+    row = c.execute("SELECT media_json FROM soc_posts WHERE id=?", (post_id,)).fetchone()
+    c.close()
+    if not row or not row["media_json"]:
+        raise HTTPException(404, "Пост не найден или без медиа")
+    media = json.loads(row["media_json"])
+    item = next((m for m in media if m.get("type") == "audio" and m.get("url") == audio_url), None)
+    if item is None:
+        raise HTTPException(400, "Это аудио не прикреплено к указанному посту")
+    meta = item.get("metadata") or {}
+    return {
+        "source": "post",
+        "source_post_id": post_id,
+        "track_id": f"post:{post_id}:{audio_url}",
+        "url": audio_url,
+        "cover_url": meta.get("cover") or None,
+        "name": meta.get("title") or item.get("name") or "Музыка профиля",
+        "artist": meta.get("artist") or "Неизвестный исполнитель",
+        "album": meta.get("album") or "Профиль GhostChat",
+        "duration_ms": int(meta.get("duration") or 0) * 1000,
+    }
+
+
 @router.post("/profile-music/upload")
 async def upload_profile_music(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    source_post_id: Optional[int] = Form(None),
+    post_audio_url: Optional[str] = Form(None),
     authorization: Optional[str] = Header(None),
 ):
-    """Store a profile-only audio file; this never creates a GhoSou track."""
-    user = auth_member(authorization)
+    """Музыка профиля: либо загруженный файл, либо ссылка на аудио поста."""
+    user = await run_in_threadpool(auth_member, authorization)
+    _require_fresh_status(user["id"])
+    if source_post_id:
+        return await run_in_threadpool(_profile_music_from_post, source_post_id, post_audio_url or "")
+    if file is None:
+        raise HTTPException(400, "Нужен файл или source_post_id")
     _rate_limit(f"profile-music-upload:{user['id']}", limit=12, window=3600)
     original = os.path.basename((file.filename or "profile-audio").replace("\\", "/"))
     ext = original.rsplit(".", 1)[-1].lower() if "." in original else ""
@@ -3684,23 +3900,15 @@ async def upload_profile_music(
     raw_path = os.path.join(MEDIA_DIR, raw_name)
     with open(raw_path, "wb") as output:
         output.write(data)
-    metadata = await asyncio.to_thread(_probe_profile_audio, raw_path, original)
-
-    # Extract embedded artwork before transcoding: a plain audio transcode can
-    # discard the attached picture even though the audio itself is preserved.
-    cover_name = f"{uuid.uuid4()}.jpg"
-    cover_path = os.path.join(MEDIA_DIR, cover_name)
-    extracted = await _run_ffmpeg([
-        "nice", "-n", "19", "ffmpeg", "-i", raw_path,
-        "-map", "0:v:0", "-frames:v", "1", "-vf", "scale=1000:-2",
-        cover_path, "-y", "-loglevel", "error",
-    ], timeout=60)
-    if extracted != 0 or not os.path.exists(cover_path) or os.path.getsize(cover_path) == 0:
-        try:
-            os.remove(cover_path)
-        except OSError:
-            pass
-        cover_name = None
+    audio_meta = await asyncio.to_thread(_extract_audio_metadata, raw_path, original)
+    metadata = {
+        "name": (audio_meta["title"] or "Музыка профиля")[:120],
+        "artist": (audio_meta["artist"] or "Неизвестный исполнитель")[:120],
+        "album": (audio_meta["album"] or "Профиль GhostChat")[:120],
+        "duration_ms": audio_meta["duration"] * 1000 if audio_meta["duration"] else None,
+    }
+    cover_name = audio_meta["cover"].rsplit("/", 1)[-1] if audio_meta["cover"] else None
+    cover_path = os.path.join(MEDIA_DIR, cover_name) if cover_name else None
 
     final_name = raw_name
     converted_name = f"{uuid.uuid4()}.mp3"
@@ -3722,6 +3930,9 @@ async def upload_profile_music(
         except OSError:
             pass
 
+    _make_public_media_readable(os.path.join(MEDIA_DIR, final_name))
+    if cover_name:
+        _make_public_media_readable(cover_path)
     return {
         "source": "local",
         "track_id": f"/social/media/{final_name}",
@@ -3753,6 +3964,16 @@ def _hydrate_posts(c, rows: list, uid: int) -> list:
     for r in my_rows:
         per_post[r["post_id"]]["your_emoji"] = r["emoji"]
     author_ids = list({r["user_id"] for r in rows})
+    # Read badges once for all authors, including reposts and miniska feeds.
+    author_placeholders = ",".join("?" * len(author_ids))
+    badge_rows = c.execute(
+        f"SELECT id, is_verified, is_premium FROM users WHERE id IN ({author_placeholders})",
+        author_ids,
+    ).fetchall()
+    author_badges = {
+        r["id"]: {"is_verified": bool(r["is_verified"]), "is_premium": bool(r["is_premium"])}
+        for r in badge_rows
+    }
     followed: set = set()
     if uid and author_ids:
         ap = ",".join("?" * len(author_ids))
@@ -3783,38 +4004,55 @@ def _hydrate_posts(c, rows: list, uid: int) -> list:
         pass
     polls_map = {}
     p_rows = c.execute(
-        f"SELECT post_id, question, options, is_quiz, correct_idx FROM soc_polls WHERE post_id IN ({placeholders})",
+        "SELECT id, post_id, question, options, is_quiz, allow_multiple, correct_idx, correct_idxs "
+        f"FROM soc_polls WHERE post_id IN ({placeholders}) ORDER BY post_id, idx",
         ids
     ).fetchall()
     if p_rows:
+        poll_ids = [r["id"] for r in p_rows]
+        ph2 = ",".join("?" * len(poll_ids))
         v_rows = c.execute(
-            f"SELECT post_id, option_idx, COUNT(*) as cnt FROM soc_poll_votes WHERE post_id IN ({placeholders}) GROUP BY post_id, option_idx",
-            ids
+            f"SELECT poll_id, option_idx, COUNT(*) as cnt FROM soc_poll_votes WHERE poll_id IN ({ph2}) GROUP BY poll_id, option_idx",
+            poll_ids
         ).fetchall()
-        my_votes = {}
+        my_by_poll = {}
         if uid > 0:
             mv_rows = c.execute(
-                f"SELECT post_id, option_idx FROM soc_poll_votes WHERE user_id=? AND post_id IN ({placeholders})",
-                [uid] + ids
+                f"SELECT poll_id, option_idx FROM soc_poll_votes WHERE user_id=? AND poll_id IN ({ph2})",
+                [uid] + poll_ids
             ).fetchall()
-            my_votes = {r["post_id"]: r["option_idx"] for r in mv_rows}
-        votes_by_post = defaultdict(dict)
+            for r in mv_rows:
+                my_by_poll.setdefault(r["poll_id"], set()).add(r["option_idx"])
+        votes_by_poll = defaultdict(dict)
         for r in v_rows:
-            votes_by_post[r["post_id"]][r["option_idx"]] = r["cnt"]
+            votes_by_poll[r["poll_id"]][r["option_idx"]] = r["cnt"]
         for r in p_rows:
             pid = r["post_id"]
+            if pid in polls_map:
+                continue  # несколько опросов на пост: пока отдаём первый (idx=0)
             try: opts = json.loads(r["options"])
             except: opts = []
-            counts = votes_by_post.get(pid, {})
-            mv = my_votes.get(pid)
+            counts = votes_by_poll.get(r["id"], {})
+            mv_set = my_by_poll.get(r["id"], set())
+            mv_list = sorted(mv_set)
+            mv = mv_list[-1] if mv_list else None
+            try: _cx = json.loads(r["correct_idxs"]) if r["correct_idxs"] else None
+            except: _cx = None
+            if r["is_quiz"] and _cx is None and r["correct_idx"] is not None:
+                _cx = [r["correct_idx"]]
+            _answered = bool(mv_list)
             polls_map[pid] = {
+                "poll_id": r["id"],
                 "question": r["question"],
                 "options": opts,
                 "counts": counts,
                 "total": sum(counts.values()),
                 "my_vote": mv,
+                "my_votes": mv_list,
                 "is_quiz": bool(r["is_quiz"]),
-                "correct_idx": r["correct_idx"] if (r["is_quiz"] and mv is not None) else None,
+                "allow_multiple": bool(r["allow_multiple"]),
+                "correct_idx": (_cx[0] if _cx else None) if (r["is_quiz"] and _answered and _cx and len(_cx) == 1) else None,
+                "correct_idxs": sorted(_cx) if (r["is_quiz"] and _answered and _cx) else None,
             }
     channel_map = {}
     src_ids = list({r["source_channel_id"] for r in rows if "source_channel_id" in r.keys() and r["source_channel_id"]})
@@ -3828,6 +4066,7 @@ def _hydrate_posts(c, rows: list, uid: int) -> list:
     out = []
     for r in rows:
         post = fmt_post(dict(r), uid, per_post[r["id"]], r["user_id"] in followed)
+        post.update(author_badges.get(r["user_id"], {"is_verified": False, "is_premium": False}))
         if r["id"] in polls_map:
             post["poll"] = polls_map[r["id"]]
         post["views_count"] = views_map.get(r["id"], 0)
@@ -3895,7 +4134,7 @@ def get_posts(
 
     params_with_uid = [uid] + params + [offset]
     rows = c.execute(f"""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments,
                u.username, u.display_name, u.avatar_url, p.activity,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p
@@ -3957,7 +4196,7 @@ def get_feed_candidates(
         follow_sql_excl = f"AND p.id NOT IN ({ph_excl})"
         follow_params = [uid] + list(excluded) + [MIN_ACTIVITY, n_follow]
     follow_rows = c.execute(f"""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments,
                u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p
@@ -3978,7 +4217,7 @@ def get_feed_candidates(
         fresh_sql = ""
         fresh_params = [MIN_ACTIVITY, n_new + offset]
     fresh = c.execute(f"""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments,
                u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -3997,7 +4236,7 @@ def get_feed_candidates(
         not_in_sql_top = ""
         top_params = [MIN_ACTIVITY, n_top]
     top = c.execute(f"""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments,
                u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -4020,7 +4259,7 @@ def get_feed_candidates(
         where_rnd = "WHERE p.kind='post' AND COALESCE(p.activity,500) >= ?"
         rnd_params = [MIN_ACTIVITY, n_rnd]
     rnd = c.execute(f"""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments,
                u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -4094,7 +4333,7 @@ def get_one_post(post_id: int, authorization: Optional[str] = Header(None)):
     uid = user["id"]
     c = db()
     row = c.execute("""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments,
                u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -4111,6 +4350,7 @@ def get_one_post(post_id: int, authorization: Optional[str] = Header(None)):
 def create_post(body: PostBody, request: Request, authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
     _rate_limit(f"post:{user['id']}", limit=30, window=3600)
+    _require_fresh_status(user["id"])
     text = body.text.strip()
     if not text:
         raise HTTPException(400, "Empty")
@@ -4125,14 +4365,22 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
         if not q or len(q) > 200:
             raise HTTPException(400, "Вопрос опроса: 1–200 символов")
         opts = [o.strip() for o in (poll.options or []) if o and o.strip()]
-        if len(opts) < 2 or len(opts) > 6:
-            raise HTTPException(400, "Опрос: от 2 до 6 вариантов")
+        if len(opts) < 2 or len(opts) > 15:
+            raise HTTPException(400, "Опрос: от 2 до 15 вариантов")
         for o in opts:
             if len(o) > 80:
                 raise HTTPException(400, "Вариант ответа: максимум 80 символов")
+        def _poll_correct_idxs() -> List[int]:
+            if poll.correct_idxs is not None:
+                try:
+                    return sorted(set(int(i) for i in poll.correct_idxs))
+                except Exception:
+                    return []
+            return [] if poll.correct_idx is None else [poll.correct_idx]
         if poll.is_quiz:
-            if poll.correct_idx is None or poll.correct_idx < 0 or poll.correct_idx >= len(opts):
-                raise HTTPException(400, "Викторина: укажите правильный ответ")
+            _cx = _poll_correct_idxs()
+            if not _cx or any(i < 0 or i >= len(opts) for i in _cx):
+                raise HTTPException(400, "Викторина: укажите правильные ответы")
 
     c = db()
     now_ts = int(time.time())
@@ -4162,10 +4410,26 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
     init_activity = max(10, min(1000, init_activity))
 
     nsfw_flag = 1 if body.is_nsfw else 0
+    formatting_flag = 1 if body.formatting else 0
+    segments_json = None
+    if body.segments:
+        if "".join(s.text for s in body.segments) != body.text:
+            raise HTTPException(400, "Участки форматирования не совпадают с текстом поста")
+        for s in body.segments:
+            if s.formatting and not _is_formatting_segment_ok(s.text):
+                raise HTTPException(400, "Участок с форматированием должен быть разметкой: **жирный**, __курсив__, ~~зачёркнутый~~, `код` или [текст](https://...)")
+        if len(body.segments) > 200:
+            raise HTTPException(400, "Слишком много участков форматирования")
+        # Флаг поста — производный: есть ли хоть один оформленный участок.
+        formatting_flag = 1 if any(s.formatting for s in body.segments) else 0
+        segments_json = json.dumps(
+            [{"text": s.text, "formatting": bool(s.formatting)} for s in body.segments],
+            ensure_ascii=False,
+        )
     c.execute(
-        "INSERT INTO soc_posts (user_id, content, media, activity, activity_set_at, automod_source, is_nsfw, nsfw_set_by) "
-        "VALUES (?,?,?,?,?,?,?,?)",
-        (user["id"], text, media_json, init_activity, now_ts, 'B', nsfw_flag, None),
+        "INSERT INTO soc_posts (user_id, content, media, activity, activity_set_at, automod_source, is_nsfw, nsfw_set_by, formatting, segments) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (user["id"], text, media_json, init_activity, now_ts, 'B', nsfw_flag, None, formatting_flag, segments_json),
     )
     post_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
     c.execute(
@@ -4175,11 +4439,15 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
          f'days_reg={days_reg} posts_cnt={posts_cnt}', now_ts),
     )
     if poll is not None:
+        _cx = _poll_correct_idxs() if poll.is_quiz else None
         c.execute(
-            "INSERT INTO soc_polls (post_id, question, options, is_quiz, correct_idx) VALUES (?,?,?,?,?)",
-            (post_id, q, json.dumps(opts, ensure_ascii=False),
+            "INSERT INTO soc_polls (post_id, idx, question, options, is_quiz, allow_multiple, correct_idx, correct_idxs) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (post_id, 0, q, json.dumps(opts, ensure_ascii=False),
              1 if poll.is_quiz else 0,
-             poll.correct_idx if poll.is_quiz else None),
+             1 if poll.allow_multiple else 0,
+             (_cx[0] if _cx else None),
+             json.dumps(_cx, ensure_ascii=False) if _cx else None),
         )
 
     preview = text[:120]
@@ -4204,7 +4472,7 @@ def create_post(body: PostBody, request: Request, authorization: Optional[str] =
     c.commit()
     c2 = db()
     row = c2.execute("""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments,
                u.username, u.display_name, u.avatar_url,
                0 as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id WHERE p.id=?
@@ -4258,6 +4526,7 @@ def edit_post(post_id: int, body: EditPostBody, authorization: Optional[str] = H
 
     updates = []
     params = []
+    removed_media_names = set()
 
     if body.text is not None:
         text = body.text.strip()
@@ -4282,14 +4551,9 @@ def edit_post(post_id: int, body: EditPostBody, authorization: Optional[str] = H
             c.close()
             raise HTTPException(400, "Добавлять медиа нельзя — только удалять существующие")
         removed = old_urls - new_urls
-        for m in old_media:
-            if m.get("url") in removed:
-                fname = m["url"].split("/")[-1]
-                if fname:
-                    fp = os.path.join(MEDIA_DIR, fname)
-                    if os.path.exists(fp):
-                        try: os.remove(fp)
-                        except: pass
+        removed_media_names = {os.path.basename(str(url).split("?", 1)[0]) for url in removed if url}
+        # Defer physical file deletion until after the post update is committed and
+        # all remaining post references have been checked.
         kept = [m for m in old_media if m.get("url") in new_urls]
         updates.append("media=?")
         params.append(json.dumps(kept, ensure_ascii=False) if kept else None)
@@ -4315,8 +4579,37 @@ def edit_post(post_id: int, body: EditPostBody, authorization: Optional[str] = H
     params.append(post_id)
     c.execute(f"UPDATE soc_posts SET {', '.join(updates)} WHERE id=?", params)
     c.commit()
+    if removed_media_names:
+        # Clear banners whose exact source post lost the selected attachment.
+        for banner_row in c.execute("SELECT id, media_banner FROM users WHERE media_banner IS NOT NULL").fetchall():
+            try:
+                banner_data = json.loads(banner_row["media_banner"] or "{}")
+                banner_name = os.path.basename(str(banner_data.get("url") or "").split("?", 1)[0])
+                source_id = int(banner_data.get("source_post_id") or 0)
+                if banner_name in removed_media_names and (source_id == post_id or source_id == 0):
+                    c.execute("UPDATE users SET media_banner=NULL WHERE id=?", (banner_row["id"],))
+            except Exception:
+                continue
+        # Only unlink files no remaining post references.
+        for filename in removed_media_names:
+            still_used = False
+            for media_row in c.execute("SELECT media FROM soc_posts WHERE media IS NOT NULL").fetchall():
+                try:
+                    items = json.loads(media_row["media"] or "[]")
+                    if isinstance(items, list) and any(isinstance(item, dict) and os.path.basename(str(item.get("url") or item.get("src") or "").split("?", 1)[0]) == filename for item in items):
+                        still_used = True
+                        break
+                except Exception:
+                    continue
+            if not still_used:
+                try:
+                    os.remove(os.path.join(MEDIA_DIR, filename))
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
     row = c.execute("""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments,
                u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id WHERE p.id=?
@@ -4339,21 +4632,47 @@ def delete_post(post_id: int, authorization: Optional[str] = Header(None)):
     if dict(post)["user_id"] != user["id"]:
         c.close()
         raise HTTPException(403, "Forbidden")
+    removed_names = set()
     if post["media"]:
         try:
-            for m in json.loads(post["media"]):
-                fname = m.get("url", "").split("/")[-1]
-                if fname:
-                    path = os.path.join(MEDIA_DIR, fname)
-                    if os.path.exists(path):
-                        os.remove(path)
+            media_items = json.loads(post["media"])
+            removed_names = {os.path.basename(str(m.get("url", "")).split("?", 1)[0]) for m in media_items if isinstance(m, dict) and m.get("url")}
         except Exception:
-            pass
+            removed_names = set()
+    # Clear the banner by exact source post; also clean legacy banners without source_post_id.
+    if removed_names:
+        for banner_row in c.execute("SELECT id, media_banner FROM users WHERE media_banner IS NOT NULL").fetchall():
+            try:
+                banner = json.loads(banner_row["media_banner"] or "{}")
+                banner_name = os.path.basename(str(banner.get("url", "")).split("?", 1)[0])
+                source_id = int(banner.get("source_post_id") or 0)
+                if source_id == post_id or (source_id == 0 and banner_name in removed_names):
+                    c.execute("UPDATE users SET media_banner=NULL WHERE id=?", (banner_row["id"],))
+            except Exception:
+                continue
     c.execute("DELETE FROM soc_reactions WHERE post_id=?", (post_id,))
     c.execute("DELETE FROM soc_comments WHERE post_id=?", (post_id,))
     c.execute("DELETE FROM soc_notifications WHERE post_id=?", (post_id,))
+    # Post-linked profile music is a reference: drop it before the post goes.
+    c.execute("DELETE FROM soc_profile_music_tracks WHERE source='post' AND source_post_id=?", (post_id,))
     c.execute("DELETE FROM soc_posts WHERE id=?", (post_id,))
     c.commit()
+    # Delete physical media only when no surviving post still references the file.
+    for filename in removed_names:
+        still_used = False
+        for media_row in c.execute("SELECT media FROM soc_posts WHERE media IS NOT NULL").fetchall():
+            try:
+                items = json.loads(media_row["media"] or "[]")
+                if isinstance(items, list) and any(isinstance(item, dict) and os.path.basename(str(item.get("url") or item.get("src") or "").split("?", 1)[0]) == filename for item in items):
+                    still_used = True
+                    break
+            except Exception:
+                continue
+        if not still_used:
+            try:
+                os.remove(os.path.join(MEDIA_DIR, filename))
+            except (FileNotFoundError, OSError):
+                pass
     c.close()
     ws_hub.broadcast("post.delete", {"post_id": post_id})
     return {"status": "ok"}
@@ -4390,7 +4709,7 @@ def search(q: str = Query(..., max_length=120), offset: int = Query(0), authoriz
         return {"type": "users", "results": [dict(r) for r in rows]}
     else:
         rows = c.execute("""
-            SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+            SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments,
                    u.username, u.display_name, u.avatar_url,
                    (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
             FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -4402,6 +4721,33 @@ def search(q: str = Query(..., max_length=120), offset: int = Query(0), authoriz
         return {"type": "posts", "results": result}
 
 # ── Profile ────────────────────────────────────────────────────────────────────
+
+def _safe_media_banner_json(value):
+    """Return a valid media-banner object without letting stale/corrupt profile data break profile loading."""
+    if not value:
+        return None
+    try:
+        parsed = json.loads(value) if isinstance(value, str) else value
+        if not isinstance(parsed, dict):
+            return None
+        url = str(parsed.get("url") or "").strip()
+        if not url.startswith("/social/media/"):
+            return None
+        if parsed.get("type") not in ("image", "video"):
+            return None
+        return {
+            "url": url,
+            "type": parsed["type"],
+            "source_post_id": int(parsed.get("source_post_id") or 0),
+            "position_x": max(0, min(100, float(parsed.get("position_x", 50)))),
+            "position_y": max(0, min(100, float(parsed.get("position_y", 50)))),
+            "zoom": max(1, min(3, float(parsed.get("zoom", 1)))),
+            "overlay": max(0, min(1, float(parsed.get("overlay", 0) or 0))),
+            "blur": max(0, min(16, float(parsed.get("blur", 0) or 0))),
+        }
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return None
+
 
 @router.get("/prof/{username}")
 def get_profile(username: str, offset: int = Query(0), authorization: Optional[str] = Header(None)):
@@ -4418,7 +4764,7 @@ def get_profile(username: str, offset: int = Query(0), authorization: Optional[s
         "SELECT 1 FROM soc_follows WHERE follower_id=? AND followee_id=?", (uid, u["id"])
     ).fetchone() is not None
     rows = c.execute("""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments,
                u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -4436,13 +4782,7 @@ def get_profile(username: str, offset: int = Query(0), authorization: Optional[s
         bot_status = bot_row["status"] if bot_row else "offline"
     c.close()
     rep_score = int(u.get("reputation_score") if u.get("reputation_score") is not None else 100)
-    status_set_at = None
-    status_expires_at = None
-    if visible_profile.get("profile_hidden"):
-        status_text = None
-        status_mood = None
-        status_eternal = False
-    elif u.get("eternal_status_text"):
+    if u.get("eternal_status_text"):
         status_text = u.get("eternal_status_text")
         status_mood = u.get("eternal_status_mood")
         status_eternal = True
@@ -4450,20 +4790,22 @@ def get_profile(username: str, offset: int = Query(0), authorization: Optional[s
         status_text = u.get("daily_status_text")
         status_mood = u.get("daily_status_mood")
         status_eternal = False
-        status_set_at = int(u.get("daily_status_set_at") or 0)
-        status_expires_at = status_set_at + _STATUS_TTL
     else:
         status_text = None; status_mood = None; status_eternal = False
     return {
         "user_id": u["id"],
         "username": visible_profile["username"],
+        "is_verified": bool(u.get("is_verified")),
+        "is_premium": bool(u.get("is_premium")),
         "is_bot": is_bot,
         "bot_status": bot_status,
         "display_name": visible_profile["display_name"],
         "about": visible_profile["about"],
         "avatar_url": visible_profile["avatar_url"],
         "banner": visible_profile["banner"],
+        "media_banner": (_safe_media_banner_json(u.get("media_banner")) if u.get("media_banner") and (uid == u["id"] or not visible_profile["profile_hidden"]) else None),
         "profile_music": visible_profile["profile_music"],
+        "created_at": visible_profile.get("created_at"),
         "profile_hidden": visible_profile["profile_hidden"],
         "display_name_hidden": visible_profile["display_name_hidden"],
         "am_following": am_following,
@@ -4473,8 +4815,6 @@ def get_profile(username: str, offset: int = Query(0), authorization: Optional[s
         "daily_status": status_text,
         "daily_status_mood": status_mood,
         "daily_status_eternal": status_eternal,
-        "daily_status_set_at": status_set_at,
-        "daily_status_expires_at": status_expires_at,
         **stats,
         "posts": posts,
     }
@@ -4490,7 +4830,7 @@ def get_profile_posts(username: str, offset: int = Query(0), authorization: Opti
         c.close()
         raise HTTPException(404, "User not found")
     rows = c.execute("""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments,
                u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -4555,7 +4895,7 @@ def unfollow(username: str, authorization: Optional[str] = Header(None)):
 @router.post("/me/avatar")
 async def upload_avatar(authorization: Optional[str] = Header(None), file: UploadFile = File(...)):
     """Загрузить свою аватарку. Image jpeg/png/webp, max 5MB. Ресайз до 512×512."""
-    user = auth_member(authorization)
+    user = await run_in_threadpool(auth_member, authorization)
     _rate_limit(f"avaup:{user['id']}", limit=10, window=3600)
     ALLOWED = {"image/jpeg", "image/png", "image/webp"}
     if file.content_type not in ALLOWED:
@@ -4596,6 +4936,7 @@ async def upload_avatar(authorization: Optional[str] = Header(None), file: Uploa
     fpath = _os.path.join(avatars_dir, fname)
     with open(fpath, "wb") as f:
         f.write(out_bytes)
+    _make_public_media_readable(fpath)
     url = f"/media/avatars/{fname}"
     c = db()
     old = c.execute("SELECT avatar_url FROM users WHERE id=?", (user["id"],)).fetchone()
@@ -4639,7 +4980,7 @@ def get_me(authorization: Optional[str] = Header(None)):
     c = db()
     stats = get_user_stats(c, user["id"])
     flags_row = c.execute(
-        "SELECT is_admin, is_moderator, avatar_url, banner_config FROM users WHERE id=?", (user["id"],)
+        "SELECT is_admin, is_moderator, avatar_url, banner_config, media_banner, terms_version FROM users WHERE id=?", (user["id"],)
     ).fetchone()
     music = _profile_music(c, user["id"])
     c.close()
@@ -4654,9 +4995,24 @@ def get_me(authorization: Optional[str] = Header(None)):
         "is_moderator": bool(flags_row and flags_row["is_moderator"]),
         "avatar_url": (flags_row["avatar_url"] if flags_row else None),
         "banner": _decode_banner_config(flags_row["banner_config"] if flags_row else None),
+        "media_banner": (_safe_media_banner_json(flags_row["media_banner"]) if flags_row and flags_row["media_banner"] else None),
         "profile_music": music,
+        "terms_version": (flags_row["terms_version"] if flags_row else 1),
+        "needs_terms_accept": (((flags_row["terms_version"] if flags_row else 1) or 1) < 2),
         **stats,
     }
+
+@router.post("/me/terms/accept")
+def accept_terms_core(authorization: Optional[str] = Header(None)):
+    user = auth(authorization)
+    if user.get("is_guest"):
+        raise HTTPException(403, "Guests cannot accept terms")
+    c = db()
+    c.execute("UPDATE users SET terms_version=2 WHERE id=?", (user["id"],))
+    c.commit()
+    c.close()
+    return {"status": "ok", "terms_version": 2}
+
 
 @router.patch("/me/profile")
 def edit_public_profile(
@@ -4786,14 +5142,25 @@ def edit_public_profile(
             (user["id"], updates["username"]),
         )
     new_token = None
+    new_session = None
     if body.new_password is not None or body.new_password_verifier is not None:
         c.execute("DELETE FROM soc_auth_challenges WHERE user_id=?", (user["id"],))
         c.execute("DELETE FROM soc_tokens WHERE user_id=?", (user["id"],))
-        new_token = secrets.token_hex(32)
-        c.execute(
-            "INSERT INTO soc_tokens (user_id, token) VALUES (?,?)",
-            (user["id"], new_token),
+        try:
+            c.execute("UPDATE user_devices SET token=NULL WHERE user_id=?", (user["id"],))
+        except sqlite3.OperationalError as exc:
+            if "no such table: user_devices" not in str(exc):
+                raise
+        from ecos_core.sessions import create_session, device_for_token, revoke_all_sessions
+        current_token = (authorization or "").partition(" ")[2].strip()
+        current_device = device_for_token(c, current_token, int(user["id"]))
+        revoke_all_sessions(c, int(user["id"]), "password_changed")
+        new_session = create_session(
+            c, int(user["id"]),
+            int(current_device["id"]) if current_device else None,
+            auth_method="password_change",
         )
+        new_token = new_session["token"]
     if music_changed:
         if body.music_clear:
             c.execute(
@@ -4801,17 +5168,24 @@ def edit_public_profile(
                 (user["id"],),
             )
         else:
+            old_ids = {r[0] for r in c.execute(
+                "SELECT track_id FROM soc_profile_music_tracks WHERE user_id=?", (user["id"],)
+            ).fetchall()}
+            # Новые треки ставим в начало, существующие сохраняют порядок, присланный клиентом.
+            fresh_tracks = [t for t in normalized_music if t["track_id"] not in old_ids]
+            kept_tracks = [t for t in normalized_music if t["track_id"] in old_ids]
+            ordered_music = fresh_tracks + kept_tracks
             c.execute("DELETE FROM soc_profile_music_tracks WHERE user_id=?", (user["id"],))
-            for position, track in enumerate(normalized_music):
+            for position, track in enumerate(ordered_music):
                 c.execute(
                     "INSERT INTO soc_profile_music_tracks "
-                    "(user_id, source, track_id, slug, url, name, artist, album, cover_url, duration_ms, position) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "(user_id, source, track_id, slug, url, name, artist, album, cover_url, duration_ms, position, source_post_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         user["id"], track["source"], track["track_id"],
                         track["slug"], track["url"], track["name"],
                         track["artist"], track["album"], track["cover_url"],
-                        track["duration_ms"], position,
+                        track["duration_ms"], position, track.get("source_post_id"),
                     ),
                 )
     c.commit()
@@ -4844,6 +5218,11 @@ def edit_public_profile(
     }
     if new_token:
         result["token"] = new_token
+        result["session_token"] = new_token
+        result["session_id"] = new_session["session_id"]
+        result["expires_at"] = new_session["expires_at"]
+        result["expires_in"] = new_session["expires_in"]
+        result["status"] = new_session["status"]
         result["password_changed"] = True
     if server_signature:
         result["server_proof"] = server_signature
@@ -4900,11 +5279,25 @@ def edit_me(body: EditProfileBody, authorization: Optional[str] = Header(None)):
             (user["id"], updates["username"]),
         )
     new_token = None
+    new_session = None
     if body.new_password is not None:
         c.execute("DELETE FROM soc_auth_challenges WHERE user_id=?", (user["id"],))
         c.execute("DELETE FROM soc_tokens WHERE user_id=?", (user["id"],))
-        new_token = secrets.token_hex(32)
-        c.execute("INSERT INTO soc_tokens (user_id, token) VALUES (?,?)", (user["id"], new_token))
+        try:
+            c.execute("UPDATE user_devices SET token=NULL WHERE user_id=?", (user["id"],))
+        except sqlite3.OperationalError as exc:
+            if "no such table: user_devices" not in str(exc):
+                raise
+        from ecos_core.sessions import create_session, device_for_token, revoke_all_sessions
+        current_token = (authorization or "").partition(" ")[2].strip()
+        current_device = device_for_token(c, current_token, int(user["id"]))
+        revoke_all_sessions(c, int(user["id"]), "password_changed")
+        new_session = create_session(
+            c, int(user["id"]),
+            int(current_device["id"]) if current_device else None,
+            auth_method="password_change",
+        )
+        new_token = new_session["token"]
     c.commit()
     row = c.execute(
         "SELECT id, username, display_name FROM users WHERE id=?", (user["id"],)
@@ -4913,6 +5306,11 @@ def edit_me(body: EditProfileBody, authorization: Optional[str] = Header(None)):
     out = {"status": "ok", "id": row["id"], "username": row["username"], "display_name": row["display_name"]}
     if new_token:
         out["token"] = new_token
+        out["session_token"] = new_token
+        out["session_id"] = new_session["session_id"]
+        out["expires_at"] = new_session["expires_at"]
+        out["expires_in"] = new_session["expires_in"]
+        out["status"] = new_session["status"]
         out["password_changed"] = True
     return out
 
@@ -5259,6 +5657,7 @@ def get_notifications(offset: int = Query(0), authorization: Optional[str] = Hea
                 "created_at": r["created_at"],
                 "actor_username": r["actor_username"],
                 "actor_name": r["actor_name"],
+                "actor_avatar_url": r["actor_avatar_url"],
             }
             for r in rows
         ],
@@ -5270,11 +5669,13 @@ def get_notifications(offset: int = Query(0), authorization: Optional[str] = Hea
 def unread_count(authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
     c = db()
-    cnt = c.execute(
-        "SELECT COUNT(*) as cnt FROM soc_notifications WHERE user_id=? AND is_read=0", (user["id"],)
-    ).fetchone()["cnt"]
+    rows = c.execute(
+        "SELECT type, COUNT(*) AS cnt FROM soc_notifications WHERE user_id=? AND is_read=0 GROUP BY type",
+        (user["id"],),
+    ).fetchall()
     c.close()
-    return {"count": cnt}
+    types = {r["type"]: r["cnt"] for r in rows}
+    return {"count": sum(types.values()), "types": types}
 
 @router.post("/notif/read")
 def mark_read(authorization: Optional[str] = Header(None)):
@@ -5325,6 +5726,9 @@ def _safe_url(u: str) -> Optional[str]:
         return None
     return f"{p.scheme}://{p.netloc}{p.path or '/'}{'?' + p.query if p.query else ''}"
 
+# VPN-туннель hysteria (тот же, что использует ghogem в ТГ): запасной путь для превью
+_GS_LINK_SOCKS = "socks5://127.0.0.1:1080"
+
 @router.get("/linkpreview")
 async def link_preview(url: str = Query(..., max_length=2000), authorization: Optional[str] = Header(None)):
     """OG/Twitter meta preview. SSRF-safe, кэш 24ч."""
@@ -5348,21 +5752,42 @@ async def link_preview(url: str = Query(..., max_length=2000), authorization: Op
 
     import httpx
     from bs4 import BeautifulSoup
-    try:
-        async with httpx.AsyncClient(
-            timeout=3.0, follow_redirects=True, max_redirects=4,
-            headers={"User-Agent": "GhostSocialPreview/1.0 (+https://ghostecos.duckdns.org)"}
-        ) as client:
-            r = await client.get(safe)
-            ctype = r.headers.get("content-type", "")
-            if "html" not in ctype.lower():
-                c.close()
-                raise HTTPException(415, "Не HTML")
-            content = r.content[:_LINK_FETCH_MAX]
-            final_url = str(r.url)
-    except HTTPException:
-        raise
-    except Exception:
+    # Пытаемся напрямую, при неудаче — через локальный SOCKS5 (VPN, как у ghogem).
+    content = None
+    final_url = safe
+    fetched = False
+    for _via in (None, _GS_LINK_SOCKS):
+        _kw = dict(
+            timeout=3.0 if _via is None else 6.0,
+            follow_redirects=True, max_redirects=4,
+            headers={"User-Agent": "GhostSocialPreview/1.0 (+https://ghostecos.duckdns.org)"},
+        )
+        try:
+            if _via:
+                _kw["proxy"] = _via
+                try:
+                    client = httpx.AsyncClient(**_kw)
+                except TypeError:
+                    # старый httpx: прокси задаётся через proxies
+                    _kw.pop("proxy", None)
+                    _kw["proxies"] = {"all://": _via}
+                    client = httpx.AsyncClient(**_kw)
+            else:
+                client = httpx.AsyncClient(**_kw)
+            async with client:
+                r = await client.get(safe)
+                ctype = r.headers.get("content-type", "")
+                if "html" not in ctype.lower():
+                    raise HTTPException(415, "Не HTML")
+                content = r.content[:_LINK_FETCH_MAX]
+                final_url = str(r.url)
+            fetched = True
+            break
+        except HTTPException:
+            raise
+        except Exception:
+            continue
+    if not fetched:
         c.close()
         raise HTTPException(502, "Не удалось загрузить")
 
@@ -5622,15 +6047,365 @@ def og_user_png(username: str):
     return _og_response(png)
 
 
+
+def _og_font(size, bold=False):
+    from PIL import ImageFont
+    for d in ("/usr/share/fonts/truetype/dejavu", "/usr/share/fonts/dejavu", "/usr/share/fonts/TTF"):
+        if os.path.isdir(d):
+            p = os.path.join(d, "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf")
+            if os.path.exists(p):
+                try:
+                    return ImageFont.truetype(p, size)
+                except Exception:
+                    pass
+    try:
+        return ImageFont.load_default(size)
+    except Exception:
+        return ImageFont.load_default()
+
+
+def _og_rrect(size, radius):
+    from PIL import Image, ImageDraw
+    m = Image.new("L", size, 0)
+    dd = ImageDraw.Draw(m)
+    try:
+        dd.rounded_rectangle([0, 0, size[0] - 1, size[1] - 1], radius=radius, fill=255)
+    except Exception:
+        dd.rectangle([0, 0, size[0] - 1, size[1] - 1], fill=255)
+    return m
+
+
+def _og_local_media(url):
+    """Local file path for a public media URL."""
+    if not url or not isinstance(url, str):
+        return None
+    u = url.split("?")[0].split("#")[0].strip()
+    if not u or u.startswith("http://") or u.startswith("https://"):
+        return None
+    name = u.rstrip("/").split("/")[-1]
+    if not name or "." not in name:
+        return None
+    stem, dot, ext = name.rpartition(".")
+    thumb = (stem + "_thumb." + ext) if dot else ""
+    bases = (MEDIA_DIR, os.path.join(MEDIA_DIR, "avatars"), os.path.join(MEDIA_DIR, "thumbs"),
+             os.path.join(MEDIA_DIR, "covers"), "/var/www/ghostsocial/assets",
+             "/var/www/ghostsocial", "/opt/ghostchat/media",
+             "/opt/ghostchat/media/avatars", "/opt/ghostchat/media/covers")
+    for base in bases:
+        for cand in (name, thumb) if thumb else (name,):
+            p = os.path.join(base, cand)
+            try:
+                if os.path.isfile(p) and os.path.getsize(p) < 16 * 1024 * 1024:
+                    return p
+            except Exception:
+                pass
+    return None
+
+
+def _og_media_image(media_json):
+    if not media_json:
+        return None
+    try:
+        items = json.loads(media_json) if isinstance(media_json, str) else media_json
+    except Exception:
+        return None
+    if isinstance(items, dict):
+        items = [items]
+    if not isinstance(items, list):
+        return None
+    for it in items:
+        url = None
+        if isinstance(it, str):
+            url = it
+        elif isinstance(it, dict):
+            for k in ("url", "src", "path", "file", "thumb", "preview", "cover"):
+                v = it.get(k)
+                if isinstance(v, str) and v.strip():
+                    url = v
+                    break
+        p = _og_local_media(url)
+        if p:
+            return p
+    return None
+
+
+def _og_wrap_text(draw, text, font, max_w, max_lines):
+    words = (text or "").split()
+    lines, cur = [], ""
+    for w in words:
+        t = (cur + " " + w).strip()
+        if draw.textlength(t, font=font) <= max_w:
+            cur = t
+        else:
+            if cur:
+                lines.append(cur)
+            cur = w
+            if len(lines) >= max_lines:
+                break
+    if cur and len(lines) < max_lines:
+        lines.append(cur)
+    full = " ".join(words)
+    if lines and " ".join(lines) != full:
+        last = lines[-1]
+        while last and draw.textlength(last + "..." , font=font) > max_w:
+            last = last[:-1]
+        lines[-1] = last + "..."
+    return lines
+
+
+def _og_media_items(media_json):
+    if not media_json:
+        return []
+    try:
+        items = json.loads(media_json) if isinstance(media_json, str) else media_json
+    except Exception:
+        return []
+    if isinstance(items, dict):
+        items = [items]
+    if not isinstance(items, list):
+        return []
+    out = []
+    for it in items:
+        url = None
+        mtype = ""
+        name = ""
+        if isinstance(it, str):
+            url = it
+        elif isinstance(it, dict):
+            for k in ("url", "src", "path", "file"):
+                v = it.get(k)
+                if isinstance(v, str) and v.strip():
+                    url = v
+                    break
+            mtype = str(it.get("type") or "").lower()
+            name = str(it.get("name") or "").strip()
+        if not url:
+            continue
+        if mtype in ("voice", "voice_note", "audio_note", "audio_message", "music", "track"):
+            mtype = "audio"
+        if not mtype:
+            low = url.lower().split("?")[0]
+            if any(low.endswith(e) for e in (".mp3", ".wav", ".ogg", ".oga", ".opus", ".m4a", ".aac", ".amr")):
+                mtype = "audio"
+            elif any(low.endswith(e) for e in (".mp4", ".webm", ".mov")):
+                mtype = "video"
+            else:
+                mtype = "image"
+        out.append((_og_local_media(url), mtype, name))
+    return out
+
+
+def _og_icon_heart(d, x, y, size, color):
+    d.ellipse([x, y + size * 0.10, x + size * 0.54, y + size * 0.60], fill=color)
+    d.ellipse([x + size * 0.46, y + size * 0.10, x + size, y + size * 0.60], fill=color)
+    d.polygon([(x + size * 0.03, y + size * 0.44), (x + size * 0.97, y + size * 0.44),
+               (x + size * 0.5, y + size * 0.98)], fill=color)
+
+
+def _og_icon_comment(d, x, y, size, color):
+    d.rounded_rectangle([x, y, x + size, y + size * 0.70], radius=max(2, size * 0.22),
+                        outline=color, width=max(2, int(size * 0.11)))
+    d.polygon([(x + size * 0.26, y + size * 0.66), (x + size * 0.24, y + size * 0.99),
+               (x + size * 0.56, y + size * 0.68)], fill=color)
+
+
+def _og_icon_play(d, cx, cy, r, color, filled=False):
+    if filled:
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=color)
+        d.polygon([(cx - r * 0.26, cy - r * 0.5), (cx - r * 0.26, cy + r * 0.5), (cx + r * 0.55, cy)],
+                  fill=(18, 12, 30))
+    else:
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=color, width=3)
+        d.polygon([(cx - r * 0.26, cy - r * 0.48), (cx - r * 0.26, cy + r * 0.48), (cx + r * 0.5, cy)],
+                  fill=color)
+
+
+def _og_ellipsis(d, text, font, max_w):
+    text = text or ""
+    if d.textlength(text, font=font) <= max_w:
+        return text
+    t = text
+    while t and d.textlength(t + "...", font=font) > max_w:
+        t = t[:-1]
+    return (t.rstrip() + "...") if t else "..."
+
+
+def _og_post_card(post_id, display_name, username, content, avatar_url, media_json,
+                  reactions, comments, is_nsfw):
+    from PIL import Image, ImageDraw, ImageFilter, ImageEnhance
+    SC = 2
+    W, H = 1200 * SC, 630 * SC
+
+    def S(v):
+        return int(round(v * SC))
+
+    BG = (17, 17, 19)
+    TEXT = (240, 240, 243)
+    SUB = (125, 125, 134)
+    LINE = (39, 39, 44)
+    PANEL = (27, 27, 32)
+
+    base = Image.new("RGB", (W, H), BG)
+    db = ImageDraw.Draw(base)
+    for y in range(H):
+        t = y / (H - 1)
+        db.line([(0, y), (W, y)], fill=(round(22 + 6 * t), round(22 + 6 * t), round(26 + 6 * t)))
+
+    items = _og_media_items(media_json)
+    photo = None
+    audio_name = None
+    has_video = False
+    for path, mtype, name in items:
+        if mtype == "audio" and audio_name is None:
+            audio_name = name or "Audio"
+        elif mtype in ("image", "video") and photo is None and path:
+            photo = path
+            has_video = mtype == "video"
+
+    img = base
+    if photo:
+        try:
+            bg = Image.open(photo).convert("RGB")
+            ratio = max(W / bg.width, H / bg.height) * 1.55
+            bg = bg.resize((max(1, int(bg.width * ratio)), max(1, int(bg.height * ratio))), Image.LANCZOS)
+            lx, ty = (bg.width - W) // 2, (bg.height - H) // 2
+            bg = bg.crop((lx, ty, lx + W, ty + H)).filter(ImageFilter.GaussianBlur(S(15)))
+            bg = ImageEnhance.Brightness(bg).enhance(0.58)
+            mask = Image.new("L", (W, H), 0)
+            mcx, mcy = W - S(64 + 170), S(172 + 170)
+            ImageDraw.Draw(mask).ellipse([mcx - S(365), mcy - S(345), mcx + S(365), mcy + S(345)], fill=255)
+            mask = mask.filter(ImageFilter.GaussianBlur(S(140)))
+            img = Image.composite(bg, base, mask)
+        except Exception:
+            img = base
+    d = ImageDraw.Draw(img)
+
+    shade = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shade)
+    sd.rectangle([0, 0, W, S(180)], fill=(17, 17, 19, 170))
+    sd.rectangle([0, H - S(112), W, H], fill=(17, 17, 19, 190))
+    img = Image.alpha_composite(img.convert("RGBA"), shade).convert("RGB")
+    d = ImageDraw.Draw(img)
+
+    ax, ay, asz = S(64), S(52), S(92)
+    av = _og_local_media(avatar_url)
+    if av:
+        try:
+            a = Image.open(av).convert("RGB").resize((asz, asz), Image.LANCZOS)
+            m = Image.new("L", (asz, asz), 0)
+            ImageDraw.Draw(m).ellipse([0, 0, asz - 1, asz - 1], fill=255)
+            img.paste(a, (ax, ay), m)
+        except Exception:
+            av = None
+    if not av:
+        d.ellipse([ax, ay, ax + asz, ay + asz], fill=(38, 38, 44))
+        fi = _og_font(S(42), True)
+        ch = (display_name or username or "?")[:1].upper()
+        d.text((ax + asz / 2 - d.textlength(ch, font=fi) / 2, ay + asz / 2 - S(28)), ch, font=fi, fill=TEXT)
+    d.ellipse([ax - S(2), ay - S(2), ax + asz + S(2), ay + asz + S(2)], outline=LINE, width=S(2))
+
+    d.text((ax + asz + S(22), ay + S(4)), (display_name or username or "")[:34], font=_og_font(S(33), True), fill=TEXT)
+    d.text((ax + asz + S(22), ay + S(48)), "@" + (username or ""), font=_og_font(S(21)), fill=SUB)
+
+    fb = _og_font(S(22), True)
+    brand = "GHOSTECOS"
+    d.text((W - S(64) - d.textlength(brand, font=fb), S(56)), brand, font=fb, fill=(196, 196, 204))
+    if is_nsfw:
+        fbd = _og_font(S(19), True)
+        bw = int(d.textlength("18+", font=fbd) + S(24))
+        bx, by = int(W - S(64) - bw), S(90)
+        img.paste(Image.new("RGB", (bw, S(30)), (150, 40, 56)), (bx, by), _og_rrect((bw, S(30)), S(15)))
+        d.text((bx + S(12), by + S(5)), "18+", font=fbd, fill=(255, 236, 240))
+
+    panel_x = W - S(64) - S(340)
+    panel_y = S(172)
+    text_right = W - S(64)
+    if photo and not is_nsfw:
+        try:
+            mi = Image.open(photo).convert("RGB")
+            ma_w = S(340)
+            ratio = max(ma_w / mi.width, ma_w / mi.height)
+            mi = mi.resize((max(1, int(mi.width * ratio)), max(1, int(mi.height * ratio))), Image.LANCZOS)
+            lx, ty = (mi.width - ma_w) // 2, (mi.height - ma_w) // 2
+            mi = mi.crop((lx, ty, lx + ma_w, ty + ma_w))
+            img.paste(mi, (panel_x, panel_y), _og_rrect((ma_w, ma_w), S(26)))
+            d = ImageDraw.Draw(img)
+            if has_video:
+                cx, cy = panel_x + ma_w / 2, panel_y + ma_w / 2
+                d.ellipse([cx - S(34), cy - S(34), cx + S(34), cy + S(34)], fill=(17, 17, 19))
+                _og_icon_play(d, cx, cy, S(24), TEXT)
+            text_right = panel_x - S(44)
+        except Exception:
+            photo = None
+    elif audio_name and not is_nsfw:
+        pw, ph = S(340), S(132)
+        px, py = panel_x, panel_y + S(60)
+        img.paste(Image.new("RGB", (pw, ph), PANEL), (px, py), _og_rrect((pw, ph), S(28)))
+        d = ImageDraw.Draw(img)
+        try:
+            d.rounded_rectangle([px, py, px + pw, py + ph], radius=S(28), outline=LINE, width=S(2))
+        except Exception:
+            pass
+        _og_icon_play(d, px + S(62), py + S(54), S(30), TEXT, filled=True)
+        d.rounded_rectangle([px + S(116), py + S(44), px + pw - S(26), py + S(50)], radius=S(3), fill=(58, 58, 66))
+        d.rounded_rectangle([px + S(116), py + S(44), px + S(196), py + S(50)], radius=S(3), fill=(210, 210, 218))
+        d.ellipse([px + S(192), py + S(41), px + S(202), py + S(53)], fill=TEXT)
+        f_name = _og_font(S(21), True)
+        d.text((px + S(108), py + S(64)), _og_ellipsis(d, audio_name, f_name, pw - S(128)), font=f_name, fill=TEXT)
+        f_sub = _og_font(S(17))
+        d.text((px + S(108), py + S(94)), _og_ellipsis(d, "Слушайте в GhostSocial", f_sub, pw - S(128)), font=f_sub, fill=SUB)
+        text_right = px - S(44)
+
+    body = "Пост помечен 18+. Откройте в GhostSocial" if is_nsfw else (content or "").strip()
+    if not body:
+        body = "GhostSocial"
+
+    y0 = ay + asz + S(46)
+    bottom = H - S(128)
+    text_w = text_right - S(64)
+    body_lines, body_font, body_lh = [], _og_font(S(40)), S(56)
+    for size in (40, 35, 30, 26, 23, 20):
+        f = _og_font(S(size))
+        lh = S(int(round(size * 1.42)))
+        max_lines = max(1, int((bottom - y0) / lh))
+        lines = _og_wrap_text(d, body, f, text_w, max_lines)
+        body_lines, body_font, body_lh = lines, f, lh
+        if " ".join(lines) == " ".join(body.split()):
+            break
+    truncated = " ".join(body_lines) != " ".join(body.split())
+    for ln in body_lines:
+        d.text((S(64), y0), ln, font=body_font, fill=TEXT)
+        y0 += body_lh
+    if truncated:
+        d.text((S(64), y0 + S(2)), _og_ellipsis(d, "Читайте дальше в GhostSocial", _og_font(S(20)), text_w), font=_og_font(S(20)), fill=SUB)
+
+    f_cnt = _og_font(S(22), True)
+    fy = H - S(66)
+    _og_icon_heart(d, S(64), fy + S(1), S(20), (206, 96, 112))
+    d.text((S(92), fy - S(4)), str(reactions), font=f_cnt, fill=(226, 226, 232))
+    tx = S(92) + d.textlength(str(reactions), font=f_cnt) + S(26)
+    _og_icon_comment(d, tx, fy + S(1), S(20), SUB)
+    d.text((tx + S(28), fy - S(4)), str(comments), font=f_cnt, fill=(226, 226, 232))
+
+    f_url = _og_font(S(22), True)
+    url = "ghostecos.duckdns.org/p/" + str(post_id)
+    d.text((W - S(64) - d.textlength(url, font=f_url), fy - S(4)), url, font=f_url, fill=(188, 188, 198))
+
+    out = img
+    buf = io.BytesIO()
+    out.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
 @router.get("/og/post/{post_id}.png")
 def og_post_png(post_id: int):
-    cached = _og_cached(f"p_{post_id}")
+    cached = _og_cached(f"p2_{post_id}")
     if cached:
         with open(cached, "rb") as f:
             return _og_response(f.read())
     c = db()
     row = c.execute(
-        "SELECT p.content, p.is_nsfw, u.username, u.display_name "
+        "SELECT p.content, p.is_nsfw, p.media, u.username, u.display_name, u.avatar_url "
         "FROM soc_posts p JOIN users u ON p.user_id=u.id WHERE p.id=?",
         (post_id,),
     ).fetchone()
@@ -5639,19 +6414,19 @@ def og_post_png(post_id: int):
     reactions = c.execute("SELECT COUNT(*) as n FROM soc_reactions WHERE post_id=?", (post_id,)).fetchone()["n"]
     comments = c.execute("SELECT COUNT(*) as n FROM soc_comments WHERE post_id=?", (post_id,)).fetchone()["n"]
     c.close()
-    is_nsfw = bool(row["is_nsfw"])
-    if is_nsfw:
-        title = "Пост помечен 18+"
-        sub = f"От {row['display_name']} (@{row['username']}). Откройте чтобы посмотреть."
-        accent = "18+ NSFW"
-    else:
-        content = (row["content"] or "").strip()
-        title = content[:140] + ("..." if len(content) > 140 else "")
-        sub = f"{row['display_name']} (@{row['username']}) · {reactions} реакций · {comments} комментариев"
-        accent = ""
-    png = _og_render(title=title or "Пост в GhostSocial", subtitle=sub,
-                     footer=f"ghostecos.duckdns.org/p/{post_id}", accent=accent)
-    _og_save(f"p_{post_id}", png)
+    k = row.keys()
+    png = _og_post_card(
+        post_id=post_id,
+        display_name=row["display_name"] or row["username"],
+        username=row["username"],
+        content=row["content"] or "",
+        avatar_url=(row["avatar_url"] if "avatar_url" in k else None),
+        media_json=(row["media"] if "media" in k else None),
+        reactions=reactions,
+        comments=comments,
+        is_nsfw=bool(row["is_nsfw"]),
+    )
+    _og_save(f"p2_{post_id}", png)
     return _og_response(png)
 
 
@@ -5972,7 +6747,7 @@ def my_reposts_ids(authorization: Optional[str] = Header(None)):
 
 @router.post("/post/{post_id}/repost")
 def repost_post(post_id: int, authorization: Optional[str] = Header(None)):
-    """Репостнуть пост в свой профиль. Не идёт в общую ленту/подписки.
+    """Репостнуть пост или миниску в свой профиль. Не идёт в общую ленту/подписки.
     Идемпотентно: повторный вызов возвращает existing=True."""
     user = auth_member(authorization)
     _rate_limit(f"repost:{user['id']}", limit=60, window=3600)
@@ -5982,8 +6757,6 @@ def repost_post(post_id: int, authorization: Optional[str] = Header(None)):
         c.close(); raise HTTPException(404, "Post not found")
     if p["user_id"] == user["id"]:
         c.close(); raise HTTPException(400, "Свой пост репостить нельзя")
-    if (p["kind"] or "post") == "miniska":
-        c.close(); raise HTTPException(400, "Миниски не репостятся")
     now = int(time.time())
     try:
         c.execute(
@@ -6018,14 +6791,14 @@ def unrepost_post(post_id: int, authorization: Optional[str] = Header(None)):
 
 
 @router.get("/post/{post_id}/reposters")
-def post_reposters(post_id: int, limit: int = Query(20)):
+def post_reposters(post_id: int, limit: int = Query(20), offset: int = Query(0)):
     """Все юзеры кто репостнул пост (публично). Лимит 20 по умолчанию."""
     c = db()
     rows = c.execute("""
         SELECT u.id, u.username, u.display_name, u.avatar_url, r.created_at
         FROM soc_reposts r JOIN users u ON r.user_id=u.id
-        WHERE r.post_id=? ORDER BY r.created_at DESC LIMIT ?
-    """, (post_id, max(1, min(100, limit)))).fetchall()
+        WHERE r.post_id=? ORDER BY r.created_at DESC, r.id DESC LIMIT ? OFFSET ?
+    """, (post_id, max(1, min(100, limit)), max(0, min(100000, offset)))).fetchall()
     total = c.execute("SELECT COUNT(*) FROM soc_reposts WHERE post_id=?", (post_id,)).fetchone()[0] or 0
     c.close()
     return {
@@ -6047,7 +6820,7 @@ def post_reposters_contacts(post_id: int, authorization: Optional[str] = Header(
         WHERE r.post_id=? AND r.user_id IN (
             SELECT followee_id FROM soc_follows WHERE follower_id=?
         )
-        ORDER BY r.created_at DESC LIMIT 10
+        ORDER BY r.created_at DESC, r.id DESC LIMIT 10
     """, (post_id, user["id"])).fetchall()
     c.close()
     return [{"user_id": r["id"], "username": r["username"],
@@ -6069,7 +6842,7 @@ def user_feed_combined(username: str, offset: int = Query(0), limit: int = Query
     target_uid = u["id"]
     rows = c.execute("""
         SELECT 'self' as kind, p.id, strftime('%s', p.created_at) as ts,
-               p.content, p.media, p.is_nsfw, p.nsfw_set_by, p.user_id, p.created_at, p.edited_at, p.source_channel_id,
+               p.content, p.media, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments, p.user_id, p.created_at, p.edited_at, p.source_channel_id,
                u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count,
                NULL as repost_ts
@@ -6077,7 +6850,7 @@ def user_feed_combined(username: str, offset: int = Query(0), limit: int = Query
         WHERE p.user_id=? AND p.kind='post'
         UNION ALL
         SELECT 'repost' as kind, p.id, CAST(r.created_at AS TEXT) as ts,
-               p.content, p.media, p.is_nsfw, p.nsfw_set_by, p.user_id, p.created_at, p.edited_at, p.source_channel_id,
+               p.content, p.media, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments, p.user_id, p.created_at, p.edited_at, p.source_channel_id,
                u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count,
                r.created_at as repost_ts
@@ -6112,7 +6885,7 @@ def user_reposts(username: str, offset: int = Query(0), limit: int = Query(20), 
     if not u:
         c.close(); raise HTTPException(404, "User not found")
     rows = c.execute("""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments,
                u2.username, u2.display_name, u2.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count,
                r.created_at as reposted_at
@@ -6345,8 +7118,27 @@ _ETERNAL_STATUS_PRICE_SOUL = 100
 def _status_active(set_at) -> bool:
     if not set_at:
         return False
-    age = int(time.time()) - int(set_at)
-    return 0 <= age < _STATUS_TTL
+    return (int(time.time()) - int(set_at)) < _STATUS_TTL
+
+
+def _require_fresh_status(user_id) -> None:
+    """Серверная проверка: свежий дневной статус (по времени сервера) или вечный.
+
+    Читаем из БД при каждом запросе, клиенту не верим.
+    """
+    c = db()
+    try:
+        row = c.execute(
+            "SELECT daily_status_set_at, eternal_status_text FROM users WHERE id=?",
+            (user_id,),
+        ).fetchone()
+    finally:
+        c.close()
+    if not row:
+        raise HTTPException(401, "Пользователь не найден")
+    if row["eternal_status_text"] or _status_active(row["daily_status_set_at"]):
+        return
+    raise HTTPException(403, "Сначала поставь статус за последние 24 часа")
 
 
 def _resolve_status(row):
@@ -6405,31 +7197,27 @@ def status_my(authorization: Optional[str] = Header(None)):
 
 @router.post("/status/set")
 def status_set(body: StatusSetBody, authorization: Optional[str] = Header(None)):
-    """Ставит мысль дня. 1..50 символов, срок не сбрасывается при правке."""
+    """Ставит дневной статус. 1..140 символов, без переносов строк."""
     user = auth_member(authorization)
     _rate_limit(f"status:{user['id']}", limit=20, window=86400)
     text = (body.text or "").strip().replace("\n", " ").replace("\r", " ")
     if not text:
         raise HTTPException(400, "Статус не может быть пустым")
-    if len(text) > 50:
-        raise HTTPException(400, "Мысль дня максимум 50 символов")
+    if len(text) > 140:
+        raise HTTPException(400, "Статус максимум 140 символов")
+    if sum(ch.isalpha() for ch in text) < 2:
+        raise HTTPException(400, "Статус должен содержать слова, а не только символы")
     mood = (body.mood or "").strip().lower() or None
     if mood and mood not in _ALLOWED_MOODS:
         raise HTTPException(400, f"Неизвестное mood. Допустимые: {', '.join(sorted(_ALLOWED_MOODS))}")
     now = int(time.time())
     c = db()
-    previous = c.execute(
-        "SELECT daily_status_set_at FROM users WHERE id=?",
-        (user["id"],),
-    ).fetchone()
-    previous_set_at = int(previous["daily_status_set_at"] or 0) if previous else 0
-    set_at = previous_set_at if _status_active(previous_set_at) else now
     c.execute(
         "UPDATE users SET daily_status_text=?, daily_status_set_at=?, daily_status_mood=? WHERE id=?",
-        (text, set_at, mood, user["id"]),
+        (text, now, mood, user["id"]),
     )
     c.commit(); c.close()
-    return {"status": "ok", "text": text, "mood": mood, "set_at": set_at, "expires_at": set_at + _STATUS_TTL}
+    return {"status": "ok", "text": text, "mood": mood, "set_at": now, "expires_at": now + _STATUS_TTL}
 
 
 @router.post("/status/eternal")
@@ -6497,50 +7285,46 @@ def status_feed(authorization: Optional[str] = Header(None)):
     uid = user["id"]
     c = db()
     rows = c.execute("""
-        SELECT u.*
+        SELECT u.id, u.username, u.display_name, u.avatar_url,
+               u.daily_status_text, u.daily_status_set_at, u.daily_status_mood,
+               u.eternal_status_text, u.eternal_status_mood, u.eternal_status_purchased_at
         FROM users u
         WHERE u.id = ? OR u.id IN (SELECT followee_id FROM soc_follows WHERE follower_id=?)
     """, (uid, uid)).fetchall()
+    c.close()
     out = []
     for r in rows:
-        if r["id"] != uid and _profile_visibility(c, dict(r), uid)["profile_hidden"]:
-            continue
         st = _resolve_status(r)
         if not st:
             continue
         out.append({
             "user_id": r["id"], "username": r["username"], "display_name": r["display_name"],
             "is_me": r["id"] == uid,
-            "expires_at": None if st["eternal"] else st["set_at"] + _STATUS_TTL,
             **st,
         })
-    c.close()
     out.sort(key=lambda x: (x.get("set_at") or 0), reverse=True)
     return out
 
 
 @router.get("/status/{username}")
-def status_of(username: str, authorization: Optional[str] = Header(None)):
-    """Статус виден только если видим сам профиль; просроченный возвращает null."""
+def status_of(username: str):
+    """Публичный статус юзера. Если просрочен — null."""
     uname = (username or "").strip().lower().lstrip("@")
     if not uname:
         raise HTTPException(400, "Empty username")
-    viewer = auth(authorization) if authorization else None
     c = db()
-    row = c.execute("SELECT * FROM users WHERE username=?", (uname,)).fetchone()
-    if not row:
-        c.close()
-        raise HTTPException(404, "User not found")
-    if _profile_visibility(c, dict(row), viewer["id"] if viewer else -1)["profile_hidden"]:
-        c.close()
-        return {"text": None, "mood": None, "set_at": None, "eternal": False}
-    st = _resolve_status(row)
+    row = c.execute(
+        "SELECT daily_status_text, daily_status_set_at, daily_status_mood, "
+        "eternal_status_text, eternal_status_mood, eternal_status_purchased_at "
+        "FROM users WHERE username=?",
+        (uname,),
+    ).fetchone()
     c.close()
+    if not row:
+        raise HTTPException(404, "User not found")
+    st = _resolve_status(row)
     if st:
-        return {
-            **st,
-            "expires_at": None if st["eternal"] else st["set_at"] + _STATUS_TTL,
-        }
+        return st
     return {"text": None, "mood": None, "set_at": None, "eternal": False}
 
 
@@ -7188,6 +7972,53 @@ def mod_overwatch_vote(request_id: int, body: OverwatchVoteBody, authorization: 
     }
 
 
+@router.post("/admin/user/{username}/{kind}")
+def admin_toggle_profile_badge(
+    username: str,
+    kind: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Admin-only toggle for profile verification and premium badges."""
+    admin = auth_member(authorization)
+    if not _is_admin_user(admin):
+        raise HTTPException(403, "Только для администратора")
+
+    badge_column = {
+        "verify": "is_verified",
+        "premium": "is_premium",
+    }.get(kind.lower())
+    if badge_column is None:
+        raise HTTPException(404, "Неизвестный тип бейджа")
+
+    uname = username.strip().lower().lstrip("@")
+    if not uname:
+        raise HTTPException(404, "Пользователь не найден")
+
+    c = db()
+    target = c.execute(
+        "SELECT id FROM users WHERE username=?",
+        (uname,),
+    ).fetchone()
+    if not target:
+        c.close()
+        raise HTTPException(404, "Пользователь не найден")
+
+    c.execute(
+        f"UPDATE users SET {badge_column}=CASE WHEN COALESCE({badge_column}, 0)=1 THEN 0 ELSE 1 END WHERE id=?",
+        (target["id"],),
+    )
+    c.commit()
+    updated = c.execute(
+        "SELECT is_verified, is_premium FROM users WHERE id=?",
+        (target["id"],),
+    ).fetchone()
+    c.close()
+    return {
+        "is_verified": bool(updated["is_verified"]),
+        "is_premium": bool(updated["is_premium"]),
+    }
+
+
 @router.post("/mod/promote/{username}")
 def mod_promote(username: str, authorization: Optional[str] = Header(None)):
     """Admin напрямую назначает юзера модератором (без заявки)."""
@@ -7360,7 +8191,7 @@ def mod_me(authorization: Optional[str] = Header(None)):
 @router.post("/post/{post_id}/vote")
 def vote(post_id: int, body: VoteBody, authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
-    _rate_limit(f"vote:{user['id']}", limit=60, window=3600)
+    _rate_limit(f"vote:{user['id']}", limit=120, window=3600)
     c = db()
     poll = c.execute("SELECT * FROM soc_polls WHERE post_id=?", (post_id,)).fetchone()
     if not poll:
@@ -7368,18 +8199,57 @@ def vote(post_id: int, body: VoteBody, authorization: Optional[str] = Header(Non
         raise HTTPException(404, "Опрос не найден")
     try: opts = json.loads(poll["options"])
     except: opts = []
-    if body.option_idx < 0 or body.option_idx >= len(opts):
-        c.close()
-        raise HTTPException(400, "Невалидный вариант")
-    c.execute(
-        "INSERT OR REPLACE INTO soc_poll_votes (post_id, user_id, option_idx) VALUES (?,?,?)",
-        (post_id, user["id"], body.option_idx)
-    )
+    n_opts = len(opts)
+    poll_id = poll["id"]
+    multi = bool(poll["allow_multiple"])
+    def _ok(i): return isinstance(i, int) and 0 <= i < n_opts
+    if body.option_idxs is not None:
+        # пакетная подача выбора (викторина с несколькими правильными / замена всего выбора)
+        try:
+            idxs = sorted(set(int(i) for i in body.option_idxs))
+        except Exception:
+            idxs = None
+        if not idxs or any(not _ok(i) for i in idxs):
+            c.close()
+            raise HTTPException(400, "Невалидные варианты")
+        c.execute("DELETE FROM soc_poll_votes WHERE poll_id=? AND user_id=?", (poll_id, user["id"]))
+        c.executemany(
+            "INSERT OR IGNORE INTO soc_poll_votes (poll_id, post_id, user_id, option_idx) VALUES (?,?,?,?)",
+            [(poll_id, post_id, user["id"], i) for i in idxs]
+        )
+    elif multi:
+        # мульти-голосование: каждый клик — toggle своего выбора
+        if not _ok(body.option_idx):
+            c.close()
+            raise HTTPException(400, "Невалидный вариант")
+        has = c.execute(
+            "SELECT 1 FROM soc_poll_votes WHERE poll_id=? AND user_id=? AND option_idx=?",
+            (poll_id, user["id"], body.option_idx)
+        ).fetchone()
+        if has or body.remove:
+            c.execute(
+                "DELETE FROM soc_poll_votes WHERE poll_id=? AND user_id=? AND option_idx=?",
+                (poll_id, user["id"], body.option_idx)
+            )
+        else:
+            c.execute(
+                "INSERT OR IGNORE INTO soc_poll_votes (poll_id, post_id, user_id, option_idx) VALUES (?,?,?,?)",
+                (poll_id, post_id, user["id"], body.option_idx)
+            )
+    else:
+        if not _ok(body.option_idx):
+            c.close()
+            raise HTTPException(400, "Невалидный вариант")
+        c.execute("DELETE FROM soc_poll_votes WHERE post_id=? AND user_id=?", (post_id, user["id"]))
+        c.execute(
+            "INSERT OR IGNORE INTO soc_poll_votes (poll_id, post_id, user_id, option_idx) VALUES (?,?,?,?)",
+            (poll_id, post_id, user["id"], body.option_idx)
+        )
     c.commit()
     state = _poll_state(c, post_id, user["id"])
     c.close()
     ws_hub.broadcast("post.vote", {"post_id": post_id, "poll": {
-        "counts": state["counts"], "total": state["total"],
+        "counts": state["counts"], "total": state["total"], "poll_id": state.get("poll_id"),
     }})
     return state
 
@@ -7391,27 +8261,36 @@ def _poll_state(c, post_id: int, uid: int) -> dict:
     try: opts = json.loads(poll["options"])
     except: opts = []
     rows = c.execute(
-        "SELECT option_idx, COUNT(*) as cnt FROM soc_poll_votes WHERE post_id=? GROUP BY option_idx",
-        (post_id,)
+        "SELECT option_idx, COUNT(*) as cnt FROM soc_poll_votes WHERE poll_id=? GROUP BY option_idx",
+        (poll["id"],)
     ).fetchall()
     counts = {r["option_idx"]: r["cnt"] for r in rows}
     total = sum(counts.values())
-    my_vote = None
+    my_votes = []
     if uid > 0:
         mv = c.execute(
-            "SELECT option_idx FROM soc_poll_votes WHERE post_id=? AND user_id=?",
-            (post_id, uid)
-        ).fetchone()
-        if mv:
-            my_vote = mv["option_idx"]
+            "SELECT option_idx FROM soc_poll_votes WHERE poll_id=? AND user_id=?",
+            (poll["id"], uid)
+        ).fetchall()
+        my_votes = sorted(r["option_idx"] for r in mv)
+    my_vote = my_votes[-1] if my_votes else None
+    try: _cx = json.loads(poll["correct_idxs"]) if poll["correct_idxs"] else None
+    except: _cx = None
+    if poll["is_quiz"] and _cx is None and poll["correct_idx"] is not None:
+        _cx = [poll["correct_idx"]]
+    answered = bool(my_votes)
     return {
+        "poll_id": poll["id"],
         "question": poll["question"],
         "options": opts,
         "counts": counts,
         "total": total,
         "my_vote": my_vote,
+        "my_votes": my_votes,
         "is_quiz": bool(poll["is_quiz"]),
-        "correct_idx": poll["correct_idx"] if (poll["is_quiz"] and my_vote is not None) else None,
+        "allow_multiple": bool(poll["allow_multiple"]),
+        "correct_idx": (_cx[0] if _cx else None) if (poll["is_quiz"] and answered and _cx and len(_cx) == 1) else None,
+        "correct_idxs": sorted(_cx) if (poll["is_quiz"] and answered and _cx) else None,
     }
 
 # ── Миниски (короткие вертикальные видео) ───────────────────────────────────
@@ -7423,9 +8302,16 @@ class MiniskaBody(BaseModel):
 MINISKA_MAX_DURATION = 30
 MINISKA_MAX_TEXT = 200
 
+
+def _require_miniska_creator(user):
+    if int(user['id']) != 2:
+        raise HTTPException(403, 'В разработке, будет совсем скоро')
+
+
 @router.post("/miniska/new")
 def create_miniska(body: MiniskaBody, authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
+    _require_miniska_creator(user)
     _rate_limit(f"miniska:{user['id']}", limit=10, window=3600)
     if not _MEDIA_URL_RE.match(body.video_url or ""):
         raise HTTPException(400, "Некорректный URL видео")
@@ -7486,7 +8372,7 @@ def miniska_feed(
     seed = (uid * 9973 + offset * 17 + 1) % 1000003 if uid else 12345
     c = db()
     rows = c.execute(f"""
-        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+        SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments,
                u.username, u.display_name, u.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_posts p JOIN users u ON p.user_id=u.id
@@ -7502,82 +8388,6 @@ def miniska_feed(
 @router.get("/health")
 def health():
     return {"status": "ok", "service": "GhostSocial", "version": VERSION}
-
-
-@router.get("/client-config")
-def client_config():
-    """Public bootstrap list for GhostChat service endpoint discovery.
-
-    Optional alternates are configured as JSON in
-    ``GC_CLIENT_API_SERVICES_JSON`` (service name -> URL or URL list). Only
-    absolute HTTPS URLs or same-origin relative paths are returned.
-    """
-    origin = os.getenv(
-        "GC_CLIENT_API_ORIGIN", "https://ghostecos.duckdns.org"
-    ).strip().rstrip("/")
-    parsed_origin = urlsplit(origin)
-    if (
-        parsed_origin.scheme != "https"
-        or not parsed_origin.hostname
-        or parsed_origin.username
-        or parsed_origin.password
-        or parsed_origin.query
-        or parsed_origin.fragment
-    ):
-        origin = "https://ghostecos.duckdns.org"
-
-    defaults = {
-        "chat": f"{origin}/api/chat",
-        "soc": f"{origin}/api/soc",
-        "root": origin,
-        "core": f"{origin}/api",
-        "bots": f"{origin}/api/bots",
-    }
-    overrides = {}
-    raw_overrides = os.getenv("GC_CLIENT_API_SERVICES_JSON", "").strip()
-    if raw_overrides:
-        try:
-            decoded = json.loads(raw_overrides)
-            if isinstance(decoded, dict):
-                overrides = decoded
-        except (TypeError, ValueError):
-            pass
-
-    services = {}
-    for key, default in defaults.items():
-        raw = overrides.get(key, default)
-        values = raw if isinstance(raw, list) else [raw]
-        candidates = []
-        for value in values[:8]:
-            if not isinstance(value, str) or not value.strip():
-                continue
-            candidate = urljoin(f"{origin}/", value.strip())
-            parts = urlsplit(candidate)
-            if (
-                parts.scheme != "https"
-                or not parts.hostname
-                or parts.username
-                or parts.password
-                or parts.query
-                or parts.fragment
-            ):
-                continue
-            normalized = candidate.rstrip("/")
-            if normalized not in candidates:
-                candidates.append(normalized)
-        services[key] = candidates or [default]
-
-    health_path = os.getenv(
-        "GC_CLIENT_API_HEALTH_PATH", "/api/soc/health"
-    ).strip()
-    if (
-        not health_path.startswith("/")
-        or health_path.startswith("//")
-        or "?" in health_path
-        or "#" in health_path
-    ):
-        health_path = "/api/soc/health"
-    return {"version": 1, "health_path": health_path, "services": services}
 
 @router.get("/version")
 def get_version():
@@ -8084,6 +8894,9 @@ def admin_grant(body: AdminGrantBody, request: Request, authorization: Optional[
             c.execute("UPDATE soc_economy_state SET system_balance = system_balance - ? WHERE is_active=1", (body.amount,))
         else:
             c.execute("UPDATE soc_economy_state SET system_balance = system_balance + ? WHERE is_active=1", (-body.amount,))
+        import logging as _emit_lg
+        _emit_lg.getLogger('gc').info('admin_emit uid=%s amount=%s note=%s',
+                                     user['id'], body.amount, (body.note or 'admin grant'))
         _credit_soul_tx(c, user["id"], body.amount, 'admin_emit', note=(body.note or 'admin grant'))
         new_bal = _soul_balance(c, user["id"])
         c.execute("COMMIT")
@@ -9400,7 +10213,7 @@ def my_saved(offset: int = Query(0), limit: int = Query(20), authorization: Opti
     c = db()
     rows = c.execute("""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
-               p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+               p.source_channel_id, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments,
                u2.username, u2.display_name, u2.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count,
                s.created_at as saved_at
@@ -9423,7 +10236,7 @@ def my_reacted(offset: int = Query(0), limit: int = Query(20), authorization: Op
     c = db()
     rows = c.execute("""
         SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
-               p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+               p.source_channel_id, p.is_nsfw, p.nsfw_set_by, p.formatting, p.segments,
                u2.username, u2.display_name, u2.avatar_url,
                (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
         FROM soc_reactions rx
@@ -9457,6 +10270,7 @@ def v11_create_miniska_carousel(body: MiniskaV2Body,
     Каждый url должен быть уже загружен (через обычный аплоад) и существовать.
     """
     user = auth_member(authorization)
+    _require_miniska_creator(user)
     _rate_limit(f"miniska:{user['id']}", limit=10, window=3600)
 
     caption = (body.caption or "").strip()
@@ -9517,3 +10331,932 @@ def v11_create_miniska_carousel(body: MiniskaV2Body,
     finally:
         c.close()
     return {"status": "ok", "id": post_id, "count": len(media)}
+
+
+# ── Chunked audio upload (composer) ────────────────────────────────────────────
+# Audio is sent as bounded raw chunks so mobile browsers can retry individual
+# pieces and report real byte progress. Only completed uploads reach /upload's
+# existing validation and ffmpeg pipeline.
+_GS_AUDIO_CHUNK_BYTES = 1024 * 1024
+_GS_AUDIO_COMPLETING = set()
+
+
+def _gs_audio_upload_id(value: Any) -> str:
+    try:
+        return str(uuid.UUID(str(value)))
+    except Exception:
+        raise HTTPException(400, "Некорректный идентификатор загрузки")
+
+
+def _gs_audio_session_dir(user_id: Any, upload_id: str) -> str:
+    import tempfile
+    owner = str(user_id)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", owner):
+        raise HTTPException(400, "Некорректный пользователь загрузки")
+    return os.path.join(tempfile.gettempdir(), "ghostsocial-audio-chunks", owner, upload_id)
+
+
+def _gs_audio_cleanup_stale(owner_dir: str) -> None:
+    now = time.time()
+    try:
+        for entry in os.scandir(owner_dir):
+            try:
+                if entry.is_dir(follow_symlinks=False) and now - entry.stat(follow_symlinks=False).st_mtime > 86400:
+                    shutil.rmtree(entry.path, ignore_errors=True)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _gs_audio_metadata(filename_header: str, mime_header: str) -> dict:
+    from urllib.parse import unquote
+    raw_name = unquote(str(filename_header or "")).replace("\\", "/")
+    filename = os.path.basename(raw_name).strip()
+    if not filename or len(filename) > 255 or any(ord(ch) < 32 for ch in filename):
+        raise HTTPException(400, "Некорректное имя аудиофайла")
+    mime = str(mime_header or "").split(";", 1)[0].strip().lower()[:120]
+    mime_ext = {
+        "audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/wav": "wav",
+        "audio/x-wav": "wav", "audio/ogg": "ogg", "audio/mp4": "m4a",
+        "audio/x-m4a": "m4a", "audio/aac": "mp3", "application/octet-stream": "",
+    }.get(mime, "")
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in ALLOWED_AUDIO:
+        ext = mime_ext
+    if ext not in ALLOWED_AUDIO:
+        raise HTTPException(400, "Недопустимый аудиофайл")
+    if filename.rsplit(".", 1)[-1].lower() not in ALLOWED_AUDIO:
+        filename = filename + "." + ext
+    return {"filename": filename, "mime": mime or "application/octet-stream", "ext": ext}
+
+
+@router.post("/upload/chunk")
+async def upload_audio_chunk(
+    request: Request,
+    upload_id: str = Header(..., alias="X-GS-Upload-ID"),
+    chunk_index: int = Header(..., alias="X-GS-Chunk-Index"),
+    chunk_count: int = Header(..., alias="X-GS-Chunk-Count"),
+    filename: str = Header(..., alias="X-GS-File-Name"),
+    file_size: int = Header(..., alias="X-GS-File-Size"),
+    file_type: str = Header("", alias="X-GS-File-Type"),
+    authorization: Optional[str] = Header(None),
+):
+    user = await run_in_threadpool(auth_member, authorization)
+    _rate_limit(f"upload-audio-chunk:{user['id']}", limit=1800, window=3600)
+    upload_id = _gs_audio_upload_id(upload_id)
+    if file_size < 1 or file_size > MAX_AUDIO:
+        raise HTTPException(413, "Аудиофайл слишком большой. Максимум: 15MB")
+    expected_count = math.ceil(file_size / _GS_AUDIO_CHUNK_BYTES)
+    if chunk_count != expected_count or chunk_count > 15 or chunk_index < 0 or chunk_index >= chunk_count:
+        raise HTTPException(400, "Некорректная часть загрузки")
+    info = _gs_audio_metadata(filename, file_type)
+    owner_dir = os.path.join(os.path.dirname(_gs_audio_session_dir(user["id"], upload_id)))
+    _gs_audio_cleanup_stale(owner_dir)
+    session_dir = _gs_audio_session_dir(user["id"], upload_id)
+    os.makedirs(session_dir, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(session_dir, 0o700)
+    except Exception:
+        pass
+    metadata_path = os.path.join(session_dir, "meta.json")
+    expected_meta = {
+        "owner": str(user["id"]),
+        "filename": info["filename"],
+        "mime": info["mime"],
+        "ext": info["ext"],
+        "file_size": file_size,
+        "chunk_count": chunk_count,
+    }
+    if os.path.exists(metadata_path):
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as meta_file:
+                saved_meta = json.load(meta_file)
+        except Exception:
+            raise HTTPException(409, "Состояние загрузки повреждено")
+        if any(saved_meta.get(key) != value for key, value in expected_meta.items()):
+            raise HTTPException(409, "Параметры загрузки изменились")
+    else:
+        if chunk_index != 0:
+            raise HTTPException(409, "Сначала отправьте первую часть")
+        temp_meta = metadata_path + ".tmp"
+        with open(temp_meta, "w", encoding="utf-8") as meta_file:
+            json.dump(expected_meta, meta_file, ensure_ascii=False)
+        os.replace(temp_meta, metadata_path)
+
+    body = await request.body()
+    expected_bytes = min(_GS_AUDIO_CHUNK_BYTES, file_size - chunk_index * _GS_AUDIO_CHUNK_BYTES)
+    if len(body) != expected_bytes:
+        raise HTTPException(400, "Размер части загрузки не совпадает")
+    part_path = os.path.join(session_dir, "chunk-%05d.part" % chunk_index)
+    temp_part = part_path + ".tmp"
+    with open(temp_part, "wb") as part_file:
+        part_file.write(body)
+    os.replace(temp_part, part_path)
+    return {"ok": True, "index": chunk_index, "received_bytes": expected_bytes}
+
+
+@router.post("/upload/complete")
+async def complete_audio_upload(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    import tempfile
+    from starlette.datastructures import Headers as _StarletteHeaders, UploadFile as _StarletteUploadFile
+
+    user = await run_in_threadpool(auth_member, authorization)
+    try:
+        payload = await request.json()
+        upload_id = _gs_audio_upload_id((payload or {}).get("upload_id"))
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(400, "Некорректный запрос завершения загрузки")
+    session_dir = _gs_audio_session_dir(user["id"], upload_id)
+    session_key = str(user["id"]) + ":" + upload_id
+    if session_key in _GS_AUDIO_COMPLETING:
+        raise HTTPException(409, "Загрузка уже обрабатывается")
+    _GS_AUDIO_COMPLETING.add(session_key)
+    assembled = None
+    wrapped = None
+    cleanup_session = False
+    try:
+        metadata_path = os.path.join(session_dir, "meta.json")
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as meta_file:
+                meta = json.load(meta_file)
+        except FileNotFoundError:
+            raise HTTPException(404, "Загрузка не найдена")
+        except Exception:
+            raise HTTPException(409, "Состояние загрузки повреждено")
+        if str(meta.get("owner")) != str(user["id"]):
+            raise HTTPException(403, "Нет доступа к этой загрузке")
+        file_size = int(meta.get("file_size") or 0)
+        chunk_count = int(meta.get("chunk_count") or 0)
+        if file_size < 1 or file_size > MAX_AUDIO or chunk_count != math.ceil(file_size / _GS_AUDIO_CHUNK_BYTES):
+            raise HTTPException(409, "Некорректный размер загрузки")
+        assembled = tempfile.SpooledTemporaryFile(max_size=1024 * 1024, mode="w+b")
+        total = 0
+        for index in range(chunk_count):
+            part_path = os.path.join(session_dir, "chunk-%05d.part" % index)
+            try:
+                with open(part_path, "rb") as part_file:
+                    part = part_file.read(_GS_AUDIO_CHUNK_BYTES + 1)
+            except FileNotFoundError:
+                raise HTTPException(409, "Не все части аудио загружены")
+            expected_bytes = min(_GS_AUDIO_CHUNK_BYTES, file_size - index * _GS_AUDIO_CHUNK_BYTES)
+            if len(part) != expected_bytes:
+                raise HTTPException(409, "Повреждена часть аудиофайла")
+            assembled.write(part)
+            total += len(part)
+        if total != file_size:
+            raise HTTPException(409, "Размер загруженного аудио не совпадает")
+        assembled.seek(0)
+        headers = _StarletteHeaders({"content-type": str(meta.get("mime") or "application/octet-stream")})
+        wrapped = _StarletteUploadFile(
+            file=assembled,
+            filename=str(meta.get("filename") or "audio.mp3"),
+            size=file_size,
+            headers=headers,
+        )
+        cleanup_session = True
+        result = await upload_media(request=request, file=wrapped, authorization=authorization)
+        return result
+    finally:
+        if wrapped is not None:
+            try:
+                await wrapped.close()
+            except Exception:
+                pass
+        elif assembled is not None:
+            try:
+                assembled.close()
+            except Exception:
+                pass
+        if cleanup_session:
+            shutil.rmtree(session_dir, ignore_errors=True)
+        _GS_AUDIO_COMPLETING.discard(session_key)
+
+
+@router.post("/upload/cancel")
+async def cancel_audio_upload(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    user = await run_in_threadpool(auth_member, authorization)
+    try:
+        payload = await request.json()
+        upload_id = _gs_audio_upload_id((payload or {}).get("upload_id"))
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(400, "Некорректный запрос отмены загрузки")
+    session_dir = _gs_audio_session_dir(user["id"], upload_id)
+    shutil.rmtree(session_dir, ignore_errors=True)
+    return {"ok": True}
+
+# Account-ID-2 profile media banner: references existing post/miniski media only.
+@router.get('/media-banner/chunk/{name}')
+def get_media_banner_chunk(name: str, offset: int = 0, size: int = 262144):
+    """Bounded chunk download for an existing media asset used by a profile banner."""
+    from fastapi.responses import Response
+    from urllib.parse import urlparse
+    if not re.fullmatch(r'[A-Za-z0-9._-]{1,200}', name) or name in ('.', '..'):
+        raise HTTPException(400, 'Некорректное имя файла')
+    if offset < 0 or size < 1 or size > 524288:
+        raise HTTPException(416, 'Некорректный диапазон загрузки')
+    root = os.path.realpath(MEDIA_DIR)
+    target = os.path.realpath(os.path.join(root, name))
+    if os.path.commonpath([root, target]) != root or not os.path.isfile(target):
+        raise HTTPException(404, 'Медиа не найдено')
+    c = db()
+    try:
+        rows = c.execute("SELECT media FROM soc_posts WHERE media IS NOT NULL AND kind IN ('post','miniska')").fetchall()
+        source_exists = False
+        for row in rows:
+            try:
+                items = json.loads(row['media'] or '[]')
+                if isinstance(items, list) and any(isinstance(item, dict) and urlparse(str(item.get('url') or item.get('src') or '')).path.rstrip('/').rsplit('/', 1)[-1] == name for item in items):
+                    source_exists = True
+                    break
+            except Exception:
+                continue
+        if not source_exists:
+            raise HTTPException(404, 'Исходная публикация больше не существует')
+        rows = c.execute("SELECT media_banner FROM users WHERE media_banner IS NOT NULL").fetchall()
+        banner_exists = False
+        for row in rows:
+            try:
+                banner = json.loads(row['media_banner'] or '{}')
+                if urlparse(str(banner.get('url') or '')).path.rstrip('/').rsplit('/', 1)[-1] == name:
+                    banner_exists = True
+                    break
+            except Exception:
+                continue
+        if not banner_exists:
+            raise HTTPException(404, 'Медиа не используется в баннере')
+    finally:
+        c.close()
+    total = os.path.getsize(target)
+    if offset >= total and total:
+        raise HTTPException(416, 'Диапазон вне файла')
+    with open(target, 'rb') as stream:
+        stream.seek(offset)
+        chunk = stream.read(min(size, max(0, total - offset)))
+    mime = mimetypes.guess_type(target)[0] or 'application/octet-stream'
+    return Response(content=chunk, media_type=mime, headers={'X-Total-Size': str(total), 'X-Chunk-Offset': str(offset), 'Cache-Control': 'no-store', 'Access-Control-Expose-Headers': 'X-Total-Size, X-Chunk-Offset'})
+
+class MediaBannerBody(BaseModel):
+    url: str = Field(..., max_length=2048)
+    media_type: str = Field(..., pattern='^(image|video)$')
+    source_post_id: int = Field(..., gt=0)
+    position_x: float = Field(50, ge=0, le=100)
+    position_y: float = Field(50, ge=0, le=100)
+    zoom: float = Field(1, ge=1, le=3)
+    overlay: float = Field(0, ge=0, le=1)
+    blur: float = Field(0, ge=0, le=16)
+
+@router.post('/media-banner')
+def set_media_banner(body: MediaBannerBody, authorization: Optional[str] = Header(None)):
+    user = auth_member(authorization)
+    if int(user.get('id', 0)) != 2:
+        raise HTTPException(403, 'Эта функция пока доступна только аккаунту ID 2')
+    from urllib.parse import urlparse
+    media_path = urlparse(body.url.strip()).path.rstrip('/')
+    if not re.fullmatch(r'/social/media/[A-Za-z0-9._-]+', media_path):
+        raise HTTPException(422, 'Некорректная ссылка на медиа GhostSocial')
+    name = media_path.rsplit('/', 1)[-1]
+    root = os.path.realpath(MEDIA_DIR)
+    target = os.path.realpath(os.path.join(root, name))
+    if os.path.commonpath([root, target]) != root or not os.path.isfile(target):
+        raise HTTPException(404, 'Исходный медиафайл не найден на сервере')
+    c = db()
+    try:
+        cols = {r[1] for r in c.execute('PRAGMA table_info(users)').fetchall()}
+        if 'media_banner' not in cols:
+            c.execute('ALTER TABLE users ADD COLUMN media_banner TEXT NULL')
+            c.commit()
+        # Bind the banner to the exact source post, not merely a matching filename.
+        source_row = c.execute("SELECT media FROM soc_posts WHERE id=? AND kind IN ('post','miniska')", (body.source_post_id,)).fetchone()
+        if not source_row:
+            raise HTTPException(404, 'Исходная публикация больше не существует')
+        try:
+            source_items = json.loads(source_row['media'] or '[]')
+        except Exception:
+            source_items = []
+        if not isinstance(source_items, list) or not any(isinstance(item, dict) and urlparse(str(item.get('url') or item.get('src') or '')).path.rstrip('/').rsplit('/', 1)[-1] == name for item in source_items):
+            raise HTTPException(404, 'Медиа не принадлежит указанной публикации')
+        # The banner may only reference media currently attached to a live post/miniski.
+        rows = c.execute("SELECT media FROM soc_posts WHERE media IS NOT NULL AND kind IN ('post','miniska')").fetchall()
+        found = False
+        for row in rows:
+            try:
+                items = json.loads(row['media'] or '[]')
+                if isinstance(items, list):
+                    for item in items:
+                        if isinstance(item, dict):
+                            source = urlparse(str(item.get('url') or item.get('src') or '')).path.rstrip('/')
+                            if source.startswith('/social/media/') and source.rsplit('/', 1)[-1] == name:
+                                found = True
+                                break
+                if found:
+                    break
+            except Exception:
+                continue
+        if not found:
+            raise HTTPException(404, 'Медиа больше не прикреплено к существующей публикации')
+        value = {'url': media_path, 'type': body.media_type, 'source_post_id': body.source_post_id, 'position_x': body.position_x, 'position_y': body.position_y, 'zoom': body.zoom, 'overlay': body.overlay, 'blur': body.blur}
+        c.execute('UPDATE users SET media_banner=? WHERE id=?', (json.dumps(value, separators=(',', ':')), user['id']))
+        c.commit()
+        return {'ok': True, 'media_banner': value}
+    finally:
+        c.close()
+
+@router.delete('/media-banner')
+def clear_media_banner(authorization: Optional[str] = Header(None)):
+    user = auth_member(authorization)
+    if int(user.get('id', 0)) != 2:
+        raise HTTPException(403, 'Эта функция пока доступна только аккаунту ID 2')
+    c = db()
+    try:
+        cols = {r[1] for r in c.execute('PRAGMA table_info(users)').fetchall()}
+        if 'media_banner' not in cols:
+            c.execute('ALTER TABLE users ADD COLUMN media_banner TEXT NULL')
+        c.execute('UPDATE users SET media_banner=NULL WHERE id=?', (user['id'],))
+        c.commit()
+        return {'ok': True, 'media_banner': None}
+    finally:
+        c.close()
+
+
+# ── Перенесено из GhostSocial API (8005) при объединении сервисов ──────────
+# Расширенный поиск (/search/all, /search/suggest, /search/landing) и
+# подсказки тегов (/tags/suggest) ранее отдавались вторым процессом.
+import re as _gs_composer_re
+_SEARCH_POPULAR_WINDOWS = (3, 7, 14, 30, 90, 3650)
+_SEARCH_POPULAR_MIN = 3
+_GS_COMPOSER_TRANSLIT = {
+    'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'yo','ж':'zh','з':'z',
+    'и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r',
+    'с':'s','т':'t','у':'u','ф':'f','х':'h','ц':'ts','ч':'ch','ш':'sh','щ':'shch',
+    'ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya',
+}
+_SEARCH_POPULAR_CACHE = {}
+_SEARCH_TAG_CACHE_TTL = 300.0
+_GS_COMPOSER_TAG_RE = _gs_composer_re.compile(r'#([0-9A-Za-zА-Яа-яЁё_]{1,30})', _gs_composer_re.UNICODE)
+import sqlite3, secrets, os, uuid, json, io, hashlib, hmac, re, time, random, base64, shutil, math
+_SEARCH_TAG_CACHE = {"ts": 0.0, "counts": {}}
+from fastapi import APIRouter, Header, HTTPException, Query, UploadFile, File, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Header, HTTPException, Query, UploadFile, File, Request, WebSocket, WebSocketDisconnect
+from typing import Any, Optional, List
+_rl_buckets: dict = defaultdict(list)
+_RATE_LIMIT_DISABLED = os.getenv("DISABLE_RATE_LIMIT") == "1"
+from fastapi import APIRouter, Header, HTTPException, Query, UploadFile, File, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Header, HTTPException, Query, UploadFile, File, Request, WebSocket, WebSocketDisconnect
+
+def _search_popular_miniskas(uid: int, is_guest: bool, limit: int = 6) -> list:
+    """Популярные миниски для пустого поиска: то же окно, что у постов."""
+    cached = _search_popular_cache("miniskas")
+    if cached is not None:
+        return cached
+    rows = []
+    for days in _SEARCH_POPULAR_WINDOWS:
+        c = db()
+        try:
+            rows = c.execute("""
+                SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
+                       p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+                       u.username, u.display_name, u.avatar_url, u.is_verified,
+                       (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count,
+                       (SELECT COUNT(*) FROM soc_reactions r WHERE r.post_id=p.id) as heat
+                FROM soc_posts p JOIN users u ON p.user_id=u.id
+                WHERE p.kind='miniska' AND COALESCE(p.activity,500) >= 10
+                  AND p.is_nsfw = 0
+                  AND p.created_at >= datetime('now','-%d days')
+                ORDER BY heat DESC, comments_count DESC, p.created_at DESC LIMIT ?
+            """ % int(days), (limit,)).fetchall()
+        finally:
+            c.close()
+        if len(rows) >= _SEARCH_POPULAR_MIN:
+            break
+    c = db()
+    try:
+        result = _hydrate_posts(c, rows, uid)
+    finally:
+        c.close()
+    _search_popular_store("miniskas", result)
+    return result
+
+def _gs_composer_translit(value):
+    return ''.join(_GS_COMPOSER_TRANSLIT.get(ch, ch) for ch in (value or '').lower())
+
+def _search_tag_counts(force: bool = False) -> dict:
+    """Счётчик хэштегов с кэшем: раньше каждый /tags/suggest сканировал 5000 постов."""
+    now = time.time()
+    if (not force and _SEARCH_TAG_CACHE["counts"]
+            and (now - _SEARCH_TAG_CACHE["ts"]) < _SEARCH_TAG_CACHE_TTL):
+        return _SEARCH_TAG_CACHE["counts"]
+    c = db()
+    try:
+        rows = c.execute("SELECT content FROM soc_posts ORDER BY id DESC LIMIT 5000").fetchall()
+    finally:
+        c.close()
+    counts: dict = {}
+    for row in rows:
+        for tag in set(_GS_COMPOSER_TAG_RE.findall(row["content"] or "")):
+            normalized = tag.lower()
+            counts[normalized] = counts.get(normalized, 0) + 1
+    _SEARCH_TAG_CACHE["counts"] = counts
+    _SEARCH_TAG_CACHE["ts"] = now
+    return counts
+
+
+# Окно popularity: стартуем с 3 дней и расширяем, пока не наберётся
+# минимум разных тегов/постов. Так на young-сайте выборка не пустует.
+_SEARCH_POPULAR_WINDOWS = (3, 7, 14, 30, 90, 3650)
+_SEARCH_POPULAR_MIN = 3
+_SEARCH_POPULAR_CACHE = {}
+
+def _search_prefix(term: str) -> str:
+    return _search_escape(term) + "%"
+
+def _gs_composer_edit_distance(left, right, limit):
+    if left == right:
+        return 0
+    if abs(len(left) - len(right)) > limit:
+        return limit + 1
+    previous = list(range(len(right) + 1))
+    for i, lch in enumerate(left, 1):
+        current = [i] + [limit + 1] * len(right)
+        lo = max(1, i - limit)
+        hi = min(len(right), i + limit)
+        for j in range(lo, hi + 1):
+            current[j] = min(
+                current[j - 1] + 1,
+                previous[j] + 1,
+                previous[j - 1] + (lch != right[j - 1]),
+            )
+        if min(current[lo:hi + 1] or [limit + 1]) > limit:
+            return limit + 1
+        previous = current
+    return previous[len(right)]
+
+def _search_like(term: str) -> str:
+    return "%" + _search_escape(term).lower() + "%"
+
+def _search_popular_tags(min_tags: int = _SEARCH_POPULAR_MIN) -> list:
+    """Популярные хэштеги за окно (3 дня → шире, если мало разных тегов)."""
+    cached = _search_popular_cache("tags")
+    if cached is not None:
+        return cached
+    counts = {}
+    for days in _SEARCH_POPULAR_WINDOWS:
+        c = db()
+        try:
+            rows = c.execute(
+                "SELECT content FROM soc_posts WHERE kind='post' "
+                "AND created_at >= datetime('now','-%d days')" % int(days)
+            ).fetchall()
+        finally:
+            c.close()
+        counts = {}
+        for row in rows:
+            for tag in set(_GS_COMPOSER_TAG_RE.findall(row['content'] or '')):
+                normalized = tag.lower()
+                counts[normalized] = counts.get(normalized, 0) + 1
+        if len(counts) >= min_tags:
+            break
+    popular = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:8]
+    result = [{'tag': tag, 'count': count, 'kind': 'popular'} for tag, count in popular]
+    _search_popular_store("tags", result)
+    return result
+
+def _search_optional_user(authorization: Optional[str], request: Request = None) -> dict:
+    """Авторизация опциональна: битый токен не должен ломать публичный поиск."""
+    try:
+        user = auth(authorization) if authorization and authorization.strip() else {"id": 0, "is_guest": True}
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+        user = {"id": 0, "is_guest": True}
+    uid = int(user.get("id") or 0)
+    if not uid or user.get("is_guest"):
+        return {"id": 0, "is_guest": True, "authed": False}
+    return {"id": uid, "is_guest": False, "authed": True, "user": user}
+
+def _search_hashtags(term: str, limit: int = 10) -> list:
+    counts = _search_tag_counts()
+    query = str(term or "").strip().lstrip("#").lower()
+    if not query:
+        popular = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]
+        return [{"tag": tag, "count": count, "kind": "popular"} for tag, count in popular]
+    ranked = []
+    for tag, count in counts.items():
+        if tag == query:
+            kind = "exact"
+        elif tag.startswith(query):
+            kind = "prefix"
+        elif query in tag:
+            kind = "contains"
+        else:
+            continue
+        ranked.append((0 if kind == "exact" else (1 if kind == "prefix" else 2), -count, tag, count, kind))
+    ranked.sort()
+    return [{"tag": tag, "count": count, "kind": kind} for _, _, tag, count, kind in ranked[:limit]]
+
+def _rate_limit(key: str, limit: int, window: int):
+    if _RATE_LIMIT_DISABLED:
+        return  # для тестов / dev окружения
+    now = time.time()
+    # Периодически подчищаем старые бакеты: иначе ключи гостей (по IP)
+    # копятся в памяти бесконечно.
+    if len(_rl_buckets) > 5000:
+        cutoff = now - window * 2
+        for stale_key in [k for k, v in _rl_buckets.items() if not v or v[-1] < cutoff]:
+            _rl_buckets.pop(stale_key, None)
+    arr = _rl_buckets[key] = [t for t in _rl_buckets.get(key, []) if now - t < window]
+    if len(arr) >= limit:
+        raise HTTPException(429, "Слишком много попыток, попробуйте позже")
+    arr.append(now)
+
+def _search_popular_people(limit: int = 5) -> list:
+    """Люди для пустого поиска: по подписчикам и числу постов."""
+    cached = _search_popular_cache("people")
+    if cached is not None:
+        return cached
+    c = db()
+    try:
+        rows = c.execute("""
+            SELECT u.id, u.username, u.display_name, u.avatar_url, u.is_verified,
+                   (SELECT COUNT(*) FROM soc_follows f WHERE f.followee_id = u.id) AS followers_count,
+                   (SELECT COUNT(*) FROM soc_posts p WHERE p.user_id = u.id AND p.kind='post') AS posts_count
+            FROM users u
+            LEFT JOIN user_privacy pv ON pv.user_id = u.id
+            WHERE COALESCE(u.is_bot, 0) = 0
+              AND (pv.username_visibility IS NULL OR pv.username_visibility <> 'nobody')
+            ORDER BY followers_count DESC, posts_count DESC, u.id DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+        result = [dict(r) for r in rows]
+    finally:
+        c.close()
+    _search_popular_store("people", result)
+    return result
+
+def _search_popular_posts(uid: int, is_guest: bool, limit: int = 5) -> list:
+    """Самые популярные посты: та же схема окна (3 дня → шире)."""
+    cached = _search_popular_cache("posts")
+    if cached is not None:
+        return cached
+    rows = []
+    for days in _SEARCH_POPULAR_WINDOWS:
+        c = db()
+        try:
+            rows = c.execute("""
+                SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media,
+                       p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+                       u.username, u.display_name, u.avatar_url, u.is_verified,
+                       (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count,
+                       (SELECT COUNT(*) FROM soc_reactions r WHERE r.post_id=p.id) as heat
+                FROM soc_posts p JOIN users u ON p.user_id=u.id
+                WHERE p.kind='post' AND COALESCE(p.activity,500) >= 10
+                  AND (:guest = 0 OR p.is_nsfw = 0)
+                  AND p.created_at >= datetime('now','-%d days')
+                ORDER BY heat DESC, comments_count DESC, p.created_at DESC LIMIT ?
+            """ % int(days), (1 if is_guest else 0, limit)).fetchall()
+        finally:
+            c.close()
+        if len(rows) >= _SEARCH_POPULAR_MIN:
+            break
+    c = db()
+    try:
+        result = _hydrate_posts(c, rows, uid)
+    finally:
+        c.close()
+    _search_popular_store("posts", result)
+    return result
+
+def _search_popular_cache(key: str, ttl: float = 60.0):
+    entry = _SEARCH_POPULAR_CACHE.get(key)
+    now = time.time()
+    if entry and (now - entry[0]) < ttl:
+        return entry[1]
+    return None
+
+def _search_popular_store(key: str, value) -> None:
+    _SEARCH_POPULAR_CACHE[key] = (time.time(), value)
+
+def _search_escape(term: str) -> str:
+    return str(term or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+@router.get("/search/all")
+def search_all(
+    q: str = Query(..., max_length=120),
+    types: str = Query("people,hashtags,channels,posts,comments,miniska"),
+    limit: int = Query(10),
+    offset: int = Query(0),
+    authorization: Optional[str] = Header(None),
+    request: Request = None,
+):
+    """Сгруппированная выдача: люди, хэштеги, каналы, посты, комментарии."""
+    session = _search_optional_user(authorization, request)
+    uid = session["id"]
+    is_guest = not session["authed"]
+    rate_identity = str(uid) if uid else f"guest:{_client_ip(request)}"
+    _rate_limit(f"searchall:{rate_identity}", limit=20 if is_guest else 60, window=60)
+    q = (q or "").strip()
+    if len(q) < 2:
+        raise HTTPException(400, "Query too short")
+    if len(q) > 80:
+        raise HTTPException(400, "Query too long")
+    limit = max(1, min(20, int(limit or 10)))
+    offset = max(0, min(200, int(offset or 0)))
+    wanted = {t.strip().lower() for t in (types or "").split(",") if t.strip()}
+    if not wanted:
+        wanted = {"people", "hashtags", "channels", "posts", "comments", "miniska"}
+    if is_guest:
+        wanted.discard("comments")
+    buckets: dict = {}
+    c = db()
+    try:
+        if "people" in wanted:
+            rows = c.execute("""
+                SELECT u.id, u.username, u.display_name, u.avatar_url, u.is_verified,
+                       (SELECT COUNT(*) FROM soc_posts p WHERE p.user_id=u.id AND p.kind='post') as posts_count
+                FROM users u
+                LEFT JOIN user_privacy pv ON pv.user_id=u.id
+                WHERE (LOWER(u.username) LIKE :like ESCAPE '\\' OR LOWER(u.display_name) LIKE :like ESCAPE '\\')
+                  AND (pv.username_visibility IS NULL OR pv.username_visibility <> 'nobody' OR u.id = :uid)
+                ORDER BY CASE
+                    WHEN u.username = :exact COLLATE NOCASE THEN 0
+                    WHEN u.username LIKE :pfx COLLATE NOCASE THEN 1
+                    WHEN u.display_name = :exact COLLATE NOCASE THEN 2
+                    WHEN u.display_name LIKE :pfx COLLATE NOCASE THEN 3
+                    ELSE 4
+                END, posts_count DESC LIMIT :limit OFFSET :offset
+            """, {
+                "like": _search_like(q),
+                "pfx": _search_prefix(q),
+                "exact": q,
+                "uid": uid,
+                "limit": limit,
+                "offset": offset,
+            }).fetchall()
+            buckets["people"] = [dict(r) for r in rows]
+        if "channels" in wanted:
+            rows = c.execute("""
+                SELECT g.id, g.name, g.username, g.kind, g.is_public, g.bio,
+                       (SELECT COUNT(*) FROM chat_group_members m WHERE m.group_id=g.id) as members_count
+                FROM chat_groups g
+                WHERE g.kind IN ('channel','group')
+                  AND (g.is_public=1 OR :uid=0 OR EXISTS(
+                        SELECT 1 FROM chat_group_members m2 WHERE m2.group_id=g.id AND m2.user_id=:uid))
+                  AND (LOWER(COALESCE(g.name,'')) LIKE :like ESCAPE '\\'
+                       OR LOWER(COALESCE(g.username,'')) LIKE :like ESCAPE '\\')
+                ORDER BY members_count DESC LIMIT :limit OFFSET :offset
+            """, {
+                "like": _search_like(q),
+                "uid": uid,
+                "limit": limit,
+                "offset": offset,
+            }).fetchall()
+            buckets["channels"] = [dict(r) for r in rows]
+        if "posts" in wanted:
+            rows = c.execute("""
+                SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+                       u.username, u.display_name, u.avatar_url, u.is_verified,
+                       (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
+                FROM soc_posts p JOIN users u ON p.user_id=u.id
+                WHERE LOWER(p.content) LIKE :like ESCAPE '\\'
+                  AND p.kind='post'
+                  AND COALESCE(p.activity,500) >= 10
+                  AND (:guest = 0 OR p.is_nsfw = 0)
+                ORDER BY p.created_at DESC LIMIT :limit OFFSET :offset
+            """, {
+                "like": _search_like(q),
+                "guest": 1 if is_guest else 0,
+                "limit": limit,
+                "offset": offset,
+            }).fetchall()
+            buckets["posts"] = _hydrate_posts(c, rows, uid)
+        if "miniska" in wanted:
+            rows = c.execute("""
+                SELECT p.id, p.content, p.created_at, p.edited_at, p.user_id, p.media, p.source_channel_id, p.is_nsfw, p.nsfw_set_by,
+                       u.username, u.display_name, u.avatar_url, u.is_verified,
+                       (SELECT COUNT(*) FROM soc_comments cm WHERE cm.post_id=p.id) as comments_count
+                FROM soc_posts p JOIN users u ON p.user_id=u.id
+                WHERE LOWER(p.content) LIKE :like ESCAPE '\\'
+                  AND p.kind='miniska'
+                  AND COALESCE(p.activity,500) >= 10
+                  AND (:guest = 0 OR p.is_nsfw = 0)
+                ORDER BY p.created_at DESC LIMIT :limit OFFSET :offset
+            """, {
+                "like": _search_like(q),
+                "guest": 1 if is_guest else 0,
+                "limit": limit,
+                "offset": offset,
+            }).fetchall()
+            buckets["miniska"] = _hydrate_posts(c, rows, uid)
+        if "comments" in wanted:
+            rows = c.execute("""
+                SELECT cm.id, cm.post_id, cm.text, cm.created_at,
+                       u.username, u.display_name, u.avatar_url
+                FROM soc_comments cm
+                JOIN users u ON u.id=cm.user_id
+                JOIN soc_posts p ON p.id=cm.post_id
+                WHERE LOWER(cm.text) LIKE :like ESCAPE '\\'
+                  AND p.kind='post'
+                  AND COALESCE(p.activity,500) >= 10
+                ORDER BY cm.created_at DESC LIMIT :limit OFFSET :offset
+            """, {
+                "like": _search_like(q),
+                "limit": limit,
+                "offset": offset,
+            }).fetchall()
+            buckets["comments"] = [dict(r) for r in rows]
+    finally:
+        c.close()
+    if "hashtags" in wanted:
+        buckets["hashtags"] = _search_hashtags(q, limit)
+    return {"query": q, "buckets": buckets}
+
+@router.get("/search/suggest")
+def search_suggest(
+    q: str = Query("", max_length=60),
+    limit: int = Query(8),
+    authorization: Optional[str] = Header(None),
+    request: Request = None,
+):
+    """Подсказки для поля поиска: люди, хэштеги, каналы. История ведёт клиент."""
+    session = _search_optional_user(authorization, request)
+    uid = session["id"]
+    is_guest = not session["authed"]
+    rate_identity = str(uid) if uid else f"guest:{_client_ip(request)}"
+    _rate_limit(f"searchsuggest:{rate_identity}", limit=60 if is_guest else 120, window=60)
+    query = (q or "").strip().lstrip("@#")
+    limit = max(1, min(12, int(limit or 8)))
+    suggestions: list = []
+    if len(query) >= 1:
+        c = db()
+        try:
+            people = c.execute("""
+                SELECT u.id, u.username, u.display_name, u.avatar_url, u.is_verified,
+                       (SELECT COUNT(*) FROM soc_posts p WHERE p.user_id=u.id AND p.kind='post') as posts_count
+                FROM users u
+                LEFT JOIN user_privacy pv ON pv.user_id=u.id
+                WHERE (LOWER(u.username) LIKE :like ESCAPE '\\' OR LOWER(u.display_name) LIKE :like ESCAPE '\\')
+                  AND (pv.username_visibility IS NULL OR pv.username_visibility <> 'nobody' OR u.id = :uid)
+                ORDER BY CASE
+                    WHEN u.username = :exact COLLATE NOCASE THEN 0
+                    WHEN u.username LIKE :pfx COLLATE NOCASE THEN 1
+                    ELSE 2
+                END, posts_count DESC LIMIT :limit
+            """, {
+                "like": _search_like(query),
+                "pfx": _search_prefix(query),
+                "exact": query,
+                "uid": uid,
+                "limit": limit,
+            }).fetchall()
+            channels = c.execute("""
+                SELECT g.id, g.name, g.username, g.kind,
+                       (SELECT COUNT(*) FROM chat_group_members m WHERE m.group_id=g.id) as members_count
+                FROM chat_groups g
+                WHERE g.kind IN ('channel','group')
+                  AND (g.is_public=1 OR :uid=0 OR EXISTS(
+                        SELECT 1 FROM chat_group_members m2 WHERE m2.group_id=g.id AND m2.user_id=:uid))
+                  AND (LOWER(COALESCE(g.name,'')) LIKE :like ESCAPE '\\'
+                       OR LOWER(COALESCE(g.username,'')) LIKE :like ESCAPE '\\')
+                ORDER BY members_count DESC LIMIT :limit
+            """, {"like": _search_like(query), "uid": uid, "limit": limit}).fetchall()
+        finally:
+            c.close()
+        for row in people:
+            suggestions.append({
+                "type": "user",
+                "value": row["username"],
+                "label": row["display_name"] or row["username"],
+                "username": row["username"],
+                "display_name": row["display_name"],
+                "avatar_url": row["avatar_url"],
+                "is_verified": row["is_verified"],
+                "meta": {"posts_count": row["posts_count"]},
+            })
+        for row in channels:
+            suggestions.append({
+                "type": "channel",
+                "value": row["username"] or row["name"],
+                "label": row["name"],
+                "username": row["username"],
+                "kind": row["kind"],
+                "meta": {"members_count": row["members_count"]},
+            })
+        for item in _search_hashtags(query, limit):
+            suggestions.append({
+                "type": "hashtag",
+                "value": item["tag"],
+                "label": "#" + item["tag"],
+                "meta": {"count": item["count"], "kind": item["kind"]},
+            })
+    return {"query": query, "suggestions": suggestions[: limit * 3]}
+
+@router.get("/search/landing")
+def search_landing(authorization: Optional[str] = Header(None), request: Request = None):
+    """Данные для пустого состояния поиска. Гостю контакты не отдаём."""
+    session = _search_optional_user(authorization, request)
+    uid = session["id"]
+    is_guest = not session["authed"]
+    rate_identity = str(uid) if uid else f"guest:{_client_ip(request)}"
+    _rate_limit(f"searchlanding:{rate_identity}", limit=30 if is_guest else 60, window=60)
+    c = db()
+    try:
+        contacts: list = []
+        if uid:
+            rows = c.execute("""
+                SELECT u.id, u.username, u.display_name, u.avatar_url, u.is_verified
+                FROM chat_contacts ct
+                JOIN users u ON u.id = ct.contact_id
+                WHERE ct.owner_id = ?
+                ORDER BY ct.added_at DESC LIMIT 3
+            """, (uid,)).fetchall()
+            contacts = [dict(r) for r in rows]
+    finally:
+        c.close()
+    return {
+        "authed": bool(uid),
+        "contacts": contacts,
+        "popular_tags": _search_popular_tags(),
+        "popular_posts": _search_popular_posts(uid, is_guest, 5),
+        "popular_miniskas": _search_popular_miniskas(uid, is_guest, 6),
+        "popular_people": _search_popular_people(5),
+    }
+
+# ── Profile ────────────────────────────────────────────────────────────────────
+
+@router.get("/tags/suggest")
+def composer_tag_suggest(q: str = Query("", max_length=30), authorization: Optional[str] = Header(None), request: Request = None):
+    # Хэштеги — публичные данные: гостю тоже отвечаем, но с отдельным лимитом.
+    session = _search_optional_user(authorization, request)
+    rate_identity = str(session['id']) if session['id'] else f"guest:{_client_ip(request)}"
+    _rate_limit(f"tagsuggest:{rate_identity}", limit=30 if not session['authed'] else 90, window=60)
+    query = (q or '').strip().lstrip('#').lower()
+    counts = _search_tag_counts()
+
+    if not query:
+        popular = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:20]
+        return {'query': '', 'exact': False, 'results': [{'tag': tag, 'count': count, 'kind': 'popular'} for tag, count in popular]}
+
+    query_latin = _gs_composer_translit(query)
+    max_distance = 1 if len(query) < 6 else 2
+    ranked = []
+    for tag, count in counts.items():
+        latin_tag = _gs_composer_translit(tag)
+        if tag == query:
+            ranked.append((0, 0, -count, tag, count, 'exact'))
+            continue
+        if tag.startswith(query):
+            ranked.append((1, 0, -count, tag, count, 'prefix'))
+            continue
+
+        candidates = []
+        if len(query) >= 4:
+            for left in {query, query_latin}:
+                if not left:
+                    continue
+                for right in {tag, latin_tag}:
+                    if abs(len(left) - len(right)) <= max_distance:
+                        distance = _gs_composer_edit_distance(left, right, max_distance)
+                        if distance:
+                            candidates.append(distance)
+        if candidates and min(candidates) <= max_distance:
+            ranked.append((2, min(candidates), -count, tag, count, 'corrected'))
+            continue
+
+        phonetic = bool(query_latin and (
+            tag.startswith(query_latin) or latin_tag.startswith(query) or
+            query_latin.startswith(tag) or query.startswith(latin_tag)
+        ))
+        if phonetic:
+            ranked.append((3, 0, -count, tag, count, 'phonetic'))
+            continue
+
+        similar = bool(query in tag or (query_latin and query_latin in tag) or query in latin_tag)
+        if similar:
+            ranked.append((4, 0, -count, tag, count, 'contains'))
+
+    ranked.sort(key=lambda item: item[:4])
+    return {
+        'query': query,
+        'exact': query in counts,
+        'results': [{'tag': tag, 'count': count, 'kind': kind} for _, _, _, tag, count, kind in ranked[:20]],
+    }
+
+@router.delete("/media-banner")
+def clear_media_banner(authorization: Optional[str] = Header(None)):
+    user = auth_member(authorization)
+    if int(user.get("id", 0)) != 2:
+        raise HTTPException(403, "Эта функция пока доступна только аккаунту ID 2")
+    c = db()
+    c.execute("UPDATE users SET media_banner=NULL WHERE id=?", (user["id"],))
+    c.commit(); c.close()
+    return {"ok": True, "media_banner": None}
