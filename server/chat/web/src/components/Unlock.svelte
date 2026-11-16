@@ -16,11 +16,13 @@
   interface Props {
     api: ChatClient;
     username: string;
+    /** Пароль из сейфа GhostID: с ним вводить ничего не нужно. */
+    initialPassword?: string;
     onready: (account: AccountKey, v2: V2Keys | null) => void;
     onlogout: () => void;
   }
 
-  let { api, username, onready, onlogout }: Props = $props();
+  let { api, username, initialPassword = '', onready, onlogout }: Props = $props();
 
   let keys = $state<MyKeys | null>(null);
   let identity = $state<IdentityMe | null>(null);
@@ -30,12 +32,15 @@
   let askReplace = $state(false);
   let account = $state<AccountKey | null>(null);
   let decision = $state<V2PairCheck | null>(null);
+  let autoTried = false;
 
   const canUnlock = $derived(!!keys?.encrypted_private_key && !!keys?.key_salt);
   const hasIdentity = $derived(!!identity?.identity_pub);
   const needCreate = $derived(!hasIdentity && !canUnlock);
 
   onMount(async () => {
+    // Пароль из сейфа GhostID подставляем сразу: пользователю остаётся подтвердить.
+    if (initialPassword) password = initialPassword;
     try {
       const [keyState, identityState] = await Promise.all([
         api.myKeys(),
@@ -45,6 +50,12 @@
       identity = identityState;
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Нет связи с сервером';
+      return;
+    }
+    // Пароль уже дан GhostID: открываем сами, без лишнего нажатия.
+    if (!autoTried && initialPassword && canUnlock) {
+      autoTried = true;
+      await open();
     }
   });
 
@@ -155,6 +166,15 @@
       <button class="link" onclick={() => finish(null)} disabled={busy}>
         Продолжить без ключа v2
       </button>
+    {:else if !canUnlock}
+      <p class="muted">
+        Ключ этого аккаунта хранится только на устройстве, а в этом браузере его нет — открывать
+        нечего.
+      </p>
+      <button class="button primary" type="button" onclick={() => create('local')} disabled={busy}>
+        Создать ключ на этом устройстве
+      </button>
+      <p class="muted">Старые зашифрованные сообщения после этого станут нечитаемыми.</p>
     {:else}
       <form onsubmit={submit}>
         <label class="field-label" for="password">Пароль аккаунта</label>

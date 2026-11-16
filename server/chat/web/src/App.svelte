@@ -5,7 +5,7 @@
   import Login from './components/Login.svelte';
   import Unlock from './components/Unlock.svelte';
   import { chatApi } from './lib/api/chat';
-  import { setTokenRefresher } from './lib/api/http';
+  import { ApiError, setTokenRefresher } from './lib/api/http';
   import { accountFromDevice } from './lib/auth/account';
   import {
     clearSession,
@@ -18,8 +18,7 @@
     type WebSession,
   } from './lib/auth/session';
   import { completeLogin, fetchUserInfo } from './lib/auth/sso';
-  import { clearDeviceVault } from './lib/auth/vault';
-  import type { AccountKey } from './lib/crypto/account-key';
+    import type { AccountKey } from './lib/crypto/account-key';
   import { unlockV2, type V2Keys } from './lib/chat/keys';
   import { applyPrefs, loadPrefs } from './lib/ui/prefs';
 
@@ -86,7 +85,14 @@
           stage = 'approval';
         }
       } catch (cause) {
-        loginError = cause instanceof Error ? cause.message : 'Вход не удался';
+        // Токен не принят — это не «вход не удался», а мёртвая сессия: чистим и просим войти.
+        if (cause instanceof ApiError && cause.status === 401) {
+          clearSession();
+          session = null;
+          loginError = 'Сессия GhostID не принята — войдите заново';
+        } else {
+          loginError = cause instanceof Error ? cause.message : 'Вход не удался';
+        }
         stage = 'login';
       }
       return;
@@ -139,8 +145,8 @@
 
   async function logout() {
     clearSession();
-    // Выход означает «забыть устройство»: ключи стираются вместе с контейнером.
-    await clearDeviceVault();
+    // Ключ устройства не стираем: у аккаунта с режимом «только на устройстве» это
+    // единственная копия, и после выхода войти было бы нечем.
     session = null;
     account = null;
     v2 = null;
