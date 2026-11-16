@@ -97,7 +97,7 @@ svg { display: block; width: 100%; height: 100%; }
 @property --gs-banner-notch-radius {
   syntax: "<length>";
   inherits: false;
-  initial-value: 72px;
+  initial-value: 84px;
 }
 .banner {
   position: relative;
@@ -107,7 +107,7 @@ svg { display: block; width: 100%; height: 100%; }
   overflow: hidden;
   border-radius: 999px;
   background: linear-gradient(120deg, #301754, #171026 72%);
-  --gs-banner-notch-radius: 72px;
+  --gs-banner-notch-radius: 84px;
   --gs-banner-notch-duration: 750ms;
   -webkit-mask-image: radial-gradient(circle var(--gs-banner-notch-radius) at 50% 100%, transparent 0, transparent calc(var(--gs-banner-notch-radius) - 1px), #000 var(--gs-banner-notch-radius));
   mask-image: radial-gradient(circle var(--gs-banner-notch-radius) at 50% 100%, transparent 0, transparent calc(var(--gs-banner-notch-radius) - 1px), #000 var(--gs-banner-notch-radius));
