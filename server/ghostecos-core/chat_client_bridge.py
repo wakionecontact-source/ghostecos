@@ -9,6 +9,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 import secrets
 import time
 
@@ -20,6 +21,8 @@ from pydantic import Field
 from ecos_core import service_sso as sso
 from ecos_core.identity import db
 from ecos_core.shared import _rate_limit
+
+LOGGER = logging.getLogger("ghostchat.web")
 
 router = APIRouter(prefix="/api/chat/v2/client", route_class=sso.SSORoute)
 
@@ -535,24 +538,39 @@ class _ScopedSocket:
 @router.websocket("/ws")
 async def client_socket(ws: WebSocket):
     await ws.accept()
-    if ws.headers.get("origin") != sso._origin(sso._issuer()):
-        return await ws.close(code=4403)
+    origin = ws.headers.get("origin")
     try:
+        if origin != sso._origin(sso._issuer()):
+            LOGGER.warning("chat ws: чужой origin %r, закрываю 4403", origin)
+            return await ws.close(code=4403)
         first = await asyncio.wait_for(ws.receive_json(), timeout=10)
         if not isinstance(first, dict) or first.get("type") != "auth":
+            LOGGER.warning("chat ws: первый кадр не auth (%r), закрываю 4401", type(first).__name__)
             return await ws.close(code=4401)
         token = _bearer("Bearer " + str(first.get("token", "")))
-        _, d = await asyncio.to_thread(device_session, token, ws.headers.get("origin"))
+        try:
+            _, d = await asyncio.to_thread(device_session, token, origin)
+        except HTTPException as exc:
+            LOGGER.warning("chat ws: device_session отклонил (%s %s), закрываю 4401", exc.status_code,
+                           exc.detail)
+            raise
         from social_router import websocket_endpoint
         scoped = _ScopedSocket(ws, token)
         await websocket_endpoint(scoped, token=d["token"], x_gs_token="")
-    except (HTTPException, asyncio.TimeoutError, ValueError):
+    except (HTTPException, asyncio.TimeoutError, ValueError) as exc:
+        LOGGER.warning("chat ws: закрыт 4401 (%s: %s)", type(exc).__name__, exc)
         try:
             await ws.close(code=4401)
         except RuntimeError:
             pass
-    except WebSocketDisconnect:
-        pass
+    except WebSocketDisconnect as exc:
+        LOGGER.info("chat ws: клиент отключился (code=%s)", getattr(exc, "code", "?"))
+    except Exception:
+        LOGGER.exception("chat ws: неожиданная ошибка")
+        try:
+            await ws.close(code=1011)
+        except RuntimeError:
+            pass
 
 
 def install(app):
