@@ -262,10 +262,8 @@ function finishDraw(fromDoubleClick) {
   }
   pushUndo();
   if (isDriveDrawMode(draw.mode) || ['rail', 'path'].includes(draw.mode)) {
-    if (draw.mode !== 'rail') {   // ЖД рисуется свободно: концы НЕ притягиваются ни к чему
-      const endpointCandidates = draw.mode === 'path' ? pedestrianBaseLines() : null;
-      joinLineEndpoints(pts, true, endpointCandidates);   // конец новой линии притягивается к сети — как и раньше
-    }
+    const endpointCandidates = draw.mode === 'path' ? pedestrianBaseLines() : null;
+    joinLineEndpoints(pts, true, endpointCandidates);   // конец новой линии притягивается к сети — как и раньше
     stationPoints.forEach(({ index, point }) => { if (index < pts.length) pts[index] = point; });
     connectNetworkLine(pts, true);
   }
@@ -335,7 +333,6 @@ function snapLineInfo(latlng, radius = SNAP_PX, excludeLine = null, includePaths
 }
 function snapLine(latlng) { const hit = snapLineInfo(latlng); return hit ? hit.point : null; }
 function snapDrawLine(latlng) {
-  if (draw.mode === 'rail') return null;   // ЖД рисуется без магнита: конец не липнет ни к чему
   const stations = isStationAccessDrawMode(draw.mode) ? stationSnapLines() : [];
   const candidates = draw.mode === 'path' ? pedestrianBaseLines().concat(stations) : networkLines(true).concat(stations);
   // Дороги: любая новая точка липнет только к КОНЦАМ линий, не к середине. Тропинки — к чему угодно (выход к дороге в любом месте).
