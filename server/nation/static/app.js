@@ -335,9 +335,8 @@ function snapLine(latlng) { const hit = snapLineInfo(latlng); return hit ? hit.p
 function snapDrawLine(latlng) {
   const stations = isStationAccessDrawMode(draw.mode) ? stationSnapLines() : [];
   const candidates = draw.mode === 'path' ? pedestrianBaseLines().concat(stations) : networkLines(true).concat(stations);
-  // Дороги: любая новая точка липнет только к КОНЦАМ линий, не к середине. Тропинки — к чему угодно (выход к дороге в любом месте).
-  const endpointsOnly = draw.mode !== 'path';
-  const hit = snapLineInfo(latlng, SNAP_PX, null, true, candidates, endpointsOnly);
+  // Полный магнит при рисовании: липнет и к концам, и к середине линий (примыкание в любом месте).
+  const hit = snapLineInfo(latlng, SNAP_PX, null, true, candidates, false);
   return hit ? hit.point : null;
 }
 function insertNetworkVertex(line, point) {
@@ -372,7 +371,7 @@ function joinLineEndpoints(points, includePaths = false, candidates = null) {
   if (!points.length) return;
   for (const index of [0, points.length - 1]) {
     const from = points[index];
-    const hit = snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, null, includePaths, candidates, true);   // к концам линий, не к середине
+    const hit = snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, null, includePaths, candidates, false);   // полный магнит: липнет в любом месте линии
     if (!hit) continue;
     const d = distMeters(from[0], from[1], hit.point.lat, hit.point.lng);
     if (d > 35) continue;   // конец подтягивается только если он УЖЕ рядом; не прыгаем через пол-карты
@@ -397,8 +396,8 @@ function repairNetworkConnections(includePaths = false, protectedPoints = [], on
       const isPedestrianPath = state.paths.includes(line);
       const candidates = isPedestrianPath ? pedestrianLines.filter(candidate => candidate !== line) : null;
       const hit = isPedestrianPath
-        ? snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, line, true, candidates, true)
-        : snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, line, includePaths, null, true);   // к концам линий, не к середине
+        ? snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, line, true, candidates, false)
+        : snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, line, includePaths, null, false);   // полный магнит (только для новых линий)
       if (!hit) continue;
       const point = [hit.point.lat, hit.point.lng];
       if (distMeters(from[0], from[1], point[0], point[1]) < 0.01) continue;
