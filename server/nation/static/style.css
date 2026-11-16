@@ -166,9 +166,6 @@ button { cursor: pointer; background: none; border: none; color: inherit; font-f
   transition: background .15s ease, opacity .15s ease;
 }
 .mini:hover { background: rgba(255,255,255,0.15); }
-.mini.plan { background: rgba(242,194,0,0.12); color: #f2c200; }
-.mini.plan:hover { background: rgba(242,194,0,0.22); }
-.mini.plan.active { background: #f2c200; color: #1a0f0a; }
 .mini.primary { background: var(--accent); color: #1a0f0a; }
 .mini.primary:hover { filter: brightness(1.08); }
 .mini.primary:disabled { opacity: .4; cursor: not-allowed; filter: grayscale(.4); }

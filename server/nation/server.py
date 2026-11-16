@@ -193,7 +193,7 @@ _WS_SEND_TIMEOUT = 5.0        # секунд на отправку одному 
 _WS_MAX_MSG = 8192            # байт в одном клиентском сообщении
 _MAX_OFFLINE_HOURS = 72.0     # сколько часов офлайна начисляем (анти-накопление)
 # коллекции состояния, которые клиент может присылать частично
-_STATE_KEYS = {"buildings", "roads", "alleys", "rails", "paths", "plannedLines", "districts",
+_STATE_KEYS = {"buildings", "roads", "alleys", "rails", "paths", "districts",
                "lights", "roadWalk", "lineMeta", "noZebra", "crosswalks", "stations", "exits",
                "parking", "simulation"}
 

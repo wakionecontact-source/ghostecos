@@ -23,7 +23,7 @@ const rand    = (a, b) => a + Math.random() * (b - a);
 const randInt = n => Math.floor(Math.random() * n);
 
 function freshState() {
-  return { name: '', color: FLAG_COLORS[0], border: null, buildings: [], roads: [], rails: [], paths: [], alleys: [], plannedLines: [], districts: [], lights: [], roadWalk: {}, lineMeta: {}, noZebra: [], crosswalks: [], stations: [], exits: [], parking: [], simulation: { carMode: 'auto', carCount: 0, trainMode: 'auto', trainCount: 0 }, view: { lat: 55.7512, lng: 37.6184, zoom: 12 } };
+  return { name: '', color: FLAG_COLORS[0], border: null, buildings: [], roads: [], rails: [], paths: [], alleys: [], districts: [], lights: [], roadWalk: {}, lineMeta: {}, noZebra: [], crosswalks: [], stations: [], exits: [], parking: [], simulation: { carMode: 'auto', carCount: 0, trainMode: 'auto', trainCount: 0 }, view: { lat: 55.7512, lng: 37.6184, zoom: 12 } };
 }
 const roadKey = pts => `${pts[0][0].toFixed(5)},${pts[0][1].toFixed(5)}|${pts[pts.length - 1][0].toFixed(5)},${pts[pts.length - 1][1].toFixed(5)}`;
 function normalizeLineMeta(meta) { return { surface: meta && meta.surface === 'dirt' ? 'dirt' : 'paved', oneWay: Boolean(meta && meta.oneWay) }; }
@@ -70,10 +70,7 @@ function migrate(s) {
   const cleanLn = l => (Array.isArray(l) ? l.filter(okPt) : []);
   const validLine = l => l.length >= 2 && !(l.length === 2 && distMeters(l[0][0], l[0][1], l[1][0], l[1][1]) < 0.5);   // валидная линия: >=2 точек и не «дважды одна точка»
   ['roads', 'rails', 'paths', 'alleys'].forEach(k => { s[k] = (s[k] || []).map(cleanLn).filter(validLine); });   // выкинуть битые точки/вырожденные линии
-  s.plannedLines = (s.plannedLines || []).map(p => {
-    const raw = Array.isArray(p) ? { pts: p } : (p || {}), mode = ['road', 'alley', 'path'].includes(raw.mode) ? raw.mode : 'road';
-    return { mode, pts: cleanLn(raw.pts || raw.points) };
-  }).filter(p => p.pts.length >= 2);
+  s.plannedLines = undefined;                                                                                    // фича «пунктир-план» удалена, старые данные не нужны
   s.buildings = (s.buildings || []).filter(b => b && isFinite(b.lat) && isFinite(b.lng));                                  // выкинуть постройки с битыми координатами (ломали сим и рендер)
   s.lights = s.lights.filter(l => l && isFinite(l.lat) && isFinite(l.lng));
   bindLineMetadata(s);
@@ -135,12 +132,12 @@ const mToPx = m => m / mpp();
 
 /* ════════════════ MAP ════════════════ */
 let map, territory = null;
-let buildLayer, roadLayer, pathLayer, railLayer, crossLayer, editLayer, alleyLayer, districtLayer, zebraLayer, lightLayer, plannedLayer, countryLabelLayer, transportLayer;
+let buildLayer, roadLayer, pathLayer, railLayer, crossLayer, editLayer, alleyLayer, districtLayer, zebraLayer, lightLayer, countryLabelLayer, transportLayer;
 let layers = {}, currentLayer = 'esri', lastMouse = null, cameraRefreshFrame = 0;
 function refreshCameraLineStyles() {
   cameraRefreshFrame = 0;
   if (!map) return;
-  [roadLayer, alleyLayer, pathLayer, railLayer, plannedLayer].forEach(g => g && g.eachLayer(l => {
+  [roadLayer, alleyLayer, pathLayer, railLayer].forEach(g => g && g.eachLayer(l => {
     if (l._mWidth != null) l.setStyle({ weight: Math.max(1, mToPx(l._mWidth)) });
     if (typeof l.redraw === 'function') l.redraw();
   }));
@@ -192,7 +189,7 @@ function setTool(tool) {
 function setToolIdle() { activeTool = null; document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.remove('active')); document.getElementById('map').classList.remove('drawing', 'erasing', 'selecting'); }
 
 /* ════════════════ DRAW ENGINE ════════════════ */
-const draw = { active: false, mode: null, plan: false, points: [], stationPoints: [], preview: null, rubber: null, handles: [] };
+const draw = { active: false, mode: null, points: [], stationPoints: [], preview: null, rubber: null, handles: [] };
 const DRIVE_DRAW_MODES = ['road', 'road-oneway', 'dirt', 'dirt-oneway', 'alley', 'alley-oneway'];
 const STATION_ACCESS_DRAW_MODES = [...DRIVE_DRAW_MODES, 'path'];
 const LINE_STYLE = { road: '#fff', 'road-oneway': '#fff', dirt: '#b98a5e', 'dirt-oneway': '#b98a5e', rail: '#d0d0d0', path: '#e9dec6', alley: '#cfcfcf', 'alley-oneway': '#cfcfcf' };
@@ -202,7 +199,7 @@ function baseLineMode(mode) { return mode && mode.startsWith('alley') ? 'alley' 
 function drawLineMeta(mode) { return { surface: mode && mode.startsWith('dirt') ? 'dirt' : 'paved', oneWay: Boolean(mode && mode.endsWith('-oneway')) }; }
 const CONNECT_PX = 28; // небольшой допуск для автоматического соединения концов улиц
 function startDraw(mode) {
-  draw.active = true; draw.mode = mode; draw.plan = false; draw.points = []; draw.stationPoints = []; draw.handles = [];
+  draw.active = true; draw.mode = mode; draw.points = []; draw.stationPoints = []; draw.handles = [];
   if (map.doubleClickZoom) map.doubleClickZoom.disable();
   if (mode === 'borders') draw.preview = L.polygon([], { pane: 'pane-territory', color: state.color, weight: 2.5, fillColor: state.color, fillOpacity: .15, dashArray: '6 5' }).addTo(map);
   else if (mode === 'district') draw.preview = L.polygon([], { pane: 'pane-district', color: '#F5A623', weight: 2, fillColor: '#F5A623', fillOpacity: .15, dashArray: '6 5' }).addTo(map);
@@ -210,25 +207,13 @@ function startDraw(mode) {
   draw.rubber = L.polyline([], { pane: 'pane-lines', color: state.color, weight: 1.6, opacity: .7, dashArray: '4 5', interactive: false }).addTo(map);
   document.getElementById('map').classList.add('drawing');
   document.getElementById('draw-bar').classList.remove('hidden');
-  updateDrawPlanUI(); updateDrawVisual();
+  updateDrawVisual();
   updateDrawHint();
 }
 function updateDrawVisual() {
   if (!draw.preview || !draw.rubber) return;
-  const planned = draw.plan && ['road', 'alley', 'path'].includes(draw.mode);
-  draw.preview.setStyle({ color: planned ? '#f2c200' : LINE_STYLE[draw.mode], dashArray: planned ? '10 8' : '6 6', opacity: planned ? .95 : .85 });
-  draw.rubber.setStyle({ color: planned ? '#f2c200' : state.color, dashArray: planned ? '10 8' : '4 5' });
-}
-function updateDrawPlanUI() {
-  const b = document.getElementById('draw-plan'); if (!b) return;
-  const canPlan = draw.active && ['road', 'alley', 'path'].includes(draw.mode);
-  b.classList.toggle('hidden', !canPlan); b.classList.toggle('active', canPlan && draw.plan);
-  b.textContent = draw.plan ? 'Пунктир-план: вкл' : 'Пунктир-план';
-  b.title = draw.plan ? 'Сохранить этот маршрут как ещё не построенный пунктир' : 'Оставить маршрут пунктиром для будущего соединения';
-}
-function toggleDrawPlan() {
-  if (!draw.active || !['road', 'alley', 'path'].includes(draw.mode)) return;
-  draw.plan = !draw.plan; updateDrawPlanUI(); updateDrawVisual(); updateDrawHint();
+  draw.preview.setStyle({ color: LINE_STYLE[draw.mode], dashArray: '6 6', opacity: .85 });
+  draw.rubber.setStyle({ color: state.color, dashArray: '4 5' });
 }
 function drawPointAt(latlng, originalEvent) {
   let point = latlng, snapped = false;
@@ -276,22 +261,22 @@ function finishDraw(fromDoubleClick) {
     if (!pts.every(p => pointInPoly(p[0], p[1], state.border))) { flash('Район — только внутри границ', true); return; }
   }
   pushUndo();
-  const saveAsPlan = draw.plan && ['road', 'alley', 'path'].includes(draw.mode);
   if (isDriveDrawMode(draw.mode) || ['rail', 'path'].includes(draw.mode)) {
-    const endpointCandidates = draw.mode === 'path' ? pedestrianBaseLines() : null;
-    joinLineEndpoints(pts, true, endpointCandidates);   // конец новой линии притягивается к сети — как и раньше
+    if (draw.mode !== 'rail') {   // ЖД рисуется свободно: концы НЕ притягиваются ни к чему
+      const endpointCandidates = draw.mode === 'path' ? pedestrianBaseLines() : null;
+      joinLineEndpoints(pts, true, endpointCandidates);   // конец новой линии притягивается к сети — как и раньше
+    }
     stationPoints.forEach(({ index, point }) => { if (index < pts.length) pts[index] = point; });
     connectNetworkLine(pts, true);
   }
   if (draw.mode === 'borders') { state.border = pts; renderTerritory(); if (isMP()) mpClaim(); }
-  else if (saveAsPlan) { state.plannedLines.push({ mode: draw.mode, pts }); repairNetworkConnections(true, stationPoints.map(x => x.point), [pts]); renderPlannedLines(); }
   else if (isDriveDrawMode(draw.mode) && baseLineMode(draw.mode) === 'road') { state.roads.push(pts); setLineMeta(pts, drawLineMeta(draw.mode)); repairNetworkConnections(true, stationPoints.map(x => x.point), [pts]); setLineWalk(pts, stationPoints.length ? 'both' : 'none'); renderRoads(); renderCrossings(); renderZebras(); if (!stationPoints.length) openWalkBar(pts); }
   else if (draw.mode === 'rail') { state.rails.push(pts); repairNetworkConnections(true, [], [pts]); renderRails(); renderCrossings(); }
   else if (isDriveDrawMode(draw.mode) && baseLineMode(draw.mode) === 'alley') { state.alleys.push(pts); setLineMeta(pts, drawLineMeta(draw.mode)); repairNetworkConnections(true, stationPoints.map(x => x.point), [pts]); setLineWalk(pts, 'none'); renderAlleys(); renderCrossings(); if (!stationPoints.length) openWalkBar(pts); }
   else if (draw.mode === 'district') { state.districts.push({ pts, color: FLAG_COLORS[randInt(FLAG_COLORS.length)] }); renderDistricts(); }
   else { state.paths.push(pts); repairNetworkConnections(true, stationPoints.map(x => x.point), [pts]); renderPaths(); }
   save(); renderTransport();
-  if (stationPoints.length && !saveAsPlan) refreshStationAccessInRunningSim(pts, drawMode);
+  if (stationPoints.length) refreshStationAccessInRunningSim(pts, drawMode);
   clearDraw(); setToolIdle(); updateStats();
 }
 function cancelDraw() { clearDraw(); }
@@ -299,11 +284,10 @@ function clearDraw() {
   if (draw.preview) map.removeLayer(draw.preview);
   if (draw.rubber) map.removeLayer(draw.rubber);
   draw.handles.forEach(h => map.removeLayer(h));
-  Object.assign(draw, { active: false, mode: null, plan: false, points: [], stationPoints: [], preview: null, rubber: null, handles: [] });
+  Object.assign(draw, { active: false, mode: null, points: [], stationPoints: [], preview: null, rubber: null, handles: [] });
   if (map.doubleClickZoom) map.doubleClickZoom.enable();
   document.getElementById('draw-bar').classList.add('hidden');
   document.getElementById('map').classList.remove('drawing');
-  updateDrawPlanUI();
 }
 function updateDrawHint() {
   const hint = document.getElementById('draw-hint'), done = document.getElementById('draw-done'), n = draw.points.length;
@@ -312,15 +296,14 @@ function updateDrawHint() {
     const prefix = draw.mode === 'district' ? 'Район · точки только внутри границы' : 'Граница страны';
     hint.textContent = `${prefix}: ${n} ${plural(n, 'точка', 'точки', 'точек')}` + (n >= 3 ? ' · ~' + fmtArea(geodesicArea(draw.points)) : '') + ' · Готово или Enter — завершить';
   }
-  else { const labels = { road: 'Дорога', 'road-oneway': 'Дорога →', dirt: 'Грунтовка', 'dirt-oneway': 'Грунтовка →', alley: 'Проезд', 'alley-oneway': 'Проезд →', rail: 'Жд', path: 'Тропинка' }, lbl = labels[draw.mode] || 'Линия'; done.disabled = n < 2; hint.textContent = `${lbl}: ${n} ${plural(n, 'точка', 'точки', 'точек')}` + (n >= 2 ? ' · ' + fmtLen(pathLength(draw.points)) : '') + ((isDriveDrawMode(draw.mode) || ['rail', 'path'].includes(draw.mode)) ? ' · Shift: ровный угол · соединение с дорогами и пунктиром · ' + (draw.plan ? 'сохранится как план' : 'двойной клик: готово') : ' · двойной клик: готово') + (isStationAccessDrawMode(draw.mode) && !draw.plan ? ' · клик по станции: зелёная привязка' : ''); }
+  else { const labels = { road: 'Дорога', 'road-oneway': 'Дорога →', dirt: 'Грунтовка', 'dirt-oneway': 'Грунтовка →', alley: 'Проезд', 'alley-oneway': 'Проезд →', rail: 'Жд', path: 'Тропинка' }, lbl = labels[draw.mode] || 'Линия'; done.disabled = n < 2; hint.textContent = `${lbl}: ${n} ${plural(n, 'точка', 'точки', 'точек')}` + (n >= 2 ? ' · ' + fmtLen(pathLength(draw.points)) : '') + ((isDriveDrawMode(draw.mode) || ['rail', 'path'].includes(draw.mode)) ? ' · Shift: ровный угол · соединение с дорогами · двойной клик: готово' : ' · двойной клик: готово') + (isStationAccessDrawMode(draw.mode) ? ' · клик по станции: зелёная привязка' : ''); }
 }
 
 /* ════════════════ SNAP ════════════════ */
 function projSeg(p, a, b) { const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy; if (l2 === 0) return a; let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2; t = Math.max(0, Math.min(1, t)); return L.point(a.x + t * dx, a.y + t * dy); }
-function plannedLineArrays() { return (state.plannedLines || []).map(p => p.pts).filter(line => line && line.length >= 2); }
-function networkLines(includePaths = false, includePlans = true) { return state.roads.concat(state.rails, state.alleys, includePaths ? state.paths : [], includePlans ? plannedLineArrays() : []); }
-function snapLineInfo(latlng, radius = SNAP_PX, excludeLine = null, includePaths = false, includePlans = true, candidates = null, endpointsOnly = false) { // вершины приоритетно, затем любой сегмент
-  const p = map.latLngToLayerPoint(latlng), lines = candidates || networkLines(includePaths, includePlans);
+function networkLines(includePaths = false) { return state.roads.concat(state.rails, state.alleys, includePaths ? state.paths : []); }
+function snapLineInfo(latlng, radius = SNAP_PX, excludeLine = null, includePaths = false, candidates = null, endpointsOnly = false) { // вершины приоритетно, затем любой сегмент
+  const p = map.latLngToLayerPoint(latlng), lines = candidates || networkLines(includePaths);
   let bestV = null, bestVD = radius * 1.7;
   if (endpointsOnly) {                              // только концы линий (для притягивания концов дорог)
     for (const line of lines) {
@@ -352,12 +335,12 @@ function snapLineInfo(latlng, radius = SNAP_PX, excludeLine = null, includePaths
 }
 function snapLine(latlng) { const hit = snapLineInfo(latlng); return hit ? hit.point : null; }
 function snapDrawLine(latlng) {
-  const stations = isStationAccessDrawMode(draw.mode) && !draw.plan ? stationSnapLines() : [];
-  const candidates = draw.mode === 'path' ? pedestrianBaseLines().concat(stations) : networkLines(true, true).concat(stations);
-  // Дороги/рельсы: любая новая точка (это всегда текущий конец линии) липнет только к КОНЦАМ
-  // других линий, чтобы не накладываться на середину полотна. Тропинки — к чему угодно (выход к дороге в любом месте).
+  if (draw.mode === 'rail') return null;   // ЖД рисуется без магнита: конец не липнет ни к чему
+  const stations = isStationAccessDrawMode(draw.mode) ? stationSnapLines() : [];
+  const candidates = draw.mode === 'path' ? pedestrianBaseLines().concat(stations) : networkLines(true).concat(stations);
+  // Дороги: любая новая точка липнет только к КОНЦАМ линий, не к середине. Тропинки — к чему угодно (выход к дороге в любом месте).
   const endpointsOnly = draw.mode !== 'path';
-  const hit = snapLineInfo(latlng, SNAP_PX, null, true, true, candidates, endpointsOnly);
+  const hit = snapLineInfo(latlng, SNAP_PX, null, true, candidates, endpointsOnly);
   return hit ? hit.point : null;
 }
 function insertNetworkVertex(line, point) {
@@ -373,15 +356,16 @@ function insertNetworkVertex(line, point) {
   return true;
 }
 function connectNetworkLine(points, includePaths = false) {
-  const network = networkLines(includePaths, true);
+  const network = networkLines(includePaths);
   let changed = false;
   for (const line of network) {
     for (let i = 1; i < points.length; i++) {
       for (let j = 1; j < line.length; j++) {
         const hit = segInter(points[i - 1], points[i], line[j - 1], line[j]);
         if (!hit) continue;
+        // Разрезаем существующую линию в точке пересечения (нужно для сети машин/поездов),
+        // но НЕ вставляем вершину в рисуемые points: конец новой линии не должен «липнуть» к середине.
         changed = insertNetworkVertex(line, hit) || changed;
-        changed = insertNetworkVertex(points, hit) || changed;
       }
     }
   }
@@ -390,30 +374,34 @@ function connectNetworkLine(points, includePaths = false) {
 function joinLineEndpoints(points, includePaths = false, candidates = null) {
   if (!points.length) return;
   for (const index of [0, points.length - 1]) {
-    const hit = snapLineInfo(L.latLng(points[index][0], points[index][1]), CONNECT_PX, null, includePaths, true, candidates, true);   // к концам линий, не к середине
-    if (hit) points[index] = [hit.point.lat, hit.point.lng];
+    const from = points[index];
+    const hit = snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, null, includePaths, candidates, true);   // к концам линий, не к середине
+    if (!hit) continue;
+    const d = distMeters(from[0], from[1], hit.point.lat, hit.point.lng);
+    if (d > 35) continue;   // конец подтягивается только если он УЖЕ рядом; не прыгаем через пол-карты
+    points[index] = [hit.point.lat, hit.point.lng];
   }
 }
 function repairNetworkConnections(includePaths = false, protectedPoints = [], onlyLines = null) {
-  const network = networkLines(includePaths, true);
+  const network = networkLines(includePaths);
   const pedestrianLines = includePaths ? pedestrianBaseLines() : [];
   let changed = false;
-  const movable = onlyLines ? new Set(onlyLines) : null;   // null — ничего не двигаем (по умолчанию)
+  const movable = onlyLines ? new Set(onlyLines) : null;   // null — никакие линии не двигаем (по умолчанию)
 
   // Подтягиваем концы только свеженарисованных линий: это чинит Т-образные стыки и
   // зазоры. Уже существующие линии не двигаем — их концы остаются на месте.
   for (let lineIndex = 0; lineIndex < network.length; lineIndex++) {
     const line = network[lineIndex];
     if (line.length < 2) continue;
-    if (movable && !movable.has(line)) continue;
+    if (!movable || !movable.has(line)) continue;   // без onlyLines не трогаем вообще ничего
     for (const index of [0, line.length - 1]) {
       const from = line[index];
       if (protectedPoints.some(point => distMeters(from[0], from[1], point[0], point[1]) < .1)) continue;
       const isPedestrianPath = state.paths.includes(line);
       const candidates = isPedestrianPath ? pedestrianLines.filter(candidate => candidate !== line) : null;
       const hit = isPedestrianPath
-        ? snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, line, true, false, candidates, true)
-        : snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, line, includePaths, true, null, true);   // к концам линий, не к середине
+        ? snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, line, true, candidates, true)
+        : snapLineInfo(L.latLng(from[0], from[1]), CONNECT_PX, line, includePaths, null, true);   // к концам линий, не к середине
       if (!hit) continue;
       const point = [hit.point.lat, hit.point.lng];
       if (distMeters(from[0], from[1], point[0], point[1]) < 0.01) continue;
@@ -1018,23 +1006,6 @@ function renderPaths() {
     lineHandlers(ln, 'paths', pp);
   });
 }
-const PLAN_STYLE = { road: '#f2c200', alley: '#aeb8c3', path: '#e9dec6' };
-function renderPlannedLines() {
-  if (!plannedLayer) return;
-  plannedLayer.clearLayers();
-  (state.plannedLines || []).forEach(plan => {
-    const mode = ['road', 'alley', 'path'].includes(plan.mode) ? plan.mode : 'road', pts = plan.pts;
-    if (!pts || pts.length < 2) return;
-    const metres = LINE_M[mode];
-    const ln = tagW(L.polyline(pts, { pane: 'pane-lines', color: PLAN_STYLE[mode], weight: Math.max(2, mToPx(metres)), opacity: .94, dashArray: '10 8', lineCap: 'round', lineJoin: 'round' }).addTo(plannedLayer), metres);
-    ln.on('click', e => {
-      if (activeTool !== 'erase') return;
-      L.DomEvent.stop(e); pushUndo(); state.plannedLines = state.plannedLines.filter(x => x !== plan); save(); clearHover(); renderPlannedLines(); updateStats();
-    });
-    ln.on('mousemove', e => { if (activeTool === 'erase') hoverSeg(e.latlng, pts); });
-    ln.on('mouseout', clearHover);
-  });
-}
 function renderAlleys() {                         // переулок: узкий; теперь КАК ДОРОГА — тротуары (по выбору) + меню
   alleyLayer.clearLayers(); const sw = Math.max(2, mToPx(LINE_M.path + 0.6));
   state.alleys.forEach(r => {
@@ -1443,7 +1414,6 @@ function stationAccessInfo(station, baseLines = pedestrianBaseLines()) {
 function connectDrawToStation(station, event) {
   if (!draw.active || !isStationAccessDrawMode(draw.mode)) return false;
   L.DomEvent.stop(event);
-  if (draw.plan) { flash('Отключи пунктир-план: пассажирскую сеть соединяй построенной линией', true); return true; }
   const endpoint = L.latLng(...stationEntryPoint(station)), lastIndex = draw.points.length - 1;
   if (lastIndex >= 0 && map.distance(draw.points[lastIndex], endpoint) < 1) {
     draw.points[lastIndex] = endpoint;
@@ -1551,7 +1521,7 @@ function renderTransport() {
 
 function renderAll() {
   if (repairNetworkConnections(true)) save();
-  renderTerritory(); renderDistricts(); renderRoads(); renderAlleys(); renderPaths(); renderRails(); renderPlannedLines(); renderCrossings(); renderZebras(); renderBuildings(); renderLights(); renderTransport(); renderCountryLabels(); updateStats(); document.getElementById('state-name').value = state.name; paintFlag(); updateUndoBtn();
+  renderTerritory(); renderDistricts(); renderRoads(); renderAlleys(); renderPaths(); renderRails(); renderCrossings(); renderZebras(); renderBuildings(); renderLights(); renderTransport(); renderCountryLabels(); updateStats(); document.getElementById('state-name').value = state.name; paintFlag(); updateUndoBtn();
 }
 
 /* ════════════════ EDITOR ════════════════ */
@@ -3566,7 +3536,6 @@ function wire() {
   document.getElementById('import-file').onchange = e => { if (e.target.files[0]) importFile(e.target.files[0]); e.target.value = ''; };
   document.getElementById('locate').innerHTML = ICONS.target || ''; document.getElementById('locate').onclick = locate;
   document.getElementById('draw-undo').onclick = undoVertex;
-  document.getElementById('draw-plan').onclick = toggleDrawPlan;
   document.getElementById('draw-done').onclick = () => finishDraw(false);
   document.getElementById('draw-cancel').onclick = () => { cancelDraw(); setToolIdle(); };
   document.getElementById('border-done').onclick = () => { exitBorderEdit(); setToolIdle(); };
@@ -3780,7 +3749,7 @@ async function mpLoadMine() {
   } catch (e) { flash('Сервер недоступен', true); }
 }
 // Частичное сохранение: на сервер уходят только изменившиеся коллекции состояния
-const MP_STATE_KEYS = ['buildings', 'roads', 'alleys', 'rails', 'paths', 'plannedLines', 'districts',
+const MP_STATE_KEYS = ['buildings', 'roads', 'alleys', 'rails', 'paths', 'districts',
   'lights', 'roadWalk', 'lineMeta', 'noZebra', 'crosswalks', 'stations', 'exits', 'parking', 'simulation'];
 function mpResetSent() { mp.sent = null; }
 function mpStatePatch() {
@@ -4110,7 +4079,6 @@ function mpLogout() {
   alleyLayer = L.layerGroup().addTo(map);
   pathLayer = L.layerGroup().addTo(map);
   railLayer = L.layerGroup().addTo(map);
-  plannedLayer = L.layerGroup().addTo(map);
   crossLayer = L.layerGroup().addTo(map);
   zebraLayer = L.layerGroup().addTo(map);
   buildLayer = L.layerGroup().addTo(map);
