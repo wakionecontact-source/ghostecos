@@ -279,14 +279,14 @@ function finishDraw(fromDoubleClick) {
   const saveAsPlan = draw.plan && ['road', 'alley', 'path'].includes(draw.mode);
   if (isDriveDrawMode(draw.mode) || ['rail', 'path'].includes(draw.mode)) {
     const endpointCandidates = draw.mode === 'path' ? pedestrianBaseLines() : null;
-    joinLineEndpoints(pts, true, endpointCandidates);
+    if (draw.mode !== 'rail') joinLineEndpoints(pts, true, endpointCandidates);   // для ЖД автопритягивание концов отключено
     stationPoints.forEach(({ index, point }) => { if (index < pts.length) pts[index] = point; });
     connectNetworkLine(pts, true);
   }
   if (draw.mode === 'borders') { state.border = pts; renderTerritory(); if (isMP()) mpClaim(); }
   else if (saveAsPlan) { state.plannedLines.push({ mode: draw.mode, pts }); repairNetworkConnections(true); renderPlannedLines(); }
   else if (isDriveDrawMode(draw.mode) && baseLineMode(draw.mode) === 'road') { state.roads.push(pts); setLineMeta(pts, drawLineMeta(draw.mode)); repairNetworkConnections(true, stationPoints.map(x => x.point)); setLineWalk(pts, stationPoints.length ? 'both' : 'none'); renderRoads(); renderCrossings(); renderZebras(); if (!stationPoints.length) openWalkBar(pts); }
-  else if (draw.mode === 'rail') { state.rails.push(pts); repairNetworkConnections(true); renderRails(); renderCrossings(); }
+  else if (draw.mode === 'rail') { state.rails.push(pts); renderRails(); renderCrossings(); }   // ЖД: без автоподтягивания концов к сети
   else if (isDriveDrawMode(draw.mode) && baseLineMode(draw.mode) === 'alley') { state.alleys.push(pts); setLineMeta(pts, drawLineMeta(draw.mode)); repairNetworkConnections(true, stationPoints.map(x => x.point)); setLineWalk(pts, 'none'); renderAlleys(); renderCrossings(); if (!stationPoints.length) openWalkBar(pts); }
   else if (draw.mode === 'district') { state.districts.push({ pts, color: FLAG_COLORS[randInt(FLAG_COLORS.length)] }); renderDistricts(); }
   else { state.paths.push(pts); repairNetworkConnections(true, stationPoints.map(x => x.point)); renderPaths(); }
@@ -342,6 +342,7 @@ function snapLineInfo(latlng, radius = SNAP_PX, excludeLine = null, includePaths
 }
 function snapLine(latlng) { const hit = snapLineInfo(latlng); return hit ? hit.point : null; }
 function snapDrawLine(latlng) {
+  if (draw.mode === 'rail') return null;                 // ЖД: без прилипания концов к сети (автоконнект отключён)
   const stations = isStationAccessDrawMode(draw.mode) && !draw.plan ? stationSnapLines() : [];
   const candidates = draw.mode === 'path' ? pedestrianBaseLines().concat(stations) : networkLines(true, true).concat(stations);
   const hit = snapLineInfo(latlng, SNAP_PX, null, true, true, candidates);
@@ -1072,13 +1073,60 @@ function railTies(latlngs, halfM, spacingM) {
   }
   return out;
 }
+function railSuperPaths() {                        // объединяет ЖД-линии, стыкующиеся «в продолжение» (параллельно, угол < 15°), в сплошные пути
+  const lines = state.rails.filter(l => l && l.length >= 2);
+  if (lines.length < 2) return lines;
+  const ANG_TOL = 15 * Math.PI / 180, DIST_TOL = 6;
+  const headingOf = (line, atEnd) => { const a = atEnd ? line[line.length - 2] : line[0], b = atEnd ? line[line.length - 1] : line[1]; return Math.atan2((b[0] - a[0]) * MPD_LAT, (b[1] - a[1]) * mPerDegLng(a[0])); };
+  const parallel = (h1, h2) => { let d = Math.abs(angleDelta(h1, h2)); if (d > Math.PI / 2) d = Math.PI - d; return d < ANG_TOL; };   // параллельность без учёта направления — стык «продолжение» или «разворот»
+  const segLen = (a, b) => distMeters(a[0], a[1], b[0], b[1]);
+  const used = new Set(), chains = [];
+  for (const start of lines) {
+    if (used.has(start)) continue;
+    const chain = [start]; used.add(start);
+    let grew = true;
+    while (grew) {                                  // наращиваем цепочку с обоих концов, пока есть коллинеарное продолжение
+      grew = false;
+      for (const side of [false, true]) {           // false — хвост (дописываем), true — голова (дописываем в начало)
+        const line = chain[side ? 0 : chain.length - 1];
+        const joinPt = side ? line[0] : line[line.length - 1];
+        const joinH = headingOf(line, !side);
+        for (const next of lines) {
+          if (used.has(next) || next === line) continue;
+          const head = [next[0], headingOf(next, false)], tailPt = next[next.length - 1], tailH = headingOf(next, true);
+          const viaHead = segLen(joinPt, head[0]) <= DIST_TOL && parallel(joinH, head[1]);
+          const viaTail = segLen(joinPt, tailPt) <= DIST_TOL && parallel(joinH, tailH);
+          if (viaHead || viaTail) {
+            const piece = viaHead ? next : next.slice().reverse();
+            if (side) chain.unshift(piece); else chain.push(piece);
+            used.add(next); grew = true; break;
+          }
+        }
+        if (grew) break;
+      }
+    }
+    chains.push(chain);
+  }
+  return chains.map(chain => {
+    const pts = chain[0].slice();
+    for (let i = 1; i < chain.length; i++) {        // дублирующуюся точку стыка не пишем второй раз
+      const prevLast = pts[pts.length - 1], cur = chain[i], k0 = segLen(prevLast, cur[0]) <= DIST_TOL ? 1 : 0;
+      for (let k = k0; k < cur.length; k++) pts.push(cur[k]);
+    }
+    return pts;
+  });
+}
 function renderRails() {
   railLayer.clearLayers(); const w = railPx(), gravelW = Math.max(2.5, w), gravelTextureW = Math.max(1.3, w * .62), tieW = Math.max(1.8, w * .28), railW = Math.max(1, w * .18), halfBed = LINE_M.rail * .5, gauge = LINE_M.rail * .34;
-  state.rails.forEach(r => {
-    const bed = tagW(L.polyline(r, { pane: 'pane-rail', color: '#47413b', weight: gravelW, opacity: .98, lineCap: 'round', lineJoin: 'round' }).addTo(railLayer), LINE_M.rail);
-    tagW(L.polyline(r, { pane: 'pane-rail', color: '#85735f', weight: gravelTextureW, opacity: .7, dashArray: '1.5 3.5', lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(railLayer), LINE_M.rail * .62);
-    railTies(r, halfBed, 5.5).forEach(seg => tagW(L.polyline(seg, { pane: 'pane-rail', color: '#b7a486', weight: tieW, opacity: .94, lineCap: 'round', interactive: false }).addTo(railLayer), LINE_M.rail * .28));
-    [gauge, -gauge].forEach(g => tagW(L.polyline(offsetLine(r, g), { pane: 'pane-rail', color: '#e1d9cc', weight: railW, opacity: .98, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(railLayer), LINE_M.rail * .18));
+  const paths = railSuperPaths();                       // сплошные пути через коллинеарные стыки — текстура без швов
+  paths.forEach(path => {
+    const bed = tagW(L.polyline(path, { pane: 'pane-rail', color: '#47413b', weight: gravelW, opacity: .98, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(railLayer), LINE_M.rail);
+    tagW(L.polyline(path, { pane: 'pane-rail', color: '#85735f', weight: gravelTextureW, opacity: .7, dashArray: '1.5 3.5', lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(railLayer), LINE_M.rail * .62);
+    railTies(path, halfBed, 5.5).forEach(seg => tagW(L.polyline(seg, { pane: 'pane-rail', color: '#b7a486', weight: tieW, opacity: .94, lineCap: 'round', interactive: false }).addTo(railLayer), LINE_M.rail * .28));
+    [gauge, -gauge].forEach(g => tagW(L.polyline(offsetLine(path, g), { pane: 'pane-rail', color: '#e1d9cc', weight: railW, opacity: .98, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(railLayer), LINE_M.rail * .18));
+  });
+  state.rails.forEach(r => {                            // кликабельное полотно — по оригинальным линиям (стирание сегмента)
+    const bed = tagW(L.polyline(r, { pane: 'pane-rail', color: '#47413b', weight: Math.max(gravelW, 4), opacity: 0, lineCap: 'round', lineJoin: 'round' }).addTo(railLayer), LINE_M.rail);
     bed.on('click', e => { if (activeTool !== 'erase') return; L.DomEvent.stop(e); eraseSegment('rails', r, e.latlng); });
     bed.on('mousemove', e => hoverSeg(e.latlng, r)); bed.on('mouseout', clearHover);
   });
@@ -3542,8 +3590,22 @@ function wire() {
   syncNameBtn();
   document.getElementById('flag').onclick = () => document.getElementById('palette').classList.toggle('hidden');
   document.querySelectorAll('.layer').forEach(b => { b.onclick = () => { const id = b.dataset.layer; if (id === currentLayer) return; map.removeLayer(layers[currentLayer]); layers[id].addTo(map); currentLayer = id; document.querySelectorAll('.layer').forEach(x => x.classList.toggle('active', x === b)); }; });
+  const panKeys = { w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0] }, held = {};
+  function stopPan() { for (const k of Object.keys(held)) delete held[k]; panTimer = 0; }
+  let panTimer = 0;
+  function stepPan() {                                    // сдвиг карты в сторону зажатой клавиши (плавно, как в играх)
+    let x = 0, y = 0;
+    for (const k of Object.keys(held)) { const d = panKeys[k]; x += d[0]; y += d[1]; }
+    if (!x && !y) return stopPan();
+    const len = Math.hypot(x, y) || 1, px = mpp() * 240, py = px;
+    map.panBy(L.point(Math.round(x / len * px), Math.round(y / len * py)), { animate: false });
+  }
   document.addEventListener('keydown', e => {
     const k = e.key.toLowerCase();
+    if (panKeys[k] && !(e.ctrlKey || e.metaKey || e.altKey) && !(e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable))) {
+      if (!held[k]) { held[k] = true; if (panTimer) { clearInterval(panTimer); panTimer = 0; } panTimer = setInterval(stepPan, 50); }   // не звать stopPan — он чистит held
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && k === 's') { e.preventDefault(); exportFile(); }
     else if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); undo(); }
     else if ((e.ctrlKey || e.metaKey) && k === 'c') { copySel(); }
@@ -3553,6 +3615,8 @@ function wire() {
     else if (e.key === 'Escape') { closeCtxMenu(); closeWalkBar(); if (genSel.active) endGenSelect(); else if (draw.active) { cancelDraw(); setToolIdle(); } else if (borderEdit.active) { exitBorderEdit(); setToolIdle(); } else if (selected) deselect(); else document.getElementById('palette').classList.add('hidden'); }
     else if (e.key === 'Backspace' && draw.active) { e.preventDefault(); undoVertex(); }
   });
+  document.addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (panKeys[k] && held[k]) { delete held[k]; if (!Object.keys(held).length) stopPan(); } });
+  window.addEventListener('blur', stopPan);
 }
 
 /* ════════════════ BOOT ════════════════ */
