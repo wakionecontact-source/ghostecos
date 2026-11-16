@@ -18,11 +18,10 @@ WebSocket-события (через ws_hub):
 - chat.new — новое сообщение получателю (если онлайн), затем удаляется
 """
 from fastapi import APIRouter, Header, HTTPException, UploadFile, File, Form, Response, Query
-from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from typing import Optional
-import asyncio, base64, json, os, sqlite3, tempfile, time, uuid
+import asyncio, base64, hashlib, json, time
 
 from ecos_core.identity import db
 from ecos_core.client import auth_member
@@ -31,41 +30,104 @@ from ecos_core.profile import _profile_visibility
 from ecos_core.realtime import ws_hub
 from key_security import validate_key_upload
 
-MAX_FILE_SIZE = 501 * 1024 * 1024
-FILE_TTL_DAYS = 5
-DM_FILE_DIR = os.environ.get(
-    "GC_DM_FILE_DIR",
-    os.path.join(os.environ.get("GC_UPLOADS_DIR", "/opt/ghostchat/uploads"), "dm_files"),
-)
+MAX_FILE_SIZE = 100 * 1024 * 1024
+FILE_TTL_DAYS = 7
 
 router = APIRouter(prefix="/api/chat", tags=["GhostChat"])
 
+# ── Аватарка из чата ──────────────────────────────────────────────
+# Веб-чат ходит своим токеном, а /api/soc/* принимает только соцсетевую сессию.
+AVATAR_DIR = "/opt/ghostchat/media/avatars"
+AVATAR_MAX_BYTES = 5 * 1024 * 1024
+AVATAR_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
-def _ensure_chat_file_path_column(c) -> None:
-    columns = {row["name"] for row in c.execute("PRAGMA table_info(chat_files)")}
-    if "file_path" not in columns:
+
+def _avatar_make_readable(path: str) -> None:
+    """nginx отдаёт /media/avatars/ от www-data — файл должен быть читаемым."""
+    import os as _os
+    try:
+        _os.chmod(path, 0o644)
+        import grp
+        _os.chown(path, 0, grp.getgrnam("www-data").gr_gid)
+    except Exception:
+        pass
+
+
+def _avatar_crop_square(raw: bytes) -> bytes:
+    """Квадрат 512×512 в JPEG — как в соцсети, чтобы аватарки совпадали."""
+    from PIL import Image
+    import io as _io
+    img = Image.open(_io.BytesIO(raw))
+    img.load()
+    if img.mode == "RGBA":
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        bg.paste(img, mask=img.split()[3])
+        img = bg
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+    w, h = img.size
+    side = min(w, h)
+    img = img.crop(((w - side) // 2, (h - side) // 2, (w - side) // 2 + side, (h - side) // 2 + side))
+    img = img.resize((512, 512), Image.LANCZOS)
+    out = _io.BytesIO()
+    img.save(out, format="JPEG", quality=85, optimize=True)
+    return out.getvalue()
+
+
+@router.post("/me/avatar")
+async def upload_my_avatar(
+    authorization: Optional[str] = Header(None), file: UploadFile = File(...)
+):
+    """Своя аватарка по токену чата: без зависимости от соцсетевой сессии."""
+    user = await run_in_threadpool(auth_member, authorization)
+    _rate_limit(f"avaup:{user['id']}", limit=10, window=3600)
+    if file.content_type not in AVATAR_TYPES:
+        raise HTTPException(400, "Только JPEG / PNG / WebP")
+    raw = await file.read()
+    if len(raw) > AVATAR_MAX_BYTES:
+        raise HTTPException(413, "Файл больше 5 МБ")
+    if len(raw) < 100:
+        raise HTTPException(400, "Файл слишком маленький")
+    try:
+        out_bytes = await run_in_threadpool(_avatar_crop_square, raw)
+    except Exception as exc:
+        raise HTTPException(400, f"Не удалось обработать изображение: {exc}") from None
+    import os as _os
+    await run_in_threadpool(_os.makedirs, AVATAR_DIR, 0o755, True)
+    fname = f"{user['id']}_{int(time.time())}.jpg"
+    fpath = _os.path.join(AVATAR_DIR, fname)
+    with open(fpath, "wb") as fh:
+        fh.write(out_bytes)
+    await run_in_threadpool(_avatar_make_readable, fpath)
+    url = f"/media/avatars/{fname}"
+    c = db()
+    try:
+        old = c.execute("SELECT avatar_url FROM users WHERE id=?", (user["id"],)).fetchone()
+        c.execute("UPDATE users SET avatar_url=? WHERE id=?", (url, user["id"]))
+        c.commit()
+    finally:
+        c.close()
+    if old and old["avatar_url"] and str(old["avatar_url"]).startswith("/media/avatars/"):
         try:
-            c.execute("ALTER TABLE chat_files ADD COLUMN file_path TEXT")
-        except sqlite3.OperationalError:
-            columns = {
-                row["name"] for row in c.execute("PRAGMA table_info(chat_files)")
-            }
-            if "file_path" not in columns:
-                raise
+            _os.remove(_os.path.join(AVATAR_DIR, str(old["avatar_url"]).rsplit("/", 1)[1]))
+        except Exception:
+            pass
+    return {"avatar_url": url}
 
 
-def _cleanup_expired_dm_files(c) -> None:
-    rows = c.execute(
-        "SELECT id, file_path FROM chat_files WHERE created_at < datetime('now', ?)",
-        (f"-{FILE_TTL_DAYS} day",),
-    ).fetchall()
-    for row in rows:
-        if row["file_path"]:
-            try:
-                os.remove(row["file_path"])
-            except OSError:
-                pass
-    c.executemany("DELETE FROM chat_files WHERE id=?", [(row["id"],) for row in rows])
+@router.delete("/me/avatar")
+def delete_my_avatar(authorization: Optional[str] = Header(None)):
+    """Снять свою аватарку."""
+    user = auth_member(authorization)
+    c = db()
+    try:
+        c.execute("UPDATE users SET avatar_url=NULL WHERE id=?", (user["id"],))
+        c.commit()
+    finally:
+        c.close()
+    return {"ok": True, "avatar_url": None}
+
+
 
 class SendBody(BaseModel):
     to_username: str
@@ -86,6 +148,10 @@ class KeysUploadBody(BaseModel):
     key_kdf: Optional[str] = None
     key_format: Optional[str] = None
     storage_mode: Optional[str] = None           # 'server' | 'local' | None (сохранить текущий)
+    # v2-ключ устройства приходит тем же эндпойнтом: подпись identity над device_pub.
+    signed_prekey_sig: Optional[str] = None
+    # Замена уже опубликованного ключа другого значения — только по явному согласию.
+    replace: bool = False
 
 class StorageModeBody(BaseModel):
     mode: str  # 'server' или 'local'
@@ -103,13 +169,21 @@ class PrivacyBody(BaseModel):
     banner_visibility: Optional[str] = None
     about_visibility: Optional[str] = None
     music_visibility: Optional[str] = None
+    created_visibility: Optional[str] = None
 
 
 _PRIVACY_AUDIENCES = {"all", "contacts", "nobody"}
 
 
+_PRIVACY_BOOL_FIELDS = frozenset({
+    "show_online", "send_read_receipts", "allow_channel_add", "allow_group_add",
+})
+
+
 def _set_privacy_bool(c, field: str, value: Optional[bool], user_id: int) -> None:
     if value is not None:
+        if field not in _PRIVACY_BOOL_FIELDS:
+            raise HTTPException(422, f"{field}: РЅРµРёР·РІРµСЃС‚РЅРѕРµ РїРѕР»Рµ РїСЂРёРІР°С‚РЅРѕСЃС‚Рё")
         c.execute(
             f"UPDATE user_privacy SET {field}=? WHERE user_id=?",
             (1 if value else 0, user_id),
@@ -167,6 +241,7 @@ def set_privacy(body: PrivacyBody, authorization: Optional[str] = Header(None)):
         _set_privacy_choice(c, "banner_visibility", body.banner_visibility, user["id"])
         _set_privacy_choice(c, "about_visibility", body.about_visibility, user["id"])
         _set_privacy_choice(c, "music_visibility", body.music_visibility, user["id"])
+        _set_privacy_choice(c, "created_visibility", body.created_visibility, user["id"])
         c.commit()
         return _get_privacy_flags(c, user["id"])
     finally:
@@ -385,7 +460,9 @@ def _deliver_message(
 
         toks = get_tokens_for_user(c, to_user["id"])
         if toks:
-            send_wake_push(toks)
+            # push в фоне: блокирующий вызов FCM задерживал ответ и давал 504
+            import threading as _t
+            _t.Thread(target=send_wake_push, args=(toks,), daemon=True).start()
     except Exception as exc:
         _lg.getLogger("gc").warning("FCM push fail: %s", exc)
     return {
@@ -444,10 +521,48 @@ def _not_delivered_param(device_id: str) -> str:
     safe = device_id.replace('%', '').replace('_', '').replace('"', '')
     return f'%"{safe}"%'
 
+def _sha256_hex(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _device_pk_for_token(c, tok: str, user_id: int) -> Optional[int]:
+    """Устройство текущего запроса: прямой токен устройства либо веб-сессия."""
+    if not tok:
+        return None
+    row = c.execute(
+        "SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1", (tok, user_id)
+    ).fetchone()
+    if row:
+        return int(row["id"])
+    row = c.execute(
+        "SELECT device_pk FROM auth_sessions WHERE token_hash=? AND user_id=? "
+        "AND status='active' ORDER BY last_seen_at DESC LIMIT 1",
+        (_sha256_hex(tok), user_id),
+    ).fetchone()
+    return int(row["device_pk"]) if row and row["device_pk"] else None
+
+
+def _v2_device_sig_ok(c, user_id: int, device_pub_b64: str, sig_b64: str) -> bool:
+    """v2-ключ устройства обязан быть подписан текущей identity аккаунта."""
+    row = c.execute("SELECT v2_identity_pub FROM users WHERE id=?", (user_id,)).fetchone()
+    if not row or not row["v2_identity_pub"]:
+        return False
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+        pk = Ed25519PublicKey.from_public_bytes(base64.b64decode(row["v2_identity_pub"]))
+        pk.verify(base64.b64decode(sig_b64), base64.b64decode(device_pub_b64))
+        return True
+    except Exception:
+        return False
+
+
 @router.post("/keys/upload")
 def upload_keys(body: KeysUploadBody, authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
-    _rate_limit(f"keys:{user['id']}", limit=5, window=3600)
+    # 15 вместо 5: отказ 409 при смене ключа тоже считался, и после пары попыток
+    # пользователь получал 429 на час, даже если ключ так и не опубликован.
+    _rate_limit(f"keys:{user['id']}", limit=15, window=3600)
     raw_pub = base64.b64decode(body.x25519_pub) if _is_b64(body.x25519_pub) else b""
     if len(raw_pub) not in (32, 65):
         raise HTTPException(400, "x25519_pub: ожидается 32 (X25519) или 65 (P-256) байт в base64")
@@ -506,31 +621,78 @@ def upload_keys(body: KeysUploadBody, authorization: Optional[str] = Header(None
     kdf_to_store = checked["key_kdf"]
     format_to_store = checked["key_format"]
 
+    # ── Тип ключа ──
+    # 65 байт с префиксом 0x04 — v1 (P-256 ECDH, легаси /send), 32 байта — v2 X25519.
+    if len(raw_pub) == 65 and raw_pub[0] == 0x04:
+        key_type = "v1"
+    elif len(raw_pub) == 32:
+        key_type = "v2"
+    else:
+        c.close()
+        raise HTTPException(400, "x25519_pub: неизвестный формат ключа (v1 65 байт, v2 32 байта)")
+
     tok = (authorization or "").split(" ", 1)[-1] if authorization else ""
-    dev = c.execute(
-        "SELECT id, is_owner FROM user_devices WHERE token=? AND user_id=? LIMIT 1",
-        (tok, user["id"]),
-    ).fetchone()
+    from ecos_core.sessions import device_for_token
+
+    if key_type == "v2":
+        # Ключ устройства без подписи identity бесполезен: получатель не сможет
+        # проверить владение. Контракт тот же, что у /v2/device/publish.
+        if not body.signed_prekey_sig or not _v2_device_sig_ok(
+            c, int(user["id"]), body.x25519_pub, body.signed_prekey_sig
+        ):
+            c.close()
+            raise HTTPException(
+                400, "signed_prekey_sig: нужна подпись identity над ключом устройства"
+            )
+        dev = device_for_token(c, tok, user["id"])
+        if not dev:
+            c.close()
+            raise HTTPException(404, "Текущее устройство не найдено")
+        cur_dev = c.execute(
+            "SELECT v2_device_pub FROM user_devices WHERE id=?", (dev["id"],)
+        ).fetchone()
+        if (
+            cur_dev
+            and cur_dev["v2_device_pub"]
+            and cur_dev["v2_device_pub"] != body.x25519_pub
+            and not body.replace
+        ):
+            c.close()
+            raise HTTPException(409, "v2_device_key_replace: у устройства уже другой v2-ключ")
+        c.execute(
+            "UPDATE user_devices SET v2_device_pub=?, v2_signed_prekey_sig=? WHERE id=?",
+            (body.x25519_pub, body.signed_prekey_sig, dev["id"]),
+        )
+        c.commit()
+        c.close()
+        return {"status": "ok", "key_type": "v2", "device_id": dev["id"]}
+
+    cur = c.execute("SELECT x25519_pub FROM users WHERE id=?", (user["id"],)).fetchone()
+    if (
+        cur
+        and cur["x25519_pub"]
+        and cur["x25519_pub"] != pub_to_store
+        and not body.replace
+    ):
+        c.close()
+        raise HTTPException(409, "v1_key_replace: у аккаунта уже опубликован другой ключ v1")
+
+    dev = device_for_token(c, tok, user["id"])
     if dev:
         c.execute(
             "UPDATE user_devices SET pub_key=? WHERE id=?",
             (body.x25519_pub, dev["id"]),
         )
-        # v1: на пару users.x25519_pub смотрят все собеседники через legacy
-        c.execute(
-            "UPDATE users SET x25519_pub=?, encrypted_private_key=?, key_salt=?, key_kdf=?, key_format=?, in_ghostchat=1, key_storage_mode=? WHERE id=?",
-            (pub_to_store, priv_to_store, salt_to_store, kdf_to_store, format_to_store, mode, user["id"]),
-        )
-    else:
-        # Legacy: токен из soc_tokens (старый веб), пишем напрямую в users.
-        c.execute(
-            "UPDATE users SET x25519_pub=?, encrypted_private_key=?, key_salt=?, key_kdf=?, key_format=?, in_ghostchat=1, key_storage_mode=? WHERE id=?",
-            (pub_to_store, priv_to_store, salt_to_store, kdf_to_store, format_to_store, mode, user["id"]),
-        )
+    # v1: на пару users.x25519_pub смотрят все собеседники через legacy /send
+    c.execute(
+        "UPDATE users SET x25519_pub=?, encrypted_private_key=?, key_salt=?, key_kdf=?, key_format=?, in_ghostchat=1, key_storage_mode=? WHERE id=?",
+        (pub_to_store, priv_to_store, salt_to_store, kdf_to_store, format_to_store, mode, user["id"]),
+    )
     c.commit()
     c.close()
     return {
         "status": "ok",
+        "key_type": "v1",
         "storage_mode": mode,
         "has_server_key": bool(priv_to_store and salt_to_store),
         "key_kdf": kdf_to_store,
@@ -658,10 +820,8 @@ def list_my_devices(authorization: Optional[str] = Header(None)):
     try:
         devs = _da.list_user_devices(c, user["id"])
         tok = (authorization or "").split(" ", 1)[-1] if authorization else ""
-        cur = c.execute(
-            "SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1",
-            (tok, user["id"]),
-        ).fetchone()
+        from ecos_core.sessions import device_for_token
+        cur = device_for_token(c, tok, user["id"])
         cur_id = cur["id"] if cur else None
         for d in devs:
             d["is_current"] = (d["id"] == cur_id)
@@ -704,10 +864,8 @@ def revoke_my_device(device_pk: int, authorization: Optional[str] = Header(None)
     c = db()
     try:
         tok = (authorization or "").split(" ", 1)[-1] if authorization else ""
-        cur = c.execute(
-            "SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1",
-            (tok, user["id"]),
-        ).fetchone()
+        from ecos_core.sessions import device_for_token
+        cur = device_for_token(c, tok, user["id"])
         if cur and cur["id"] == device_pk:
             raise HTTPException(400, "Нельзя отозвать текущее устройство — выйдите через «Выход»")
         ok = _da.revoke_device(c, user["id"], device_pk)
@@ -885,6 +1043,7 @@ def pending_status(request_id: str):
     """Новое устройство долбит этот эндпойнт раз в 1.5-2 сек.
     Без auth — потому что у нового устройства ещё нет токена.
     Защита: request_id — 32 hex, угадать невозможно."""
+    _rate_limit(f"pendstat:{request_id}", limit=240, window=60)
     c = db()
     try:
         r = c.execute(
@@ -1801,82 +1960,39 @@ async def file_upload(
     Возвращает file_id, который sender передаёт receiver-у в сообщении (с ключом)."""
     user = await run_in_threadpool(auth_member, authorization)
     _rate_limit(f"fileup:{user['id']}", limit=20, window=3600)
+    # Стримим чанками — иначе 100MB×10 параллельных uploads = 1GB RAM spike
+    chunks = []
+    total = 0
+    CHUNK = 64 * 1024
+    while True:
+        chunk = await blob.read(CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_FILE_SIZE:
+            raise HTTPException(413, f"Слишком большой. Максимум {MAX_FILE_SIZE // 1024 // 1024}MB")
+        chunks.append(chunk)
+    if not total:
+        raise HTTPException(400, "Пустой файл")
+    data = b"".join(chunks)
+    del chunks
     c = db()
-    temp_path = None
-    destination = None
-    saved = False
-    try:
-        _ensure_chat_file_path_column(c)
-        to_user = _get_user_by_username(c, to_username)
-        if not to_user:
-            raise HTTPException(404, "Получатель не найден")
-        if to_user["id"] == user["id"]:
-            raise HTTPException(400, "Нельзя слать себе")
-        if _is_blocked(c, user["id"], to_user["id"]):
-            raise HTTPException(403, "Пользователь заблокирован")
-        privacy = _get_privacy_flags(c, to_user["id"]).get("message_privacy", "all")
-        if privacy == "nobody" or (
-            privacy == "contacts"
-            and not c.execute(
-                "SELECT 1 FROM chat_contacts WHERE owner_id=? AND contact_id=?",
-                (to_user["id"], user["id"]),
-            ).fetchone()
-        ):
-            raise HTTPException(403, "Получатель ограничил личные сообщения")
-
-        _cleanup_expired_dm_files(c)
-        c.commit()
-        total = 0
-        os.makedirs(DM_FILE_DIR, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            mode="wb", dir=DM_FILE_DIR, prefix=".dm-upload-", delete=False
-        ) as output:
-            temp_path = output.name
-            while True:
-                chunk = await blob.read(64 * 1024)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > MAX_FILE_SIZE:
-                    raise HTTPException(
-                        413,
-                        f"Слишком большой. Максимум {MAX_FILE_SIZE // 1024 // 1024}MB",
-                    )
-                output.write(chunk)
-        if total == 0:
-            raise HTTPException(400, "Пустой файл")
-
-        file_token = uuid.uuid4().hex
-        destination = os.path.join(DM_FILE_DIR, file_token)
-        os.replace(temp_path, destination)
-        temp_path = None
-        cur = c.execute(
-            "INSERT INTO chat_files (sender_id,receiver_id,blob,size,file_path) "
-            "VALUES (?,?,?, ?, ?)",
-            (user["id"], to_user["id"], b"", total, destination),
-        )
-        file_id = cur.lastrowid
-        c.commit()
-        saved = True
-        return {"file_id": file_id, "size": total}
-    except HTTPException:
-        c.rollback()
-        raise
-    except OSError as error:
-        c.rollback()
-        raise HTTPException(500, "Не удалось сохранить файл") from error
-    except Exception:
-        c.rollback()
-        raise
-    finally:
-        c.close()
-        if not saved:
-            for path in (temp_path, destination):
-                if path:
-                    try:
-                        os.remove(path)
-                    except OSError:
-                        pass
+    to_user = _get_user_by_username(c, to_username)
+    if not to_user:
+        c.close(); raise HTTPException(404, "Получатель не найден")
+    if to_user["id"] == user["id"]:
+        c.close(); raise HTTPException(400, "Нельзя слать себе")
+    if _is_blocked(c, user["id"], to_user["id"]):
+        c.close(); raise HTTPException(403, "Пользователь заблокирован")
+    c.execute("DELETE FROM chat_files WHERE created_at < datetime('now', ?)",
+              (f"-{FILE_TTL_DAYS} day",))
+    c.execute(
+        "INSERT INTO chat_files (sender_id, receiver_id, blob, size) VALUES (?,?,?,?)",
+        (user["id"], to_user["id"], data, len(data)),
+    )
+    file_id = c.execute("SELECT last_insert_rowid() as id").fetchone()["id"]
+    c.commit(); c.close()
+    return {"file_id": file_id, "size": len(data)}
 
 
 @router.get("/file/{file_id}")
@@ -1885,32 +2001,15 @@ def file_download(file_id: int, authorization: Optional[str] = Header(None)):
     user = auth_member(authorization)
     _rate_limit(f"filedl:{user['id']}", limit=120, window=60)
     c = db()
-    _ensure_chat_file_path_column(c)
-    _cleanup_expired_dm_files(c)
-    c.commit()
     row = c.execute(
-        "SELECT sender_id, receiver_id, blob, size, file_path, "
-        "(created_at < datetime('now', ?)) AS expired "
-        "FROM chat_files WHERE id=?",
-        (f"-{FILE_TTL_DAYS} day", file_id),
+        "SELECT sender_id, receiver_id, blob, size FROM chat_files WHERE id=?",
+        (file_id,),
     ).fetchone()
     c.close()
     if not row:
         raise HTTPException(404, "Файл не найден или удалён")
     if user["id"] not in (row["sender_id"], row["receiver_id"]):
         raise HTTPException(403, "Нет доступа")
-    if row["expired"]:
-        raise HTTPException(404, "Файл не найден или удалён")
-    file_path = row["file_path"]
-    if file_path:
-        if not os.path.isfile(file_path):
-            raise HTTPException(404, "Файл не найден или удалён")
-        return FileResponse(
-            file_path,
-            media_type="application/octet-stream",
-            filename="encrypted.bin",
-            headers={"Cache-Control": "no-store"},
-        )
     return Response(content=row["blob"], media_type="application/octet-stream", headers={
         "Content-Length": str(row["size"]),
         "Cache-Control": "no-store",
@@ -1922,22 +2021,13 @@ def file_ack(file_id: int, authorization: Optional[str] = Header(None)):
     """Receiver подтверждает что скачал файл → сервер удаляет blob."""
     user = auth_member(authorization)
     c = db()
-    _ensure_chat_file_path_column(c)
-    c.commit()
-    row = c.execute(
-        "SELECT receiver_id, file_path FROM chat_files WHERE id=?", (file_id,)
-    ).fetchone()
+    row = c.execute("SELECT receiver_id FROM chat_files WHERE id=?", (file_id,)).fetchone()
     if not row:
         c.close(); return {"deleted": 0}
     if row["receiver_id"] != user["id"]:
         c.close(); raise HTTPException(403, "Только получатель может удалить")
     c.execute("DELETE FROM chat_files WHERE id=?", (file_id,))
     c.commit(); c.close()
-    if row["file_path"]:
-        try:
-            os.remove(row["file_path"])
-        except OSError:
-            pass
     return {"deleted": 1}
 
 
@@ -2625,3 +2715,4 @@ def group_by_tag(tag: str, authorization: Optional[str] = Header(None)):
         "members_count": g["members_count"],
         "created_at": g["created_at"],
     }
+

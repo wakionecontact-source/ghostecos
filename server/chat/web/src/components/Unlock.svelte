@@ -1,6 +1,7 @@
 ﻿<script lang="ts">
   import { onMount } from 'svelte';
   import type { ChatClient, IdentityMe, MyKeys } from '../lib/api/chat';
+  import { ApiError } from '../lib/api/http';
   import { unlockAccount } from '../lib/auth/account';
   import { saveDeviceVault } from '../lib/auth/vault';
   import {
@@ -30,6 +31,7 @@
   let busy = $state(false);
   let error = $state('');
   let askReplace = $state(false);
+  let askRotate = $state(false);
   let account = $state<AccountKey | null>(null);
   let decision = $state<V2PairCheck | null>(null);
   let autoTried = false;
@@ -93,13 +95,13 @@
   }
 
   /** Новый аккаунт: копия v1 на сервере — по выбору, локальный режим без пароля. */
-  async function create(mode: KeyStorageMode) {
+  async function create(mode: KeyStorageMode, replace = askReplace) {
     busy = true;
     error = '';
     try {
       const generated = await generateKeys();
       const secret = mode === 'server' ? password : '';
-      await publishAccountKey(api, username, generated.account, mode, secret, askReplace);
+      await publishAccountKey(api, username, generated.account, mode, secret, replace);
       await saveDeviceVault({
         accountPkcs8: generated.account.pkcs8,
         accountPublic: generated.account.publicKey,
@@ -114,7 +116,7 @@
   }
 
   /** Отправляем ли зашифрованную копию identity на сервер — отдельный выбор. */
-  async function publishV2(uploadCopy: boolean) {
+  async function publishV2(uploadCopy: boolean, rotate = false) {
     if (!decision) return;
     busy = true;
     error = '';
@@ -125,11 +127,13 @@
         keys: v2,
         uploadCopy,
         password,
-        rotate: state === 'locked',
+        rotate: rotate || state === 'locked',
       });
       decision = null;
       finish(v2);
     } catch (cause) {
+      // Сервер не даёт сменить identity без явного согласия — показываем кнопку замены.
+      if (cause instanceof ApiError && cause.status === 409) askRotate = true;
       fail(cause);
     } finally {
       busy = false;
@@ -157,6 +161,15 @@
       <button class="button" onclick={() => publishV2(false)} disabled={busy}>
         Только на устройстве
       </button>
+      {#if askRotate}
+        <button class="button" onclick={() => publishV2(false, true)} disabled={busy}>
+          Заменить identity
+        </button>
+        <p class="muted">Прежняя identity останется у контактов до их обновления ключей.</p>
+      {/if}
+      <button class="link" onclick={() => finish(null)} disabled={busy}>
+        Продолжить без ключа v2
+      </button>
     {:else if decision?.state === 'locked'}
       <p class="muted">Копии ключа v2 на сервере нет.</p>
       <button class="button primary" onclick={() => publishV2(true)} disabled={busy}>
@@ -171,10 +184,25 @@
         Ключ этого аккаунта хранится только на устройстве, а в этом браузере его нет — открывать
         нечего.
       </p>
-      <button class="button primary" type="button" onclick={() => create('local')} disabled={busy}>
-        Создать ключ на этом устройстве
-      </button>
-      <p class="muted">Старые зашифрованные сообщения после этого станут нечитаемыми.</p>
+      {#if askReplace}
+        <button
+          class="button primary"
+          type="button"
+          onclick={() => create('local', true)}
+          disabled={busy}
+        >
+          Заменить ключ на этом устройстве
+        </button>
+        <p class="muted">
+          У аккаунта уже опубликован ключ. Замена отвяжет его от прежних сообщений — они станут
+          нечитаемыми.
+        </p>
+      {:else}
+        <button class="button primary" type="button" onclick={() => create('local')} disabled={busy}>
+          Создать ключ на этом устройстве
+        </button>
+        <p class="muted">Старые зашифрованные сообщения после этого станут нечитаемыми.</p>
+      {/if}
     {:else}
       <form onsubmit={submit}>
         <label class="field-label" for="password">Пароль аккаунта</label>
