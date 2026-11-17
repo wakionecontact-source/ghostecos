@@ -3,10 +3,9 @@
   import Approval from './components/Approval.svelte';
   import Home from './components/Home.svelte';
   import Login from './components/Login.svelte';
-  import Unlock from './components/Unlock.svelte';
+  import Setup from './components/Setup.svelte';
   import { chatApi } from './lib/api/chat';
   import { ApiError, setTokenRefresher } from './lib/api/http';
-  import { accountFromDevice } from './lib/auth/account';
   import {
     clearSession,
     enroll,
@@ -19,10 +18,10 @@
   } from './lib/auth/session';
   import { completeLogin, fetchUserInfo } from './lib/auth/sso';
     import type { AccountKey } from './lib/crypto/account-key';
-  import { unlockV2, type V2Keys } from './lib/chat/keys';
+  import type { V2Keys } from './lib/chat/keys';
   import { applyPrefs, loadPrefs } from './lib/ui/prefs';
 
-  type Stage = 'loading' | 'login' | 'approval' | 'unlock' | 'home';
+  type Stage = 'loading' | 'login' | 'approval' | 'setup' | 'home';
 
   let stage = $state<Stage>('loading');
   let session = $state<WebSession | null>(null);
@@ -36,8 +35,6 @@
     refresh?: RefreshPart;
   } | null>(null);
   let loginError = $state('');
-  // Пароль из сейфа GhostID живёт только в памяти вкладки.
-  let vaultPassword = $state('');
 
   const CALLBACK_PATH = '/v2/chat/sso/callback';
 
@@ -68,7 +65,6 @@
     if (location.pathname.replace(/\/$/, '') === CALLBACK_PATH) {
       try {
         const sso = await completeLogin(new URLSearchParams(location.search));
-        if (sso.password) vaultPassword = sso.password;
         const user = await fetchUserInfo(sso.token);
         const result = await enroll(sso.token, user.username, sso);
         history.replaceState({}, '', '/v2/chat');
@@ -115,26 +111,8 @@
     if (persist) saveSession(value);
     session = value;
     pending = null;
-
-    // Ключ уже лежит в хранилище устройства — пароль не спрашиваем.
-    const stored = await accountFromDevice();
-    if (stored) {
-      account = stored;
-      // v2-ключи устройства поднимаем без пароля: seed уже в сейфе.
-      const keys = await unlockV2(chatApi(value.token), { username: value.username }).catch(
-        () => null,
-      );
-      if (keys) {
-        v2 = keys;
-        stage = 'home';
-        return;
-      }
-      // Без v2-ключа устройство не сможет ни принять, ни расшифровать конверты.
-      v2 = null;
-      stage = 'unlock';
-      return;
-    }
-    stage = 'unlock';
+    // Ключи поднимает Setup: он сам берёт их из сейфа браузера или создаёт новые.
+    stage = 'setup';
   }
 
   function unlocked(value: AccountKey, keys: V2Keys | null) {
@@ -176,11 +154,10 @@
     onready={(value) => void acceptSession(value)}
     oncancel={cancelApproval}
   />
-{:else if stage === 'unlock' && session}
-  <Unlock
+{:else if stage === 'setup' && session}
+  <Setup
     api={chatApi(session.token)}
     username={session.username}
-    initialPassword={vaultPassword}
     onready={unlocked}
     onlogout={logout}
   />
