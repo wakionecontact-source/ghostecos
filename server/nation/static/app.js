@@ -1900,19 +1900,6 @@ function prepareCitizenEntry(cit) {
   if (entries.length && Math.random() < .35) { const entry = entries[randInt(entries.length)]; cit.fwd = entry.fwd; cit.seg = entry.atEnd ? last : 0; cit.t = entry.atEnd ? .985 : .015; }
   return cit;
 }
-function stationNearTrain(train, radius = 7) {
-  if (!train || !train.line || !Array.isArray(state.stations)) return null;
-  const point = lerpPos(train.line, train.seg, train.t), key = roadKey(train.line);
-  return state.stations.find(x => {
-    if (x.railKey === key) return distMeters(x.lat, x.lng, point[0], point[1]) <= radius;
-    if (x.railKey2 === key) {                       // поезд на второй линии двусторонней станции
-      const ref2 = stationRailRef2(x);
-      return Boolean(ref2) && distMeters(ref2.point[0], ref2.point[1], point[0], point[1]) <= radius;
-    }
-    const distance = distMeters(x.lat, x.lng, point[0], point[1]);
-    return distance <= radius && (!x.railKey || distance <= 2.5);
-  }) || null;
-}
 function stationRailLines(station) {                     // обе линии станции (или ближайшая как fallback)
   const lines = [];
   for (const key of [station.railKey, station.railKey2]) {
@@ -2264,13 +2251,39 @@ function buildTrainTurn(train, picked, endpoint, bend) {   // дуга пово�
   const outFwd = segmentVector(to.line, to.seg, to.fwd);
   return { ...curve, s: 0, end: to, angle: Math.atan2(outFwd.n, outFwd.e), bend: bend || 0 };
 }
+function stationStopAhead(train, radius = 7) {        // ближайшая станция на текущей линии и дистанция до неё
+  if (!train || !train.line || !Array.isArray(state.stations)) return null;
+  const point = lerpPos(train.line, train.seg, train.t), key = roadKey(train.line);
+  let best = null;
+  for (const x of state.stations) {
+    let d = null;
+    if (x.railKey === key) d = distMeters(x.lat, x.lng, point[0], point[1]);
+    else if (x.railKey2 === key) {
+      const ref2 = stationRailRef2(x);
+      if (ref2) d = distMeters(ref2.point[0], ref2.point[1], point[0], point[1]);
+    } else {
+      const dd = distMeters(x.lat, x.lng, point[0], point[1]);
+      d = dd <= 2.5 ? dd : null;
+    }
+    if (d != null && d <= radius && (!best || d < best.dist)) best = { station: x, dist: d };
+  }
+  return best;
+}
 function stepTrain(train, dt) {
   if (train.dead || !train.line || train.line.length < 2 || !train.line[train.seg] || !train.line[train.seg + 1]) { train.dead = true; return; }
-  const station = stationNearTrain(train, 7);
-  if (station && train.stationKey !== station) { train.stationKey = station; train.dwell = 3.2; train.v = 0; handleTrainStationStop(train, station); }
-  if (train.dwell > 0) { train.dwell = Math.max(0, train.dwell - dt); train.v = Math.max(0, (train.v || 0) - (train.brake || 20) * dt); return; }
-  if (!station) train.stationKey = null;
+  const brake = train.brake || 20, comfort = brake * .6;   // тормозим мягче экстренного
+  const stopDist = ((train.v || 0) ** 2) / (2 * comfort);
+  const ahead = stationStopAhead(train, Math.max(7, stopDist + 4));
+  if (ahead && train.stationKey !== ahead.station && ahead.dist <= .8 && (train.v || 0) <= 1.2) {
+    train.stationKey = ahead.station; train.dwell = 3.2; train.v = 0; handleTrainStationStop(train, ahead.station);
+  }
+  if (train.dwell > 0) { train.dwell = Math.max(0, train.dwell - dt); train.v = Math.max(0, (train.v || 0) - brake * dt); return; }
+  if (!ahead) train.stationKey = null;
   train.v = Math.min(train.maxSpd || 30, (train.v || 0) + (train.accel || 8) * dt);
+  if (ahead && train.stationKey !== ahead.station) {       // подходим к станции: гасим по тормозной кривой
+    const safe = Math.sqrt(Math.max(0, 2 * comfort * Math.max(0, ahead.dist - .4)));
+    if (train.v > safe) train.v = safe;
+  }
   let left = Math.max(0, train.v * dt), guard = 0;
   while (left > 1e-5 && guard++ < 10) {
     if (train.turn) {                                   // идём по дуге поворота
