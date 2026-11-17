@@ -1923,7 +1923,7 @@ function railBendBetween(line, seg, fwd, otherLine, otherSeg, otherFwd) {   // �
   return Math.abs(angleDelta(Math.atan2(a.n, a.e), Math.atan2(b.n, b.e)));
 }
 function railJunctionOptions(train, endpoint, returnAll = false) {          // стыки рельсов: только плавные по курсу
-  const options = [], current = train.line, tol = Math.max(5, LINE_M.rail * .95);
+  const options = [], sharp = [], current = train.line, tol = Math.max(5, LINE_M.rail * .95);
   const incomingAngle = Math.atan2(segmentVector(current, train.seg, train.fwd).n, segmentVector(current, train.seg, train.fwd).e);
   const prev = train.seg > 0 ? segmentVector(current, train.seg - 1, train.fwd) : null;
   const prevAngle = prev ? Math.atan2(prev.n, prev.e) : incomingAngle;
@@ -1938,21 +1938,21 @@ function railJunctionOptions(train, endpoint, returnAll = false) {          // �
       for (const fwd of [true, false]) {
         if ((fwd ? 1 - t : t) * segLen < .45) continue;
         const bend = railBendBetween(current, train.seg, train.fwd, line, i - 1, fwd);
-        // отсекаем резкие повороты: разрешено продолжение почти по курсу или плавный изгиб (<= 70°),
-        // U-разворот на 180° оставляем только как крайний случай (нет других путей)
-        if (bend > Math.PI * .39 && bend < Math.PI * .8) continue;
-        options.push({ line, seg: i - 1, t, fwd, point: hit, distance, bend });
+        // плавные варианты — в приоритет; резкие (U-разворот) берём только если других путей нет
+        const option = { line, seg: i - 1, t, fwd, point: hit, distance, bend };
+        if (bend > Math.PI * .39) sharp.push(option); else options.push(option);
       }
       break;
     }
   }
-  if (!options.length) return null;
-  options.sort((a, b) => (a.bend || 0) - (b.bend || 0));
-  if (returnAll) return options;
+  const pool = options.length ? options : sharp;   // тупиковый U-разворот — только без альтернатив
+  if (!pool.length) return null;
+  pool.sort((a, b) => (a.bend || 0) - (b.bend || 0));
+  if (returnAll) return pool;
   // маршрут до станции: если он есть и совпадает с опцией — почти всегда туда
   const planned = train.route && train.route[0];
   if (planned) {
-    const matches = options.filter(o => o.line === planned.line && o.fwd === planned.fwd);
+    const matches = pool.filter(o => o.line === planned.line && o.fwd === planned.fwd);
     if (matches.length) {
       const picked = planned.point ? matches.sort((a, b) => distMeters(a.point[0], a.point[1], planned.point[0], planned.point[1]) - distMeters(b.point[0], b.point[1], planned.point[0], planned.point[1]))[0] : matches[0];
       train.route.shift();
@@ -1961,7 +1961,7 @@ function railJunctionOptions(train, endpoint, returnAll = false) {          // �
     train.route = [];
   }
   // прямо по курсу: берём самый плавный изгиб; случайность — только среди почти прямых (±12° от лучшего)
-  const bestBend = options[0].bend || 0, nearStraight = options.filter(o => (o.bend || 0) <= bestBend + Math.PI / 15);
+  const bestBend = pool[0].bend || 0, nearStraight = pool.filter(o => (o.bend || 0) <= bestBend + Math.PI / 15);
   return nearStraight[randInt(nearStraight.length)];
 }
 function makeTrain(line, fwd, initialT) {
@@ -1975,7 +1975,8 @@ function makeTrain(line, fwd, initialT) {
   // 8 вагонов: локомотив (i=0) — голова, ведёт; прицепные следуют за ним с фикс. сцепкой
   const wagons = [];
   for (let i = 0; i < TRAIN_WAGONS; i++) wagons.push({ i, len: TRAIN_WAGON_LEN, w: TRAIN_WIDTH, pos: null, angle: 0, hitchAngle: 0, couplDist: TRAIN_COUPLING });
-  const train = { id: ++_trainId, line, seg, t, fwd: enterFwd, v: rand(12, 16), maxSpd: rand(27, 34), accel: 8, brake: 20, wagons, length: TRAIN_WAGONS * TRAIN_COUPLING, width: TRAIN_WIDTH, dwell: 0, stationKey: null, passengers: [], inboundPassengers: entryExit ? 4 + randInt(11) : 0, entryExit, dead: false, pos: null, angle: 0, route: [] };
+  const train = { id: ++_trainId, line, seg, t, fwd: enterFwd, v: rand(12, 16), maxSpd: rand(27, 34), accel: 8, brake: 20, wagons, length: TRAIN_WAGONS * TRAIN_COUPLING, width: TRAIN_WIDTH, dwell: 0, stationKey: null, passengers: [], inboundPassengers: entryExit ? 4 + randInt(11) : 0, entryExit, dead: false, pos: null, angle: 0, route: [], trail: [] };
+  seedTrainTrail(train);
   assignTrainRoute(train);
   return train;
 }
@@ -2216,10 +2217,45 @@ function lineBackwardPose(line, seg, t, fwd, distBack) {
   const tan = a && b ? tangentAt(line, s) : { e: 1, n: 0 };
   return { pos: [a[0], a[1]], angle: Math.atan2(tan.n, tan.e) };
 }
-// Поза точки на distBack метров к хвосту от носа: сначала дуга поворота (если идём по ней),
-// затем рельс, по которому поезд ехал до поворота. Так прицепные вагоны едут ПО рельсам.
+// След пройденного пути: точки от хвоста к голове, чтобы вагоны не сжимались на стыках линий
+function seedTrainTrail(train) {
+  const need = (train.length || 150) + 40, points = [];
+  for (let d = 0; d <= need; d += 2) {
+    const p = lineBackwardPose(train.line, train.seg, train.t, train.fwd, d);
+    if (!p) break;
+    points.push(p.pos.slice());
+  }
+  train.trail = points.reverse();
+}
+function pushTrainTrail(train) {
+  const head = trainFrontPose(train); if (!head) return;
+  if (!Array.isArray(train.trail)) seedTrainTrail(train);
+  const last = train.trail[train.trail.length - 1];
+  if (last && distMeters(last[0], last[1], head.pos[0], head.pos[1]) < .05) return;
+  train.trail.push(head.pos.slice());
+  const need = (train.length || 150) + 40; let total = 0;
+  for (let i = train.trail.length - 1; i > 0; i--) {
+    total += distMeters(train.trail[i][0], train.trail[i][1], train.trail[i - 1][0], train.trail[i - 1][1]);
+    if (total > need && i > 1) { train.trail.splice(0, i - 1); break; }
+  }
+}
 function trainPointBehind(train, distBack) {
   if (distBack <= 1e-3) return trainFrontPose(train);
+  const head = trainFrontPose(train); if (!head) return null;
+  const trail = train.trail;
+  if (Array.isArray(trail) && trail.length >= 2) {          // идём назад по фактически пройденному пути
+    let left = distBack, from = head.pos;
+    for (let i = trail.length - 1; i >= 0; i--) {
+      const to = trail[i], d = distMeters(from[0], from[1], to[0], to[1]);
+      if (d >= left) {
+        const f = d > 1e-6 ? left / d : 0, pos = [from[0] + (to[0] - from[0]) * f, from[1] + (to[1] - from[1]) * f];
+        const e = (to[1] - from[1]) * mPerDegLng(pos[0]), n = (to[0] - from[0]) * MPD_LAT;
+        return { pos, angle: Math.atan2(n, e) };
+      }
+      left -= d; from = to;
+    }
+    return { pos: trail[0].slice(), angle: head.angle };
+  }
   let remaining = distBack;
   if (train.turn) {
     const tr = train.turn, headS = tr.s;
@@ -2320,7 +2356,7 @@ function stepTrain(train, dt) {
       const picked = railJunctionOptions(train, endpoint);
       const merged = Object.assign({}, picked, { line: picked.line });
       const bend = picked.bend || 0;
-      const turn = buildTrainTurn(train, merged, endpoint, bend);
+      const turn = bend > Math.PI * .8 ? null : buildTrainTurn(train, merged, endpoint, bend);   // петлю не рисуем: сразу на путь
       if (turn && turn.length > 0.5) {
         const speedLimit = bend > 0.9 ? Math.min(train.maxSpd || 30, 18) : bend > 0.5 ? Math.min(train.maxSpd || 30, 24) : (train.maxSpd || 30);
         turn.limit = speedLimit;
@@ -2338,6 +2374,7 @@ function stepTrain(train, dt) {
       train.fwd = !train.fwd; train.t = train.fwd ? .015 : .985; train.stationKey = null;
     }
   }
+  pushTrainTrail(train);
   updateTrainChain(train);                              // расставить 8 физических вагонов от головы
 }
 function simulationSettings() { state.simulation = normalizeSimulation(state.simulation); return state.simulation; }
@@ -3007,7 +3044,7 @@ function junctionOptions(c, endpoint, returnAll = false) {
     }
   }
   if (!options.length) return null;
-  if (returnAll) return options;
+  if (returnAll) return pool;
   // Never choose a near-180 degree branch while a real turn is available.
   const natural = options.filter(o => o.bend < Math.PI * .84), pool = natural.length ? natural : options;
   const bestBend = Math.min(...pool.map(o => o.bend)), preferred = pool.filter(o => o.bend <= bestBend + .62);
@@ -3064,7 +3101,7 @@ function chooseCarRouteOption(c, endpoint) {
   let picked = null;
   const planned = c.route && c.route[0];
   if (planned) {
-    const matches = options.filter(o => o.line === planned.line && o.fwd === planned.fwd);
+    const matches = pool.filter(o => o.line === planned.line && o.fwd === planned.fwd);
     if (matches.length) {
       picked = planned.point
         ? matches.slice().sort((a, b) => distMeters(a.point[0], a.point[1], planned.point[0], planned.point[1]) - distMeters(b.point[0], b.point[1], planned.point[0], planned.point[1]))[0]
