@@ -1276,7 +1276,7 @@ function stationPlatformShape(ref, side, halfLen = STATION_PLATFORM_LEN / 2, wid
   const cum = [0]; for (let i = 1; i < ref.line.length; i++) cum.push(cum[i - 1] + distMeters(ref.line[i - 1][0], ref.line[i - 1][1], ref.line[i][0], ref.line[i][1]));
   let base = cum[ref.seg] + ref.t * distMeters(ref.line[ref.seg][0], ref.line[ref.seg][1], ref.line[ref.seg + 1][0], ref.line[ref.seg + 1][1]);
   const total = cum[cum.length - 1] || 1, d0 = Math.max(0, base - halfLen), d1 = Math.min(total, base + halfLen);
-  const inner = [], outer = [], gap = innerOffset + (side === 1 ? 0 : width), gapFar = gap + width;
+  const inner = [], outer = [], gap = innerOffset, gapFar = innerOffset + width;   // ближний и дальний край от пути — одинаково для обеих сторон
   for (let d = d0; d <= d1 + 1e-6; d += 2.5) {
     const dd = Math.min(d, d1), at = linePointAtDistance(ref.line, dd);
     const p = lerpPos(ref.line, at[2], Math.max(0, Math.min(1, (dd - cum[at[2]]) / (distMeters(ref.line[at[2]][0], ref.line[at[2]][1], ref.line[at[2] + 1][0], ref.line[at[2] + 1][1]) || 1))));
