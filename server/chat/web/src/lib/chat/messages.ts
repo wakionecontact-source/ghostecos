@@ -7,6 +7,7 @@ import { fromBase64, toBase64, utf8 } from '../crypto/bytes';
 import { decryptDm, encryptDm } from '../crypto/dm';
 import { decryptForMe, encryptV2 } from '../crypto/envelope';
 import { idbGet, idbPut, STORE_MESSAGES } from '../storage/db';
+import { scopeSuffix } from '../auth/scope';
 import { toUnixSeconds } from './time';
 import { identityPubB64, trustedPeerDevice, v2FromDevice, type V2Keys } from './keys';
 
@@ -57,8 +58,13 @@ interface WirePayload {
   thumb?: string;
 }
 
+/** История у каждого аккаунта своя: смена аккаунта не подмешивает чужое и не стирает. */
+function keyOf(name: string): string {
+  return `${scopeSuffix()}|${name}`;
+}
+
 function threadKey(peer: string): string {
-  return `thread:${peer.trim().toLowerCase()}`;
+  return keyOf(`thread:${peer.trim().toLowerCase()}`);
 }
 
 export interface ThreadSummary {
@@ -76,7 +82,7 @@ const CLEAR_MARKS = 'clear-marks';
 const peerPubCache = new Map<string, Uint8Array>();
 
 async function clearedAt(peer: string): Promise<number> {
-  const marks = (await idbGet<Record<string, number>>(STORE_MESSAGES, CLEAR_MARKS)) ?? {};
+  const marks = (await idbGet<Record<string, number>>(STORE_MESSAGES, keyOf(CLEAR_MARKS))) ?? {};
   return marks[peer] ?? 0;
 }
 
@@ -89,11 +95,11 @@ export async function clearThread(api: ChatClient, peer: string): Promise<void> 
     // Буфер мог уже опустеть — локальную очистку всё равно выполняем.
   }
   await idbPut(STORE_MESSAGES, threadKey(trimmed), []);
-  const index = (await idbGet<ThreadSummary[]>(STORE_MESSAGES, INDEX_KEY)) ?? [];
-  await idbPut(STORE_MESSAGES, INDEX_KEY, index.filter((item) => item.peer !== trimmed));
-  const marks = (await idbGet<Record<string, number>>(STORE_MESSAGES, CLEAR_MARKS)) ?? {};
+  const index = (await idbGet<ThreadSummary[]>(STORE_MESSAGES, keyOf(INDEX_KEY))) ?? [];
+  await idbPut(STORE_MESSAGES, keyOf(INDEX_KEY), index.filter((item) => item.peer !== trimmed));
+  const marks = (await idbGet<Record<string, number>>(STORE_MESSAGES, keyOf(CLEAR_MARKS))) ?? {};
   marks[trimmed] = Math.floor(Date.now() / 1000);
-  await idbPut(STORE_MESSAGES, CLEAR_MARKS, marks);
+  await idbPut(STORE_MESSAGES, keyOf(CLEAR_MARKS), marks);
 }
 
 export async function getThread(peer: string): Promise<StoredMessage[]> {
@@ -103,14 +109,14 @@ export async function getThread(peer: string): Promise<StoredMessage[]> {
 }
 
 export async function listThreads(): Promise<ThreadSummary[]> {
-  const index = (await idbGet<ThreadSummary[]>(STORE_MESSAGES, INDEX_KEY)) ?? [];
+  const index = (await idbGet<ThreadSummary[]>(STORE_MESSAGES, keyOf(INDEX_KEY))) ?? [];
   return index
     .map((item) => ({ ...item, lastTs: toUnixSeconds(item.lastTs) }))
     .sort((a, b) => b.lastTs - a.lastTs);
 }
 
 async function touchIndex(message: StoredMessage): Promise<void> {
-  const index = (await idbGet<ThreadSummary[]>(STORE_MESSAGES, INDEX_KEY)) ?? [];
+  const index = (await idbGet<ThreadSummary[]>(STORE_MESSAGES, keyOf(INDEX_KEY))) ?? [];
   const next = index.filter((item) => item.peer !== message.peer);
   next.push({
     peer: message.peer,
@@ -119,7 +125,7 @@ async function touchIndex(message: StoredMessage): Promise<void> {
     mine: message.mine,
     status: message.status,
   });
-  await idbPut(STORE_MESSAGES, INDEX_KEY, next);
+  await idbPut(STORE_MESSAGES, keyOf(INDEX_KEY), next);
 }
 
 async function appendMessage(message: StoredMessage): Promise<boolean> {
@@ -418,7 +424,7 @@ async function ingestHistoryMessage(
 
 /** История шифротекста: очередь pending чистится, история остаётся (как в приложении). */
 export async function syncHistory(api: ChatClient, account: AccountKey, me: string): Promise<void> {
-  let cursor = (await idbGet<number>(STORE_MESSAGES, HISTORY_CURSOR)) ?? 0;
+  let cursor = (await idbGet<number>(STORE_MESSAGES, keyOf(HISTORY_CURSOR))) ?? 0;
   for (let page = 0; page < 20; page += 1) {
     const result = await api.history(cursor, 500);
     for (const item of result.messages) {
@@ -429,7 +435,7 @@ export async function syncHistory(api: ChatClient, account: AccountKey, me: stri
       }
     }
     cursor = result.next_after_id || cursor;
-    await idbPut(STORE_MESSAGES, HISTORY_CURSOR, cursor);
+    await idbPut(STORE_MESSAGES, keyOf(HISTORY_CURSOR), cursor);
     if (!result.has_more) break;
   }
 }

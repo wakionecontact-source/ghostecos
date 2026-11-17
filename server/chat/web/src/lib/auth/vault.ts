@@ -125,10 +125,7 @@ export async function saveDeviceVault(secrets: VaultSecrets): Promise<void> {
 /** Читает ключи устройства; null — если хранилища нет или оно повреждено. */
 export async function unlockDeviceVault(): Promise<VaultSecrets | null> {
   const key = await wrapKey(false);
-  // Старые сборки писали общий ключ 'device' — читаем его, пока сейф не пересохранён.
-  const stored =
-    (await idbGet<ArrayBuffer>(STORE_VAULT, deviceKey())) ??
-    (await idbGet<ArrayBuffer>(STORE_VAULT, DEVICE_VAULT_KEY));
+  const stored = await idbGet<ArrayBuffer>(STORE_VAULT, deviceKey());
   if (!key || !stored) return null;
   const raw = new Uint8Array(stored);
   try {
@@ -144,10 +141,26 @@ export async function unlockDeviceVault(): Promise<VaultSecrets | null> {
 }
 
 export async function hasDeviceVault(): Promise<boolean> {
-  return (
-    (await idbGet<ArrayBuffer>(STORE_VAULT, deviceKey())) !== null ||
-    (await idbGet<ArrayBuffer>(STORE_VAULT, DEVICE_VAULT_KEY)) !== null
-  );
+  return (await idbGet<ArrayBuffer>(STORE_VAULT, deviceKey())) !== null;
+}
+
+/**
+ * Переезд со старой схемы: общий ключ 'device' отдаём текущему аккаунту один раз.
+ * Дальше он живёт под своим именем и другим аккаунтам не виден.
+ */
+export async function migrateLegacyVault(): Promise<void> {
+  const flag = 'gc.web.vault-migrated';
+  try {
+    if (localStorage.getItem(flag)) return;
+    const legacy = await idbGet<ArrayBuffer>(STORE_VAULT, DEVICE_VAULT_KEY);
+    if (legacy && (await idbGet<ArrayBuffer>(STORE_VAULT, deviceKey())) === null) {
+      await idbPut(STORE_VAULT, deviceKey(), legacy);
+    }
+    await idbDelete(STORE_VAULT, DEVICE_VAULT_KEY);
+    localStorage.setItem(flag, '1');
+  } catch {
+    // Приватный режим: без миграции просто стартуем с чистого сейфа.
+  }
 }
 
 /** Забыть устройство: выход из аккаунта стирает и ключ, и контейнер. */

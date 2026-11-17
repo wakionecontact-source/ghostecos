@@ -1,16 +1,17 @@
 <script lang="ts">
-  import { pollApproval, type WebSession } from '../lib/auth/session';
+  import { pollApproval, type RefreshPart, type WebSession } from '../lib/auth/session';
 
   interface Props {
     token: string;
     username: string;
     approvalId: string;
     code?: string;
+    refresh?: RefreshPart;
     onready: (session: WebSession) => void;
     oncancel: () => void;
   }
 
-  let { token, username, approvalId, code = '', onready, oncancel }: Props = $props();
+  let { token, username, approvalId, code = '', refresh, onready, oncancel }: Props = $props();
   let expired = $state(false);
   let error = $state('');
   let timer: number | undefined;
@@ -20,7 +21,7 @@
 
     const poll = async () => {
       try {
-        const result = await pollApproval(token, approvalId, username);
+        const result = await pollApproval(token, approvalId, username, refresh);
         if (stopped) return;
         if (typeof result === 'object' && result !== null) {
           onready(result);

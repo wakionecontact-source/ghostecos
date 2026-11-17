@@ -18,7 +18,7 @@
   } from './lib/auth/session';
   import { completeLogin, fetchUserInfo } from './lib/auth/sso';
   import { applyScope } from './lib/auth/scope';
-  import { idbClear, STORE_MESSAGES } from './lib/storage/db';
+  import { migrateLegacyVault } from './lib/auth/vault';
     import type { AccountKey } from './lib/crypto/account-key';
   import type { V2Keys } from './lib/chat/keys';
   import { applyPrefs, loadPrefs } from './lib/ui/prefs';
@@ -121,8 +121,9 @@
 
   async function acceptSession(value: WebSession, persist = true) {
     if (persist) saveSession(value);
-    // Аккаунт сменился — кеш чатов прошлого аккаунта показывать нельзя.
-    if (applyScope(value.userId)) await idbClear(STORE_MESSAGES);
+    // Хранилище разделено по аккаунту, поэтому чистить чужое не нужно — только переключаем.
+    applyScope(value.userId);
+    await migrateLegacyVault();
     session = value;
     pending = null;
     // Ключи поднимает Setup: он сам берёт их из сейфа браузера или создаёт новые.
