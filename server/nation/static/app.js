@@ -1988,7 +1988,7 @@ function makeTrain(line, fwd, initialT) {
   // 8 вагонов: локомотив (i=0) — голова, ведёт; прицепные следуют за ним с фикс. сцепкой
   const wagons = [];
   for (let i = 0; i < TRAIN_WAGONS; i++) wagons.push({ i, len: TRAIN_WAGON_LEN, w: TRAIN_WIDTH, pos: null, angle: 0, hitchAngle: 0, couplDist: TRAIN_COUPLING });
-  const train = { id: ++_trainId, line, seg, t, fwd: enterFwd, v: rand(7, 11), maxSpd: rand(12, 17), accel: 2.8, brake: 12, wagons, length: TRAIN_WAGONS * TRAIN_COUPLING, width: TRAIN_WIDTH, dwell: 0, stationKey: null, passengers: [], inboundPassengers: entryExit ? 4 + randInt(11) : 0, entryExit, dead: false, pos: null, angle: 0, route: [] };
+  const train = { id: ++_trainId, line, seg, t, fwd: enterFwd, v: rand(12, 16), maxSpd: rand(24, 32), accel: 6.5, brake: 20, wagons, length: TRAIN_WAGONS * TRAIN_COUPLING, width: TRAIN_WIDTH, dwell: 0, stationKey: null, passengers: [], inboundPassengers: entryExit ? 4 + randInt(11) : 0, entryExit, dead: false, pos: null, angle: 0, route: [] };
   assignTrainRoute(train);
   return train;
 }
@@ -2268,16 +2268,16 @@ function stepTrain(train, dt) {
   if (train.dead || !train.line || train.line.length < 2 || !train.line[train.seg] || !train.line[train.seg + 1]) { train.dead = true; return; }
   const station = stationNearTrain(train, 7);
   if (station && train.stationKey !== station) { train.stationKey = station; train.dwell = 3.2; train.v = 0; handleTrainStationStop(train, station); }
-  if (train.dwell > 0) { train.dwell = Math.max(0, train.dwell - dt); train.v = Math.max(0, (train.v || 0) - (train.brake || 12) * dt); return; }
+  if (train.dwell > 0) { train.dwell = Math.max(0, train.dwell - dt); train.v = Math.max(0, (train.v || 0) - (train.brake || 20) * dt); return; }
   if (!station) train.stationKey = null;
-  train.v = Math.min(train.maxSpd || 15, (train.v || 0) + (train.accel || 2.8) * dt);
+  train.v = Math.min(train.maxSpd || 28, (train.v || 0) + (train.accel || 6.5) * dt);
   let left = Math.max(0, train.v * dt), guard = 0;
   while (left > 1e-5 && guard++ < 10) {
     if (train.turn) {                                   // идём по дуге поворота
       const remain = train.turn.length - train.turn.s, moved = Math.min(left, remain);
       train.turn.s += moved; left -= moved;
-      const curveLimit = train.turn.limit || train.maxSpd || 15;
-      if (train.v > curveLimit) train.v = Math.max(curveLimit, train.v - (train.brake || 12) * dt);
+      const curveLimit = train.turn.limit || train.maxSpd || 28;
+      if (train.v > curveLimit) train.v = Math.max(curveLimit, train.v - (train.brake || 20) * dt);
       if (train.turn.s >= train.turn.length - 1e-4) {
         Object.assign(train, train.turn.end); train.turn = null; train.stationKey = null;
         if (left <= 1e-5) break; continue;
@@ -2286,7 +2286,7 @@ function stepTrain(train, dt) {
     }
     const raw = segmentVector(train.line, train.seg, true), available = train.fwd ? (1 - train.t) * raw.len : train.t * raw.len;
     const gap = trainFrontGap(train), allowed = Math.max(0, Math.min(left, available, Number.isFinite(gap) ? gap : left));
-    if (allowed <= 1e-5) { train.v = Math.max(0, train.v - (train.brake || 12) * dt); break; }
+    if (allowed <= 1e-5) { train.v = Math.max(0, train.v - (train.brake || 20) * dt); break; }
     train.t += (train.fwd ? 1 : -1) * allowed / raw.len; left -= allowed;
     if (allowed + 1e-5 < available) break;
     if (train.fwd && train.seg < train.line.length - 2) { train.seg++; train.t = 0; continue; }
@@ -2309,7 +2309,7 @@ function stepTrain(train, dt) {
       const bend = picked.bend || 0;
       const turn = buildTrainTurn(train, merged, endpoint, bend);
       if (turn && turn.length > 0.5) {
-        const speedLimit = bend > 0.9 ? Math.min(train.maxSpd || 15, 6) : bend > 0.5 ? Math.min(train.maxSpd || 15, 9.5) : (train.maxSpd || 15);
+        const speedLimit = bend > 0.9 ? Math.min(train.maxSpd || 28, 12) : bend > 0.5 ? Math.min(train.maxSpd || 28, 19) : (train.maxSpd || 28);
         turn.limit = speedLimit;
         if (train.v > speedLimit) train.v = speedLimit;
         train.turn = turn;
