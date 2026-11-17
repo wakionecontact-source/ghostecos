@@ -337,6 +337,7 @@ button { cursor: pointer; background: none; border: none; color: inherit; font-f
 .station-building { fill: #5a4352; fill-opacity: .96; stroke: #ffd975; stroke-width: 1.4; }
 .station-platform.connected { fill: #477758; stroke: #42dc83; }
 .station-building.connected { fill: #315b48; stroke: #42dc83; }
+.station-platform.assigning, .station-building.assigning { fill: #2f5d8d; stroke: #4aa3ff; stroke-width: 2.6; }
 .parking-field { fill: #4b545b; fill-opacity: .88; stroke: #c4cbd0; stroke-width: 1.5; }
 .parking-stall { stroke: rgba(255,255,255,.75); stroke-width: 1; }
 

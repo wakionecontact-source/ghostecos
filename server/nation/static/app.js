@@ -1473,10 +1473,17 @@ function renderTransport() {
     const g = stationGeometry(s), access = stationAccessInfo(s), assigning = stationAssign === s;
     const connectedClass = access ? ' connected' : '';
     const accent = assigning ? '#4aa3ff' : access ? '#42dc83' : null;
-    const platform = L.polygon(g.platformPoly, { pane: 'pane-builds', className: `station-platform${connectedClass}`, color: accent || '#e4c875', weight: assigning ? 2.6 : 1.4, fillColor: assigning ? '#2f5d8d' : access ? '#477758' : '#8d7651', fillOpacity: .84 }).addTo(transportLayer);
-    const building = L.polygon(rectCorners(g.building), { pane: 'pane-builds', className: `station-building${connectedClass}`, color: accent || '#ffd975', weight: assigning ? 2.6 : 1.4, fillColor: assigning ? '#2f5d8d' : access ? '#315b48' : '#5a4352', fillOpacity: .96 }).addTo(transportLayer);
-    const railA = offset(g.point[0], g.point[1], -g.n * 3, g.e * 3), railB = offset(g.point[0], g.point[1], g.n * 3, -g.e * 3);
-    L.polyline([railA, railB], { pane: 'pane-edit', color: '#f7df8c', weight: Math.max(1, railPx() * .38), opacity: .95, interactive: false, lineCap: 'round' }).addTo(transportLayer);
+    const platform = L.polygon(g.platformPoly, { pane: 'pane-builds', className: `station-platform${connectedClass}${assigning ? ' assigning' : ''}`, color: accent || '#e4c875', weight: assigning ? 2.6 : 1.4, fillColor: assigning ? '#2f5d8d' : access ? '#477758' : '#8d7651', fillOpacity: .84 }).addTo(transportLayer);
+    const building = L.polygon(rectCorners(g.building), { pane: 'pane-builds', className: `station-building${connectedClass}${assigning ? ' assigning' : ''}`, color: accent || '#ffd975', weight: assigning ? 2.6 : 1.4, fillColor: assigning ? '#2f5d8d' : access ? '#315b48' : '#5a4352', fillOpacity: .96 }).addTo(transportLayer);
+    const stopMark = (point, e, n) => {               // поперечная линия остановки поезда на пути
+      const a = offset(point[0], point[1], -n * 3, e * 3), b = offset(point[0], point[1], n * 3, -e * 3);
+      L.polyline([a, b], { pane: 'pane-edit', color: '#f7df8c', weight: Math.max(1, railPx() * .38), opacity: .95, interactive: false, lineCap: 'round' }).addTo(transportLayer);
+    };
+    stopMark(g.point, g.e, g.n);
+    if (g.dual) {                                      // двусторонняя: маркер остановки и на втором пути
+      const ref2 = stationRailRef2(s);
+      if (ref2) { const tan2 = tangentAt(ref2.line, ref2.seg); stopMark(ref2.point, tan2.e, tan2.n); }
+    }
     const m = L.marker([g.building.lat, g.building.lng], { pane: 'markerPane', icon: transportIcon(access ? 'station connected' : 'station', 'ЖД') }).addTo(transportLayer);
     m.bindTooltip((s.name || 'Станция') + (access ? ` · вход подключён · пеший подход ${fmtLen(access.distance)}` : ' · нет пешеходной сети'), { direction: 'top', offset: [0, -8] });
     const stationClick = e => {
