@@ -31,7 +31,6 @@
   let busy = $state(false);
   let error = $state('');
   let askReplace = $state(false);
-  let askRotate = $state(false);
   let account = $state<AccountKey | null>(null);
   let decision = $state<V2PairCheck | null>(null);
   let autoTried = false;
@@ -95,7 +94,8 @@
   }
 
   /** Новый аккаунт: копия v1 на сервере — по выбору, локальный режим без пароля. */
-  async function create(mode: KeyStorageMode, replace = askReplace) {
+  /** Новый ключ всегда заменяет прежний: пользователь уже подтвердил это нажатием. */
+  async function create(mode: KeyStorageMode, replace = true) {
     busy = true;
     error = '';
     try {
@@ -122,18 +122,22 @@
     error = '';
     try {
       const { keys: v2, state } = decision;
-      await activateV2Pair(api, {
-        username,
-        keys: v2,
-        uploadCopy,
-        password,
-        rotate: rotate || state === 'locked',
-      });
+      try {
+        await activateV2Pair(api, {
+          username,
+          keys: v2,
+          uploadCopy,
+          password,
+          rotate: rotate || state === 'locked',
+        });
+      } catch (cause) {
+        // Сервер не меняет identity молча — повторяем сразу с ротацией, как в приложении.
+        if (!(cause instanceof ApiError && cause.status === 409)) throw cause;
+        await activateV2Pair(api, { username, keys: v2, uploadCopy, password, rotate: true });
+      }
       decision = null;
       finish(v2);
     } catch (cause) {
-      // Сервер не даёт сменить identity без явного согласия — показываем кнопку замены.
-      if (cause instanceof ApiError && cause.status === 409) askRotate = true;
       fail(cause);
     } finally {
       busy = false;
@@ -161,12 +165,6 @@
       <button class="button" onclick={() => publishV2(false)} disabled={busy}>
         Только на устройстве
       </button>
-      {#if askRotate}
-        <button class="button" onclick={() => publishV2(false, true)} disabled={busy}>
-          Заменить identity
-        </button>
-        <p class="muted">Прежняя identity останется у контактов до их обновления ключей.</p>
-      {/if}
       <button class="link" onclick={() => finish(null)} disabled={busy}>
         Продолжить без ключа v2
       </button>
