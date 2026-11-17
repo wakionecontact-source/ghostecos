@@ -17,6 +17,8 @@
     type WebSession,
   } from './lib/auth/session';
   import { completeLogin, fetchUserInfo } from './lib/auth/sso';
+  import { applyScope } from './lib/auth/scope';
+  import { idbClear, STORE_MESSAGES } from './lib/storage/db';
     import type { AccountKey } from './lib/crypto/account-key';
   import type { V2Keys } from './lib/chat/keys';
   import { applyPrefs, loadPrefs } from './lib/ui/prefs';
@@ -59,6 +61,16 @@
     session = bound;
     saveSession(bound);
     return bound.token;
+  }
+
+  /** С экрана истёкшей сессии возвращаем туда, откуда пришли. */
+  function goBack(): void {
+    loginError = '';
+    if (history.length > 1) {
+      history.back();
+      return;
+    }
+    location.assign('/v2/chat');
   }
 
   async function boot() {
@@ -109,6 +121,8 @@
 
   async function acceptSession(value: WebSession, persist = true) {
     if (persist) saveSession(value);
+    // Аккаунт сменился — кеш чатов прошлого аккаунта показывать нельзя.
+    if (applyScope(value.userId)) await idbClear(STORE_MESSAGES);
     session = value;
     pending = null;
     // Ключи поднимает Setup: он сам берёт их из сейфа браузера или создаёт новые.
@@ -142,7 +156,10 @@
 {:else if stage === 'login'}
   <Login />
   {#if loginError}
-    <p class="boot-error">{loginError}</p>
+    <div class="boot-error" role="alert">
+      <span>{loginError}</span>
+      <button type="button" class="boot-back" onclick={goBack}>Назад</button>
+    </div>
   {/if}
 {:else if stage === 'approval' && pending}
   <Approval
@@ -178,14 +195,32 @@
     left: 50%;
     bottom: 20px;
     transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 12px;
     margin: 0;
     padding: 10px 16px;
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 10px;
     background: var(--card);
     color: var(--danger);
     font-size: 13px;
     z-index: 10;
+  }
+
+  .boot-back {
+    flex: none;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .boot-back:hover {
+    background: var(--hover, rgba(255, 255, 255, .06));
   }
 </style>
 

@@ -3,6 +3,7 @@ import { sha256 } from '@noble/hashes/sha2';
 import { openContainer, sealContainer } from '../crypto/aes';
 import { concat, fromBase64, randomBytes, toBase64, utf8 } from '../crypto/bytes';
 import { idbDelete, idbGet, idbPut, STORE_KEYS, STORE_VAULT } from '../storage/db';
+import { scopeSuffix } from './scope';
 
 const VAULT_KEY = 'main';
 const DEVICE_VAULT_KEY = 'device';
@@ -10,6 +11,11 @@ const WRAP_KEY = 'vault-wrap';
 const KDF_ITERATIONS = 260000;
 const SALT_BYTES = 16;
 const IV_BYTES = 12;
+
+/** Сейф устройства у каждого аккаунта свой: вход другим аккаунтом не видит чужие ключи. */
+function deviceKey(): string {
+  return DEVICE_VAULT_KEY + scopeSuffix();
+}
 
 /** WebCrypto принимает только ArrayBuffer, а не view поверх общего буфера. */
 function bufferOf(bytes: Uint8Array): ArrayBuffer {
@@ -113,13 +119,16 @@ export async function saveDeviceVault(secrets: VaultSecrets): Promise<void> {
   const blob = new Uint8Array(IV_BYTES + sealed.byteLength);
   blob.set(iv, 0);
   blob.set(new Uint8Array(sealed), IV_BYTES);
-  await idbPut(STORE_VAULT, DEVICE_VAULT_KEY, blob.buffer);
+  await idbPut(STORE_VAULT, deviceKey(), blob.buffer);
 }
 
 /** Читает ключи устройства; null — если хранилища нет или оно повреждено. */
 export async function unlockDeviceVault(): Promise<VaultSecrets | null> {
   const key = await wrapKey(false);
-  const stored = await idbGet<ArrayBuffer>(STORE_VAULT, DEVICE_VAULT_KEY);
+  // Старые сборки писали общий ключ 'device' — читаем его, пока сейф не пересохранён.
+  const stored =
+    (await idbGet<ArrayBuffer>(STORE_VAULT, deviceKey())) ??
+    (await idbGet<ArrayBuffer>(STORE_VAULT, DEVICE_VAULT_KEY));
   if (!key || !stored) return null;
   const raw = new Uint8Array(stored);
   try {
@@ -135,11 +144,15 @@ export async function unlockDeviceVault(): Promise<VaultSecrets | null> {
 }
 
 export async function hasDeviceVault(): Promise<boolean> {
-  return (await idbGet<ArrayBuffer>(STORE_VAULT, DEVICE_VAULT_KEY)) !== null;
+  return (
+    (await idbGet<ArrayBuffer>(STORE_VAULT, deviceKey())) !== null ||
+    (await idbGet<ArrayBuffer>(STORE_VAULT, DEVICE_VAULT_KEY)) !== null
+  );
 }
 
 /** Забыть устройство: выход из аккаунта стирает и ключ, и контейнер. */
 export async function clearDeviceVault(): Promise<void> {
+  await idbDelete(STORE_VAULT, deviceKey());
   await idbDelete(STORE_VAULT, DEVICE_VAULT_KEY);
   await idbDelete(STORE_KEYS, WRAP_KEY);
 }

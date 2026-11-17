@@ -2,6 +2,7 @@
 import { ChatSocket } from '../api/ws';
 import { CallStore } from './calls.svelte';
 import type { AccountKey } from '../crypto/account-key';
+import { scopeSuffix } from '../auth/scope';
 import { loadPrefs } from '../ui/prefs';
 import { v2FromDevice, type V2Keys } from './keys';
 import {
@@ -396,11 +397,14 @@ export class ChatStore {
   }
 }
 
-const READ_KEY = 'gc.web.readmarks';
+/** Метки прочтения у каждого аккаунта свои. */
+function readKey(): string {
+  return `gc.web.readmarks${scopeSuffix()}`;
+}
 
 function loadReadMarks(): Map<string, number> {
   try {
-    const raw = localStorage.getItem(READ_KEY);
+    const raw = localStorage.getItem(readKey());
     if (!raw) return new Map();
     const parsed = JSON.parse(raw) as Record<string, number>;
     return new Map(Object.entries(parsed));
@@ -411,7 +415,7 @@ function loadReadMarks(): Map<string, number> {
 
 function saveReadMarks(marks: Map<string, number>): void {
   try {
-    localStorage.setItem(READ_KEY, JSON.stringify(Object.fromEntries(marks)));
+    localStorage.setItem(readKey(), JSON.stringify(Object.fromEntries(marks)));
   } catch {
     // Приватный режим может запрещать запись.
   }
