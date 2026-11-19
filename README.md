@@ -8,6 +8,11 @@
 
 ⚠️ **Статус:** ранняя бета.
 
+## Структура репозитория
+
+- `backend/` — актуальный снимок бэкенда и сайта с сервера (ноябрь 2026): код, `core/`, `site/`, тесты.
+- `legacy/` — архив публичного релиза июня 2026 (`server/`, `web_split/`, `ge_icons/`). Оставлен для истории, не поддерживается.
+
 ---
 
 ## Что такое GhostEcos
@@ -204,10 +209,12 @@ A: Да, в Android APK есть офлайн-режим.
 
 ### Self-host (развёртывание своего сервера)
 
+> Гайд описывает архивную версию из `legacy/` (июнь 2026). Актуальный код — в `backend/`.
+
 1. Клонируйте репозиторий:
    ```bash
    git clone https://github.com/wakionecontact-source/ghostecos.git
-   cd ghostecos/server/social
+   cd ghostecos/legacy/server/social
    ```
 2. Создайте venv и установите зависимости:
    ```bash
@@ -219,8 +226,8 @@ A: Да, в Android APK есть офлайн-режим.
    ```bash
    uvicorn social_app:app --host 0.0.0.0 --port 8005
    ```
-4. Настройте nginx (пример в `server/nginx/`).
-5. Включите systemd (примеры в `server/deploy/`).
+4. Настройте nginx (пример в `legacy/server/nginx/`).
+5. Включите systemd (примеры в `legacy/server/deploy/`).
 
 ### Регистрация
 
@@ -273,14 +280,17 @@ A: Да, в Android APK есть офлайн-режим.
 ### Структура репо
 
 ```
-server/
-├── social/          # backend соцсети + банк + чат API
-├── chat/            # E2E-эндпоинты и web-клиент
-├── bank/            # GhostBank (кошелёк, NFT, инвойсы)
-├── site/            # Лендинг
-├── shop/            # Premium-магазин
-├── nginx/           # Конфиг nginx
-└── deploy/          # systemd unit-файлы
+backend/             # актуальный снимок (ноябрь 2026)
+├── core/            # ghostecos-core (свежий код)
+├── site/            # фронтенд сайта
+├── routers/ ws/ bot/# API, WebSocket, боты
+├── tests/           # тесты
+└── .env.example     # шаблон переменных окружения
+
+legacy/              # архив релиза июня 2026
+├── server/          # social/, chat/, bank/, shop/, nginx/, deploy/
+├── web_split/       # старый фронтенд
+└── ge_icons/        # иконки
 ```
 
 ### Безопасность
@@ -298,7 +308,7 @@ server/
 ### Запуск локально
 
 ```bash
-cd server/social
+cd legacy/server/social
 python -m venv venv
 source venv/bin/activate
 pip install -r social_requirements.txt
