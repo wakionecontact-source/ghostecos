@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ghostecos-api"
+version = "0.1.0a4"
+description = "Python SDK for the GhostEcos API."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "GhostEcos" },
+]
+keywords = ["ghostecos", "ghostapi", "ghostchat", "sdk", "api"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: Other/Proprietary License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Typing :: Typed",
+]
+dependencies = ["websockets>=13,<18", "cryptography>=42"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ghostapi"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -1,0 +1,438 @@
+"""Серверная часть ключей GhostChat v2; v1-эндпойнты остаются нетронутыми."""
+from fastapi import APIRouter, Header, HTTPException
+from pydantic import BaseModel, Field
+from typing import Optional, List
+import base64, hashlib, time
+
+from social_router import auth_member, db, ws_hub, _rate_limit, _record_dm_direction
+from key_security import validate_identity_backup
+
+try:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    from cryptography.exceptions import InvalidSignature
+    _HAS_ED25519 = True
+except Exception:
+    _HAS_ED25519 = False
+
+
+router = APIRouter(prefix="/api/chat/v2", tags=["GhostChat v2"])
+
+
+# ── Вспомогательные функции ─────────────────────────────────────────────────────
+
+def _is_b64(s: str, expected_len: Optional[int] = None) -> bool:
+    if not s or not isinstance(s, str) or len(s) > 8000:
+        return False
+    try:
+        raw = base64.b64decode(s, validate=True)
+    except Exception:
+        return False
+    if expected_len is not None and len(raw) != expected_len:
+        return False
+    return True
+
+
+def _device_pk_for_token(c, tok: str, user_id: int) -> Optional[int]:
+    """Устройство текущего запроса: прямой токен устройства либо веб-сессия."""
+    if not tok:
+        return None
+    row = c.execute(
+        "SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1", (tok, user_id)
+    ).fetchone()
+    if row:
+        return int(row["id"])
+    row = c.execute(
+        "SELECT device_pk FROM auth_sessions WHERE token_hash=? AND user_id=? "
+        "AND status='active' ORDER BY last_seen_at DESC LIMIT 1",
+        (hashlib.sha256(tok.encode("utf-8")).hexdigest(), user_id),
+    ).fetchone()
+    return int(row["device_pk"]) if row and row["device_pk"] else None
+
+
+def _verify_ed25519(identity_pub_b64: str, signature_b64: str, data: bytes) -> bool:
+    """Проверка подписи Ed25519. Возвращает True если корректно подписано."""
+    if not _HAS_ED25519:
+        # SECURITY: отсутствие криптографической библиотеки не должно
+        # превращать проверку владения identity в пропуск.
+        return False
+    try:
+        pub_raw = base64.b64decode(identity_pub_b64)
+        sig_raw = base64.b64decode(signature_b64)
+        pk = Ed25519PublicKey.from_public_bytes(pub_raw)
+        pk.verify(sig_raw, data)
+        return True
+    except (InvalidSignature, ValueError, Exception):
+        return False
+
+
+# ── Слой идентичности ──
+
+class IdentityPublishBody(BaseModel):
+    identity_pub: str = Field(max_length=100)     # Ed25519 pub, 32 байта base64
+    identity_priv_encrypted: Optional[str] = Field(None, max_length=8000)
+    identity_salt: Optional[str] = Field(None, max_length=100)  # 16 байт base64
+    identity_kdf: Optional[str] = Field(None, max_length=80)
+    # Доказательство владения identity_priv: подпись фиксированной строки.
+    proof_signature: str = Field(max_length=100)  # Ed25519_sign(...)
+
+
+@router.post("/identity/publish")
+def publish_identity(body: IdentityPublishBody, authorization: Optional[str] = Header(None)):
+    """Публикует identity и зашифрованный priv для recovery на сервере."""
+    user = auth_member(authorization)
+    _rate_limit(f"v2id:{user['id']}", limit=5, window=3600)
+    # Валидация identity_pub
+    if not _is_b64(body.identity_pub, 32):
+        raise HTTPException(400, "identity_pub: ожидается Ed25519 32 байт в base64")
+    # Доказательство владения
+    if not _verify_ed25519(body.identity_pub, body.proof_signature,
+                           b"ghostchat-v2-identity-claim"):
+        raise HTTPException(400, "proof_signature: подпись не проходит проверку")
+    # Опциональная серверная копия зашифрованного priv
+    priv_enc = body.identity_priv_encrypted
+    salt = body.identity_salt
+    backup_supplied = any(
+        value is not None
+        for value in (body.identity_priv_encrypted, body.identity_salt, body.identity_kdf)
+    )
+    try:
+        checked_backup = validate_identity_backup(
+            encrypted_private_key=priv_enc,
+            key_salt=salt,
+            key_kdf=body.identity_kdf,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    c = db()
+    try:
+        # Защита от случайной смены identity без явного recovery:
+        # если у юзера уже есть identity_pub и присылается другой — отказываем.
+        # Смена identity делается отдельным эндпойнтом (TODO).
+        cur = c.execute(
+            "SELECT v2_identity_pub FROM users WHERE id=?", (user["id"],)
+        ).fetchone()
+        if cur and cur["v2_identity_pub"] and cur["v2_identity_pub"] != body.identity_pub:
+            raise HTTPException(409, "У вас уже опубликован другой identity. Смена identity — отдельная процедура.")
+        if backup_supplied:
+            # Полный бэкап заменяет старый; обычный апдейт ключа не стирает его.
+            c.execute(
+                "UPDATE users SET v2_identity_pub=?, v2_identity_priv_encrypted=?, v2_identity_salt=? WHERE id=?",
+                (
+                    body.identity_pub,
+                    checked_backup["encrypted"],
+                    checked_backup["salt"],
+                    user["id"],
+                ),
+            )
+        else:
+            c.execute(
+                "UPDATE users SET v2_identity_pub=? WHERE id=?",
+                (body.identity_pub, user["id"]),
+            )
+        c.commit()
+        return {"status": "ok"}
+    finally:
+        c.close()
+
+
+@router.post("/identity/rotate")
+def rotate_identity(body: IdentityPublishBody, authorization: Optional[str] = Header(None)):
+    # Явная ротация V2-identity после подтверждённой юзером регенерации ключа.
+    user = auth_member(authorization)
+    _rate_limit(f"v2rotate:{user['id']}", limit=3, window=3600)
+    if not _is_b64(body.identity_pub, 32):
+        raise HTTPException(400, "identity_pub: ожидается Ed25519 32 байт в base64")
+    if not _verify_ed25519(body.identity_pub, body.proof_signature,
+                           b"ghostchat-v2-identity-claim"):
+        raise HTTPException(400, "proof_signature: подпись не проходит проверку")
+    c = db()
+    try:
+        cur = c.execute(
+            "SELECT v2_identity_pub FROM users WHERE id=?", (user["id"],)
+        ).fetchone()
+        if not cur:
+            raise HTTPException(404, "Пользователь не найден")
+        if cur["v2_identity_pub"] == body.identity_pub:
+            raise HTTPException(409, "Эта V2 identity уже опубликована")
+        c.execute(
+            "UPDATE users SET v2_identity_pub=?, "
+            "v2_identity_priv_encrypted=NULL, v2_identity_salt=NULL WHERE id=?",
+            (body.identity_pub, user["id"]),
+        )
+        c.execute(
+            "UPDATE user_devices SET v2_device_pub=NULL, "
+            "v2_signed_prekey_sig=NULL WHERE user_id=?",
+            (user["id"],),
+        )
+        c.commit()
+        return {"status": "ok"}
+    finally:
+        c.close()
+
+
+@router.get("/identity/me")
+def get_my_identity(authorization: Optional[str] = Header(None)):
+    """Возвращает identity и зашифрованный priv, если он сохранён на сервере."""
+    user = auth_member(authorization)
+    c = db()
+    try:
+        r = c.execute(
+            "SELECT v2_identity_pub, v2_identity_priv_encrypted, v2_identity_salt "
+            "FROM users WHERE id=?", (user["id"],)
+        ).fetchone()
+        return {
+            "identity_pub": r["v2_identity_pub"] if r else None,
+            "identity_priv_encrypted": r["v2_identity_priv_encrypted"] if r else None,
+            "identity_salt": r["v2_identity_salt"] if r else None,
+        }
+    finally:
+        c.close()
+
+
+# ── Слой устройств ──
+
+class DevicePublishBody(BaseModel):
+    device_pub: str = Field(max_length=100)       # X25519 pub, 32 байта base64
+    signed_prekey_sig: str = Field(max_length=100)  # Ed25519_sign(identity_priv, device_pub_raw)
+    # Замена действующего ключа устройства — только по явному согласию пользователя.
+    replace: bool = False
+
+
+@router.post("/device/publish")
+def publish_device(body: DevicePublishBody, authorization: Optional[str] = Header(None)):
+    """Текущее устройство публикует свой device_pub + signature от identity.
+    Сервер верифицирует подпись и привязывает к текущему device_id."""
+    user = auth_member(authorization)
+    _rate_limit(f"v2dev:{user['id']}", limit=10, window=3600)
+    if not _is_b64(body.device_pub, 32):
+        raise HTTPException(400, "device_pub: ожидается 32 байт в base64")
+    if not _is_b64(body.signed_prekey_sig, 64):
+        raise HTTPException(400, "signed_prekey_sig: ожидается Ed25519 64 байт в base64")
+    c = db()
+    try:
+        # Берём identity_pub юзера и проверяем подпись device_pub им.
+        id_row = c.execute(
+            "SELECT v2_identity_pub FROM users WHERE id=?", (user["id"],)
+        ).fetchone()
+        if not id_row or not id_row["v2_identity_pub"]:
+            raise HTTPException(409, "Сначала опубликуйте identity (/v2/identity/publish)")
+        device_pub_raw = base64.b64decode(body.device_pub)
+        if not _verify_ed25519(id_row["v2_identity_pub"], body.signed_prekey_sig, device_pub_raw):
+            raise HTTPException(400, "signed_prekey_sig: подпись не проходит проверку identity")
+        # Находим текущее устройство: прямой токен устройства либо веб-сессия.
+        tok = (authorization or "").split(" ", 1)[-1] if authorization else ""
+        dev_id = _device_pk_for_token(c, tok, int(user["id"]))
+        if dev_id is None:
+            raise HTTPException(404, "Текущее устройство не найдено")
+        cur = c.execute(
+            "SELECT v2_device_pub FROM user_devices WHERE id=?", (dev_id,)
+        ).fetchone()
+        if (
+            cur
+            and cur["v2_device_pub"]
+            and cur["v2_device_pub"] != body.device_pub
+            and not body.replace
+        ):
+            raise HTTPException(409, "v2_device_key_replace: у устройства уже другой v2-ключ")
+        c.execute(
+            "UPDATE user_devices SET v2_device_pub=?, v2_signed_prekey_sig=? WHERE id=?",
+            (body.device_pub, body.signed_prekey_sig, dev_id),
+        )
+        c.commit()
+        return {"status": "ok", "device_id": dev_id}
+    finally:
+        c.close()
+
+
+@router.get("/keys/{username}")
+def get_user_v2_keys(username: str, authorization: Optional[str] = Header(None)):
+    """Получить identity_pub собеседника + список signed_prekey его активных
+    устройств с подписями."""
+    auth_member(authorization)
+    c = db()
+    try:
+        u = c.execute(
+            "SELECT id, v2_identity_pub FROM users WHERE username=?", (username.lower(),)
+        ).fetchone()
+        if not u:
+            raise HTTPException(404, "Юзер не найден")
+        if not u["v2_identity_pub"]:
+            return {"username": username.lower(), "identity_pub": None, "devices": []}
+        devs = c.execute(
+            "SELECT id, v2_device_pub, v2_signed_prekey_sig FROM user_devices "
+            "WHERE user_id=? AND is_active=1 AND is_blocked=0 AND expires_at>? "
+            "AND v2_device_pub IS NOT NULL",
+            (u["id"], int(time.time())),
+        ).fetchall()
+        return {
+            "username": username.lower(),
+            "identity_pub": u["v2_identity_pub"],
+            "devices": [
+                {
+                    "device_id": d["id"],
+                    "device_pub": d["v2_device_pub"],
+                    "signed_prekey_sig": d["v2_signed_prekey_sig"],
+                }
+                for d in devs
+            ],
+        }
+    finally:
+        c.close()
+
+
+# ── Обратный поиск identity → username ─────────────────────────
+
+@router.get("/whois")
+def whois_by_identity(identity_pub: str, authorization: Optional[str] = Header(None)):
+    """Резолв identity_pub в username для отображения sealed-сообщений."""
+    auth_member(authorization)
+    if not identity_pub or len(identity_pub) > 200:
+        raise HTTPException(400, "identity_pub: некорректный")
+    c = db()
+    try:
+        u = c.execute(
+            "SELECT username, display_name FROM users WHERE v2_identity_pub=?", (identity_pub,)
+        ).fetchone()
+        if not u:
+            raise HTTPException(404, "Не найден")
+        return {"username": u["username"], "display_name": u["display_name"]}
+    finally:
+        c.close()
+
+
+# ── Обмен сообщениями ──
+
+class EnvelopeForDevice(BaseModel):
+    target_device_id: int = Field(gt=0)   # одно из устройств получателя
+    envelope: str = Field(max_length=10_000)           # base64 — eph_pub || iv || ct (формат см. спеку)
+
+
+class SendV2Body(BaseModel):
+    to_username: str = Field(min_length=1, max_length=64)
+    envelopes: List[EnvelopeForDevice] = Field(max_length=32)  # по одному на каждое устройство получателя
+
+
+@router.post("/send")
+def send_v2(body: SendV2Body, authorization: Optional[str] = Header(None)):
+    """Отправляет v2-сообщение: клиент шифрует под каждое устройство получателя."""
+    user = auth_member(authorization)
+    _rate_limit(f"v2send:{user['id']}", limit=120, window=3600)
+    if not body.envelopes:
+        raise HTTPException(400, "envelopes пуст")
+    if len(body.envelopes) > 32:
+        raise HTTPException(400, "слишком много target-устройств в одном /send")
+    c = db()
+    try:
+        target_user = c.execute(
+            "SELECT id, v2_identity_pub FROM users WHERE username=?",
+            (body.to_username.lower(),),
+        ).fetchone()
+        if not target_user:
+            raise HTTPException(404, "Получатель не найден")
+        if not target_user["v2_identity_pub"]:
+            raise HTTPException(409, "У получателя нет identity v2")
+        now_ = int(time.time())
+        ids = []
+        for env in body.envelopes:
+            # Валидация envelope: должен быть валидный base64, разумной длины.
+            if not env.envelope or len(env.envelope) > 10000:
+                raise HTTPException(400, "envelope: пусто или слишком большое")
+            if not _is_b64(env.envelope):
+                raise HTTPException(400, "envelope: ожидается base64")
+            # Проверим, что target_device_id принадлежит получателю.
+            d = c.execute(
+                "SELECT id FROM user_devices "
+                "WHERE id=? AND user_id=? AND is_active=1 AND is_blocked=0 AND expires_at>? "
+                "AND v2_device_pub IS NOT NULL",
+                (env.target_device_id, target_user["id"], now_),
+            ).fetchone()
+            if not d:
+                # Не существует / отключено / без v2 ключа — пропускаем, не ошибка.
+                continue
+            cur = c.execute(
+                "INSERT INTO chat_dm_v2 (receiver_user_id, receiver_device_id, envelope, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (target_user["id"], d["id"], env.envelope, now_),
+            )
+            ids.append(cur.lastrowid)
+        if ids:
+            _record_dm_direction(c, int(user["id"]), int(target_user["id"]))
+        c.commit()
+        try:
+            ws_hub.send_to(target_user["id"], "chat.v2.new", {"count": len(ids)})
+        except Exception:
+            pass
+        # FCM push на устройства получателя — generic, без plaintext.
+        if ids:
+            try:
+                from fcm_helper import get_tokens_for_user, send_wake_push
+                toks = get_tokens_for_user(c, target_user["id"])
+                if toks:
+                    send_wake_push(toks)
+            except Exception as _e:
+                import logging as _lg
+                _lg.getLogger('gc').warning(f"FCM v2 push fail: {_e}")
+        return {"status": "ok", "delivered_to_devices": len(ids), "ids": ids}
+    finally:
+        c.close()
+
+
+@router.get("/pending")
+def pending_v2(authorization: Optional[str] = Header(None)):
+    """Забрать pending сообщения для ТЕКУЩЕГО устройства."""
+    user = auth_member(authorization)
+    tok = (authorization or "").split(" ", 1)[-1] if authorization else ""
+    c = db()
+    try:
+        dev = c.execute(
+            "SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1",
+            (tok, user["id"]),
+        ).fetchone()
+        if not dev:
+            raise HTTPException(404, "Текущее устройство не найдено")
+        rows = c.execute(
+            "SELECT id, envelope, created_at FROM chat_dm_v2 "
+            "WHERE receiver_user_id=? AND receiver_device_id=? ORDER BY id ASC LIMIT 200",
+            (user["id"], dev["id"]),
+        ).fetchall()
+        return {
+            "messages": [
+                {"id": r["id"], "envelope": r["envelope"], "created_at": r["created_at"]}
+                for r in rows
+            ]
+        }
+    finally:
+        c.close()
+
+
+class AckV2Body(BaseModel):
+    ids: List[int] = Field(max_length=500)
+
+
+@router.post("/ack")
+def ack_v2(body: AckV2Body, authorization: Optional[str] = Header(None)):
+    """Подтверждение доставки — сервер удаляет из chat_dm_v2."""
+    user = auth_member(authorization)
+    if not body.ids:
+        return {"status": "ok"}
+    if len(body.ids) > 500:
+        raise HTTPException(400, "too many ids")
+    tok = (authorization or "").split(" ", 1)[-1] if authorization else ""
+    c = db()
+    try:
+        dev = c.execute(
+            "SELECT id FROM user_devices WHERE token=? AND user_id=? LIMIT 1",
+            (tok, user["id"]),
+        ).fetchone()
+        if not dev:
+            raise HTTPException(404, "Текущее устройство не найдено")
+        placeholders = ",".join("?" * len(body.ids))
+        cur = c.execute(
+            f"DELETE FROM chat_dm_v2 WHERE receiver_user_id=? AND receiver_device_id=? "
+            f"AND id IN ({placeholders})",
+            (user["id"], dev["id"], *body.ids),
+        )
+        c.commit()
+        return {"status": "ok", "deleted": cur.rowcount}
+    finally:
+        c.close()

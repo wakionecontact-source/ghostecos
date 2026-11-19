@@ -1,0 +1,11 @@
+-c security-constraints.txt
+fastapi==0.137.1
+starlette==1.4.1
+uvicorn[standard]==0.34.0
+websockets==14.1
+argon2-cffi==23.1.0
+cryptography==50.0.2
+pyjwt==2.15.1
+python-multipart==0.0.32
+aiosqlite==0.20.0
+Pillow==12.3.0

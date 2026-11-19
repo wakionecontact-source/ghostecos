@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Игры — GhostEcos</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg:       #020617;
+      --bg-deep:  #060a1a;
+      --surface:  rgba(15, 23, 42, 0.45);
+      --border:   rgba(255,255,255,0.08);
+      --border-strong: rgba(255,255,255,0.13);
+      --primary:  #a855f7;
+      --primary2: #ec4899;
+      --text:     #f1f5f9;
+      --sub:      #94a3b8;
+      --muted:    #64748b;
+    }
+    html { scroll-behavior: smooth; background: var(--bg); }
+    body {
+      background: transparent; color: var(--text);
+      font-family: 'Inter', sans-serif; overflow-x: hidden; position: relative; min-height: 100vh;
+    }
+    #mesh-bg { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+    body::before {
+      content: ""; position: fixed; inset: 0; z-index: -1;
+      background:
+        radial-gradient(80% 60% at 20% 0%,  rgba(124,58,237,0.18), transparent 60%),
+        radial-gradient(70% 60% at 100% 100%, rgba(236,72,153,0.10), transparent 60%),
+        linear-gradient(180deg, var(--bg-deep), var(--bg));
+    }
+
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      padding: 14px 24px; display: flex; align-items: center; gap: 18px;
+      background: rgba(2,6,23,0.7); backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+    }
+    nav .logo { font-weight: 800; font-size: 18px; color: var(--text); text-decoration: none;
+                display: flex; align-items: center; gap: 8px; }
+    nav .logo i { color: var(--primary); }
+    nav .right { margin-left: auto; display: flex; gap: 14px; align-items: center; }
+    nav .right a {
+      color: var(--sub); text-decoration: none; font-size: 13px; font-weight: 600;
+      transition: color 0.15s;
+    }
+    nav .right a:hover { color: var(--text); }
+
+    main { max-width: 1100px; margin: 0 auto; padding: 60px 24px 80px; position: relative; z-index: 1; }
+
+    .header { text-align: center; margin-bottom: 50px; }
+    .section-label {
+      font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--primary); margin-bottom: 14px;
+    }
+    h1 {
+      font-size: clamp(32px, 5vw, 48px); font-weight: 800; line-height: 1.1;
+      margin-bottom: 16px;
+      background: linear-gradient(135deg, #f1f5f9 0%, #cbd5e1 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .sub {
+      font-size: 15px; color: var(--sub); max-width: 560px; margin: 0 auto;
+      line-height: 1.6;
+    }
+
+    .grid {
+      display: grid; gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+    }
+
+    .card {
+      position: relative; overflow: hidden;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 18px; backdrop-filter: blur(10px);
+      transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+      display: flex; flex-direction: column;
+    }
+    .card.live:hover {
+      transform: translateY(-3px);
+      border-color: rgba(168,85,247,0.45);
+      box-shadow: 0 14px 40px rgba(168,85,247,0.18);
+    }
+    .card-link { color: inherit; text-decoration: none; display: flex; flex-direction: column; height: 100%; }
+
+    .card-img {
+      height: 160px; background: linear-gradient(135deg, rgba(168,85,247,0.18), rgba(236,72,153,0.10));
+      display: flex; align-items: center; justify-content: center;
+      font-size: 56px; color: rgba(255,255,255,0.7);
+      position: relative; overflow: hidden;
+    }
+    .card-img::after {
+      content: ""; position: absolute; inset: 0;
+      background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.08), transparent 60%);
+    }
+
+    .card-body { padding: 18px 20px 20px; flex: 1; display: flex; flex-direction: column; }
+    .card-head {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;
+    }
+    .card-title { font-size: 17px; font-weight: 700; color: var(--text); }
+    .badge {
+      font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 6px;
+      letter-spacing: 0.04em; text-transform: uppercase;
+    }
+    .badge.soon  { background: rgba(251,191,36,0.13); color: #fbbf24; border: 1px solid rgba(251,191,36,0.25); }
+    .badge.live  { background: rgba(74,222,128,0.13); color: #4ade80; border: 1px solid rgba(74,222,128,0.25); }
+    .badge.wip   { background: rgba(168,85,247,0.13); color: var(--primary); border: 1px solid rgba(168,85,247,0.25); }
+    .badge.local { background: rgba(148,163,184,0.13); color: var(--sub); border: 1px solid var(--border-strong); }
+
+    .card-desc {
+      font-size: 13px; color: var(--sub); line-height: 1.55; margin-bottom: 14px; flex: 1;
+    }
+    .card-meta {
+      font-size: 11px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap;
+      padding-top: 12px; border-top: 1px solid var(--border);
+    }
+    .card-meta span { display: flex; align-items: center; gap: 4px; }
+
+    .card.placeholder { opacity: 0.75; }
+    .card.placeholder .card-img { background: rgba(15,23,42,0.4); color: var(--muted); }
+
+    .footnote {
+      text-align: center; margin-top: 60px; padding: 20px;
+      font-size: 12px; color: var(--muted); line-height: 1.6;
+    }
+    .footnote a { color: var(--primary); text-decoration: none; }
+  </style>
+</head>
+<body>
+
+<canvas id="mesh-bg"></canvas>
+
+<nav>
+  <a class="logo" href="/"><i class="fa-solid fa-ghost"></i> GhostEcos</a>
+  <div class="right">
+    <a href="/">Главная</a>
+    <a href="/social">Social</a>
+    <a href="/bank/">Bank</a>
+    <a href="/games" style="color: var(--text); font-weight: 700;">Games</a>
+  </div>
+</nav>
+
+<main>
+  <div class="header">
+    <div class="section-label">Игры</div>
+    <h1>Мои игры на коленке</h1>
+    <p class="sub">
+      Сделанные для души проекты. Большая часть ещё в работе — но раз уж есть, держите. Без рекламы, без подписок, всё бесплатно.
+    </p>
+  </div>
+
+  <div class="grid">
+
+    <!-- GhostNation — играбельно -->
+    <div class="card live">
+      <a class="card-link" href="/nation/" target="_blank" rel="noopener">
+        <div class="card-img">
+          <i class="fa-solid fa-flag"></i>
+        </div>
+        <div class="card-body">
+          <div class="card-head">
+            <div class="card-title">GhostNation</div>
+            <span class="badge live">Играть</span>
+          </div>
+          <div class="card-desc">
+            Создай своё государство на реальной спутниковой карте: тяни дороги, строй города, размечай границы. Включи «Движение» — поедут машины и пойдут жители (у каждого имя и цель, кликни — камера следит за ним).
+          </div>
+          <div class="card-meta">
+            <span><i class="fa-regular fa-map"></i> Leaflet + спутник</span>
+            <span><i class="fa-solid fa-car"></i> Трафик-симуляция</span>
+          </div>
+        </div>
+      </a>
+    </div>
+
+    <!-- Заглушка для будущих игр -->
+    <div class="card placeholder">
+      <div class="card-img" style="font-size: 38px;">
+        <i class="fa-solid fa-plus"></i>
+      </div>
+      <div class="card-body">
+        <div class="card-head">
+          <div class="card-title">Что-нибудь новое</div>
+          <span class="badge wip">Идея</span>
+        </div>
+        <div class="card-desc">
+          Здесь появятся новые проекты. У меня их много в голове, дойдут руки — выложу.
+        </div>
+        <div class="card-meta">
+          <span><i class="fa-regular fa-lightbulb"></i> Скоро</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="footnote">
+    Игры — не основная экосистема. Это побочные проекты. Если хочешь — пиши в <a href="https://t.me/waki_one" target="_blank" rel="noopener">@waki_one</a>.
+  </div>
+</main>
+
+<script src="/mesh.js"></script>
+</body>
+</html>

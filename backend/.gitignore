@@ -1,0 +1,59 @@
+# Секреты и ключи
+*private*
+.env
+.env.*
+!.env.example
+.jwt_secret
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+*secret*
+firebase-service-account.json
+windows-ssh-key-once.txt
+
+# Базы данных и бэкапы
+*.db
+*.db.*
+*.sqlite*
+*.bak
+*.before*
+*.bak.*
+*.incoming
+*.snapshot
+backup/
+_backups/
+backups/
+
+# Логи и мусор
+*.log
+*.tmp
+*.swp
+*~
+__pycache__/
+*.py[cod]
+
+# Окружение
+venv/
+venv-*/
+.venv/
+node_modules/
+
+# Сборки и медиа
+apk/
+media/
+uploads/
+checkpoints/
+.*backups*/
+*.apk
+*.ipa
+*.exe
+*.zip
+*.tar
+*.gz
+*.pt
+*.pth
+*.onnx
+*.ckpt
+*.model
